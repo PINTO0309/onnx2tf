@@ -17,6 +17,7 @@ from onnx2tf.tflite_builder.passes.instance_norm_prepost_layout import (
     _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains,
     _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains,
     _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains,
+    _optimize_transpose_squeeze_reshape_instancenorm_residual_reshape_nhwc_chains,
 )
 
 
@@ -29,6 +30,9 @@ _SIDE_STATS = (
 )
 _UNARY_RESHAPE_STATS = (
     "optimized_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains"
+)
+_RESIDUAL_RESHAPE_STATS = (
+    "optimized_transpose_squeeze_reshape_instancenorm_residual_reshape_nhwc_chains"
 )
 
 
@@ -1039,44 +1043,6 @@ def test_compatibility_wrapper_does_not_fallback_for_unsafe_direct_tail(
     assert repr(model_ir) == before
 
 
-def test_legacy_instance_norm_residual_tail_remains_numerically_equivalent() -> None:
-    model_ir, names = _build_model()
-    _replace_tail(model_ir, names, "squeeze_add_reshape")
-    rng = np.random.default_rng(61)
-    feeds = {
-        name: rng.normal(size=model_ir.tensors[name].shape).astype(np.float32)
-        for name in model_ir.inputs
-    }
-    expected = _evaluate(copy.deepcopy(model_ir), feeds)
-    before = repr(model_ir)
-
-    direct_stats = (
-        _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
-            model_ir
-        )
-    )
-
-    assert direct_stats == {_STATS: 0}
-    assert repr(model_ir) == before
-
-    graph_index = ModelIRGraphIndex(model_ir)
-    layout_state = LayoutState.from_model_ir(model_ir)
-    compatibility_stats = _optimize_transpose_instancenorm_prepost_nhwc_chains(
-        model_ir,
-        graph_index=graph_index,
-        layout_state=layout_state,
-    )
-
-    assert compatibility_stats == {_COMPAT_STATS: 1}
-    assert validate_model_ir_invariants(model_ir) == []
-    _assert_index_current(model_ir, graph_index)
-    assert layout_state.validate_against_model_ir(model_ir) == []
-    actual = _evaluate(model_ir, feeds)
-    assert set(actual) == set(expected)
-    for name in expected:
-        np.testing.assert_allclose(actual[name], expected[name], rtol=1e-6, atol=1e-6)
-
-
 @pytest.mark.parametrize("dtype", ("FLOAT16", "FLOAT32"))
 @pytest.mark.parametrize("produced_source", (False, True))
 @pytest.mark.parametrize("separate_axes", (False, True))
@@ -1788,7 +1754,11 @@ def test_compatibility_wrapper_does_not_fallback_for_unsafe_side_squeeze(
 
 @pytest.mark.parametrize(
     ("first_mode", "first_output_op"),
-    (("side_squeeze", "ADD"), ("squeeze_unary_reshape", "RESHAPE")),
+    (
+        ("side_squeeze", "ADD"),
+        ("squeeze_unary_reshape", "RESHAPE"),
+        ("squeeze_add_reshape", "RESHAPE"),
+    ),
 )
 def test_compatibility_wrapper_preserves_mixed_tail_order_and_total_limit(
     first_mode: str,
@@ -1832,8 +1802,12 @@ def test_compatibility_wrapper_preserves_mixed_tail_order_and_total_limit(
             _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains,
             _UNARY_RESHAPE_STATS,
         ),
+        (
+            _optimize_transpose_squeeze_reshape_instancenorm_residual_reshape_nhwc_chains,
+            _RESIDUAL_RESHAPE_STATS,
+        ),
     ),
-    ids=("direct", "side_squeeze", "unary_reshape"),
+    ids=("direct", "side_squeeze", "unary_reshape", "residual_reshape"),
 )
 def test_instance_norm_prepost_preflight_does_not_allocate_index(
     monkeypatch,

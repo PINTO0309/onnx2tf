@@ -5749,6 +5749,9 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
     unary_reshape_owner_name = (
         "_optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains"
     )
+    residual_reshape_owner_name = (
+        "_optimize_transpose_squeeze_reshape_instancenorm_residual_reshape_nhwc_chains"
+    )
 
     def _functions(path: Path) -> dict[str, ast.FunctionDef]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -5760,6 +5763,24 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
 
     lowerer_functions = _functions(lowering_path)
     compatibility = lowerer_functions[compatibility_name]
+    assert compatibility.end_lineno is not None
+    assert compatibility.end_lineno - compatibility.lineno + 1 <= 70
+    compatibility_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(compatibility)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert {
+        "_build_tensor_consumer_map",
+        "_build_tensor_producer_map",
+        "_prune_unused_tensors",
+        "_replace_operator_input_at",
+        "_set_operator_inputs",
+        "_set_operator_outputs",
+        "insert_operator",
+        "remove_operators",
+    }.isdisjoint(compatibility_calls)
     assert f"{owner_name}_pass" in {
         node.id
         for node in ast.walk(compatibility)
@@ -5775,6 +5796,11 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
         for node in ast.walk(compatibility)
         if isinstance(node, ast.Name)
     }
+    assert f"{residual_reshape_owner_name}_pass" in {
+        node.id
+        for node in ast.walk(compatibility)
+        if isinstance(node, ast.Name)
+    }
     owner_functions = _functions(pass_path)
     owner = owner_functions[owner_name]
     owner_calls = {
@@ -5783,8 +5809,11 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
             owner,
             owner_functions[side_owner_name],
             owner_functions[unary_reshape_owner_name],
+            owner_functions[residual_reshape_owner_name],
             owner_functions["_run_indexed_instance_norm_prepost_tail"],
             owner_functions["_resolve_candidate"],
+            owner_functions["_resolve_residual_tail"],
+            owner_functions["_resolve_residual_source"],
             owner_functions["_plan_constant_update"],
             owner_functions["_apply_plan"],
         )

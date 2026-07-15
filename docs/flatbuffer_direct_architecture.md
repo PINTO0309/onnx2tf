@@ -4923,7 +4923,8 @@ quantization grids, per-axis quantization, duplicate producers, backward
 consumers, and clone failures are complete no-ops. The sole production call
 supplies the Session LayoutState.
 
-The direct, side-Squeeze, and Squeeze/unary/Reshape subsets of decomposed
+The direct, side-Squeeze, Squeeze/unary/Reshape, and
+Squeeze/residual-ADD/Reshape subsets of decomposed
 InstanceNormalization pre/post canonicalization are owned by
 `passes/instance_norm_prepost_layout.py`. Their common exact boundary is an
 NHWC-to-NCHW Transpose, batch-axis Squeeze, Reshape back to rank four, the
@@ -4932,9 +4933,12 @@ two-Mean `SUB -> square -> variance+epsilon -> SQRT -> reciprocal -> normalize
 NCHW-to-NHWC post-Transpose. The side mode requires that post-Transpose plus
 exactly one additional axis-zero Squeeze consumer. The unary/Reshape mode
 requires an axis-zero Squeeze, one of the thirteen retained unary operators, a
-second rank-four Reshape, and the post-Transpose. Only the
-Squeeze/residual-ADD/Reshape tail remains in the ordered compatibility path and
-is not partially matched or mutated by this owner.
+second rank-four Reshape, and the post-Transpose. The residual mode replaces
+the unary with an ADD whose other input is normalized from either a rank-three
+HWC-to-CHW Transpose or an NHWC-to-NCHW Transpose followed by Squeeze and an
+optional supported unary. All four modes are fully owned; the compatibility
+function is a 60-line graph-order/shared-32-cap dispatcher with no ModelIR
+mutation of its own.
 
 One `ModelIRGraphIndex` proves every producer, duplicate producer, consumer
 multiplicity, operator role and order, public boundary, exact concrete shape,
@@ -4945,7 +4949,7 @@ and reciprocal DIV retain their noncommutative input order. Epsilon is finite
 and nonnegative, the reciprocal numerator is exactly one, and scale and bias
 are finite `[1,C,1,1]` FLOAT16 or FLOAT32 constants.
 
-All three rewrites move the first Squeeze and rank-four normalization computation
+All four rewrites move the first Squeeze and rank-four normalization computation
 to NHWC, change the reduction axes to `[1,2]`, transpose every changed tensor
 metadata contract, convert scale and bias to `[1,1,1,C]`, and remove only the
 two boundary Transposes. Direct and side modes redirect the existing bias ADD
@@ -4959,6 +4963,11 @@ constant and `newShape`, and moves the post-Transpose output name to that
 Reshape. CAST alone may change dtype; all other supported unary operators must
 preserve it. Dynamic height, width, or channel signatures are carried through
 the full, kept-dimension, side-branch, unary, and second-Reshape tensors.
+Residual mode also lifts its residual branch to HWC. If the ADD output has
+non-Reshape consumers, one preplanned HWC-to-CHW adapter preserves all legacy
+consumer slots; compatible INT32/INT64 permutation constants are reused and
+incompatible, produced, public, or quantized constants reject the entire
+transaction.
 
 Changed Reshape, Mean-axis, scale, bias, and optional second-Reshape constants
 are fully planned before mutation. A private constant updates in place; a constant shared with any
@@ -4968,13 +4977,13 @@ public-input, produced-input, FLOAT16, negative-axis, and commuted affine
 fixtures produce exactly the same ModelIR as the committed legacy helper.
 Separate but equivalent Mean-axis constants, which the legacy helper skipped
 because it required one shared tensor, are now handled safely. Unsafe direct-,
-side-, or unary/Reshape-tail candidates are not passed back to the legacy
-mutator. Invalid, public, produced, floating, or quantized adapter/shape
-constants and unsafe tail tensors are complete no-ops. The production calls supply the Session
+side-, unary/Reshape-, or residual/Reshape-tail candidates are not passed back
+to a legacy mutator. Invalid, public, produced, floating, or quantized
+adapter/shape constants and unsafe tail tensors are complete no-ops. The production calls supply the Session
 LayoutState. A supplied graph index is used by the indexed owner, refreshed
 immediately after a retained legacy rewrite so subsequent dispatch remains
 current, and reconciled once at the compatibility boundary. The compatibility
-loop offers each pre-Transpose to all three indexed modes at its original graph
+loop offers each pre-Transpose to all four indexed modes at its original graph
 position, so mixed tail modes retain the legacy graph-order priority and one
 shared 32-rewrite ceiling.
 

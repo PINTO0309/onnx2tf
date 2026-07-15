@@ -8,14 +8,13 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the
-Squeeze/unary/Reshape/post-Transpose subset of the decomposed
+The latest implementation unit moves the final
+Squeeze/residual-ADD/Reshape/post-Transpose subset of the decomposed
 InstanceNormalization pre/post rewrite to
-`passes/instance_norm_prepost_layout.py`. It reuses the complete indexed
-normalization contract, validates all thirteen retained unary operators, and
-preplans the second Reshape constant, metadata, and output-name transaction.
-Only the Squeeze/residual-ADD/Reshape mode remains in the ordered compatibility
-path.
+`passes/instance_norm_prepost_layout.py`. It resolves both residual-source
+families and ADD fan-out adapters as one transaction. All four retained tail
+modes now have indexed owners, and the former 975-line compatibility mutator is
+a 60-line graph-order/shared-cap dispatcher.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains ninety-nine coherent continuations:
+The current `fb-refactor5` work contains one hundred coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -255,9 +254,11 @@ The current `fb-refactor5` work contains ninety-nine coherent continuations:
   to a complete indexed topology/layout/constant transaction;
 - `c7496639` moves its dual-consumer post-Transpose plus side-Squeeze tail to
   the same indexed owner with a transactional local compatibility adapter;
-- the current checkpoint moves the Squeeze/unary/Reshape tail to the same
-  indexed owner with a transactional second-Reshape constant and output-name
-  rewrite.
+- `50278afa` moves the Squeeze/unary/Reshape tail to the same indexed owner
+  with a transactional second-Reshape constant and output-name rewrite;
+- the current checkpoint moves the residual-ADD/Reshape tail, its residual
+  source bridges, and its fan-out adapter to the indexed owner, then removes
+  the legacy mutator from the compatibility dispatcher.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -278,6 +279,7 @@ The current checkpoint changes:
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/instance_norm_prepost_layout.py`;
 - `tests/test_flatbuffer_direct_indexed_instance_norm_direct_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_instance_norm_residual_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -2589,6 +2591,47 @@ direct and `-cotof` plus the sequential quantization/evaluation/coverage smoke
 passed with `3 passed in 6.63s`. Ruff, syntax compilation, and `git diff
 --check` passed. No Tier corpus conversion was run.
 
+The indexed residual/Reshape InstanceNormalization checkpoint completes the
+four-mode migration. It validates the main `Squeeze -> residual ADD -> Reshape
+-> post-Transpose` tail together with either a rank-three HWC-to-CHW residual
+bridge or an NHWC-to-NCHW bridge followed by Squeeze and an optional retained
+unary. The residual bridge is removed only after every shape/signature, dtype,
+quantization, public-boundary, fan-out, producer, consumer, and graph-order
+contract succeeds. Residual unary CAST may change FLOAT16/FLOAT32 dtype; the
+other twelve operators must preserve it.
+
+ADD output fan-out is planned in the same transaction. Its Reshape path moves
+to HWC/NHWC, while all other consumer slots share one deterministic
+HWC-to-CHW adapter. A compatible INT32/INT64 fixed permutation is reused;
+invalid, produced, public, quantized, or collision cases are complete no-ops.
+After this migration the former 975-line compatibility helper contains no raw
+ModelIR mutation: it is a 60-line dispatcher that tries the four indexed modes
+at each pre-Transpose's original graph position and preserves their shared
+32-rewrite ceiling.
+
+Focused coverage includes twelve NumPy equivalence variants across all three
+residual source forms, FLOAT16/FLOAT32, and public/produced main sources; all
+thirteen residual unary operators; nine dynamic-signature combinations; four
+fan-out position/repeated-slot variants; multi-chain execution; commuted ADD;
+existing adapter reuse; fifteen unsafe transactional no-ops; four
+compatibility-fallback blockers; adapter-allocation collision; all four mixed
+tail modes under the shared cap; and preflight/no-index behavior with `238
+passed in 0.92s`. Ten representative static, produced-source, FLOAT16,
+negative-axis, commuted-affine, residual-source, and fan-out variants were
+exactly ModelIR-identical to the committed legacy helper. The related
+InstanceNormalization, Pad, Mean, architecture, core, and pass-efficiency
+suites passed with `640 passed in 54.91s`; twelve selected direct-builder
+characterizations passed with `12 passed in 1.00s`. TensorFlow-import-blocked
+direct and `-cotof` plus the sequential quantization/evaluation/coverage smoke
+passed with `3 passed in 6.92s`. Ruff, syntax compilation, and `git diff
+--check` passed. No Tier corpus conversion was run.
+
+Residual-specific fixtures and cases are isolated in
+`test_flatbuffer_direct_indexed_instance_norm_residual_layout.py`; the common
+ModelIR builder/evaluator remains in the direct-tail module. This keeps the
+common characterization file at 1,825 lines and the residual module at 642
+lines without duplicating fixture construction.
+
 The focused indexed and architecture tests pass Ruff normally. The changed
 legacy characterization file passes with its pre-existing `F401` findings
 scoped out, and the lowerer passes with its pre-existing `F401` and `F841`
@@ -2640,11 +2683,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Extend `passes/instance_norm_prepost_layout.py` with the final bounded
-   Squeeze/residual-ADD/Reshape mode next. Reuse the proven core decomposition
-   contract, model the residual source normalization and legacy fan-out
-   adapter as one transaction, and then reduce the compatibility helper to a
-   graph-order/cap orchestrator.
+3. Audit the adjacent 380-line
+   `_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains`
+   helper next. Characterize its exact topology and overlap with the common
+   decomposed-InstanceNormalization matcher before choosing a bounded indexed
+   owner; do not merge it into the completed four-tail dispatcher implicitly.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
