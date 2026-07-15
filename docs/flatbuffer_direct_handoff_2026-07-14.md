@@ -24,6 +24,63 @@ The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
 
+## Pause snapshot — 2026-07-15
+
+The latest source checkpoint remains `b80150a3` (`Index safe binary bridge
+recovery`). No source file has changed since that checkpoint. Local
+`fb-refactor5` and `origin/fb-refactor5` were equal at that commit before this
+handoff-only update, and the worktree contained no uncommitted files.
+
+The next proposed extraction was deliberately stopped at characterization.
+The 218-line compatibility helper
+`_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw` and its
+two ordered sequence call sites were audited, but no indexed owner, production
+dispatcher, or new test has been implemented. Its current implementation
+recognizes an NHWC-to-NCHW Transpose followed by two binary operations and a
+channel-axis Split, propagates the new layout through a unary/binary/Concat/
+Split closure, remaps Split/Concat axes, and may add one terminal public-output
+Transpose. It still owns unbounded full-graph fixed-point scans, mutable
+constant handling, layout propagation, and output adaptation in one function.
+
+Production characterization was run sequentially before any extraction. The
+helper returned zero for all four runtime invocations on each of
+`face_detection_yunet_2023mar.onnx`, `FastestDet.onnx`,
+`human_segmentation_pphumanseg_2021oct_org.onnx`, and
+`osnet025_Nx3x256x128.onnx`, and for all eight runtime invocations on
+`sinet_320_op.onnx`. No operator was added, removed, or changed in those calls.
+The active behavior is currently represented by the existing synthetic direct-
+builder test. This zero-match result is an audit result, not authorization to
+remove the compatibility behavior.
+
+The following tests were rerun from the clean source checkpoint immediately
+before this pause:
+
+- the two indexed binary-bridge suites plus the complete architecture suite:
+  `234 passed in 45.07s`;
+- TensorFlow-import-blocked explicit direct, default direct, and `-cotof`
+  conversions: `3 passed, 8 deselected in 3.68s`.
+
+No Tier corpus or additional real-model conversion was run for this pause.
+The preceding `b80150a3` checkpoint already records byte-identical sequential
+SiNet artifacts and its focused validation below. There is no newly failing
+test and no newly discovered production regression at this boundary. The
+inherited lint, optional exporter, and unrun broad-regression limitations remain
+listed under **Failing tests and known issues**.
+
+At resumption, the first implementation task is the characterized Split/
+channelwise binary-tail helper. Use a dedicated cohesive layout owner if the
+match/plan/apply split confirms that boundary, retain the exact two production
+sequence positions, use `ModelIRGraphIndex` and Session `LayoutState`, and
+replace the closure scans with a bounded consumer worklist. Add transactional
+guards and focused synthetic equivalence/no-op tests before running one short
+sequential zero-match byte comparison. Module placement is a cohesion decision;
+there is no source-file 2,000-line Goal requirement. The 2,000 threshold applies
+only to ONNX operation-count Tier classification.
+
+This document is the only file changed for the pause checkpoint. After it is
+committed and pushed, the required handoff state is a clean worktree with local
+and remote `fb-refactor5` equal. Do not open a pull request.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -329,7 +386,7 @@ corpus run was performed.
 
 Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
-The current checkpoint changes:
+The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/binary_bridge_layout.py`;
@@ -338,8 +395,9 @@ The current checkpoint changes:
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
 
-The expected handoff state after committing and pushing is an empty `git
-status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
+The pause checkpoint changes only this handoff document. The expected handoff
+state after committing and pushing is an empty `git status --short` with local
+`fb-refactor5` equal to `origin/fb-refactor5`.
 
 ## Important design decisions
 
@@ -3906,6 +3964,13 @@ The full Goal is not complete. The fast-precanonicalize orchestrator still has
 orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
+The characterized
+`_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw` helper
+has not yet been extracted. It remains a 218-line mixed match/mutate/propagate
+implementation with full-graph fixed-point scans. Its representative production
+match count is zero as recorded in the pause snapshot, while its existing
+synthetic active-path behavior must be preserved.
+
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
 regression work also remains subject to the original refactor plan and its
@@ -3915,23 +3980,28 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
+2. First implement the already-characterized 218-line
+   `_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw`
+   helper as a bounded indexed owner. Preserve both ordered production call
+   sites and the existing public-output adapter contract; use transactional
+   match/plan/revalidation/apply stages, a differential graph index, Session
+   LayoutState, and a bounded consumer worklist. Prefer a dedicated Split-
+   layout module if that remains the cohesive ownership boundary. Do not use a
+   source-line count as the module-placement criterion.
+3. Add focused synthetic active-path equivalence and unsafe no-op coverage,
+   architecture ownership checks, and TensorFlow import blockers. Then run one
+   short sequential zero-match production byte comparison; do not run a Tier
+   corpus unless explicitly requested.
+4. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. At resumption, first audit the remaining 218-line
-   `_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw`
-   helper and its two production calls. Record its active match counts on the
-   same short representatives, its Split/channelwise guards, and its ordering
-   dependency on the new general/safe binary owners before deciding whether it
-   belongs in `binary_bridge_layout.py` or a dedicated Split-layout owner. Do
-   not begin implementation until that characterization is recorded.
-4. Keep the terminal direct backend boundary explicit; do not reintroduce
+5. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
-5. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
+6. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
    unless a new bounded decision is found.
-6. Run only the focused synthetic/ownership/static checks unless the user asks
+7. Run only the focused synthetic/ownership/static checks unless the user asks
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not
    create a pull request.
