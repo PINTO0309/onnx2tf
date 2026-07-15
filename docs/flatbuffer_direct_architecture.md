@@ -5455,6 +5455,41 @@ a configurable 32-rewrite ceiling, success-only pruning, and Session
 former 505-line direct helper and 503-line deep-skip helper are both 17-line
 compatibility dispatchers and both production calls supply LayoutState.
 
+The adjacent shared-post SiNet fan-out island is owned by
+`passes/sinet_shared_post_layout.py`. It proves two private
+NHWC-to-NCHW adapters feeding
+`ADD -> MUL -> ADD -> PReLU -> NCHW-to-NHWC Transpose`, with exactly one
+adapter source produced by a channel-last Concat. The canonical post tensor
+must fan out to at least one Conv or DepthwiseConv data input and at least one
+plain ADD; any other consumer role rejects the complete candidate.
+
+The canonical post tensor is the authoritative NHWC contract. Both source
+tensors must have the same rank-four concrete shape and dynamic signature,
+while every NCHW stage tensor must be its exact permutation. The rewrite
+removes both input adapters and the terminal output adapter, makes the first
+ADD consume the two canonical NHWC sources, makes PReLU produce the existing
+post tensor directly, and updates only the three affine intermediates to the
+canonical metadata. Post-consumer names and repeated ADD input slots remain
+unchanged.
+
+All activation tensors use one unquantized FLOAT16/FLOAT32/FLOAT64 contract.
+Typed permutation constants, unique producers, exact private fan-out,
+dependency order, public boundaries, Concat axis and fused activation, Conv
+data-input ownership, and plain affine operators are validated before
+mutation. MUL, ADD, and PReLU constants must be finite same-dtype broadcasts
+in the original NCHW graph and after explicit NHWC rotation. Identity-grouped
+roles are updated once; constants with unrelated consumers receive one
+deterministic clone.
+
+The plan is resolved again immediately before apply. Constant clone names,
+all removal and mutation indices, post consumers, and metadata targets are
+preflighted before the first write. One differential `ModelIRGraphIndex`,
+graph-order candidates, a configurable 32-rewrite ceiling, success-only
+pruning, and Session `LayoutState` synchronization replace the former full-map
+fixed-point loop. The former 321-line lowerer helper is a 17-line compatibility
+dispatcher and its sole production call supplies LayoutState. Matching uses no
+model name or fixed spatial dimension.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
