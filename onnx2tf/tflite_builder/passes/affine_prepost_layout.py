@@ -220,6 +220,7 @@ def _constant_replacement(
     old_nchw_shape: Tuple[int, ...],
     target_nhwc_shape: Tuple[int, ...],
     public_names: set[str],
+    allow_direct_non_rank4: bool = False,
 ) -> Optional[np.ndarray]:
     tensor = model_ir.tensors.get(str(name))
     expected_dtype = _FLOAT_DTYPES.get(str(dtype))
@@ -253,7 +254,12 @@ def _constant_replacement(
     if int(data.size) == 1:
         return np.asarray(data)
     if data.ndim != 4:
-        return None
+        return (
+            np.asarray(data)
+            if allow_direct_non_rank4
+            and _broadcasts_to(shape, target_nhwc_shape)
+            else None
+        )
 
     direct_ok = _broadcasts_to(shape, target_nhwc_shape)
     old_ok = _broadcasts_to(shape, old_nchw_shape)

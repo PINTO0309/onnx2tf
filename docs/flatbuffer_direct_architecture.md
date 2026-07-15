@@ -5194,6 +5194,37 @@ configurable 32-rewrite ceiling, success-only pruning, and LayoutState sync
 replace the unbounded full-map loop. The former 409-line helper is a 17-line
 dispatcher, and all seven production calls provide the Session LayoutState.
 
+The adjacent strict
+`NHWC -> Transpose(NCHW) -> MUL(const) -> Transpose(NHWC) -> ADD(const)`
+layout island is owned by `passes/affine_post_add_layout.py`. The owner starts
+from graph-ordered MUL candidates, proves one typed NHWC-to-NCHW producer and
+one typed NCHW-to-NHWC consumer, then validates every consumer of the private
+post output as a plain ADD tail. Multiple ADD branches and downstream repeated
+input slots are preserved. The pre adapter remains when another branch still
+uses its NCHW output; otherwise both Transposes are removed.
+
+The surviving MUL output adopts the removed post-Transpose tensor's exact
+shape, dynamic signature, logical layout, and physical layout. This makes the
+post tensor the sole authoritative layout contract and replaces the legacy
+metadata permutation heuristic. ADD side inputs are finite same-dtype scalar
+or exact `[1,1,1,C]` constants. MUL supports finite FLOAT16, FLOAT32, and
+FLOAT64 scalar, raw NCHW channel/spatial/full, already-NHWC, and legacy direct
+non-rank-four constants under the same shared orientation contract as the
+affine pre/post owner. Ambiguous equal-axis non-invariant rank-four constants
+are rejected. A changed MUL constant with an unrelated consumer receives one
+deterministic `_nhwc` clone.
+
+Producer uniqueness, exact consumer multiplicity, dependency order, public
+boundaries, rank-four shape/signature permutations, dtype, quantization,
+fused activation, constant provenance, and downstream order are resolved
+before mutation with one `ModelIRGraphIndex`. The plan is resolved again at
+apply time, including clone-name and removal preflight. Candidate traversal is
+bounded by a configurable 32-rewrite ceiling; pruning is success-only and the
+Session `LayoutState` is synchronized. The former 278-line lowerer helper is a
+17-line dispatcher and all four production calls provide LayoutState. The
+four-line Pad compatibility wrapper remains independently owned by
+`passes/pad_layout.py` because its topology and constant contracts differ.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

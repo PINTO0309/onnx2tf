@@ -8,13 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the strict Transpose-MUL-ADD-Transpose
-NHWC recovery to `passes/affine_prepost_layout.py` and reduces its former
-409-line raw mutator to a 17-line compatibility dispatcher. It plans every
-constant and post alias before mutation, rejects ambiguous constant axes,
-preserves the canonical post-output tensor contract, and uses one bounded
-differential ModelIR index. All seven production calls now synchronize the
-Session LayoutState.
+The latest implementation unit moves the strict
+Transpose-MUL-Transpose-ADD NHWC recovery to
+`passes/affine_post_add_layout.py` and reduces its former 278-line raw mutator
+to a 17-line compatibility dispatcher. It validates the complete ADD fan-out
+before mutation, preserves the post-Transpose output contract on the surviving
+MUL tensor, and uses one bounded differential ModelIR index. All four
+production calls now synchronize the Session LayoutState. The adjacent Pad
+compatibility alias remains independently owned by `passes/pad_layout.py`.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -37,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 105 coherent continuations:
+The current `fb-refactor5` work contains 106 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -257,9 +258,11 @@ The current `fb-refactor5` work contains 105 coherent continuations:
   the same indexed owner with a transactional local compatibility adapter;
 - `50278afa` moves the Squeeze/unary/Reshape tail to the same indexed owner
   with a transactional second-Reshape constant and output-name rewrite;
-- the current checkpoint moves the residual-ADD/Reshape tail, its residual
-  source bridges, and its fan-out adapter to the indexed owner, then removes
-  the legacy mutator from the compatibility dispatcher.
+- the current checkpoint moves strict Transpose-MUL-Transpose-ADD recovery to
+  a bounded indexed owner, preserves the canonical post-layout contract,
+  handles complete ADD fan-out transactionally, and removes the legacy raw
+  mutator from the compatibility dispatcher without changing the separate Pad
+  owner.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -278,9 +281,9 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/instance_norm_prepost_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_instance_norm_direct_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_instance_norm_residual_layout.py`;
+- `onnx2tf/tflite_builder/passes/affine_prepost_layout.py`;
+- `onnx2tf/tflite_builder/passes/affine_post_add_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_affine_post_add_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -2930,6 +2933,51 @@ TensorFlow-import-blocked import, direct conversion, and `-cotof` passed
 sequentially with `3 passed in 4.01s`. Scoped Ruff, syntax compilation, and
 `git diff --check` passed. No Tier corpus conversion was run.
 
+The indexed affine post-ADD checkpoint moves
+`_optimize_transpose_mul_posttranspose_add_nhwc_chains` to
+`passes/affine_post_add_layout.py`. The legacy helper rebuilt full producer and
+consumer maps inside an unbounded loop, collapsed sole-consumer multiplicity
+through a set, mutated or cloned the MUL constant during matching, and
+permuted the surviving MUL output metadata heuristically. It did not validate
+dtype, quantization, fused activation, public boundaries, producer uniqueness,
+constant provenance, exact graph order, or the complete post-ADD fan-out
+before mutation.
+
+The new owner resolves from a graph-ordered MUL candidate. It proves a typed
+private NHWC-to-NCHW pre adapter, the MUL output's one exact typed inverse post
+adapter, and every consumer of the private post output as a plain ADD with a
+finite same-dtype scalar or exact `[1,1,1,C]` side constant. Multiple ADD tails
+and their downstream repeated slots remain intact. The pre Transpose is kept
+when another NCHW branch uses it. Otherwise both adapters are removed, all ADD
+tails consume the surviving MUL output, and that output adopts the canonical
+post tensor's shape, dynamic signature, logical layout, and physical layout.
+
+MUL constants share the affine pre/post owner's finite FLOAT16/FLOAT32/FLOAT64
+orientation contract. Scalar, raw NCHW channel/spatial/full, already-NHWC, and
+legacy direct non-rank-four forms are retained. Ambiguous equal-axis
+non-invariant rank-four tensors are rejected. A changed constant with an
+unrelated consumer receives a deterministic `_nhwc` clone. The complete plan
+is resolved again before apply, and clone names, input slots, and operator
+removals are preflighted before any mutation. One differential index, a
+32-rewrite ceiling, success-only pruning, and LayoutState synchronization
+replace the legacy loop. The former 278-line helper is a 17-line dispatcher;
+all four production calls pass LayoutState. The Pad compatibility wrapper
+continues to dispatch only to its independent `passes/pad_layout.py` owner.
+
+Focused coverage contains twenty-four FLOAT16/FLOAT32/FLOAT64 numerical
+equivalence combinations across both operand orders and scalar, channel,
+spatial, and full MUL constants; dynamic signatures; two ADD tails; canonical
+layout propagation; legacy already-NHWC/vector constant modes; retained pre
+fan-out; unrelated constant cloning; candidate-only and capped execution;
+twenty-three transactional unsafe contracts; equal-axis ambiguity; clone
+collision; and no-index preflight. The focused owner plus two existing direct-
+builder characterizations passed with `56 passed`; the full architecture suite
+passed with `182 passed in 51.86s`; the selected direct-builder tests passed
+with `2 passed, 753 deselected in 0.46s`; and TensorFlow-import-blocked direct,
+default, and `-cotof` conversion passed sequentially with
+`3 passed, 8 deselected in 3.57s`. Scoped Ruff, syntax compilation, and
+`git diff --check` passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -2972,11 +3020,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 278-line
-   `_optimize_transpose_mul_posttranspose_add_nhwc_chains` helper next, including
-   the four-line pad compatibility alias. Characterize pre/post Transpose
-   ownership, MUL constant rotation, post-ADD side-input layout, fan-out,
-   metadata, and graph-order contracts before extracting a bounded owner.
+3. Audit the adjacent 482-line
+   `_optimize_sinet_shuffle_residual_transpose_chains` helper next. Characterize
+   both residual branches, shared affine constants, Concat axis/layout,
+   PReLU slope ownership, post-adapter fan-out, metadata, and graph-order
+   contracts before extracting a bounded semantic owner.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
