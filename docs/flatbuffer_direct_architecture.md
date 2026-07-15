@@ -6041,7 +6041,8 @@ representative. Only the first was active: YuNet rewrote 10 chains, FastestDet
 Conv2D/DepthwiseConv2D followed by RELU, while the full historical unary,
 binary, and TransposeConv capability remains covered synthetically. The
 separate channel-one TransposeConv/Squeeze terminal helper matched zero in all
-20 invocations and remains a distinct semantic family.
+20 invocations and is implemented as a distinct semantic plan in the same
+op-family owner.
 
 Fifty-six focused tests cover all three producer types, all seven unary types,
 all six binary types in both operand positions, exact numerical equivalence,
@@ -6050,6 +6051,37 @@ idempotence, GraphIndex/LayoutState integrity, and twenty unsafe transactional
 no-op contracts. Sequential comparisons against the preceding checkpoint emit
 byte-identical float32, float16, correspondence, and schema artifacts for all
 four active representatives.
+
+The channel-one terminal plan recognizes only a TransposeConv-produced NHWC
+tensor whose static and dynamic channel dimension is exactly one, its private
+NHWC-to-NCHW adapter, a strictly linear unary/binary chain containing exactly
+one Squeeze, and a final graph output with no consumers. It retains its own
+entry point and stats key; the lowerer dispatcher remains immediately after
+the general passthrough dispatcher and also receives Session LayoutState.
+
+Explicit, negative, and implicit Squeeze axes are normalized against the
+original rank-four NCHW contract and remapped by semantic axis label to NHWC.
+Every removed dimension must be statically and dynamically one. The surviving
+semantic axis order after Squeeze must be identical in both paths. This admits
+the intended channel removal and other order-preserving cases while rejecting
+spatial-only rewrites that would silently expose a channel-last graph output
+under the original channel-first rank-three contract.
+
+The terminal plan preserves the larger historical unary family before or
+after Squeeze. Non-scalar binary constants are accepted only before Squeeze
+and use the shared rank-four constant planner; binary operations after Squeeze
+must use a scalar constant. Static/dynamic broadcasts, dtype, per-tensor
+quantization, operand order, producer/consumer order, public intermediates,
+the exact graph output, Squeeze options, metadata, constants, and the one
+adapter removal are fully planned and re-resolved before apply.
+
+Fifty-seven focused tests cover explicit/negative/implicit axes, static and
+dynamic signatures, all fourteen unary operations, all six binary operations
+in both operand positions, exact numerical behavior, a post-Squeeze scalar
+binary, shared constant cloning, candidate limits, idempotence, GraphIndex and
+LayoutState integrity, and twenty-two transactional rejection cases. YuNet
+retains four zero-match invocations and emits five byte-identical artifacts
+against the preceding checkpoint.
 
 ## Managed-corpus SWAP exclusion policy
 

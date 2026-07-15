@@ -19,6 +19,8 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
 )
 from onnx2tf.tflite_builder.ir import (
     LOGICAL_LAYOUT_NHWC,
+    LOGICAL_LAYOUT_NWC,
+    LOGICAL_LAYOUT_UNKNOWN,
     ModelIR,
     OperatorIR,
     TensorIR,
@@ -26,6 +28,9 @@ from onnx2tf.tflite_builder.ir import (
 
 
 _STATS_KEY = "rewritten_transposeconv_output_nhwc_passthrough_chains"
+_TERMINAL_STATS_KEY = (
+    "rewritten_transposeconv_output_channel1_terminal_transpose_chains"
+)
 _PERM_NHWC_TO_NCHW = (0, 3, 1, 2)
 _PERM_NCHW_TO_NHWC = (0, 2, 3, 1)
 _PRODUCER_TYPES = frozenset(
@@ -45,6 +50,26 @@ _UNARY_TYPES = frozenset(
 _BINARY_TYPES = frozenset(
     {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM"}
 )
+_TERMINAL_UNARY_TYPES = frozenset(
+    {
+        "QUANTIZE",
+        "DEQUANTIZE",
+        "CAST",
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "LOGISTIC",
+        "TANH",
+        "GELU",
+        "HARD_SWISH",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+    }
+)
+_NCHW_LABELS = ("N", "C", "H", "W")
+_NHWC_LABELS = ("N", "H", "W", "C")
 
 
 @dataclass(frozen=True)
@@ -97,6 +122,28 @@ class _Plan:
     post: OperatorIR
     input_rewrites: Tuple[_InputRewrite, ...]
     output_rewrite: _OutputRewrite
+    metadata_updates: Tuple[_MetadataUpdate, ...]
+    constant_updates: Tuple[_ConstantUpdate, ...]
+    removals: Tuple[OperatorIR, ...]
+    tensor_contracts: Tuple[Tuple[Any, ...], ...]
+    operator_contracts: Tuple[Tuple[Any, ...], ...]
+
+
+@dataclass(frozen=True)
+class _OptionsUpdate:
+    operator: OperatorIR
+    original_options: Any
+    new_options: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _TerminalPlan:
+    pre: OperatorIR
+    source: OperatorIR
+    chain: Tuple[OperatorIR, ...]
+    squeeze: OperatorIR
+    input_rewrites: Tuple[_InputRewrite, ...]
+    options_update: _OptionsUpdate
     metadata_updates: Tuple[_MetadataUpdate, ...]
     constant_updates: Tuple[_ConstantUpdate, ...]
     removals: Tuple[OperatorIR, ...]
@@ -277,6 +324,68 @@ def _unique_name(base: str, occupied: set[str]) -> str:
         suffix += 1
     occupied.add(candidate)
     return candidate
+
+
+def _plan_rank4_constant_updates(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    uses_by_name: Dict[str, list[Tuple[OperatorIR, int]]],
+) -> Optional[Tuple[Tuple[_ConstantUpdate, ...], Dict[str, str]]]:
+    occupied = {str(name) for name in model_ir.tensors}
+    updates = []
+    targets: Dict[str, str] = {}
+    for name in sorted(uses_by_name):
+        tensor = model_ir.tensors.get(name)
+        if tensor is None or tensor.data is None:
+            return None
+        data = np.asarray(tensor.data)
+        view = _view(tensor)
+        if tuple(int(value) for value in data.shape) != view.shape or not _rank4(
+            view
+        ):
+            return None
+        planned_slots = {
+            (id(operator), int(input_index))
+            for operator, input_index in uses_by_name[name]
+        }
+        actual_slots = {
+            (id(operator), int(input_index))
+            for operator, input_index in _consumer_slots(
+                model_ir,
+                graph_index,
+                name,
+            )
+        }
+        if not planned_slots <= actual_slots:
+            return None
+        in_place = actual_slots == planned_slots
+        target_name = name
+        if not in_place:
+            target_name = _unique_name(f"{name}_nhwc", occupied)
+        targets[name] = target_name
+        updates.append(
+            _ConstantUpdate(
+                source_name=name,
+                target_name=target_name,
+                in_place=in_place,
+                data=np.transpose(data, _PERM_NCHW_TO_NHWC).astype(
+                    data.dtype,
+                    copy=False,
+                ),
+                shape=tuple(
+                    _permute_shape(list(view.shape), list(_PERM_NCHW_TO_NHWC))
+                    or ()
+                ),
+                signature=tuple(
+                    _permute_shape(
+                        list(view.signature),
+                        list(_PERM_NCHW_TO_NHWC),
+                    )
+                    or ()
+                ),
+            )
+        )
+    return tuple(updates), targets
 
 
 def _metadata_update(
@@ -608,54 +717,14 @@ def _resolve_candidate(
         if int(consumer_index) <= post_index:
             return None
 
-    occupied = {str(name) for name in model_ir.tensors}
-    constant_updates = []
-    constant_targets: Dict[str, str] = {}
-    for side_name in sorted(binary_uses):
-        side_tensor = model_ir.tensors[side_name]
-        side_data = np.asarray(side_tensor.data)
-        side_view = _view(side_tensor)
-        planned_slots = {
-            (id(operator), int(input_index))
-            for operator, input_index in binary_uses[side_name]
-        }
-        actual_slots = {
-            (id(operator), int(input_index))
-            for operator, input_index in _consumer_slots(
-                model_ir,
-                graph_index,
-                side_name,
-            )
-        }
-        if not planned_slots <= actual_slots:
-            return None
-        in_place = actual_slots == planned_slots
-        target_name = side_name
-        if not in_place:
-            target_name = _unique_name(f"{side_name}_nhwc", occupied)
-        constant_targets[side_name] = target_name
-        constant_updates.append(
-            _ConstantUpdate(
-                source_name=side_name,
-                target_name=target_name,
-                in_place=in_place,
-                data=np.transpose(side_data, _PERM_NCHW_TO_NHWC).astype(
-                    side_data.dtype,
-                    copy=False,
-                ),
-                shape=tuple(
-                    _permute_shape(list(side_view.shape), list(_PERM_NCHW_TO_NHWC))
-                    or ()
-                ),
-                signature=tuple(
-                    _permute_shape(
-                        list(side_view.signature),
-                        list(_PERM_NCHW_TO_NHWC),
-                    )
-                    or ()
-                ),
-            )
-        )
+    planned_constants = _plan_rank4_constant_updates(
+        model_ir,
+        graph_index,
+        binary_uses,
+    )
+    if planned_constants is None:
+        return None
+    constant_updates, constant_targets = planned_constants
 
     rewritten_inputs: Dict[int, list[str]] = {
         id(operator): [str(value) for value in operator.inputs]
@@ -747,7 +816,7 @@ def _resolve_candidate(
         input_rewrites=input_rewrites,
         output_rewrite=output_rewrite,
         metadata_updates=tuple(metadata_updates),
-        constant_updates=tuple(constant_updates),
+        constant_updates=constant_updates,
         removals=(pre, post),
         tensor_contracts=tuple(tensor_contracts),
         operator_contracts=tuple(
@@ -908,3 +977,650 @@ def optimize_transposeconv_output_nhwc_passthrough_chains(
     if rewritten > 0:
         _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {_STATS_KEY: int(rewritten)}
+
+
+def _terminal_layout(labels: Sequence[str]) -> str:
+    normalized = tuple(str(value) for value in labels)
+    if normalized == _NHWC_LABELS:
+        return LOGICAL_LAYOUT_NHWC
+    if len(normalized) == 3 and normalized[-1] == "C":
+        return LOGICAL_LAYOUT_NWC
+    return LOGICAL_LAYOUT_UNKNOWN
+
+
+def _normalize_terminal_squeeze_axes(
+    operator: OperatorIR,
+    old_view: _View,
+    new_view: _View,
+) -> Optional[
+    Tuple[
+        Tuple[int, ...],
+        Tuple[int, ...],
+        Tuple[str, ...],
+        _View,
+        Dict[str, Any],
+    ]
+]:
+    if not isinstance(operator.options, dict):
+        return None
+    raw_axes = operator.options.get("squeezeDims", [])
+    if raw_axes is None:
+        values = []
+    elif isinstance(raw_axes, (list, tuple, np.ndarray)):
+        try:
+            values = [int(value) for value in raw_axes]
+        except Exception:
+            return None
+    else:
+        try:
+            values = [int(raw_axes)]
+        except Exception:
+            return None
+    axes = []
+    if len(values) == 0:
+        axes = [
+            index
+            for index, (shape_dim, signature_dim) in enumerate(
+                zip(old_view.shape, old_view.signature)
+            )
+            if int(shape_dim) == 1 and int(signature_dim) == 1
+        ]
+    else:
+        for value in values:
+            axis = int(value)
+            if axis < 0:
+                axis += 4
+            if axis < 0 or axis >= 4:
+                return None
+            if axis not in axes:
+                axes.append(axis)
+    if len(axes) == 0:
+        return None
+    if any(
+        int(old_view.shape[axis]) != 1 or int(old_view.signature[axis]) != 1
+        for axis in axes
+    ):
+        return None
+
+    mapped_axes = tuple(
+        int(_NHWC_LABELS.index(_NCHW_LABELS[axis])) for axis in axes
+    )
+    if any(
+        int(new_view.shape[axis]) != 1 or int(new_view.signature[axis]) != 1
+        for axis in mapped_axes
+    ):
+        return None
+    old_labels = tuple(
+        label for index, label in enumerate(_NCHW_LABELS) if index not in axes
+    )
+    new_labels = tuple(
+        label
+        for index, label in enumerate(_NHWC_LABELS)
+        if index not in mapped_axes
+    )
+    if old_labels != new_labels:
+        return None
+    new_shape = tuple(
+        value
+        for index, value in enumerate(new_view.shape)
+        if index not in mapped_axes
+    )
+    new_signature = tuple(
+        value
+        for index, value in enumerate(new_view.signature)
+        if index not in mapped_axes
+    )
+    options = dict(operator.options)
+    options["squeezeDims"] = [int(value) for value in mapped_axes]
+    return (
+        tuple(axes),
+        mapped_axes,
+        new_labels,
+        _View(new_shape, new_signature, old_view.dtype),
+        options,
+    )
+
+
+def _terminal_plan_signature(plan: _TerminalPlan) -> Tuple[Any, ...]:
+    return (
+        id(plan.pre),
+        id(plan.source),
+        tuple(id(operator) for operator in plan.chain),
+        id(plan.squeeze),
+        tuple(
+            (
+                id(rewrite.operator),
+                rewrite.original_inputs,
+                rewrite.new_inputs,
+            )
+            for rewrite in plan.input_rewrites
+        ),
+        (
+            id(plan.options_update.operator),
+            _freeze(plan.options_update.original_options),
+            _freeze(plan.options_update.new_options),
+        ),
+        tuple(
+            (
+                update.name,
+                update.shape,
+                update.signature,
+                update.dtype,
+                _freeze(update.quantization),
+                update.logical_layout,
+                update.physical_layout,
+            )
+            for update in plan.metadata_updates
+        ),
+        tuple(
+            (
+                update.source_name,
+                update.target_name,
+                update.in_place,
+                _freeze(update.data),
+                update.shape,
+                update.signature,
+            )
+            for update in plan.constant_updates
+        ),
+        tuple(id(operator) for operator in plan.removals),
+        plan.tensor_contracts,
+        plan.operator_contracts,
+    )
+
+
+def _resolve_terminal_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    pre: OperatorIR,
+    *,
+    layout_state: Optional[LayoutState],
+) -> Optional[_TerminalPlan]:
+    del layout_state
+    pre_index = _operator_index(graph_index, pre)
+    if pre_index is None or not _typed_permutation(
+        model_ir,
+        graph_index,
+        pre,
+        _PERM_NHWC_TO_NCHW,
+    ):
+        return None
+    pre_input_name = str(pre.inputs[0])
+    pre_output_name = str(pre.outputs[0])
+    graph_inputs = {str(value) for value in model_ir.inputs}
+    graph_outputs = {str(value) for value in model_ir.outputs}
+    public_names = graph_inputs | graph_outputs
+    if pre_input_name in public_names or pre_output_name in public_names:
+        return None
+    if (
+        pre_input_name in graph_index.duplicate_producers
+        or pre_output_name in graph_index.duplicate_producers
+    ):
+        return None
+    source_index = graph_index.producers.get(pre_input_name)
+    if source_index is None or int(source_index) >= int(pre_index):
+        return None
+    source = model_ir.operators[int(source_index)]
+    if _op_type(source) != "TRANSPOSE_CONV":
+        return None
+
+    pre_input_tensor = model_ir.tensors.get(pre_input_name)
+    pre_output_tensor = model_ir.tensors.get(pre_output_name)
+    if pre_input_tensor is None or pre_output_tensor is None:
+        return None
+    pre_input_view = _view(pre_input_tensor)
+    pre_output_view = _view(pre_output_tensor)
+    if (
+        not _rank4(pre_input_view)
+        or not _rank4(pre_output_view)
+        or not _positive(pre_input_view.shape)
+        or not _positive(pre_output_view.shape)
+        or int(pre_input_view.shape[3]) != 1
+        or int(pre_input_view.signature[3]) != 1
+        or pre_input_view.dtype != pre_output_view.dtype
+        or not _per_tensor_quantization(pre_input_tensor.quantization)
+        or not _per_tensor_quantization(pre_output_tensor.quantization)
+        or tuple(
+            _permute_shape(
+                list(pre_input_view.shape),
+                list(_PERM_NHWC_TO_NCHW),
+            )
+            or ()
+        )
+        != pre_output_view.shape
+        or tuple(
+            _permute_shape(
+                list(pre_input_view.signature),
+                list(_PERM_NHWC_TO_NCHW),
+            )
+            or ()
+        )
+        != pre_output_view.signature
+    ):
+        return None
+
+    chain = []
+    binary_uses: Dict[str, list[Tuple[OperatorIR, int]]] = {}
+    converted_views: Dict[str, _View] = {}
+    converted_labels: Dict[str, Tuple[str, ...]] = {}
+    current_name = pre_output_name
+    current_old_view = pre_output_view
+    current_new_view = pre_input_view
+    current_labels = _NHWC_LABELS
+    previous_index = int(pre_index)
+    squeeze: Optional[OperatorIR] = None
+    squeeze_new_options: Optional[Dict[str, Any]] = None
+
+    for _ in range(len(model_ir.operators)):
+        user_indices = graph_index.consumer_indices(current_name)
+        if len(user_indices) != 1:
+            break
+        operator_index = int(user_indices[0])
+        if operator_index <= previous_index:
+            return None
+        operator = model_ir.operators[operator_index]
+        operator_type = _op_type(operator)
+        if operator_type not in _TERMINAL_UNARY_TYPES | _BINARY_TYPES | {
+            "SQUEEZE"
+        }:
+            break
+        if len(operator.outputs) != 1:
+            return None
+        output_name = str(operator.outputs[0])
+        if output_name in graph_inputs or output_name in graph_index.duplicate_producers:
+            return None
+        output_tensor = model_ir.tensors.get(output_name)
+        if output_tensor is None or not _per_tensor_quantization(
+            output_tensor.quantization
+        ):
+            return None
+        output_old_view = _view(output_tensor)
+
+        if operator_type in _TERMINAL_UNARY_TYPES:
+            if len(operator.inputs) != 1 or str(operator.inputs[0]) != current_name:
+                return None
+            if (
+                output_old_view.shape != current_old_view.shape
+                or output_old_view.signature != current_old_view.signature
+            ):
+                return None
+            output_new_view = _View(
+                current_new_view.shape,
+                current_new_view.signature,
+                output_old_view.dtype,
+            )
+            output_labels = current_labels
+        elif operator_type in _BINARY_TYPES:
+            if len(operator.inputs) != 2:
+                return None
+            input_names = tuple(str(value) for value in operator.inputs)
+            main_slots = [
+                index for index, name in enumerate(input_names) if name == current_name
+            ]
+            if len(main_slots) != 1:
+                return None
+            main_input_index = int(main_slots[0])
+            side_input_index = 1 - main_input_index
+            side_name = input_names[side_input_index]
+            side_tensor = model_ir.tensors.get(side_name)
+            if (
+                side_tensor is None
+                or side_tensor.data is None
+                or bool(side_tensor.is_variable)
+                or side_name in public_names
+                or side_name in graph_index.producers
+                or side_name in graph_index.duplicate_producers
+                or not _per_tensor_quantization(side_tensor.quantization)
+            ):
+                return None
+            side_data = np.asarray(side_tensor.data)
+            side_view = _view(side_tensor)
+            if (
+                not _positive(side_view.shape)
+                or tuple(int(value) for value in side_data.shape) != side_view.shape
+                or not _compatible(side_view.shape, side_view.signature)
+                or side_view.dtype != current_old_view.dtype
+                or output_old_view.dtype != current_old_view.dtype
+            ):
+                return None
+            old_shape = _broadcast_static_shapes(
+                list(current_old_view.shape),
+                list(side_view.shape),
+            )
+            old_signature = _broadcast_shape_signatures(
+                list(current_old_view.signature),
+                list(side_view.signature),
+            )
+            if (
+                old_shape is None
+                or old_signature is None
+                or tuple(old_shape) != output_old_view.shape
+                or tuple(old_signature) != output_old_view.signature
+            ):
+                return None
+            if int(side_data.size) == 1:
+                side_new_shape = side_view.shape
+                side_new_signature = side_view.signature
+            else:
+                if squeeze is not None or not _rank4(side_view):
+                    return None
+                side_new_shape = tuple(
+                    _permute_shape(
+                        list(side_view.shape),
+                        list(_PERM_NCHW_TO_NHWC),
+                    )
+                    or ()
+                )
+                side_new_signature = tuple(
+                    _permute_shape(
+                        list(side_view.signature),
+                        list(_PERM_NCHW_TO_NHWC),
+                    )
+                    or ()
+                )
+                binary_uses.setdefault(side_name, []).append(
+                    (operator, side_input_index)
+                )
+            new_shape = _broadcast_static_shapes(
+                list(current_new_view.shape),
+                list(side_new_shape),
+            )
+            new_signature = _broadcast_shape_signatures(
+                list(current_new_view.signature),
+                list(side_new_signature),
+            )
+            if new_shape is None or new_signature is None:
+                return None
+            output_new_view = _View(
+                tuple(new_shape),
+                tuple(new_signature),
+                output_old_view.dtype,
+            )
+            output_labels = current_labels
+        else:
+            if squeeze is not None:
+                return None
+            if len(operator.inputs) != 1 or str(operator.inputs[0]) != current_name:
+                return None
+            if not _rank4(current_old_view) or not _rank4(current_new_view):
+                return None
+            normalized = _normalize_terminal_squeeze_axes(
+                operator,
+                current_old_view,
+                current_new_view,
+            )
+            if normalized is None:
+                return None
+            old_axes, _, output_labels, output_new_view, squeeze_new_options = (
+                normalized
+            )
+            expected_old_shape = tuple(
+                value
+                for index, value in enumerate(current_old_view.shape)
+                if index not in old_axes
+            )
+            expected_old_signature = tuple(
+                value
+                for index, value in enumerate(current_old_view.signature)
+                if index not in old_axes
+            )
+            if (
+                output_old_view.shape != expected_old_shape
+                or output_old_view.signature != expected_old_signature
+                or output_old_view.dtype != current_old_view.dtype
+            ):
+                return None
+            squeeze = operator
+
+        chain.append(operator)
+        converted_views[output_name] = output_new_view
+        converted_labels[output_name] = tuple(output_labels)
+        current_name = output_name
+        current_old_view = output_old_view
+        current_new_view = output_new_view
+        current_labels = tuple(output_labels)
+        previous_index = operator_index
+
+    if len(chain) == 0 or squeeze is None or squeeze_new_options is None:
+        return None
+    if current_name not in graph_outputs:
+        return None
+    if graph_index.consumer_indices(current_name):
+        return None
+    if any(str(operator.outputs[0]) in graph_outputs for operator in chain[:-1]):
+        return None
+
+    planned_constants = _plan_rank4_constant_updates(
+        model_ir,
+        graph_index,
+        binary_uses,
+    )
+    if planned_constants is None:
+        return None
+    constant_updates, constant_targets = planned_constants
+
+    rewritten_inputs: Dict[int, list[str]] = {
+        id(operator): [str(value) for value in operator.inputs]
+        for operator in chain
+    }
+    first = chain[0]
+    first_inputs = rewritten_inputs[id(first)]
+    first_slots = [
+        index for index, name in enumerate(first_inputs) if name == pre_output_name
+    ]
+    if len(first_slots) != 1:
+        return None
+    first_inputs[int(first_slots[0])] = pre_input_name
+    for side_name, uses in binary_uses.items():
+        for operator, input_index in uses:
+            rewritten_inputs[id(operator)][int(input_index)] = constant_targets[
+                side_name
+            ]
+    input_rewrites = tuple(
+        _InputRewrite(
+            operator=operator,
+            original_inputs=tuple(str(value) for value in operator.inputs),
+            new_inputs=tuple(rewritten_inputs[id(operator)]),
+        )
+        for operator in chain
+        if tuple(str(value) for value in operator.inputs)
+        != tuple(rewritten_inputs[id(operator)])
+    )
+    metadata_updates = []
+    for operator in chain:
+        name = str(operator.outputs[0])
+        tensor = model_ir.tensors[name]
+        converted = converted_views[name]
+        layout = _terminal_layout(converted_labels[name])
+        metadata_updates.append(
+            _MetadataUpdate(
+                name=name,
+                shape=converted.shape,
+                signature=converted.signature,
+                dtype=str(tensor.dtype),
+                quantization=_clone_quantization(tensor.quantization),
+                logical_layout=layout,
+                physical_layout=layout,
+            )
+        )
+
+    contract_names = {
+        pre_input_name,
+        pre_output_name,
+        str(pre.inputs[1]),
+        current_name,
+    }
+    contract_names.update(
+        str(value)
+        for operator in chain
+        for value in (*operator.inputs, *operator.outputs)
+    )
+    tensor_contracts = []
+    for name in sorted(contract_names):
+        tensor = model_ir.tensors.get(name)
+        if tensor is None:
+            return None
+        tensor_contracts.append(_tensor_contract(name, tensor))
+    return _TerminalPlan(
+        pre=pre,
+        source=source,
+        chain=tuple(chain),
+        squeeze=squeeze,
+        input_rewrites=input_rewrites,
+        options_update=_OptionsUpdate(
+            operator=squeeze,
+            original_options=_freeze(squeeze.options),
+            new_options=squeeze_new_options,
+        ),
+        metadata_updates=tuple(metadata_updates),
+        constant_updates=constant_updates,
+        removals=(pre,),
+        tensor_contracts=tuple(tensor_contracts),
+        operator_contracts=tuple(
+            _operator_contract(operator) for operator in (source, pre, *chain)
+        ),
+    )
+
+
+def _apply_terminal_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    plan: _TerminalPlan,
+    *,
+    layout_state: Optional[LayoutState],
+) -> bool:
+    current = _resolve_terminal_candidate(
+        model_ir,
+        graph_index,
+        plan.pre,
+        layout_state=layout_state,
+    )
+    if current is None or _terminal_plan_signature(current) != _terminal_plan_signature(
+        plan
+    ):
+        return False
+    if _operator_index(graph_index, plan.pre) is None:
+        return False
+    for rewrite in plan.input_rewrites:
+        if tuple(str(value) for value in rewrite.operator.inputs) != rewrite.original_inputs:
+            return False
+    if _freeze(plan.options_update.operator.options) != plan.options_update.original_options:
+        return False
+    for update in plan.metadata_updates:
+        if update.name not in model_ir.tensors:
+            return False
+    for update in plan.constant_updates:
+        if update.source_name not in model_ir.tensors:
+            return False
+        if not update.in_place and update.target_name in model_ir.tensors:
+            return False
+
+    for update in plan.constant_updates:
+        source = model_ir.tensors[update.source_name]
+        if update.in_place:
+            target = source
+        else:
+            target = TensorIR(
+                name=update.target_name,
+                dtype=str(source.dtype),
+                shape=[int(value) for value in update.shape],
+                shape_signature=[int(value) for value in update.signature],
+                data=np.asarray(update.data).copy(),
+                is_variable=False,
+                quantization=_clone_quantization(source.quantization),
+                logical_layout=LOGICAL_LAYOUT_NHWC,
+                physical_layout=LOGICAL_LAYOUT_NHWC,
+                onnx_tensor_name=source.onnx_tensor_name,
+            )
+            model_ir.tensors[update.target_name] = target
+        target.data = np.asarray(update.data).copy()
+        target.shape = [int(value) for value in update.shape]
+        target.shape_signature = [int(value) for value in update.signature]
+        target.logical_layout = LOGICAL_LAYOUT_NHWC
+        target.physical_layout = LOGICAL_LAYOUT_NHWC
+        if layout_state is not None:
+            layout_state.set(
+                update.target_name,
+                logical=LOGICAL_LAYOUT_NHWC,
+                physical=LOGICAL_LAYOUT_NHWC,
+            )
+    for rewrite in plan.input_rewrites:
+        _set_operator_inputs(
+            model_ir=model_ir,
+            op=rewrite.operator,
+            new_inputs=list(rewrite.new_inputs),
+            graph_index=graph_index,
+        )
+    plan.options_update.operator.options = dict(plan.options_update.new_options)
+    for update in plan.metadata_updates:
+        tensor = model_ir.tensors[update.name]
+        tensor.shape = [int(value) for value in update.shape]
+        tensor.shape_signature = [int(value) for value in update.signature]
+        tensor.dtype = str(update.dtype)
+        tensor.quantization = _clone_quantization(update.quantization)
+        tensor.logical_layout = str(update.logical_layout)
+        tensor.physical_layout = str(update.physical_layout)
+        if layout_state is not None:
+            layout_state.set(
+                update.name,
+                logical=update.logical_layout,
+                physical=update.physical_layout,
+            )
+    graph_index.remove_operator(int(_operator_index(graph_index, plan.pre)))
+    return True
+
+
+def optimize_transposeconv_output_channel1_terminal_transpose_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Remove a proven channel-one terminal adapter through one Squeeze."""
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
+    candidates = (
+        [candidate]
+        if candidate is not None
+        else [
+            model_ir.operators[index]
+            for index in active_index.operator_indices_for_normalized_types(
+                {"TRANSPOSE"}
+            )
+        ]
+    )
+    rewrite_limit = (
+        len(candidates) if max_rewrites is None else max(0, int(max_rewrites))
+    )
+    if rewrite_limit == 0:
+        return {_TERMINAL_STATS_KEY: 0}
+    rewritten = 0
+    for pre in candidates:
+        if rewritten >= rewrite_limit:
+            break
+        if pre is None or _operator_index(active_index, pre) is None:
+            continue
+        plan = _resolve_terminal_candidate(
+            model_ir,
+            active_index,
+            pre,
+            layout_state=layout_state,
+        )
+        if plan is None:
+            continue
+        if _apply_terminal_plan(
+            model_ir,
+            active_index,
+            plan,
+            layout_state=layout_state,
+        ):
+            rewritten += 1
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {_TERMINAL_STATS_KEY: int(rewritten)}

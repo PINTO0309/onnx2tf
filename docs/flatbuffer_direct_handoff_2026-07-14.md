@@ -8,13 +8,13 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves the active Conv-family output passthrough
-chain into the dedicated indexed
-`passes/conv_output_passthrough_layout.py` owner. The former 316-line full-map
-fixed-point helper is now a thin compatibility dispatcher in its unchanged
-production position and receives Session LayoutState. One immutable plan proves
-the Conv output, both layout adapters, the complete unary/binary chain, side
-constants, and the surviving NHWC boundary before mutation.
+The latest implementation unit completes the adjacent channel-one
+TransposeConv/Squeeze terminal family in the indexed
+`passes/conv_output_passthrough_layout.py` owner. Its former 390-line full-map
+fixed-point helper is now a thin dispatcher in the unchanged position after
+the general Conv-output passthrough owner and receives Session LayoutState. A
+separate immutable plan proves the channel-one source, unary/binary chain,
+Squeeze axes, and terminal graph-output contract before mutation.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -163,7 +163,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 125 coherent implementation
+The current `fb-refactor5` work contains 126 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -461,6 +461,10 @@ continuations:
   to a dedicated indexed owner, preserves every producer/unary/binary variant
   and operand slot, groups shared side-constant updates, and removes both
   layout adapters only after a complete revalidated transaction.
+- the current checkpoint moves the separate channel-one TransposeConv/Squeeze
+  terminal family into the same op-family module under an independent plan,
+  validates semantic Squeeze-axis order and the exact graph output, and removes
+  its leading adapter only after complete revalidation.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -480,7 +484,7 @@ The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/conv_output_passthrough_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_conv_output_passthrough_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_transposeconv_terminal_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -539,8 +543,9 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   consumers are preserved, and an unsupported fan-out rejects the whole
   candidate without mutation.
 - Conv-output passthrough and channel-one terminal Squeeze chains remain
-  separate owners because the former preserves an intermediate NHWC boundary,
-  while the latter terminates at a graph output and remaps Squeeze axes.
+  separate plans because the former preserves an intermediate NHWC boundary,
+  while the latter terminates at a graph output and remaps Squeeze axes. They
+  share only typed adapter, contract, constant-planning, and apply primitives.
 - The general Conv-output owner preserves all three Conv producer types, all
   historical unary/binary operations, and binary operand slots. It validates
   static/dynamic broadcast results and never commutes SUB or DIV.
@@ -552,6 +557,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   output rather than blindly permuting the existing output metadata. The plan
   captures and revalidates every tensor/operator, constant, input/output slot,
   metadata update, and removal before its first write.
+- Terminal Squeeze axes are remapped by semantic label. Each squeezed static
+  and dynamic dimension must equal one, and the surviving semantic axis order
+  must match between the original NCHW and converted NHWC paths. A spatial-
+  only squeeze that would reorder a public rank-three output is rejected.
+- Non-scalar terminal-chain constants are allowed only before Squeeze and use
+  the common grouped rank-four planner. Post-Squeeze binary operations must use
+  scalar constants. Public intermediates, a nonterminal graph output, a second
+  Squeeze, or any output consumer rejects the complete plan.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -4238,7 +4251,7 @@ Only the first general-passthrough invocation was active: YuNet rewrote 10,
 FastestDet 23, HumanSeg 27, OSNet 63, and SiNet zero chains. All 123 active
 chains were Conv2D or DepthwiseConv2D followed by RELU. The distinct
 channel-one TransposeConv/Squeeze terminal helper returned zero in all 20
-invocations and remains a separate raw family.
+invocations and remains a separate semantic family.
 
 The new owner proves a typed private NHWC-to-NCHW Transpose produced by
 Conv2D, DepthwiseConv2D, or TransposeConv, a strictly linear nonempty chain,
@@ -4281,6 +4294,59 @@ HumanSeg, and OSNet. The temporary detached worktree and outputs were removed.
 Scoped Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
 conversion was run.
 
+The indexed channel-one terminal checkpoint replaces the remaining 390-line
+raw `_optimize_transposeconv_output_channel1_terminal_transpose_chains`
+implementation with a second immutable plan in
+`passes/conv_output_passthrough_layout.py`. The helper remains immediately
+after the general passthrough owner in the unchanged attention/gate recovery
+sequence and now receives Session LayoutState.
+
+The terminal resolver requires a TransposeConv output whose static and dynamic
+NHWC channel is exactly one, one private typed NHWC-to-NCHW adapter, a strictly
+linear unary/binary chain containing exactly one Squeeze, and a final graph
+output with no consumer. It preserves all fourteen historical unary operations
+and all six binary operations without reordering operands. Public
+intermediates, a second Squeeze, stale order, fan-out, invalid quantization,
+missing tensors, or a nonterminal output reject the complete candidate.
+
+Explicit, negative, and implicit Squeeze axes are normalized in NCHW and
+remapped to NHWC by semantic label. Every squeezed static and dynamic
+dimension must equal one. The surviving labels must occur in the same order in
+both paths, preventing a spatial-only Squeeze from exposing a reordered public
+rank-three tensor. Metadata and LayoutState use NHWC/NWC only when the
+surviving labels support that annotation; channel-free outputs remain
+explicitly unknown rather than receiving a misleading layout.
+
+Non-scalar binary constants are accepted only before Squeeze and reuse the
+general owner's grouped rank-four constant planner. A post-Squeeze binary must
+use a scalar constant. All chain inputs, Squeeze options, tensor/operator
+contracts, constant updates, output metadata, and the one adapter removal are
+re-resolved before apply through the differential graph index. Candidate count
+and an optional limit bound execution; pruning occurs only after success.
+
+The terminal suite passes with `57 passed in 0.69s`, covering explicit,
+negative, and implicit axes, static/dynamic signatures, all unary and binary
+operations, both operand positions, numerical equivalence, post-Squeeze scalar
+binary, shared constants, candidate limits, idempotence, GraphIndex,
+LayoutState, and twenty-two unsafe no-op cases. It and the preceding indexed
+owners, active fixtures, and complete architecture suite pass together with
+`465 passed, 751 deselected in 43.74s`. TensorFlow-import-blocked explicit
+direct, default direct, and `-cotof` conversion pass sequentially with `3
+passed in 3.95s`.
+
+YuNet retained four zero-match terminal invocations. A sequential comparison
+against source checkpoint `ac8c4cf7` emitted the same five byte-identical
+files: float32
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+correspondence
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`,
+and both unchanged schema artifacts. The first comparison-harness attempt
+omitted its output-directory environment variable and exited before current-
+branch conversion; the corrected run passed. The temporary worktree and all
+outputs were removed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -4318,13 +4384,14 @@ The full Goal is not complete. The fast-precanonicalize orchestrator still has
 orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
-The remaining adjacent raw lowerer family is
-`_optimize_transposeconv_output_channel1_terminal_transpose_chains`, currently
-about 390 lines. Characterization proves it is distinct from the extracted
-general passthrough owner and inactive on the five short representatives. Its
-graph-output contract, required Squeeze, axis remapping, scalar/rank-four
-constant handling, terminal output metadata, and synthetic compatibility path
-still require a transactional owner and focused tests.
+The next adjacent raw lowerer area is the Split/Conv/Concat trio:
+`_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains`
+(about 340 lines), `_optimize_transpose_relu_split_all_outputs_to_nhwc_chains`
+(about 182 lines), and
+`_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw` (about 287
+lines). Their overlap with the existing indexed Split roots, active production
+match counts, phase ordering, branch closure, Conv layout, axis constants, and
+public/local adapter ownership have not yet been characterized together.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -4335,19 +4402,18 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Implement the already-characterized
-   `_optimize_transposeconv_output_channel1_terminal_transpose_chains` as a
-   separate transactional owner. Preserve its exact TransposeConv channel-one,
-   at-least-one-Squeeze, terminal graph-output, unary/binary ordering, Squeeze
-   axis, and side-constant contracts; do not merge it into the intermediate-
-   boundary passthrough owner.
-3. Add focused synthetic checks for explicit and implicit Squeeze axes,
-   negative axes, unary/binary operations before Squeeze, scalar and rank-four
-   constants, dynamic signatures where the static channel remains one,
-   public-output preservation, candidate limits, and transactional rejection.
-   Because all 20 real-model invocations were zero-match, use one short
-   sequential no-op artifact comparison; do not run a Tier corpus unless
-   explicitly requested.
+2. Audit the three adjacent Split/Conv/Concat helpers together: record every
+   production position and order, their exact accepted branch topology and
+   mutation surfaces, overlap or exclusivity with
+   `passes/split_channelwise_layout.py`, and sequential match signatures on the
+   same five short representatives. Do not implement before this shared
+   characterization is complete.
+3. Select the smallest non-overlapping semantic root from that audit. Define
+   its branch-closure, Split/Concat axis, Conv input/output layout, constant,
+   public-boundary, graph-order, and terminal-adapter invariants before adding
+   an indexed plan. Use focused synthetic checks and one short sequential
+   production comparison; do not run a Tier corpus unless explicitly
+   requested.
 4. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
