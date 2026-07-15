@@ -8,14 +8,13 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves the direct Split channelwise tail into
-the dedicated indexed `passes/split_channelwise_layout.py` owner. The former
-mixed full-map fixed-point helper is a thin compatibility dispatcher, both
-production sequence positions supply Session LayoutState, and the direct root
-shares the proven closed-tail machinery without sharing unsafe source state.
-The extraction makes downstream Slice constants transactional, preserves
-shared constants through deterministic copy-on-write, and keeps unrelated
-consumers of the original NHWC source untouched.
+The latest implementation unit moves the unary/Split/Concat compatibility
+island into the dedicated indexed `passes/split_channelwise_layout.py` owner.
+The former mixed full-map fixed-point helper is a thin compatibility
+dispatcher, both production sequence positions supply Session LayoutState,
+and one immutable unary-root plan now proves every branch and the local NCHW
+adapter before mutation. The extraction corrects the raw helper's partial-
+mutation path and its non-singleton Reshape bypass.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -107,6 +106,46 @@ byte-identical files with the same float32, float16, and correspondence hashes
 recorded above. The detached worktree and temporary outputs were removed; no
 Tier corpus run was performed.
 
+### Unary/Split/Concat root continuation
+
+The preceding `_optimize_transpose_unary_split_concat_single_post_nchw` helper
+is now extracted into the same semantic owner under a separate immutable root
+plan. Its two production positions, order relative to the direct and binary
+Split roots, and stats key are unchanged. Both calls now supply Session
+LayoutState.
+
+The plan proves an exact typed private NHWC-to-NCHW Transpose, one allowed
+pre-Split unary, one channel Split, every Split output exactly once through
+either a direct edge or one allowed unary, exactly one external branch, and a
+channel Concat. All converted branch fan-out is closed. Public intermediates,
+duplicate or missing Split branches, multiple external branches, duplicate
+producers, stale order, per-axis quantization, and malformed unary operators
+reject the candidate without mutation.
+
+An external singleton Reshape is bypassed only when its source/output shapes
+and dynamic signatures have the exact NHWC/NCHW relationship and both channel
+dimensions are one. Dtype, quantization, provenance, graph order, and physical
+layout are also validated. Already-proven direct NHWC external inputs remain
+supported. Shared external Reshape consumers are untouched.
+
+The Concat output may be public or an intermediate legacy NCHW tensor. One
+private NHWC producer output and the proven input permutation preserve that
+local contract. Split-axis copy-on-write, metadata, Concat inputs/options,
+adapter insertion, graph-index updates, and LayoutState updates occur only
+after full re-resolution and preflight. This removes the raw path that could
+change the Split axis, metadata, and Concat before discovering an invalid
+output tensor.
+
+Pre-extraction characterization recorded zero matches in all 24 invocations:
+four each on YuNet, FastestDet, HumanSeg, and OSNet, and eight on SiNet. The
+29-test owner suite, existing active-path test, adjacent Split owners, binary
+bridge owners, and architecture suite pass together with `318 passed in
+43.96s`. TensorFlow-import-blocked explicit direct, default direct, and
+`-cotof` conversion pass with `3 passed in 3.83s`. A sequential YuNet
+comparison against `0b4a0001` emits the same five byte-identical files. The
+detached worktree and all temporary outputs were removed; no Tier corpus run
+was performed.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -124,7 +163,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 122 coherent implementation
+The current `fb-refactor5` work contains 123 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -408,6 +447,11 @@ continuations:
   begin/size remapping with copy-on-write for shared constants, stops unrelated
   source consumers from entering the closure, and preserves the original
   public NCHW contract through the common terminal adapter.
+- the latest checkpoint moves the unary/Split/Concat compatibility island to
+  the same indexed owner under a separate root plan, proves every Split branch
+  and the one external branch, restricts the layout-only Reshape bypass to a
+  true singleton channel, and preserves either a public or intermediate NCHW
+  Concat contract as one revalidated transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -427,8 +471,9 @@ The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/split_channelwise_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_split_channelwise_direct_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_unary_split_concat_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
+- `tests/test_tflite_builder_direct.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
 
@@ -459,6 +504,18 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   same value; otherwise planned uses share one deterministic typed clone.
   Invalid bounds, conflicting roles, mutable constants, and per-axis
   quantization reject the transaction.
+- The unary-root island requires the pre-Transpose and pre-unary edges plus
+  every Split branch to have exact closed ownership through the Concat. Every
+  Split output appears exactly once, with at most one allowed branch unary,
+  and there is exactly one external Concat input.
+- The external Reshape bypass is valid only for `[N,H,W,1]` to `[N,1,H,W]`
+  with matching static/dynamic shape, dtype, per-tensor quantization,
+  provenance, and physical-layout evidence. Other consumers of the Reshape
+  output continue using the original NCHW view.
+- The unary-root adapter is a local boundary rather than a sole-public-output
+  boundary. It preserves the original Concat tensor name and NCHW metadata for
+  either graph outputs or existing downstream consumers while moving only the
+  producer output to a private NHWC tensor.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -4036,6 +4093,53 @@ Both schema hashes also match. The detached worktree and temporary outputs were
 removed. Scoped Ruff, syntax compilation, and `git diff --check` passed. No
 Tier corpus conversion was run.
 
+The indexed unary/Split/Concat checkpoint replaces the former raw helper with
+a separate unary-root plan in `passes/split_channelwise_layout.py`.
+Pre-extraction characterization observed zero matches in all 24 sequential
+runtime invocations: four each on YuNet, FastestDet, HumanSeg, and OSNet, and
+eight on SiNet. The two existing production positions and their ordering before
+the direct and binary Split roots are unchanged, and both now receive Session
+LayoutState.
+
+The owner validates the private typed Transpose, allowed pre-unary, channel
+Split, exact one-to-one coverage of every Split output, optional branch
+unaries, exactly one external Concat branch, channel Concat, unique producers,
+resolved provenance, graph order, public boundaries, dtype, per-tensor
+quantization, static shapes, and dynamic signatures. Every converted branch
+has exact consumers through the Concat. The local terminal adapter preserves
+the original NCHW Concat tensor for either a public output or later consumers.
+
+The external layout-only Reshape now requires a real singleton channel and an
+exact NHWC-to-NCHW shape/signature relation. A proven direct NHWC external
+branch is also accepted. Shared Reshape or raw-source consumers remain
+untouched. The full plan is re-resolved and preflighted before changing the
+pre-unary input, Split axis, branch metadata, Concat inputs/options, or output
+adapter. This specifically eliminates the raw partial-mutation failure when
+the Concat output tensor is absent or invalid.
+
+The focused suite passed with `29 passed in 0.44s`. It covers INT32/INT64
+axes, static and dynamic signatures, public and intermediate NCHW boundaries,
+exact numerical equivalence, a direct NHWC external branch, shared axis and
+side-consumer preservation, candidate-only and capped execution, idempotence,
+differential-index freshness, LayoutState validation, and eighteen unsafe
+transactional no-op cases. The active legacy fixture was corrected to declare
+its previously producerless external tensor as a graph input.
+
+The new owner, existing active fixture, both preceding Split-root owners, both
+binary bridge owners, and the complete architecture suite passed with
+`318 passed in 43.96s`. TensorFlow-import-blocked explicit direct, default
+direct, and `-cotof` conversion passed sequentially with `3 passed in 3.83s`.
+One sequential YuNet conversion from source checkpoint `0b4a0001` and the
+current implementation emitted five byte-identical files. Float32 remains
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16 remains
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+and correspondence remains
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`.
+Both schema files also match. The detached worktree and temporary outputs were
+removed. Scoped Ruff, syntax compilation, and `git diff --check` passed. No
+Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -4051,7 +4155,11 @@ Tier corpus conversion was run.
 - A whole-file Ruff run on `lower_from_onnx2tf.py` reports 14 pre-existing
   unused-local (`F841`) findings outside this extracted helper. The changed
   lowerer passes Ruff with that inherited category ignored; the new owner and
-  both changed test files pass Ruff without exclusions.
+  dedicated owner/architecture tests pass Ruff without exclusions.
+- A whole-file Ruff run on `test_tflite_builder_direct.py` reports ten
+  pre-existing unused compatibility imports (`F401`). The one corrected
+  fixture line passes with that inherited category ignored; the dedicated new
+  owner test and architecture test pass Ruff without exclusions.
 - The optional PyTorch exporter suite runs when the host's Python 3.10
   `LD_LIBRARY_PATH` and `PYTHONPATH` are removed from the command environment.
   The focused results, restored native-codegen bindings, real-model artifact
@@ -4070,11 +4178,12 @@ orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
 The immediately preceding
-`_optimize_transpose_unary_split_concat_single_post_nchw` helper remains a raw
-mixed match/mutate implementation. Its exact unary/Split/Concat topology,
-constant ownership, public-output behavior, active production match counts,
-and ordering dependency on the two indexed Split-root owners have not yet
-received the same transactional-contract audit.
+`_optimize_singleton_gate_conv_concat_nhwc_bridge_blocks` helper remains an
+approximately 239-line raw mixed match/mutate implementation. Its gate/Conv/
+Concat topology, singleton Reshape ownership, multiple adapter removals,
+public and side-consumer behavior, active production match counts, and ordering
+dependency on the new unary/Split/Concat owner have not yet received the same
+transactional-contract audit.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -4086,16 +4195,18 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. First audit the adjacent
-   `_optimize_transpose_unary_split_concat_single_post_nchw` helper, its two
+   `_optimize_singleton_gate_conv_concat_nhwc_bridge_blocks` helper, its two
    production sequence positions, active match counts on the same five short
-   representatives, its Split-axis and Concat-axis ownership, public-output
-   handling, and ordering dependency on the two indexed Split-root owners. Do
-   not implement until that characterization is recorded.
-3. If the audit identifies a safe semantic boundary, add a separately planned
-   unary-root family while reusing only the already-proven typed-axis,
-   metadata, adapter, graph-index, and LayoutState primitives. Use focused
-   synthetic checks and one short sequential production comparison; do not run
-   a Tier corpus unless explicitly requested.
+   representatives, every singleton Reshape and Transpose removal, its public
+   and side-consumer behavior, and ordering dependency on the indexed unary/
+   Split/Concat owner. Do not implement until that characterization is
+   recorded.
+3. If the audit identifies a safe semantic boundary, create a separate indexed
+   singleton-gate owner with immutable plan/revalidation/apply stages. Reuse
+   only proven graph-index, shape/signature, quantization, LayoutState, and
+   local-boundary primitives. Use focused synthetic checks and one short
+   sequential production comparison; do not run a Tier corpus unless
+   explicitly requested.
 4. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

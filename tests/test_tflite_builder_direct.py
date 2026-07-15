@@ -42589,7 +42589,7 @@ def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks_accepts
 
 def test_flatbuffer_direct_transpose_unary_split_concat_single_post_nchw() -> None:
     model_ir = ModelIR("transpose_unary_split_concat_single_post_nchw_test")
-    model_ir.inputs = ["x_nhwc"]
+    model_ir.inputs = ["x_nhwc", "clip3_nhwc"]
     model_ir.outputs = ["cat_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 2], shape_signature=[1, 5, 7, 2])
     model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 2, 5, 7], shape_signature=[1, 2, 5, 7])

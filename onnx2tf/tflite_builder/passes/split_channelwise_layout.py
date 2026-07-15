@@ -42,10 +42,22 @@ _UNARY_OPS = frozenset(
         "EXP",
     }
 )
+_UNARY_SPLIT_CONCAT_OPS = frozenset(
+    {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "LOGISTIC",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "TANH",
+    }
+)
 _PERM_NHWC_TO_NCHW = (0, 3, 1, 2)
 _PERM_NCHW_TO_NHWC = (0, 2, 3, 1)
 _STATS_KEY = "optimized_transpose_binary_split_channelwise_tail_to_single_post_nchw"
 _DIRECT_STATS_KEY = "optimized_transpose_split_channelwise_tail_to_single_post_nchw"
+_UNARY_STATS_KEY = "optimized_transpose_unary_split_concat_single_post_nchw"
 
 
 @dataclass(frozen=True)
@@ -148,6 +160,23 @@ class _DirectSplitTailPlan:
     root_split: OperatorIR
     pre_input_name: str
     pre_output_name: str
+    tail: _ClosedTailPlan
+    tensor_contracts: Tuple[Tuple[Any, ...], ...]
+    operator_contracts: Tuple[Tuple[Any, ...], ...]
+
+
+@dataclass(frozen=True)
+class _UnarySplitConcatPlan:
+    pre: OperatorIR
+    pre_unary: OperatorIR
+    root_split: OperatorIR
+    branch_unaries: Tuple[OperatorIR, ...]
+    concat: OperatorIR
+    external_reshape: Optional[OperatorIR]
+    pre_input_name: str
+    pre_output_name: str
+    original_concat_inputs: Tuple[str, ...]
+    new_concat_inputs: Tuple[str, ...]
     tail: _ClosedTailPlan
     tensor_contracts: Tuple[Tuple[Any, ...], ...]
     operator_contracts: Tuple[Tuple[Any, ...], ...]
@@ -727,26 +756,29 @@ def _concat_view(views: Sequence[_TensorView]) -> Optional[_TensorView]:
     )
 
 
-def _resolve_concat_update(
+def _resolve_concat_update_for_inputs(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     operator: OperatorIR,
     *,
+    input_names: Sequence[str],
     nhwc_views: Dict[str, _TensorView],
-    converted_names: set[str],
 ) -> Optional[Tuple[_MetadataUpdate, _ConcatUpdate]]:
     operator_index = _operator_index(graph_index, operator)
     if (
         operator_index is None
         or _normalized_op_type(operator) != "CONCATENATION"
-        or len(operator.inputs) == 0
+        or len(input_names) == 0
         or len(operator.outputs) != 1
-        or not all(str(name) in converted_names for name in operator.inputs)
-        or not _inputs_resolved_before(
-            model_ir,
-            graph_index,
-            operator,
-            operator_index,
+        or not all(str(name) in nhwc_views for name in input_names)
+        or not all(
+            _resolved_source(
+                model_ir,
+                graph_index,
+                name=str(name),
+                before_index=operator_index,
+            )
+            for name in input_names
         )
     ):
         return None
@@ -763,7 +795,7 @@ def _resolve_concat_update(
         or graph_index.producers.get(output_name) != operator_index
     ):
         return None
-    tensors = [model_ir.tensors.get(str(name)) for name in operator.inputs]
+    tensors = [model_ir.tensors.get(str(name)) for name in input_names]
     output_tensor = model_ir.tensors.get(output_name)
     if (
         output_tensor is None
@@ -771,7 +803,7 @@ def _resolve_concat_update(
         or not _all_per_tensor_quantized([*tensors, output_tensor])
     ):
         return None
-    view = _concat_view([nhwc_views[str(name)] for name in operator.inputs])
+    view = _concat_view([nhwc_views[str(name)] for name in input_names])
     update = _permuted_update(model_ir, output_name)
     if (
         view is None
@@ -785,6 +817,26 @@ def _resolve_concat_update(
         operator=operator,
         original_axis=axis,
         new_axis=3,
+    )
+
+
+def _resolve_concat_update(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    operator: OperatorIR,
+    *,
+    nhwc_views: Dict[str, _TensorView],
+    converted_names: set[str],
+) -> Optional[Tuple[_MetadataUpdate, _ConcatUpdate]]:
+    input_names = tuple(str(name) for name in operator.inputs)
+    if not all(name in converted_names for name in input_names):
+        return None
+    return _resolve_concat_update_for_inputs(
+        model_ir,
+        graph_index,
+        operator,
+        input_names=input_names,
+        nhwc_views=nhwc_views,
     )
 
 
@@ -1661,6 +1713,398 @@ def _resolve_candidate(
     )
 
 
+def _resolve_singleton_layout_reshape_bypass(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    output_name: str,
+    before_index: int,
+    expected_dtype: str,
+    anchor: _TensorView,
+    layout_state: Optional[LayoutState],
+) -> Optional[Tuple[OperatorIR, str, _TensorView]]:
+    producer_index = graph_index.producers.get(str(output_name))
+    if (
+        producer_index is None
+        or str(output_name) in graph_index.duplicate_producers
+        or int(producer_index) >= int(before_index)
+    ):
+        return None
+    operator = model_ir.operators[int(producer_index)]
+    if (
+        _normalized_op_type(operator) != "RESHAPE"
+        or len(operator.inputs) not in {1, 2}
+        or len(operator.outputs) != 1
+        or str(operator.outputs[0]) != str(output_name)
+        or not _inputs_resolved_before(
+            model_ir,
+            graph_index,
+            operator,
+            int(producer_index),
+        )
+    ):
+        return None
+    input_name = str(operator.inputs[0])
+    input_tensor = model_ir.tensors.get(input_name)
+    output_tensor = model_ir.tensors.get(str(output_name))
+    input_view = _external_view(
+        model_ir,
+        graph_index,
+        name=input_name,
+        before_index=int(producer_index),
+        expected_dtype=expected_dtype,
+        anchor=anchor,
+        layout_state=layout_state,
+    )
+    if (
+        input_tensor is None
+        or output_tensor is None
+        or input_view is None
+        or output_tensor.data is not None
+        or bool(output_tensor.is_variable)
+        or len(input_view.shape) != 4
+        or len(output_tensor.shape) != 4
+        or str(output_tensor.dtype) != expected_dtype
+        or not _all_per_tensor_quantized([input_tensor, output_tensor])
+        or int(input_view.shape[3]) != 1
+        or int(output_tensor.shape[1]) != 1
+        or _layout_of(str(output_name), output_tensor, layout_state)
+        == LOGICAL_LAYOUT_NHWC
+    ):
+        return None
+    output_signature = (
+        output_tensor.shape
+        if output_tensor.shape_signature is None
+        else output_tensor.shape_signature
+    )
+    expected_shape = _permute_shape(
+        list(input_view.shape),
+        list(_PERM_NHWC_TO_NCHW),
+    )
+    expected_signature = _permute_shape(
+        list(input_view.signature),
+        list(_PERM_NHWC_TO_NCHW),
+    )
+    if (
+        expected_shape is None
+        or expected_signature is None
+        or tuple(int(value) for value in expected_shape)
+        != tuple(int(value) for value in output_tensor.shape)
+        or not _signature_compatible(expected_signature, output_signature)
+    ):
+        return None
+    return operator, input_name, input_view
+
+
+def _unary_split_concat_plans_equal(
+    expected: _UnarySplitConcatPlan,
+    actual: _UnarySplitConcatPlan,
+) -> bool:
+    return bool(
+        expected.pre is actual.pre
+        and expected.pre_unary is actual.pre_unary
+        and expected.root_split is actual.root_split
+        and expected.branch_unaries == actual.branch_unaries
+        and expected.concat is actual.concat
+        and expected.external_reshape is actual.external_reshape
+        and expected.pre_input_name == actual.pre_input_name
+        and expected.pre_output_name == actual.pre_output_name
+        and expected.original_concat_inputs == actual.original_concat_inputs
+        and expected.new_concat_inputs == actual.new_concat_inputs
+        and _closed_tail_signature(expected.tail) == _closed_tail_signature(actual.tail)
+        and expected.tensor_contracts == actual.tensor_contracts
+        and expected.operator_contracts == actual.operator_contracts
+    )
+
+
+def _resolve_unary_split_concat_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    concat: OperatorIR,
+    *,
+    layout_state: Optional[LayoutState],
+) -> Optional[_UnarySplitConcatPlan]:
+    concat_index = _operator_index(graph_index, concat)
+    if (
+        concat_index is None
+        or _normalized_op_type(concat) != "CONCATENATION"
+        or len(concat.inputs) < 2
+        or len(concat.outputs) != 1
+    ):
+        return None
+    try:
+        if int(concat.options.get("axis", -1)) != 1:
+            return None
+    except Exception:
+        return None
+
+    original_concat_inputs = tuple(str(value) for value in concat.inputs)
+    root_split: Optional[OperatorIR] = None
+    branch_by_source: Dict[str, Tuple[str, Optional[OperatorIR]]] = {}
+    external_inputs = []
+    for input_name in original_concat_inputs:
+        producer_index = graph_index.producers.get(input_name)
+        producer = (
+            None
+            if producer_index is None or input_name in graph_index.duplicate_producers
+            else model_ir.operators[int(producer_index)]
+        )
+        branch_unary = None
+        source_name = input_name
+        if (
+            producer is not None
+            and _normalized_op_type(producer) in _UNARY_SPLIT_CONCAT_OPS
+            and len(producer.inputs) == 1
+            and len(producer.outputs) == 1
+        ):
+            possible_source = str(producer.inputs[0])
+            source_producer_index = graph_index.producers.get(possible_source)
+            if (
+                source_producer_index is not None
+                and possible_source not in graph_index.duplicate_producers
+                and _normalized_op_type(model_ir.operators[int(source_producer_index)])
+                == "SPLIT"
+            ):
+                source_name = possible_source
+                branch_unary = producer
+                producer = model_ir.operators[int(source_producer_index)]
+        if producer is None or _normalized_op_type(producer) != "SPLIT":
+            external_inputs.append(input_name)
+            continue
+        if root_split is None:
+            root_split = producer
+        elif root_split is not producer:
+            return None
+        if source_name in branch_by_source:
+            return None
+        branch_by_source[source_name] = (input_name, branch_unary)
+
+    if root_split is None or len(external_inputs) != 1:
+        return None
+    split_index = _operator_index(graph_index, root_split)
+    if (
+        split_index is None
+        or len(root_split.inputs) != 2
+        or len(root_split.outputs) == 0
+        or len(original_concat_inputs) != len(root_split.outputs) + 1
+        or set(branch_by_source) != {str(value) for value in root_split.outputs}
+        or len(branch_by_source) != len(root_split.outputs)
+    ):
+        return None
+
+    pre_unary_output = str(root_split.inputs[1])
+    pre_unary_index = graph_index.producers.get(pre_unary_output)
+    if (
+        pre_unary_index is None
+        or pre_unary_output in graph_index.duplicate_producers
+        or int(pre_unary_index) >= int(split_index)
+    ):
+        return None
+    pre_unary = model_ir.operators[int(pre_unary_index)]
+    if (
+        _normalized_op_type(pre_unary) not in _UNARY_SPLIT_CONCAT_OPS
+        or len(pre_unary.inputs) != 1
+        or len(pre_unary.outputs) != 1
+        or str(pre_unary.outputs[0]) != pre_unary_output
+    ):
+        return None
+    pre_output_name = str(pre_unary.inputs[0])
+    pre_index = graph_index.producers.get(pre_output_name)
+    if pre_index is None or pre_output_name in graph_index.duplicate_producers:
+        return None
+    pre = model_ir.operators[int(pre_index)]
+    pre_root = _resolve_pre_transpose_root(
+        model_ir,
+        graph_index,
+        pre,
+        layout_state=layout_state,
+    )
+    if (
+        pre_root is None
+        or pre_root.output_name != pre_output_name
+        or int(pre_root.operator_index) >= int(pre_unary_index)
+        or graph_index.consumer_indices(pre_output_name) != [int(pre_unary_index)]
+        or graph_index.consumer_indices(pre_unary_output) != [int(split_index)]
+    ):
+        return None
+
+    protected_names = {
+        str(value) for value in tuple(model_ir.inputs) + tuple(model_ir.outputs)
+    }
+    intermediate_names = {pre_output_name, pre_unary_output}
+    branch_unaries = []
+    for source_name, (branch_output, branch_unary) in branch_by_source.items():
+        intermediate_names.add(source_name)
+        if branch_unary is None:
+            if branch_output != source_name or graph_index.consumer_indices(
+                source_name
+            ) != [int(concat_index)]:
+                return None
+            continue
+        branch_unary_index = _operator_index(graph_index, branch_unary)
+        if (
+            branch_unary_index is None
+            or int(branch_unary_index) <= int(split_index)
+            or int(branch_unary_index) >= int(concat_index)
+            or str(branch_unary.inputs[0]) != source_name
+            or str(branch_unary.outputs[0]) != branch_output
+            or graph_index.consumer_indices(source_name) != [int(branch_unary_index)]
+            or graph_index.consumer_indices(branch_output) != [int(concat_index)]
+        ):
+            return None
+        branch_unaries.append(branch_unary)
+        intermediate_names.add(branch_output)
+    if intermediate_names & protected_names:
+        return None
+    branch_unaries.sort(
+        key=lambda operator: int(_operator_index(graph_index, operator) or 0)
+    )
+
+    reserved_names = set(str(name) for name in model_ir.tensors)
+    nhwc_views = {pre_output_name: pre_root.source_view}
+    converted_names = {pre_output_name}
+    pre_unary_update = _resolve_unary_update(
+        model_ir,
+        graph_index,
+        pre_unary,
+        nhwc_views=nhwc_views,
+        converted_names=converted_names,
+    )
+    if pre_unary_update is None:
+        return None
+    nhwc_views[pre_unary_output] = _view_for_update(model_ir, pre_unary_update)
+    converted_names.add(pre_unary_output)
+    split_result = _resolve_split_updates(
+        model_ir,
+        graph_index,
+        root_split,
+        nhwc_views=nhwc_views,
+        converted_names=converted_names,
+        reserved_names=reserved_names,
+    )
+    if split_result is None:
+        return None
+    axis_update, split_updates = split_result
+    metadata_updates = [pre_unary_update, *split_updates]
+    for update in split_updates:
+        nhwc_views[update.name] = _view_for_update(model_ir, update)
+        converted_names.add(update.name)
+    for branch_unary in branch_unaries:
+        update = _resolve_unary_update(
+            model_ir,
+            graph_index,
+            branch_unary,
+            nhwc_views=nhwc_views,
+            converted_names=converted_names,
+        )
+        if update is None:
+            return None
+        metadata_updates.append(update)
+        nhwc_views[update.name] = _view_for_update(model_ir, update)
+        converted_names.add(update.name)
+
+    external_original = external_inputs[0]
+    external_replacement = external_original
+    external_reshape = None
+    external_view = _external_view(
+        model_ir,
+        graph_index,
+        name=external_original,
+        before_index=int(concat_index),
+        expected_dtype=pre_root.source_view.dtype,
+        anchor=pre_root.source_view,
+        layout_state=layout_state,
+    )
+    if external_view is None:
+        reshape_result = _resolve_singleton_layout_reshape_bypass(
+            model_ir,
+            graph_index,
+            output_name=external_original,
+            before_index=int(concat_index),
+            expected_dtype=pre_root.source_view.dtype,
+            anchor=pre_root.source_view,
+            layout_state=layout_state,
+        )
+        if reshape_result is None:
+            return None
+        external_reshape, external_replacement, external_view = reshape_result
+    nhwc_views[external_replacement] = external_view
+    converted_names.add(external_replacement)
+    new_concat_inputs = tuple(
+        external_replacement if name == external_original else name
+        for name in original_concat_inputs
+    )
+    concat_result = _resolve_concat_update_for_inputs(
+        model_ir,
+        graph_index,
+        concat,
+        input_names=new_concat_inputs,
+        nhwc_views=nhwc_views,
+    )
+    if concat_result is None:
+        return None
+    concat_output_update, concat_axis_update = concat_result
+    concat_output_name = str(concat.outputs[0])
+    if concat_output_name in {str(value) for value in model_ir.inputs}:
+        return None
+    private_name = _unique_name(
+        model_ir,
+        reserved_names,
+        f"{concat_output_name}_nhwc",
+    )
+    tail = _ClosedTailPlan(
+        metadata_updates=tuple(metadata_updates),
+        axis_updates=(axis_update,),
+        concat_updates=(concat_axis_update,),
+        constant_updates=(),
+        closure_operators=(pre_unary, root_split, *branch_unaries, concat),
+        adapter=_OutputAdapter(
+            producer=concat,
+            output_slot=0,
+            public_name=concat_output_name,
+            private_name=private_name,
+            private_shape=concat_output_update.shape,
+            private_signature=concat_output_update.signature,
+            permutation_name=pre_root.permutation_name,
+        ),
+    )
+
+    relevant_operators = [pre, pre_unary, root_split, *branch_unaries, concat]
+    if external_reshape is not None:
+        relevant_operators.append(external_reshape)
+    relevant_operators = sorted(
+        relevant_operators,
+        key=lambda operator: int(_operator_index(graph_index, operator) or 0),
+    )
+    relevant_tensor_names = {concat_output_name, external_replacement}
+    for operator in relevant_operators:
+        relevant_tensor_names.update(str(value) for value in operator.inputs)
+        relevant_tensor_names.update(str(value) for value in operator.outputs)
+    tensor_contracts = []
+    for name in sorted(relevant_tensor_names):
+        tensor = model_ir.tensors.get(name)
+        if tensor is None:
+            return None
+        tensor_contracts.append(_tensor_contract(name, tensor))
+    return _UnarySplitConcatPlan(
+        pre=pre,
+        pre_unary=pre_unary,
+        root_split=root_split,
+        branch_unaries=tuple(branch_unaries),
+        concat=concat,
+        external_reshape=external_reshape,
+        pre_input_name=pre_root.input_name,
+        pre_output_name=pre_output_name,
+        original_concat_inputs=original_concat_inputs,
+        new_concat_inputs=new_concat_inputs,
+        tail=tail,
+        tensor_contracts=tuple(tensor_contracts),
+        operator_contracts=tuple(
+            _operator_contract(operator) for operator in relevant_operators
+        ),
+    )
+
+
 def _direct_plans_equal(
     expected: _DirectSplitTailPlan,
     actual: _DirectSplitTailPlan,
@@ -2075,6 +2519,123 @@ def _apply_direct_plan(
         raise RuntimeError("validated direct Split-tail input Transpose disappeared")
     graph_index.remove_operator(pre_index)
     return True
+
+
+def _apply_unary_split_concat_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    plan: _UnarySplitConcatPlan,
+    *,
+    layout_state: Optional[LayoutState],
+) -> bool:
+    current = _resolve_unary_split_concat_candidate(
+        model_ir,
+        graph_index,
+        plan.concat,
+        layout_state=layout_state,
+    )
+    required_operators = [
+        plan.pre,
+        plan.pre_unary,
+        plan.root_split,
+        *plan.branch_unaries,
+        plan.concat,
+    ]
+    if plan.external_reshape is not None:
+        required_operators.append(plan.external_reshape)
+    if (
+        current is None
+        or not _unary_split_concat_plans_equal(plan, current)
+        or len(plan.pre_unary.inputs) != 1
+        or str(plan.pre_unary.inputs[0]) != plan.pre_output_name
+        or tuple(str(value) for value in plan.concat.inputs)
+        != plan.original_concat_inputs
+        or not _preflight_closed_tail(
+            model_ir,
+            graph_index,
+            plan.tail,
+            required_operators=required_operators,
+        )
+    ):
+        return False
+
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=plan.pre_unary,
+        new_inputs=[plan.pre_input_name],
+        graph_index=graph_index,
+    )
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=plan.concat,
+        new_inputs=list(plan.new_concat_inputs),
+        graph_index=graph_index,
+    )
+    _apply_closed_tail(
+        model_ir,
+        graph_index,
+        plan.tail,
+        layout_state=layout_state,
+    )
+    pre_index = _operator_index(graph_index, plan.pre)
+    if pre_index is None:
+        raise RuntimeError("validated unary/Split input Transpose disappeared")
+    graph_index.remove_operator(pre_index)
+    return True
+
+
+def optimize_transpose_unary_split_concat_single_post_nchw(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Move a closed unary/Split/Concat island to NHWC with one adapter."""
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
+    rewrite_limit = max(0, int(max_rewrites))
+    if rewrite_limit == 0:
+        return {_UNARY_STATS_KEY: 0}
+    candidates = (
+        [candidate]
+        if candidate is not None
+        else [
+            model_ir.operators[index]
+            for index in active_index.operator_indices_for_normalized_types(
+                {"CONCATENATION"}
+            )
+        ]
+    )
+    rewritten = 0
+    for concat in candidates:
+        if rewritten >= rewrite_limit:
+            break
+        if concat is None or _operator_index(active_index, concat) is None:
+            continue
+        plan = _resolve_unary_split_concat_candidate(
+            model_ir,
+            active_index,
+            concat,
+            layout_state=layout_state,
+        )
+        if plan is None:
+            continue
+        if _apply_unary_split_concat_plan(
+            model_ir,
+            active_index,
+            plan,
+            layout_state=layout_state,
+        ):
+            rewritten += 1
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {_UNARY_STATS_KEY: int(rewritten)}
 
 
 def optimize_transpose_split_channelwise_tail_to_single_post_nchw(

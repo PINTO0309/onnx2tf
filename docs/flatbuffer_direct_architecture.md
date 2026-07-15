@@ -5901,6 +5901,54 @@ The direct and binary-root suites pass together, and a sequential YuNet
 comparison against the preceding checkpoint emits byte-identical float32,
 float16, correspondence, and schema artifacts.
 
+The unary/Split/Concat compatibility island is the third root family in
+`passes/split_channelwise_layout.py`. It matches one exact private
+NHWC-to-NCHW Transpose, one layout-preserving unary, a channel Split, every
+Split output consumed either directly or through one allowed unary, exactly
+one external Concat branch, and one channel-axis Concat. The lowerer retains a
+thin compatibility dispatcher at both unchanged sequence positions and passes
+Session `LayoutState`.
+
+The root and every branch form a closed local island. The pre-Transpose output
+must feed only the pre-Split unary, that unary must feed only the Split, every
+Split output must appear exactly once, and an optional branch unary must feed
+only the Concat. Duplicate or missing branches, a second external input,
+external fan-out from a converted branch, public intermediate tensors,
+duplicate producers, and consumer-before-producer order reject the plan. The
+allowed unary set remains the exact historical RELU, RELU6, RELU_0_TO_1,
+LOGISTIC, HARD_SWISH, LEAKY_RELU, and TANH family.
+
+The external branch is either an already-proven NHWC tensor or the source of a
+layout-only singleton Reshape. The bypass form now requires both rank-four
+shapes and signatures to have the exact NHWC-to-NCHW relationship, channel
+size one in both representations, matching dtype, per-tensor quantization,
+resolved provenance, unique production, graph order, and non-NHWC physical
+evidence on the Reshape output. This corrects the raw helper's misleading
+"singleton" guard, which accepted arbitrary channel counts.
+
+The immutable plan reuses the common typed Split-axis copy-on-write, Concat
+shape/signature validation, metadata updates, private NHWC output allocation,
+and local NHWC-to-NCHW adapter. Unlike the closed public-tail families, the
+adapter may preserve either a graph output or an intermediate legacy NCHW
+contract, so existing downstream consumers remain unchanged. The proven input
+permutation is reused rather than creating another buffer.
+
+The complete plan is resolved twice and preflighted before the pre-unary or
+Concat input changes. This removes the raw partial-mutation path that changed
+the Split axis, multiple tensor metadata records, and Concat inputs/options
+before discovering a missing or invalid Concat output. One differential graph
+index, graph-ordered Concat candidates, a configurable 32-rewrite ceiling,
+success-only pruning, and LayoutState synchronization replace the full-map
+unbounded loop.
+
+Pre-extraction characterization observed zero matches in all 24 runtime
+invocations on YuNet, FastestDet, HumanSeg, OSNet, and SiNet. Twenty-nine
+focused tests cover INT32/INT64 axes, static and dynamic signatures, public and
+local NCHW boundaries, exact numerical equivalence, a direct NHWC external
+branch, shared axes and side consumers, candidate limits, idempotence, and
+eighteen unsafe transactional no-op cases. A sequential YuNet comparison
+against the preceding checkpoint emits five byte-identical artifacts.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

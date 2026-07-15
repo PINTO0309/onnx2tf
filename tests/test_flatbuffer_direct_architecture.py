@@ -12222,7 +12222,7 @@ def test_generated_pytorch_gap_se_rewrites_have_single_owner() -> None:
     assert "import torch" not in rewrite_source
 
 
-def test_indexed_split_channelwise_tail_owner_is_bounded_and_transactional() -> None:
+def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
     owner_path = (
         REPO_ROOT
         / "onnx2tf"
@@ -12242,6 +12242,9 @@ def test_indexed_split_channelwise_tail_owner_is_bounded_and_transactional() -> 
     assert "def _resolve_direct_candidate(" in owner_source
     assert "def _apply_direct_plan(" in owner_source
     assert "def _direct_plans_equal(" in owner_source
+    assert "def _resolve_unary_split_concat_candidate(" in owner_source
+    assert "def _apply_unary_split_concat_plan(" in owner_source
+    assert "def _unary_split_concat_plans_equal(" in owner_source
     assert "def _resolve_closed_tail(" in owner_source
     assert "def _finalize_slice_constant_updates(" in owner_source
     assert "deque" in owner_source
@@ -12258,6 +12261,9 @@ def test_indexed_split_channelwise_tail_owner_is_bounded_and_transactional() -> 
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
     wrappers = {
+        "_optimize_transpose_unary_split_concat_single_post_nchw": (
+            "_optimize_transpose_unary_split_concat_single_post_nchw_pass"
+        ),
         "_optimize_transpose_split_channelwise_tail_to_single_post_nchw": (
             "_optimize_transpose_split_channelwise_tail_to_single_post_nchw_pass"
         ),
