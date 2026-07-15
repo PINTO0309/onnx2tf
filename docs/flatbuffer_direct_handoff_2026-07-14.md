@@ -8,13 +8,14 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves the unary/Split/Concat compatibility
-island into the dedicated indexed `passes/split_channelwise_layout.py` owner.
-The former mixed full-map fixed-point helper is a thin compatibility
-dispatcher, both production sequence positions supply Session LayoutState,
-and one immutable unary-root plan now proves every branch and the local NCHW
-adapter before mutation. The extraction corrects the raw helper's partial-
-mutation path and its non-singleton Reshape bypass.
+The latest implementation unit moves the singleton gate/Conv/Concat
+compatibility island into the dedicated indexed
+`passes/singleton_gate_layout.py` owner. The former mixed full-map fixed-point
+helper is now a thin compatibility dispatcher, both production sequence
+positions supply Session LayoutState, and one immutable plan proves the full
+gate, optional RGB, and Concat boundary before mutation. The extraction fixes
+the raw helper's non-singleton Reshape acceptance, incomplete fan-out
+ownership, and partial metadata/input mutation paths.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -163,7 +164,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 123 coherent implementation
+The current `fb-refactor5` work contains 124 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -452,6 +453,11 @@ continuations:
   and the one external branch, restricts the layout-only Reshape bypass to a
   true singleton channel, and preserves either a public or intermediate NCHW
   Concat contract as one revalidated transaction.
+- the current checkpoint moves the singleton gate/Conv/Concat compatibility
+  island to a dedicated indexed owner, proves both auxiliary variants and the
+  optional RGB bridge, preserves view-equivalent side consumers, and applies
+  all rewrites, metadata updates, constant reshapes, and adapter removals only
+  after full plan revalidation.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -470,8 +476,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/split_channelwise_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_unary_split_concat_layout.py`;
+- `onnx2tf/tflite_builder/passes/singleton_gate_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_singleton_gate_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `tests/test_tflite_builder_direct.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -516,6 +522,20 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   boundary. It preserves the original Concat tensor name and NCHW metadata for
   either graph outputs or existing downstream consumers while moving only the
   producer output to a private NHWC tensor.
+- The singleton-gate owner accepts only the exact gate topology and true
+  `[N,H,W,1]`/`[N,1,H,W]` view adapters. Both the direct auxiliary and Logistic
+  auxiliary variants are explicit plan forms; no model-name or chain-name
+  special case is used.
+- Optional RGB propagation removes an input Transpose only when its typed
+  permutation, ownership, order, shape/signature, dtype, and quantization are
+  proven. A direct stale-NCHW input is accepted only for a private constant
+  with physical NHWC evidence, and its data buffer is reshaped together with
+  its metadata.
+- Every singleton-gate input rewrite, tensor/operator contract, metadata
+  update, and removal is immutable plan state and is re-resolved before apply.
+  Shared view-equivalent adapter consumers are rewired, unrelated source
+  consumers are preserved, and an unsupported fan-out rejects the whole
+  candidate without mutation.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -4140,6 +4160,56 @@ Both schema files also match. The detached worktree and temporary outputs were
 removed. Scoped Ruff, syntax compilation, and `git diff --check` passed. No
 Tier corpus conversion was run.
 
+The indexed singleton-gate checkpoint replaces the former raw gate/Conv/
+Concat helper with `passes/singleton_gate_layout.py`. Pre-extraction
+characterization observed zero matches in all 24 sequential runtime
+invocations: four each on YuNet, FastestDet, HumanSeg, and OSNet, and eight on
+SiNet. The helper remains at both unchanged production sequence positions as a
+thin dispatcher and now receives Session LayoutState.
+
+The owner proves the exact clip adapter, gate multiply, scalar subtraction,
+direct or Logistic auxiliary branch, signal multiply, Add, allowed terminal
+unary, output adapter, and channel-last Concat before mutation. Every removed
+adapter is a true singleton-channel NHWC/NCHW view with compatible static and
+dynamic shapes, dtype, per-tensor quantization, typed immutable Reshape shape
+input when present, unique producer, resolved provenance, and valid graph
+order. Public intermediates, fused activations, duplicate producers, stale
+order, unsupported fan-out, non-singleton channels, per-axis quantization, and
+invalid broadcast contracts are transactional no-ops.
+
+The optional RGB branch accepts either a fully owned typed `[0,3,1,2]`
+Transpose or a private constant whose physical NHWC evidence proves that its
+NCHW metadata is stale. The latter constant's data buffer is reshaped together
+with its metadata. View-equivalent split and terminal adapter consumers are
+rewired as a group, while unrelated source and side consumers remain intact.
+All input rewrites, tensor/operator contracts, metadata updates, and removals
+are captured in an immutable plan and fully re-resolved immediately before
+apply through one differential graph index. Graph-ordered candidates, a
+configurable 32-rewrite ceiling, success-only pruning, and LayoutState updates
+replace the unbounded full-map loop.
+
+The focused suite passes with `29 passed in 0.47s` and covers both auxiliary
+forms across static/dynamic and RGB/no-RGB modes, direct stale-layout RGB,
+shared side consumers, exact numerical equivalence, candidate-only and capped
+execution, idempotence, differential-index freshness, LayoutState validation,
+and nineteen unsafe no-op cases. The dedicated owner, two corrected active
+fixtures, the unary/direct/binary Split roots, both binary bridge owners, and
+the complete architecture suite pass together with `349 passed, 753
+deselected in 43.88s`. TensorFlow-import-blocked explicit direct, default
+direct, and `-cotof` conversion pass sequentially with `3 passed in 3.80s`.
+
+One sequential YuNet conversion was run from source checkpoint `12680f75` and
+from the current implementation. All five emitted files are byte-identical.
+Float32 remains
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16 remains
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+the correspondence report remains
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`,
+and both schema hashes also match. The detached worktree and all temporary
+outputs were removed. Scoped Ruff, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -4157,9 +4227,9 @@ Tier corpus conversion was run.
   lowerer passes Ruff with that inherited category ignored; the new owner and
   dedicated owner/architecture tests pass Ruff without exclusions.
 - A whole-file Ruff run on `test_tflite_builder_direct.py` reports ten
-  pre-existing unused compatibility imports (`F401`). The one corrected
-  fixture line passes with that inherited category ignored; the dedicated new
-  owner test and architecture test pass Ruff without exclusions.
+  pre-existing unused compatibility imports (`F401`). The corrected
+  singleton-gate fixtures pass with that inherited category ignored; the
+  dedicated new owner test and architecture test pass Ruff without exclusions.
 - The optional PyTorch exporter suite runs when the host's Python 3.10
   `LD_LIBRARY_PATH` and `PYTHONPATH` are removed from the command environment.
   The focused results, restored native-codegen bindings, real-model artifact
@@ -4177,13 +4247,13 @@ The full Goal is not complete. The fast-precanonicalize orchestrator still has
 orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
-The immediately preceding
-`_optimize_singleton_gate_conv_concat_nhwc_bridge_blocks` helper remains an
-approximately 239-line raw mixed match/mutate implementation. Its gate/Conv/
-Concat topology, singleton Reshape ownership, multiple adapter removals,
-public and side-consumer behavior, active production match counts, and ordering
-dependency on the new unary/Split/Concat owner have not yet received the same
-transactional-contract audit.
+The next adjacent raw lowerer family is the pair
+`_optimize_transposeconv_output_channel1_terminal_transpose_chains` and
+`_optimize_transposeconv_output_nhwc_passthrough_chains`, currently about 390
+and 316 lines. Their shared TransposeConv output-layout semantics, ordering,
+public boundary behavior, actual production match counts, and overlap must be
+characterized before deciding whether they belong in one indexed semantic
+owner or two independently staged owners.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -4194,19 +4264,19 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. First audit the adjacent
-   `_optimize_singleton_gate_conv_concat_nhwc_bridge_blocks` helper, its two
-   production sequence positions, active match counts on the same five short
-   representatives, every singleton Reshape and Transpose removal, its public
-   and side-consumer behavior, and ordering dependency on the indexed unary/
-   Split/Concat owner. Do not implement until that characterization is
+2. First audit
+   `_optimize_transposeconv_output_channel1_terminal_transpose_chains` and the
+   immediately preceding `_optimize_transposeconv_output_nhwc_passthrough_chains`:
+   record both production positions, ordered interaction, exact mutation
+   surfaces, public/side-consumer handling, and match counts on the same five
+   short representatives. Do not implement until that characterization is
    recorded.
-3. If the audit identifies a safe semantic boundary, create a separate indexed
-   singleton-gate owner with immutable plan/revalidation/apply stages. Reuse
-   only proven graph-index, shape/signature, quantization, LayoutState, and
-   local-boundary primitives. Use focused synthetic checks and one short
-   sequential production comparison; do not run a Tier corpus unless
-   explicitly requested.
+3. If the audit identifies a safe semantic boundary, define immutable
+   plan/revalidation/apply contracts for the smallest independent
+   TransposeConv output-layout family. Reuse the current graph index,
+   shape/signature, quantization, LayoutState, and boundary primitives. Use
+   focused synthetic checks and one short sequential production comparison;
+   do not run a Tier corpus unless explicitly requested.
 4. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

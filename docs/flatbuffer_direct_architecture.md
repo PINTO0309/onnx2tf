@@ -5949,6 +5949,56 @@ branch, shared axes and side consumers, candidate limits, idempotence, and
 eighteen unsafe transactional no-op cases. A sequential YuNet comparison
 against the preceding checkpoint emits five byte-identical artifacts.
 
+The adjacent singleton gate/Conv/Concat compatibility island is owned by
+`passes/singleton_gate_layout.py`. The former lowerer implementation mixed
+matching, metadata writes, consumer rewiring, and operator deletion in one
+unbounded full-map loop. Its two ordered production positions remain intact as
+thin dispatches, and both supply Session `LayoutState` to the new owner.
+
+The resolver accepts the exact historical gate topology: an NHWC clip tensor
+viewed through a singleton NCHW Reshape feeds both the gate multiply and the
+scalar-minus-clip branch; a second singleton adapter supplies either a direct
+auxiliary signal or the input to a Logistic; the two multiplied branches join
+through Add and one allowed unary before a singleton output adapter reaches a
+channel-last Concat. An optional RGB multiply may consume the same clip through
+either a proven `[0,3,1,2]` input Transpose or a private constant whose physical
+NHWC evidence shows its NCHW metadata is stale.
+
+Every removed Reshape must represent an exact `[N,H,W,1]` to `[N,1,H,W]` view,
+including compatible dynamic signatures, equal dtype, and per-tensor
+quantization. Typed shape inputs, when present, must be immutable INT32 or
+INT64 constants consistent with the declared output. All core producers,
+consumer multiplicities, public boundaries, graph order, unary/binary options,
+static broadcasts, and dynamic broadcasts are resolved before a plan exists.
+This replaces the raw predicate that accepted arbitrary channel counts and the
+raw mutation path that could remove an adapter while leaving an unsupported
+fan-out in the old layout.
+
+The plan records every operator input rewrite, tensor contract, operator
+contract, metadata update, and removal. It is fully re-resolved immediately
+before apply. Split and terminal adapter aliases are rewired only for their
+proven view-equivalent consumers; unrelated consumers of the original NHWC
+sources remain unchanged. Shared side consumers are preserved. Constant data
+with stale layout metadata is reshaped to the validated NHWC view at the same
+time as its TensorIR metadata, so physical storage and declared shape cannot
+diverge after the rewrite.
+
+One differential `ModelIRGraphIndex`, graph-ordered Concat candidates, a
+configurable 32-rewrite ceiling, success-only pruning, and differential
+LayoutState updates replace the raw `while True` loop and repeated producer/
+consumer map construction. Candidate-only operation and idempotence use the
+same entry point as production.
+
+Pre-extraction characterization observed zero matches in all 24 sequential
+runtime invocations: four each on YuNet, FastestDet, HumanSeg, and OSNet, and
+eight on SiNet. Twenty-nine focused tests cover both auxiliary variants,
+static and dynamic signatures, the optional Transpose RGB bridge, the stale
+constant RGB view, shared side consumers, exact numerical equivalence,
+candidate and rewrite limits, differential-index freshness, LayoutState, and
+nineteen unsafe transactional no-op contracts. A sequential YuNet comparison
+against the preceding checkpoint emits byte-identical float32, float16,
+correspondence, and schema artifacts.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

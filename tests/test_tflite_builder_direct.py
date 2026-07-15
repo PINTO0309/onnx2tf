@@ -42478,12 +42478,18 @@ def test_flatbuffer_direct_reverse_sequence_and_scatter_builtin_parity() -> None
 
 def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks() -> None:
     model_ir = ModelIR("singleton_gate_conv_concat_nhwc_bridge_blocks_test")
-    model_ir.inputs = ["x_nhwc"]
+    model_ir.inputs = [
+        "x_nhwc",
+        "clip_nhwc",
+        "conv_nhwc",
+        "keep1_nhwc",
+        "keep2_nhwc",
+    ]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
     model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 3, 5, 7], shape_signature=[1, 3, 5, 7])
     model_ir.tensors["to_nchw_perm"] = TensorIR(name="to_nchw_perm", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([0, 3, 1, 2], dtype=np.int32), is_variable=False)
-    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7], data=np.ones([1, 1, 5, 7], dtype=np.float32), is_variable=False)
     model_ir.tensors["split0_nhwc"] = TensorIR(name="split0_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
     model_ir.tensors["split0_shape"] = TensorIR(name="split0_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 5, 7, 1], dtype=np.int32), is_variable=False)
     model_ir.tensors["clip_nhwc"] = TensorIR(name="clip_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
@@ -42538,12 +42544,18 @@ def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks() -> No
 
 def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks_accepts_direct_singleton_aux() -> None:
     model_ir = ModelIR("singleton_gate_conv_concat_direct_aux_test")
-    model_ir.inputs = ["x_nhwc"]
+    model_ir.inputs = [
+        "x_nhwc",
+        "clip_nhwc",
+        "aux_nhwc",
+        "keep1_nhwc",
+        "keep2_nhwc",
+    ]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
     model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 3, 5, 7], shape_signature=[1, 3, 5, 7])
     model_ir.tensors["to_nchw_perm"] = TensorIR(name="to_nchw_perm", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([0, 3, 1, 2], dtype=np.int32), is_variable=False)
-    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7], data=np.ones([1, 1, 5, 7], dtype=np.float32), is_variable=False)
     model_ir.tensors["split0_nhwc"] = TensorIR(name="split0_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
     model_ir.tensors["split0_shape"] = TensorIR(name="split0_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 5, 7, 1], dtype=np.int32), is_variable=False)
     model_ir.tensors["clip_nhwc"] = TensorIR(name="clip_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])

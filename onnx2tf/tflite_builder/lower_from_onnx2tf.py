@@ -158,6 +158,9 @@ from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
     optimize_sinet_shuffle_residual_transpose_chains as _optimize_sinet_shuffle_residual_transpose_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.singleton_gate_layout import (
+    optimize_singleton_gate_conv_concat_nhwc_bridge_blocks as _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_deep_skip_layout import (
     optimize_sinet_deep_skip_concat_resize_affine_tail_chains as _optimize_sinet_deep_skip_concat_resize_affine_tail_chains_pass,
 )
@@ -22214,243 +22217,21 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
     return _optimize_singleton_reshape_concat_post_transpose_nhwc_chains_pass(model_ir)
 
 
-def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Remove singleton-channel NCHW adapters around a localized gate->conv->concat block.
-
-    Target:
-      split_nchw --RESHAPE--> split_nhwc
-      clip_nhwc --RESHAPE--> clip_nchw
-      clip_nchw * split_nchw -> mul_gate
-      scalar - clip_nchw -> sub_gate
-      (optional) input_nhwc --TRANSPOSE--> input_nchw
-      clip_nchw * input_nchw -> mul_rgb
-      conv_out_nhwc --RESHAPE--> conv_out_nchw --LOGISTIC--> sig_nchw
-      sub_gate * sig_nchw -> gated
-      mul_gate + gated -> fused --UNARY--> clip3_nchw
-      clip3_nchw --RESHAPE--> clip3_nhwc
-      CONCAT(axis=3, [..., split_nhwc, ..., clip3_nhwc]) -> y_nhwc
-
-    Rewrite:
-      - Keep the whole gate path in NHWC.
-      - Remove singleton layout RESHAPEs and optional input TRANSPOSE.
-      - Rewire CONCAT to consume the NHWC tensors directly.
-    """
-    rewritten = 0
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    unary_ops = {"RELU", "RELU6", "RELU_0_TO_1", "LOGISTIC", "HARD_SWISH", "LEAKY_RELU", "TANH"}
-
-    def _is_singleton_layout_reshape(op: OperatorIR) -> bool:
-        if str(op.op_type) != "RESHAPE" or len(op.inputs) < 1 or len(op.outputs) != 1:
-            return False
-        in_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-        out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-        if (
-            in_tensor is None
-            or out_tensor is None
-            or not _is_fully_known_positive_shape(in_tensor.shape)
-            or not _is_fully_known_positive_shape(out_tensor.shape)
-        ):
-            return False
-        in_shape = [int(v) for v in list(in_tensor.shape)]
-        out_shape = [int(v) for v in list(out_tensor.shape)]
-        if len(in_shape) != 4 or len(out_shape) != 4:
-            return False
-        return _permute_shape(in_shape, perm_nchw_to_nhwc) == out_shape or _permute_shape(in_shape, perm_nhwc_to_nchw) == out_shape
-
-    while True:
-        changed = False
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for concat_idx, concat_op in enumerate(model_ir.operators):
-            if str(concat_op.op_type) != "CONCATENATION" or int(concat_op.options.get("axis", 3)) != 3:
-                continue
-            concat_inputs = [str(v) for v in list(concat_op.inputs)]
-            clip3_adapter_idx = None
-            clip3_adapter_op = None
-            clip3_nchw_name = ""
-            clip3_nhwc_name = ""
-            clip3_unary_idx = None
-            for name in concat_inputs:
-                prod_idx = producers.get(name, None)
-                if prod_idx is None or not _is_singleton_layout_reshape(model_ir.operators[int(prod_idx)]):
-                    continue
-                candidate_op = model_ir.operators[int(prod_idx)]
-                candidate_source_name = str(candidate_op.inputs[0])
-                candidate_unary_idx = producers.get(candidate_source_name, None)
-                if candidate_unary_idx is None or str(model_ir.operators[int(candidate_unary_idx)].op_type) not in unary_ops:
-                    continue
-                add_candidate_idx = producers.get(str(model_ir.operators[int(candidate_unary_idx)].inputs[0]), None)
-                if add_candidate_idx is None or str(model_ir.operators[int(add_candidate_idx)].op_type) != "ADD":
-                    continue
-                clip3_adapter_idx = int(prod_idx)
-                clip3_adapter_op = candidate_op
-                clip3_nchw_name = str(candidate_source_name)
-                clip3_nhwc_name = str(candidate_op.outputs[0])
-                clip3_unary_idx = int(candidate_unary_idx)
-                break
-            if clip3_adapter_idx is None or clip3_adapter_op is None or clip3_unary_idx is None:
-                continue
-            add_idx = producers.get(str(model_ir.operators[int(clip3_unary_idx)].inputs[0]), None)
-            if add_idx is None or str(model_ir.operators[int(add_idx)].op_type) != "ADD":
-                continue
-            add_inputs = [str(v) for v in list(model_ir.operators[int(add_idx)].inputs)]
-            mul_indices = [producers.get(name, None) for name in add_inputs]
-            if any(idx is None or str(model_ir.operators[int(idx)].op_type) != "MUL" for idx in mul_indices):
-                continue
-
-            clip_adapter_idx = None
-            clip_nhwc_name = ""
-            split_nchw_name = ""
-            sig_idx = None
-            aux_adapter_idx = None
-            aux_nhwc_name = ""
-            sub_idx = None
-            gate_mul_idx = None
-            sig_mul_idx = None
-            for mul_idx in [int(v) for v in mul_indices if v is not None]:
-                mul_op = model_ir.operators[int(mul_idx)]
-                mul_inputs = [str(v) for v in list(mul_op.inputs)]
-                found_gated_branch = False
-                for maybe_aux_name in mul_inputs:
-                    maybe_aux_idx = producers.get(maybe_aux_name, None)
-                    if maybe_aux_idx is None:
-                        continue
-                    maybe_aux_op = model_ir.operators[int(maybe_aux_idx)]
-                    if not (
-                        str(maybe_aux_op.op_type) == "LOGISTIC"
-                        or _is_singleton_layout_reshape(maybe_aux_op)
-                    ):
-                        continue
-                    other_name = next(name for name in mul_inputs if name != str(maybe_aux_op.outputs[0]))
-                    cand_sub_idx = producers.get(other_name, None)
-                    if cand_sub_idx is None or str(model_ir.operators[int(cand_sub_idx)].op_type) != "SUB":
-                        continue
-                    clip_adapter_out = str(model_ir.operators[int(cand_sub_idx)].inputs[1])
-                    cand_clip_adapter_idx = producers.get(clip_adapter_out, None)
-                    if cand_clip_adapter_idx is None or not _is_singleton_layout_reshape(model_ir.operators[int(cand_clip_adapter_idx)]):
-                        continue
-                    sub_idx = int(cand_sub_idx)
-                    clip_adapter_idx = int(cand_clip_adapter_idx)
-                    clip_nhwc_name = str(model_ir.operators[int(clip_adapter_idx)].inputs[0])
-                    if str(maybe_aux_op.op_type) == "LOGISTIC":
-                        sig_idx = int(maybe_aux_idx)
-                        aux_input_name = str(maybe_aux_op.inputs[0])
-                        aux_adapter_idx = producers.get(aux_input_name, None)
-                        if aux_adapter_idx is None or not _is_singleton_layout_reshape(model_ir.operators[int(aux_adapter_idx)]):
-                            sig_idx = None
-                            sub_idx = None
-                            clip_adapter_idx = None
-                            clip_nhwc_name = ""
-                            continue
-                        aux_nhwc_name = str(model_ir.operators[int(aux_adapter_idx)].inputs[0])
-                    else:
-                        sig_idx = None
-                        aux_adapter_idx = int(maybe_aux_idx)
-                        aux_nhwc_name = str(maybe_aux_op.inputs[0])
-                    sig_mul_idx = int(mul_idx)
-                    found_gated_branch = True
-                    break
-                if not found_gated_branch:
-                    clip_side = next((name for name in mul_inputs if producers.get(name, None) is not None and _is_singleton_layout_reshape(model_ir.operators[int(producers.get(name))])), None)
-                    if clip_side is None:
-                        continue
-                    clip_adapter_idx = int(producers.get(clip_side))
-                    clip_nhwc_name = str(model_ir.operators[int(clip_adapter_idx)].inputs[0])
-                    split_nchw_name = next(name for name in mul_inputs if name != clip_side)
-                    gate_mul_idx = int(mul_idx)
-            if None in {clip_adapter_idx, aux_adapter_idx, sub_idx, gate_mul_idx, sig_mul_idx}:
-                continue
-
-            split_reshape_idx = producers.get(next((name for name in concat_inputs if name != clip3_nhwc_name and producers.get(name, None) is not None and _is_singleton_layout_reshape(model_ir.operators[int(producers.get(name))]) and str(model_ir.operators[int(producers.get(name))].inputs[0]) == split_nchw_name), ""), None)
-
-            gate_clip_out = str(model_ir.operators[int(clip_adapter_idx)].outputs[0])
-            gate_mul_op = model_ir.operators[int(gate_mul_idx)]
-            sub_op = model_ir.operators[int(sub_idx)]
-            sig_mul_op = model_ir.operators[int(sig_mul_idx)]
-
-            _set_operator_inputs(model_ir=model_ir, op=gate_mul_op, new_inputs=[clip_nhwc_name if str(v) == gate_clip_out else str(v) for v in list(gate_mul_op.inputs)])
-            _set_operator_inputs(model_ir=model_ir, op=sub_op, new_inputs=[clip_nhwc_name if str(v) == gate_clip_out else str(v) for v in list(sub_op.inputs)])
-            if sig_idx is not None:
-                sig_op = model_ir.operators[int(sig_idx)]
-                _set_operator_inputs(model_ir=model_ir, op=sig_op, new_inputs=[aux_nhwc_name])
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=sig_mul_op,
-                new_inputs=[
-                    aux_nhwc_name if str(v) == str(model_ir.operators[int(aux_adapter_idx)].outputs[0]) else str(v)
-                    for v in list(sig_mul_op.inputs)
-                ],
-            )
-
-            rgb_mul_idx = next((int(user_idx) for user_idx in consumers.get(gate_clip_out, []) if int(user_idx) not in {int(gate_mul_idx), int(sub_idx)} and str(model_ir.operators[int(user_idx)].op_type) == "MUL"), None)
-            input_transpose_idx = None
-            if rgb_mul_idx is not None:
-                rgb_mul_op = model_ir.operators[int(rgb_mul_idx)]
-                other_name = next(name for name in list(rgb_mul_op.inputs) if name != gate_clip_out)
-                input_transpose_idx = producers.get(other_name, None)
-                if input_transpose_idx is not None and str(model_ir.operators[int(input_transpose_idx)].op_type) == "TRANSPOSE" and _read_transpose_perm(model_ir, model_ir.operators[int(input_transpose_idx)]) == perm_nhwc_to_nchw:
-                    _set_operator_inputs(model_ir=model_ir, op=rgb_mul_op, new_inputs=[str(model_ir.operators[int(input_transpose_idx)].inputs[0]) if str(v) == other_name else clip_nhwc_name if str(v) == gate_clip_out else str(v) for v in list(rgb_mul_op.inputs)])
-                    _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(rgb_mul_op.outputs[0]), None), perm_nchw_to_nhwc)
-                else:
-                    input_transpose_idx = None
-                    _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(other_name, None), perm_nchw_to_nhwc)
-                    _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(rgb_mul_op.outputs[0]), None), perm_nchw_to_nhwc)
-                    _set_operator_inputs(
-                        model_ir=model_ir,
-                        op=rgb_mul_op,
-                        new_inputs=[
-                            clip_nhwc_name if str(v) == gate_clip_out else str(v)
-                            for v in list(rgb_mul_op.inputs)
-                        ],
-                    )
-
-            for tensor_name in [
-                str(model_ir.tensors[split_nchw_name].name),
-                str(gate_mul_op.outputs[0]),
-                str(sub_op.outputs[0]),
-                str(sig_mul_op.outputs[0]),
-                str(model_ir.operators[int(add_idx)].outputs[0]),
-                str(model_ir.operators[int(clip3_unary_idx)].outputs[0]),
-            ]:
-                _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(tensor_name, None), perm_nchw_to_nhwc)
-            if sig_idx is not None:
-                _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(model_ir.operators[int(sig_idx)].outputs[0]), None), perm_nchw_to_nhwc)
-
-            if split_reshape_idx is not None:
-                split_reshape_out = str(model_ir.operators[int(split_reshape_idx)].outputs[0])
-                for user_idx in consumers.get(split_reshape_out, []):
-                    user_op = model_ir.operators[int(user_idx)]
-                    _set_operator_inputs(model_ir=model_ir, op=user_op, new_inputs=[split_nchw_name if str(v) == split_reshape_out else str(v) for v in list(user_op.inputs)])
-
-            for user_idx in consumers.get(str(clip3_nhwc_name), []):
-                user_op = model_ir.operators[int(user_idx)]
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=user_op,
-                    new_inputs=[clip3_nchw_name if str(v) == clip3_nhwc_name else str(v) for v in list(user_op.inputs)],
-                )
-
-            remove_indices = {int(clip_adapter_idx), int(aux_adapter_idx), int(clip3_adapter_idx)}
-            if split_reshape_idx is not None:
-                remove_indices.add(int(split_reshape_idx))
-            if input_transpose_idx is not None:
-                remove_indices.add(int(input_transpose_idx))
-            for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_singleton_gate_conv_concat_nhwc_bridge_blocks": int(rewritten)}
+def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
@@ -31190,7 +30971,10 @@ def lower_onnx_to_ir(
         _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
         _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(model_ir)
         _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
-        _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
+        _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_unary_split_concat_single_post_nchw(
             model_ir,
             layout_state=session.layout_state,
@@ -31225,7 +31009,10 @@ def lower_onnx_to_ir(
         _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
         _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(model_ir)
         _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
-        _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
+        _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_unary_split_concat_single_post_nchw(
             model_ir,
             layout_state=session.layout_state,
