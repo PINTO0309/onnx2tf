@@ -5659,6 +5659,53 @@ lowerer helper is a 17-line compatibility dispatcher and both production calls
 supply LayoutState. Matching contains neither a model name nor a fixed spatial
 size.
 
+The preceding SiNet SA/PA MirrorPad compatibility island is owned by
+`passes/sinet_sa_pa_mirrorpad_layout.py`. A production audit established that
+both the legacy and indexed owners match zero candidates across all seven
+invocations in the current `sinet_320_op.onnx` ordered pipeline. The path is
+retained as a semantically guarded compatibility owner rather than broadened
+against that artifact.
+
+The resolver begins at one private NHWC-to-NCHW source adapter. Its exact
+NCHW fan-out is Mean, ReduceMax, and one rank-five source Reshape; the legacy
+form additionally feeds the terminal Mul. Mean and ReduceMax converge at a
+channel Concat followed by MirrorPad, NCHW-to-NHWC, Conv, and one removable
+Reshape. The second attention input is an external NHWC channel-attention
+value behind a private NHWC-to-NCHW adapter. Their ADD result and the original
+source are expanded to rank five, concatenated, reshaped to rank four, padded,
+and passed through NCHW-to-NHWC and Conv before Logistic and Mul.
+
+The terminal Mul has two explicit contracts. The direct form consumes the
+original NHWC source and an NHWC gate. The legacy form consumes the NCHW
+source and a gate behind one NHWC-to-NCHW adapter. The rewrite lifts both to
+NHWC. For the legacy form, Mul receives a deterministic private NHWC output
+and one inverse adapter is inserted immediately afterward, preserving the old
+NCHW tensor name, public output, and all downstream consumers.
+
+The source channel must be concretely one. This is the invariant that makes
+the removed SA Reshape and channel-attention adapter value-preserving; the
+former raw helper did not state it. Non-singleton candidates are now
+transactional no-ops. Spatial dimensions remain arbitrary and dynamic
+signatures are derived relationally.
+
+Both reduce axes, both MirrorPad tensors, both rank-five expansion targets,
+and the final rank-four target retain INT32 or INT64 dtype while being
+remapped. Constant roles are grouped by tensor identity. Unrelated consumers
+receive deterministic clones and incompatible shared roles reject the plan.
+Rank-four metadata follows the proven NHWC contract, while rank-five tensors
+are explicitly layout-unknown.
+
+The complete plan is resolved again immediately before apply. Source
+provenance, producer uniqueness, exact fan-out, dependency order, public
+boundaries, constant clone and legacy-output names, input slots, option
+changes, metadata targets, and all five direct or six legacy removals are
+preflighted before mutation. One differential `ModelIRGraphIndex`, graph-
+ordered candidates, a configurable 32-rewrite ceiling, success-only pruning,
+and Session `LayoutState` synchronization replace the full-map fixed-point
+loop. The former 683-line lowerer helper is a 17-line compatibility dispatcher
+and all three production calls supply LayoutState. Matching contains neither a
+model name nor a fixed spatial size.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

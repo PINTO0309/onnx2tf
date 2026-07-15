@@ -4,19 +4,20 @@
 
 The active branch is `fb-refactor5`, created from `main` after pull request
 `#949` merged the complete `fb-refactor4` checkpoint. Pull request `#950` is
-closed, and no open pull request tracks this branch. The Goal is active again;
-subsequent work uses coherent commits and pushes without opening a pull
-request.
+closed, and no open pull request tracks this branch. This checkpoint is ready
+for a Goal pause; work resumes only after an explicit instruction and continues
+with coherent commits and pushes without opening a pull request.
 
-The latest implementation unit moves the dormant SiNet double-Logistic mix-
-attention compatibility path to `passes/sinet_mix_attention_layout.py`. The
-former 808-line full-map fixed-point mutator is now a 17-line compatibility
-dispatcher over one bounded indexed matcher and transaction owner. It proves
-the channel- and spatial-attention branches, both residual-source variants,
-rank-four and rank-five axis/shape changes, both Logistic gates, constant
-ownership, terminal Conv ownership, and every removable adapter before
-mutation. The current real SiNet ordered pipeline matches neither the old nor
-the new owner, and the production artifacts remain byte-identical.
+The latest implementation unit moves the dormant SiNet SA/PA MirrorPad
+compatibility path to `passes/sinet_sa_pa_mirrorpad_layout.py`. The former
+683-line full-map fixed-point mutator is now a 17-line compatibility dispatcher
+over one bounded indexed matcher and transaction owner. It proves the Mean/
+ReduceMax spatial-attention branch, external channel-attention input, rank-five
+position-attention merge, optional gate adapter, source-side Mul layout,
+constant ownership, public boundaries, and every removable adapter before
+mutation. Both legacy and indexed owners match zero candidates in the current
+real SiNet ordered pipeline, and the production artifacts remain byte-
+identical.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -39,7 +40,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 117 coherent continuations:
+The current `fb-refactor5` work contains 118 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -298,6 +299,10 @@ The current `fb-refactor5` work contains 117 coherent continuations:
   both residual-source variants, replaces eight or nine removable adapters as
   one transaction, and corrects the legacy branch rewire that could leave an
   unbound NCHW tensor when this compatibility topology did match.
+- the current checkpoint moves the preceding SA/PA MirrorPad compatibility
+  path to a dedicated indexed owner, validates the singleton-channel condition
+  required for numerical equivalence, preserves both direct-NHWC and legacy-
+  NCHW Mul outputs, and removes five or six adapters as one transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -316,8 +321,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/sinet_mix_attention_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_sinet_mix_attention_layout.py`;
+- `onnx2tf/tflite_builder/passes/sinet_sa_pa_mirrorpad_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_sinet_sa_pa_mirrorpad_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -3656,6 +3661,76 @@ The byte identity preserves the recorded sequential `-cotof` evidence:
 Scoped Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
 conversion was run.
 
+The indexed SA/PA MirrorPad checkpoint moves
+`_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains` to
+`passes/sinet_sa_pa_mirrorpad_layout.py`. A pre-extraction production audit
+ran all seven ordered invocations against `sinet_320_op.onnx`; the legacy
+owner matched zero candidates in every invocation. The replacement is
+therefore a compatibility owner and does not use the current SiNet artifact to
+broaden its guards.
+
+The resolver starts at one private NHWC-to-NCHW source adapter. Its exact
+fan-out is Mean, ReduceMax, and one source Reshape, plus the terminal Mul only
+for the legacy NCHW-output form. Mean and ReduceMax converge at a channel
+Concat followed by MirrorPad, NCHW-to-NHWC, Conv, and the removable singleton-
+channel Reshape. The second ADD input must be one external NHWC channel-
+attention value behind its own private adapter. The ADD result and original
+source are expanded to rank five, concatenated, reshaped to rank four, padded,
+and passed through NCHW-to-NHWC and Conv before Logistic and Mul.
+
+The terminal Mul supports two historical forms. A direct NHWC source requires
+an already-NHWC Logistic gate and retains its output name. A legacy NCHW source
+requires the matching gate adapter; the owner rewires Mul to NHWC, gives it a
+deterministic private NHWC output, and inserts one inverse adapter immediately
+after Mul to preserve the original NCHW output name, public output, and all
+downstream consumers.
+
+The rewrite explicitly requires a concrete singleton source channel. Removing
+the SA Reshape and channel-attention adapter is generally value-preserving only
+under that condition; the former raw helper did not state this invariant. A
+non-singleton candidate is now a transactional no-op instead of a potentially
+incorrect layout rewrite. Concrete shape and dynamic signature relationships
+are derived without a fixed spatial size.
+
+Both reduction axes, both MirrorPad tensors, both rank-five expansion targets,
+and the final rank-four target preserve INT32 or INT64 dtype while being
+remapped to NHWC. Shared constants are grouped by identity. Unrelated users
+receive deterministic clones; conflicting roles reject the plan. Rank-four
+metadata follows the proven NHWC source contract, and rank-five intermediates
+are explicitly layout-unknown.
+
+The complete plan is resolved again immediately before apply. Constant clone
+names, source provenance, unique producers, exact consumers, dependency order,
+public boundaries, input slots, option changes, metadata targets, legacy
+output names, and all five or six removals are preflighted before the first
+write. One differential `ModelIRGraphIndex`, graph-ordered candidates, a
+configurable 32-rewrite ceiling, success-only pruning, and Session
+`LayoutState` synchronization replace the full-map `while True` loop. All
+three production calls retain their ordered positions and now supply the
+Session LayoutState.
+
+Focused coverage passed with `42 passed in 0.47s`; all indexed SiNet suites
+passed with `703 passed in 1.76s`. Coverage spans FLOAT16/FLOAT32/FLOAT64,
+direct-NHWC and legacy-NCHW Mul forms, reversed binary and Concat inputs,
+dynamic signatures, external constant cloning, candidate-only and capped
+execution, twenty-five unsafe topology/provenance/layout/public-boundary
+contracts, stale-plan revalidation, legacy-name collision, differential-index
+validation, and LayoutState validation. The full architecture suite, run with
+the focused owner, passed with `234 passed in 47.46s`, including `192`
+architecture tests. TensorFlow-import-blocked direct, default, and `-cotof`
+conversion passed sequentially with `3 passed in 3.70s`.
+
+The sequential production conversion confirmed seven zero-match indexed
+invocations and produced the unchanged 449,824-byte float32 artifact with
+SHA-256
+`40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`
+and the unchanged 253,452-byte float16 artifact with SHA-256
+`180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`.
+The byte identity preserves the recorded sequential `-cotof` evidence:
+`max_abs=2.57205e-09`, `rmse=9.15391e-11`, `cosine=1`, and `pass=True`.
+Scoped Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
+conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3698,10 +3773,12 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Select the next raw layout helper from the current lowerer by fixed-pipeline
-   priority and measured size, then characterize its real-model match count,
-   topology, ownership, and failure contracts before extraction. Do not tune a
-   dormant compatibility path against the current SiNet artifact.
+3. At resumption, first audit the remaining 650-line
+   `_optimize_transpose_binary_bridges` helper and its sole production call.
+   Classify its binary subfamilies, determine whether it is an intended
+   dispatcher or still owns independent full-map mutation loops, and measure
+   active match counts before selecting an extraction boundary. Do not begin
+   implementation until that characterization is recorded.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
