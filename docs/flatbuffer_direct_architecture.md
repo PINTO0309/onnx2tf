@@ -5610,6 +5610,55 @@ the former full-map fixed-point loop. The former 612-line lowerer helper is a
 17-line compatibility dispatcher and its sole production call supplies
 LayoutState. Matching contains neither a model name nor a fixed spatial size.
 
+The SiNet double-Logistic mix-attention compatibility island is owned by
+`passes/sinet_mix_attention_layout.py`. A production audit established that
+the legacy helper matches zero candidates across all six invocations in the
+current `sinet_320_op.onnx` ordered pipeline. The semantic owner nevertheless
+preserves both historical residual forms: one private NHWC-to-NCHW branch
+adapter paired with either a direct residual adapter or an ADD of two private
+residual adapters.
+
+The resolver begins at the terminal NCHW-to-NHWC adapter and its sole post-
+Conv consumer. It proves the double-Logistic gate and the
+`gate * branch + (1 - gate) * residual` tail back to their shared source ADD.
+The channel-attention branch is Mean, NCHW-to-NHWC, two Conv operators, and
+NHWC-to-NCHW. The spatial-attention branch is Mean plus ReduceMax, channel
+Concat, MirrorPad, NCHW-to-NHWC, Conv, and Reshape. The position-attention
+merge uses two rank-five Reshapes, Concat, one rank-four Reshape, MirrorPad,
+NCHW-to-NHWC, Conv, and NHWC-to-NCHW. Binary and Concat roles are resolved by
+producer semantics and remain valid when their input order is reversed.
+
+The terminal NHWC tensor is the authoritative rank-four contract. All NCHW
+attention and tail tensors must be its exact typed permutation. Channel-
+attention and spatial-attention shapes, both rank-five expansion shapes, their
+Concat result, and the rank-four position-attention shape are derived
+relationally. Reduce axes, both MirrorPad pair tensors, all Reshape targets,
+and Concat axes retain their original INT32 or INT64 dtype while being
+remapped. Transformed rank-five tensors receive unknown layout metadata rather
+than an invalid rank-four label.
+
+Every transformed constant is grouped by tensor identity. Unrelated consumers
+receive deterministic clones and conflicting shared orientations reject the
+candidate. Producer uniqueness, exact fan-out, dependency order, private
+intermediates, public boundaries, plain fused activations, finite floating
+data, dtype, quantization, layout, concrete shape, and dynamic signature are
+complete guards across the island.
+
+The plan is resolved again immediately before apply. Constant clone names,
+operator indices, input slots, option changes, metadata targets, and the eight
+direct-residual or nine ADD-residual adapters are preflighted before mutation.
+The rewrite connects the branch and residual uses to their canonical NHWC
+sources. This corrects the former compatibility helper's defective branch
+rewrite, which removed the branch adapter but left consumers attached to its
+now-unbound output name.
+
+One differential `ModelIRGraphIndex`, graph-ordered candidates, a configurable
+32-rewrite ceiling, success-only pruning, and Session `LayoutState`
+synchronization replace the full-map fixed-point loop. The former 808-line
+lowerer helper is a 17-line compatibility dispatcher and both production calls
+supply LayoutState. Matching contains neither a model name nor a fixed spatial
+size.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
