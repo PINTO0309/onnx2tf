@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves tanh-expanded GELU transpose passthrough
-beside pseudo-Swish in the TensorFlow-free indexed
-`passes/activation_passthrough_layout.py` owner. Its former 294-line full-map
-fixed-point helper is now a thin dispatcher at its unchanged production
-position and receives Session LayoutState. The plan proves the complete
-nine-operation GELU approximation, all source and post-alias slots, four
-immutable constants, and an optional retained legacy boundary before mutation.
-Shared post-permutation constants are never rewritten in place.
+The latest implementation unit moves center/size/offset terminal-head recovery
+into the TensorFlow-free indexed `passes/center_size_offset_layout.py` owner.
+Its former roughly 390-line full-map fixed-point helper is now a thin
+dispatcher at its unchanged position between tanh-GELU and LeakyReLU and
+receives Session LayoutState. The plan proves all three branch topologies,
+Reshape/GatherND shape semantics, coordinate roles, shared constants, and
+public boundaries before mutation; the former sixteen-operator proximity
+heuristic is gone.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -426,6 +426,72 @@ and `schema_generated.py`
 `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
 Temporary outputs were removed and no Tier corpus was run.
 
+### Center/size/offset terminal-head continuation
+
+The raw `_optimize_center_size_offset_terminal_transpose_chains` implementation
+is now a thin indexed compatibility dispatcher. Its sole production position,
+public name, and stats key are unchanged, and its call receives Session
+LayoutState. The dedicated `passes/center_size_offset_layout.py` owner has no
+model-name or fixed operator-distance condition.
+
+Three typed NHWC-to-NCHW roots are classified by complete semantic branches.
+The singleton-channel center branch closes through
+Logistic/Maximum/Minimum/Reshape to `[N,H*W]`; size uses the same activation
+prefix plus `[N,C,H*W]` Reshape/GatherND; offset uses the matching direct
+Reshape/GatherND tail. Static shape, dynamic signature, dtype, per-tensor
+quantization, source provenance, layout, unique production, exact consumers,
+graph order, and every private/public boundary are validated. Shape-compatible
+multiple triples reject transactionally instead of being paired by proximity.
+
+Gather coordinates are classified as immutable batch grid, dynamic axis
+Reshape, and immutable channel grid using tensor shape, dtype, provenance, and
+range evidence. The owner supports INT32/INT64 coordinates, arbitrary original
+Concat order, a shared coordinate Concat, and the equal-grid case where either
+constant name is numerically equivalent. Each coordinate output must be closed
+over the planned GatherND slots before the order changes to
+`[batch, axis, channel]`.
+
+Size and offset reshape literals rotate to `[N,HW,C]`, including valid inferred
+`-1` dimensions and both option fields. Shape constants are grouped by tensor
+and consumer slot. Exclusive constants change in place; shared constants use
+one deterministic typed clone, so unrelated Reshape consumers retain the old
+`[N,C,HW]` value. Activation intermediates receive their proven NHWC metadata,
+rank-three data views become NWC, and LayoutState is updated only after the
+plan has been accepted.
+
+Every input rewrite, option, constant value/use, metadata update, adapter
+removal, tensor/operator contract, and public list is immutable plan state. A
+full second resolution and preflight precede all writes. One differential
+ModelIRGraphIndex performs the rewires and three-adapter compaction;
+graph-ordered candidates plus a rewrite limit replace the raw full-map
+fixed-point loop, and pruning is success-only.
+
+Pre- and post-extraction characterization ran sequentially on YuNet,
+FastestDet, HumanSeg, OSNet, and SiNet. The helper was reached four times per
+model; all 20 invocations were zero-match and preserved operator/tensor counts.
+
+The dedicated suite passes with `37 passed`. It covers static/dynamic shape,
+INT32/INT64 buffers, operand order, per-tensor quantization, inferred Reshape
+dimensions, shared constant and coordinate closure, exact numerical
+equivalence, candidate limits, idempotence, GraphIndex, LayoutState, and
+twenty-two unsafe transactional no-op variants. The new owner, adjacent
+activation/layout suites, active fixtures, and complete architecture suite pass
+together with `399 passed in 42.94s`.
+
+TensorFlow-import-blocked explicit direct, default direct, and `-cotof`
+conversion pass sequentially with `3 passed in 3.99s`. One sequential YuNet
+conversion reproduced float32
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+correspondence
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`,
+`schema.fbs`
+`0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`,
+and `schema_generated.py`
+`b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+Temporary outputs were removed and no Tier corpus was run.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -443,7 +509,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 131 coherent implementation
+The current `fb-refactor5` work contains 132 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -765,6 +831,10 @@ continuations:
   activation-family owner under an independent immutable plan, proves all nine
   operations, five source slots, four constants, and every post alias, and
   preserves public or consumed transposed boundaries with one local adapter.
+- the current checkpoint moves center/size/offset terminal-head recovery to a
+  dedicated indexed owner, replaces operator-distance pairing with complete
+  branch/shape/coordinate contracts, and updates shared Reshape constants with
+  deterministic copy-on-write before removing three layout adapters.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -783,9 +853,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/activation_passthrough_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_swish_passthrough_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_gelu_passthrough_layout.py`;
+- `onnx2tf/tflite_builder/passes/center_size_offset_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_center_size_offset_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -932,6 +1001,18 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   contract as Swish. If the old final transposed tensor remains observable, a
   local adapter reuses the pre-permutation; neither activation pass mutates a
   shared post-permutation constant.
+- Center/size/offset association is semantic rather than positional. One
+  singleton-channel center branch, one activated size branch, and one direct
+  offset branch must agree on batch/spatial shape and the size/offset data view;
+  more than one compatible triple rejects instead of choosing the nearest
+  Transpose.
+- GatherND coordinate roles are proven from the dynamic Reshape and bounded
+  immutable integer grids. Every coordinate Concat consumer slot must belong
+  to the planned size/offset gathers before its inputs are reordered.
+- Reshape shape constants are grouped by identity and exact slot. Exclusive
+  INT32/INT64 constants rotate in place; a constant with any unrelated use is
+  cloned once for the planned size/offset Reshapes. Inferred `-1` values and
+  option metadata stay symbolic.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -4790,6 +4871,28 @@ with unchanged operator/tensor counts, and one sequential YuNet conversion
 reproduced all five fixed hashes. Temporary outputs were removed. No Tier
 corpus was run.
 
+The center/size/offset checkpoint passed its 37 dedicated cases. The new
+owner, adjacent activation/input/quantized-Swish owners, active center, Swish,
+and GELU fixtures, and the complete architecture suite passed together:
+
+```text
+399 passed in 42.94s
+```
+
+TensorFlow import blocking was exercised sequentially for explicit direct,
+default direct, and direct `-cotof` conversion:
+
+```text
+3 passed in 3.99s
+```
+
+Scoped Ruff and syntax compilation pass for the owner, dedicated test,
+architecture test, and lowerer with only its inherited F841 exclusion.
+`git diff --check` passes. Pre/post characterization produced the same 20
+zero-match invocations and unchanged counts. One sequential YuNet conversion
+reproduced all five fixed hashes; temporary outputs were removed. No Tier
+corpus was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -4833,9 +4936,9 @@ the generic direct bridge has its own indexed owner and preserves all three
 production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
-The unquantized pseudo-Swish and tanh-GELU passthrough helpers are now indexed
-at their unchanged production positions. The adjacent raw activation helpers
-for center/size offset, LeakyReLU, and PReLU remain independent candidates and
+The unquantized pseudo-Swish, tanh-GELU, and center/size/offset recovery helpers
+are now indexed at their unchanged production positions. The adjacent raw
+activation helpers for LeakyReLU and PReLU remain independent candidates and
 must be characterized separately before extraction.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
@@ -4848,9 +4951,10 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. Characterize the adjacent raw activation recovery helpers in their current
-   order, beginning with the center/size-offset helper that immediately follows
-   indexed GELU. Select only one bounded semantic owner after confirming its
-   runtime match set, topology, and interaction with GELU and LeakyReLU.
+   order, beginning with LeakyReLU immediately after the indexed center/size/
+   offset owner. Select only one bounded semantic owner after confirming its
+   runtime match set, topology, and interaction with the terminal-head and
+   PReLU helpers.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

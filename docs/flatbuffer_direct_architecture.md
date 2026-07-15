@@ -1244,6 +1244,57 @@ with `362 passed in 42.95s`. TensorFlow-blocked direct/default/`-cotof` checks
 pass sequentially with `3 passed in 3.95s`, and YuNet again reproduces all five
 fixed artifact hashes.
 
+Center/size/offset terminal-head recovery is owned by
+`passes/center_size_offset_layout.py`. Its former roughly 390-line raw helper
+is a thin compatibility dispatcher at the same position between tanh-GELU and
+LeakyReLU. The call receives Session `LayoutState`; its public symbol and
+legacy statistic remain unchanged.
+
+The owner classifies three independent typed NHWC-to-NCHW Transpose roots by
+their semantic branch contracts rather than searching the following sixteen
+operators. The center root must have singleton channel and close through
+Logistic/Maximum/Minimum into a valid `[N,H*W]` Reshape. The size root uses the
+same activation prefix and a valid `[N,C,H*W]` Reshape/GatherND tail. The offset
+root closes directly through the equivalent Reshape/GatherND tail. Static
+shape, independently dynamic signature, dtype, per-tensor quantization,
+producer ownership, exact consumer slots, graph order, provenance, public
+boundaries, and known logical/physical layouts are proven for every branch.
+Ambiguous triples are rejected rather than selected by proximity.
+
+Each GatherND coordinate Concat is independently classified as batch, dynamic
+axis, and channel coordinates. The axis coordinate must be the exact output of
+a typed Reshape; the two immutable integer grids must be in range for the
+proven batch and channel dimensions. INT32 and INT64 coordinates, arbitrary
+original Concat order, a shared coordinate Concat, and equal-valued batch and
+channel grids are supported. The Concat output is closed over exactly the
+planned GatherND input slots before its inputs change from
+`[batch, channel, axis]` to `[batch, axis, channel]`.
+
+Size and offset Reshape literals rotate from `[N,C,HW]` to `[N,HW,C]` while
+preserving inferred `-1` dimensions and their option metadata. Shape constants
+are grouped by identity and exact input slot. An exclusive constant changes in
+place; a shared constant receives one deterministic typed copy-on-write clone,
+leaving unrelated consumers on the original value. The six activation
+intermediates move to the proven NHWC view, the two rank-three Reshape outputs
+become NWC, and LayoutState changes only with the accepted transaction.
+
+The immutable plan captures every input rewrite, constant use, option change,
+metadata update, removal, tensor/operator contract, and public list. It is
+fully re-resolved before apply. One differential graph index rewires slots and
+compacts all three adapters; graph-ordered candidates and an optional rewrite
+limit replace the raw fixed-point loop. Pruning occurs only after success.
+
+Thirty-seven focused cases cover static/dynamic views, INT32/INT64 shape and
+coordinate buffers, binary operand order, per-tensor quantization, inferred
+dimensions, shared constants and coordinates, numerical equivalence,
+GraphIndex, LayoutState, candidate limits, idempotence, and twenty-two unsafe
+transactional no-op variants. Pre/post characterization on five short models
+produces twenty zero-match invocations with unchanged operator/tensor counts.
+The owner, adjacent activation/layout suites, active fixtures, and complete
+architecture suite pass together with `399 passed in 42.94s`. TensorFlow-
+blocked direct/default/`-cotof` checks pass sequentially with
+`3 passed in 3.99s`, and YuNet reproduces all five fixed artifact hashes.
+
 The terminal hard-activation recovery and its immediately following optional
 generic Transpose cleanup share one lazy `ModelIRPassStateScope`. The hard
 runner keeps its exact late configuration: HardSwish is disabled, both
