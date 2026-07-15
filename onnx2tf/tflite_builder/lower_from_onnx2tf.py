@@ -161,6 +161,9 @@ from onnx2tf.tflite_builder.passes.split_all_outputs_layout import (
     optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains as _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_pass,
     optimize_transpose_relu_split_all_outputs_to_nhwc_chains as _optimize_transpose_relu_split_all_outputs_to_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.split_conv_concat_bridge_layout import (
+    optimize_split_conv_concat_transpose_bridge_to_single_post_nchw as _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
@@ -20587,291 +20590,19 @@ def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
 
 def _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
 ) -> Dict[str, int]:
-    """
-    Collapse a NCHW bridge around split/conv/concat into NHWC with a single
-    post-concat transpose.
-
-    Target motif:
-      src_nhwc --T(0,3,1,2)--> src_nchw
-      SPLIT(axis=1): src_nchw -> [keep_nchw, branch_nchw]
-      branch_nchw --T(0,2,3,1)--> branch_nhwc -> conv_subgraph -> y*_nhwc
-      y*_nhwc --T(0,3,1,2)--> y*_nchw
-      CONCAT(axis=1): [keep_nchw, y*_nchw] -> z_nchw
-
-    Rewrite:
-      SPLIT(axis=3): src_nhwc -> [keep_nhwc, branch_nhwc]
-      conv_subgraph stays NHWC
-      CONCAT(axis=3): [keep_nhwc, y*_nhwc] -> z_nhwc
-      z_nhwc --T(0,3,1,2)--> z_nchw
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    def _unique_tensor_name(base: str) -> str:
-        candidate = str(base)
-        serial = 1
-        while candidate in model_ir.tensors:
-            candidate = f"{base}_{serial}"
-            serial += 1
-        return candidate
-
-    while True:
-        changed = False
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for split_idx, split_op in enumerate(model_ir.operators):
-            if str(split_op.op_type) != "SPLIT" or len(split_op.inputs) < 2:
-                continue
-            split_axis_name = str(split_op.inputs[0])
-            split_data_name = str(split_op.inputs[1])
-            split_axis_vals = _read_const_ints_from_tensor(
-                model_ir.tensors.get(split_axis_name, None)
-            )
-            if split_axis_vals is None or len(split_axis_vals) <= 0:
-                continue
-            split_axis = int(split_axis_vals[0])
-            # Operate only on channel split in NCHW.
-            if split_axis not in [1, -3]:
-                continue
-            if split_data_name in model_outputs:
-                continue
-
-            pre_t_idx = producers.get(split_data_name, None)
-            if pre_t_idx is None:
-                continue
-            pre_t_op = model_ir.operators[int(pre_t_idx)]
-            if (
-                str(pre_t_op.op_type) != "TRANSPOSE"
-                or len(pre_t_op.inputs) < 2
-                or len(pre_t_op.outputs) != 1
-                or str(pre_t_op.outputs[0]) != split_data_name
-                or _read_transpose_perm(model_ir, pre_t_op) != perm_nhwc_to_nchw
-            ):
-                continue
-            src_nhwc_name = str(pre_t_op.inputs[0])
-            if src_nhwc_name in model_outputs:
-                continue
-
-            split_outputs = [str(v) for v in list(split_op.outputs)]
-            if len(split_outputs) < 2:
-                continue
-
-            branch_t_idx: Optional[int] = None
-            branch_split_out_name = ""
-            branch_nhwc_name = ""
-            for out_name in list(split_outputs):
-                user_indices = [int(v) for v in consumers.get(out_name, [])]
-                if len(user_indices) != 1:
-                    continue
-                candidate_idx = int(user_indices[0])
-                candidate_op = model_ir.operators[int(candidate_idx)]
-                if (
-                    str(candidate_op.op_type) == "TRANSPOSE"
-                    and len(candidate_op.inputs) >= 2
-                    and len(candidate_op.outputs) == 1
-                    and str(candidate_op.inputs[0]) == out_name
-                    and _read_transpose_perm(model_ir, candidate_op) == perm_nchw_to_nhwc
-                ):
-                    branch_t_idx = int(candidate_idx)
-                    branch_split_out_name = str(out_name)
-                    branch_nhwc_name = str(candidate_op.outputs[0])
-                    break
-            if branch_t_idx is None or branch_split_out_name == "" or branch_nhwc_name == "":
-                continue
-            if branch_nhwc_name in model_outputs:
-                continue
-
-            # Identify concat that consumes one or more post NHWC->NCHW transposes
-            # and at least one direct split output.
-            candidate_concat_indices: List[int] = []
-            for out_name in list(split_outputs):
-                if out_name == branch_split_out_name:
-                    continue
-                for user_idx in consumers.get(out_name, []):
-                    user_op = model_ir.operators[int(user_idx)]
-                    if str(user_op.op_type) == "CONCATENATION":
-                        candidate_concat_indices.append(int(user_idx))
-            if len(candidate_concat_indices) <= 0:
-                continue
-
-            selected_concat_idx: Optional[int] = None
-            selected_concat_op: Optional[OperatorIR] = None
-            selected_post_t_outputs: List[str] = []
-            selected_post_t_inputs: List[str] = []
-            for concat_idx in list(dict.fromkeys(candidate_concat_indices)):
-                concat_op = model_ir.operators[int(concat_idx)]
-                if len(concat_op.outputs) != 1:
-                    continue
-                concat_output_name = str(concat_op.outputs[0])
-                if concat_output_name in model_outputs:
-                    continue
-                concat_axis = int(concat_op.options.get("axis", 0))
-                if concat_axis not in [1, -3]:
-                    continue
-                concat_inputs = [str(v) for v in list(concat_op.inputs)]
-                if branch_split_out_name in concat_inputs:
-                    # branch split output should be consumed via branch transpose path.
-                    continue
-                direct_split_inputs = [
-                    v for v in concat_inputs if v in split_outputs and v != branch_split_out_name
-                ]
-                if len(direct_split_inputs) <= 0:
-                    continue
-                post_t_indices: List[int] = []
-                post_t_outputs: List[str] = []
-                post_t_inputs: List[str] = []
-                valid = True
-                for input_name in list(concat_inputs):
-                    prod_idx = producers.get(input_name, None)
-                    if prod_idx is None:
-                        continue
-                    prod_op = model_ir.operators[int(prod_idx)]
-                    if (
-                        str(prod_op.op_type) == "TRANSPOSE"
-                        and len(prod_op.inputs) >= 2
-                        and len(prod_op.outputs) == 1
-                        and str(prod_op.outputs[0]) == input_name
-                        and _read_transpose_perm(model_ir, prod_op) == perm_nhwc_to_nchw
-                    ):
-                        if str(prod_op.outputs[0]) in model_outputs:
-                            valid = False
-                            break
-                        if set(int(v) for v in consumers.get(str(prod_op.outputs[0]), [])) != {int(concat_idx)}:
-                            valid = False
-                            break
-                        post_t_indices.append(int(prod_idx))
-                        post_t_outputs.append(str(prod_op.outputs[0]))
-                        post_t_inputs.append(str(prod_op.inputs[0]))
-                if not valid or len(post_t_indices) <= 0:
-                    continue
-                selected_concat_idx = int(concat_idx)
-                selected_concat_op = concat_op
-                selected_post_t_outputs = list(post_t_outputs)
-                selected_post_t_inputs = list(post_t_inputs)
-                break
-
-            if selected_concat_idx is None or selected_concat_op is None:
-                continue
-
-            # 1) Bypass pre-branch transpose.
-            _replace_tensor_inputs(model_ir, branch_nhwc_name, branch_split_out_name)
-            branch_tensor = model_ir.tensors.get(branch_split_out_name, None)
-            if branch_tensor is not None:
-                _permute_tensor_metadata_if_rank_matches(
-                    branch_tensor,
-                    perm_nchw_to_nhwc,
-                )
-
-            # 2) Rewire split to consume NHWC source and split channel axis=3.
-            new_split_axis_name = _unique_tensor_name(f"{split_axis_name}_nhwc")
-            model_ir.tensors[new_split_axis_name] = TensorIR(
-                name=new_split_axis_name,
-                dtype="INT32",
-                shape=[1],
-                shape_signature=[1],
-                data=np.asarray([3], dtype=np.int32),
-                is_variable=False,
-            )
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=split_op,
-                new_inputs=[new_split_axis_name, src_nhwc_name],
-            )
-            for split_out_name in list(split_outputs):
-                split_out_tensor = model_ir.tensors.get(split_out_name, None)
-                if split_out_tensor is None:
-                    continue
-                _permute_tensor_metadata_if_rank_matches(
-                    split_out_tensor,
-                    perm_nchw_to_nhwc,
-                )
-
-            # 3) Replace concat post-transpose inputs with NHWC tensors and switch axis.
-            concat_inputs = [str(v) for v in list(selected_concat_op.inputs)]
-            replaced_concat_inputs: List[str] = []
-            post_out_to_in = {
-                str(out_name): str(in_name)
-                for out_name, in_name in zip(
-                    selected_post_t_outputs,
-                    selected_post_t_inputs,
-                )
-            }
-            for input_name in list(concat_inputs):
-                replaced_concat_inputs.append(post_out_to_in.get(str(input_name), str(input_name)))
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=selected_concat_op,
-                new_inputs=replaced_concat_inputs,
-            )
-            selected_concat_op.options["axis"] = int(3)
-
-            # 4) Keep original concat output contract by appending one NHWC->NCHW transpose.
-            concat_output_nchw_name = str(selected_concat_op.outputs[0])
-            concat_output_nhwc_name = _unique_tensor_name(f"{concat_output_nchw_name}__nhwc")
-            concat_output_nchw_tensor = model_ir.tensors.get(concat_output_nchw_name, None)
-            if concat_output_nchw_tensor is None:
-                continue
-            nhwc_shape = _permute_shape(
-                [int(v) for v in list(concat_output_nchw_tensor.shape)],
-                perm_nchw_to_nhwc,
-            )
-            if nhwc_shape is None:
-                continue
-            nhwc_signature = _permute_shape(
-                (
-                    [int(v) for v in list(concat_output_nchw_tensor.shape_signature)]
-                    if concat_output_nchw_tensor.shape_signature is not None
-                    else [int(v) for v in list(concat_output_nchw_tensor.shape)]
-                ),
-                perm_nchw_to_nhwc,
-            )
-            if nhwc_signature is None:
-                nhwc_signature = [int(v) for v in list(nhwc_shape)]
-            model_ir.tensors[concat_output_nhwc_name] = TensorIR(
-                name=concat_output_nhwc_name,
-                dtype=str(concat_output_nchw_tensor.dtype),
-                shape=[int(v) for v in list(nhwc_shape)],
-                shape_signature=[int(v) for v in list(nhwc_signature)],
-                data=None,
-                is_variable=False,
-                quantization=_clone_quantization(concat_output_nchw_tensor.quantization),
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=selected_concat_op,
-                new_outputs=[concat_output_nhwc_name],
-            )
-            bridge_perm_name = _unique_tensor_name(f"{concat_output_nchw_name}_bridge_perm")
-            model_ir.tensors[bridge_perm_name] = TensorIR(
-                name=bridge_perm_name,
-                dtype="INT32",
-                shape=[4],
-                shape_signature=[4],
-                data=np.asarray(perm_nhwc_to_nchw, dtype=np.int32),
-                is_variable=False,
-            )
-            model_ir.operators.insert(
-                int(selected_concat_idx + 1),
-                OperatorIR(
-                    op_type="TRANSPOSE",
-                    inputs=[concat_output_nhwc_name, bridge_perm_name],
-                    outputs=[concat_output_nchw_name],
-                ),
-            )
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_split_conv_concat_transpose_bridge_to_single_post_nchw": int(rewritten)}
+    return _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
@@ -30293,7 +30024,10 @@ def lower_onnx_to_ir(
         _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
         _run_qkv_attention_layout_pass_cluster()
-        _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
+        _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         # Run the multi-branch gate rewrite at terminal stage so earlier
         # generic passes do not re-wrap rewritten NHWC tensors.
         _run_singleton_reshape_layout_pass_cluster(
@@ -30350,7 +30084,10 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
+    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
         model_ir,
         layout_state=session.layout_state,
@@ -30656,7 +30393,10 @@ def lower_onnx_to_ir(
         include_layout_transpose=optimize_layout_transpose_chains,
         include_prefix=False,
     )
-    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
+    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.

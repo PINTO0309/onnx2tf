@@ -6050,6 +6050,54 @@ indexed owners, and full architecture suite, `525` tests pass. TensorFlow-
 blocked direct/default/`-cotof` checks pass sequentially, and YuNet reproduces
 the five fixed artifact hashes.
 
+The direct Split/Conv/Concat bridge is independently owned by
+`passes/split_conv_concat_bridge_layout.py`. The former 287-line lowerer
+implementation is a thin dispatcher at all three unchanged production
+positions. Each invocation receives Session `LayoutState`, and its phase order
+relative to the exact all-output, Conv/Concat, and late QKV helpers is
+unchanged.
+
+The resolver requires a private typed NHWC-to-NCHW adapter feeding an equal
+channel Split exclusively. Exactly one Split output must own one typed inverse
+adapter. Every other Split output must occur exactly once as a direct input of
+one selected NCHW Concat; every remaining Concat input must be the exclusive
+output of a typed NHWC-to-NCHW adapter. At least one of those post-adapter
+inputs must be reachable from the converted Split branch through a bounded,
+graph-ordered NHWC interior. The interior is deliberately operation-agnostic:
+it preserves existing Conv and non-Conv computation instead of recognizing a
+model name or one hard-coded chain.
+
+Source and axis provenance, typed permutations, producer uniqueness,
+consumer slots, graph order, public boundaries, equal Split metadata,
+static/dynamic shapes, dtype, per-tensor quantization, physical layout, Concat
+input classification, and the retained NCHW output contract are all resolved
+before planning. Every consumer of the inverse branch adapter is rewired by
+exact input slot. An unclassified Concat input, Split fan-out, post-adapter
+fan-out, unreachable converted branch, duplicate producer, missing tensor,
+stale order, per-axis quantization, or contradictory layout rejects the full
+candidate without mutation.
+
+The immutable plan records all input replacements, every Split metadata
+update, Split-axis copy-on-write, the Concat axis/output change, a private NHWC
+Concat tensor, the three-or-more adapter removal group, and all tensor/operator
+contracts. The original local NCHW Concat tensor name and metadata remain the
+output of one inserted post adapter, which reuses the proven pre-adapter
+permutation. Shared INT32/INT64 axes receive deterministic typed clones; an
+exclusive axis changes in place. A second complete resolution and preflight
+precedes writes, one differential graph index performs compaction and adapter
+insertion, LayoutState is updated differentially, and pruning occurs only
+after success.
+
+Forty-six dedicated tests cover two- and three-way Split, either branch,
+multiple NHWC post paths, both Concat orders, static/dynamic signatures,
+INT32/INT64 and negative axes, exact numerical equivalence, branch-side
+consumers, shared-axis cloning, candidate limits, idempotence, GraphIndex,
+LayoutState, and twenty-four transactional rejection cases. With the adjacent
+indexed owners, two active fixtures, and complete architecture suite, `534`
+tests pass. TensorFlow-blocked direct/default/`-cotof` checks pass
+sequentially, and one sequential YuNet conversion reproduces all five fixed
+artifact hashes.
+
 The adjacent singleton gate/Conv/Concat compatibility island is owned by
 `passes/singleton_gate_layout.py`. The former lowerer implementation mixed
 matching, metadata writes, consumer rewiring, and operator deletion in one
