@@ -5749,6 +5749,55 @@ producer/consumer rebuild and unbounded `while True` loop. The no-post path no
 longer rewires inputs before later tensor and quantization guards, so a rejected
 candidate is a transactional no-op.
 
+The five late safe binary recovery modes share the same owner and one ordered
+entry point, `run_safe_binary_bridge_recovery`. Their historical phase order
+is fixed as symmetric legacy-only, symmetric single-post, symmetric mixed
+fan-out, asymmetric fan-out, and symmetric full-post fan-out. The lowerer
+retains 17-line compatibility dispatchers for the five former helpers, but all
+three lowerer call sites now call the single ordered owner and supply Session
+LayoutState. This replaces 938 lines of repeated full-map
+fixed-point mutation.
+
+Legacy-only and single-post modes reuse the strict symmetric resolver and
+applier. The safe phases additionally retain the historical
+`__preserve_layout_boundary__` marker on inserted or reversed adapters; the
+earlier general bridge phase does not acquire this late cleanup boundary.
+This distinction preserves later activation-fusion and adapter-cleanup order.
+
+Mixed fan-out and full-post fan-out share one multi-post plan. Every output
+consumer is classified as an inverse post or a legacy-layout user. Full-post
+mode requires at least two inverse posts and no legacy user, selects the first
+post output as the canonical raw tensor, rewires later aliases, and removes all
+posts. Mixed mode requires both classes, converts the first post into the one
+raw-to-legacy adapter, rewires later post aliases to the canonical raw tensor,
+and removes only the remaining posts. The retained adapter references the
+already-proven pre-permutation constant; the former mutation of a potentially
+shared inverse-permutation buffer is gone. It must precede every legacy user.
+
+Asymmetric fan-out retains its distinct requirement for an existing inverse
+Transpose of the plain binary operand. That producer must already precede the
+binary. The binary consumes the original raw pre-adapter source and this
+existing raw-layout peer without changing SUB or DIV operand order. The first
+inverse output post supplies the canonical result. When the original output
+has other consumers or is public, one adapter is inserted immediately after
+the binary to preserve the original tensor name and layout.
+
+All five phases use the same differential `ModelIRGraphIndex`. Each phase
+enumerates current binary candidates in graph order and has its own
+configurable 32-rewrite ceiling. Typed permutations, source provenance,
+producer uniqueness, exact fan-out, graph order, public boundaries, fused
+activation, dtype, per-tensor quantization, broadcast shape, dynamic
+signature, alias consumers, and every removal/insertion index are planned and
+re-resolved before apply. Pruning and LayoutState synchronization occur once
+after the selected ordered phases.
+
+A production audit observed four ordered invocations per model across five
+short representatives. Four modes matched zero candidates everywhere. Only
+the first SiNet invocation was active: legacy-only rewrote `Add_52` and
+`Add_109`, exactly two candidates. The indexed sequence preserves those two
+matches and emits byte-identical SiNet float32, float16, correspondence, and
+schema artifacts.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

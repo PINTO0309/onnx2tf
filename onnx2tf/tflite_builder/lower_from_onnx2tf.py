@@ -30,8 +30,6 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _normalize_squeeze_axes_for_rank,
     _invert_perm,
     _permute_shape,
-    _shapes_equal,
-    _is_unknown_shape,
     _is_fully_known_positive_shape,
     _prune_unused_tensors,
     _permute_tensor_metadata_if_rank_matches,
@@ -143,6 +141,12 @@ from onnx2tf.tflite_builder.passes.affine_post_add_layout import (
 )
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
+    optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
+    optimize_transpose_binary_full_post_fanout_bridges as _optimize_transpose_binary_full_post_fanout_bridges_pass,
+    optimize_transpose_binary_mixed_fanout_bridges_safe as _optimize_transpose_binary_mixed_fanout_bridges_safe_pass,
+    optimize_transpose_binary_single_post_bridges_safe as _optimize_transpose_binary_single_post_bridges_safe_pass,
+    optimize_transpose_binary_symmetric_legacy_only_bridges_safe as _optimize_transpose_binary_symmetric_legacy_only_bridges_safe_pass,
+    run_safe_binary_bridge_recovery as _run_safe_binary_bridge_recovery_pass,
 )
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
@@ -5138,952 +5142,99 @@ def _optimize_transpose_binary_bridges(
     )
 
 
-def _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold asymmetric transpose wrappers around binary ops when output has fanout.
-
-    Target pattern:
-      T(P)(X) + Y -> Z
-      T(inv(P))(Z) -> Z_nhwc
-      (Z may have extra non-transpose consumers)
-
-    Rewritten:
-      X + T(inv(P))(Y) -> Z_nhwc
-      (optional adapter) T(P)(Z_nhwc) -> Z
-
-    This reduces one transpose in fanout cases where the simple asymmetric bridge
-    optimization cannot apply.
-    """
-    rewritten = 0
-    binary_ops = {"ADD", "SUB", "MUL", "DIV"}
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for mid_idx, mid_op in enumerate(model_ir.operators):
-            if str(mid_op.op_type) not in binary_ops:
-                continue
-            if len(mid_op.inputs) != 2 or len(mid_op.outputs) != 1:
-                continue
-
-            in0_name = str(mid_op.inputs[0])
-            in1_name = str(mid_op.inputs[1])
-            out_name = str(mid_op.outputs[0])
-
-            pre0_idx = producers.get(in0_name, None)
-            pre1_idx = producers.get(in1_name, None)
-            pre0_is_transpose = False
-            pre1_is_transpose = False
-            pre0_op = None
-            pre1_op = None
-
-            if pre0_idx is not None:
-                pre0_op = model_ir.operators[int(pre0_idx)]
-                pre0_is_transpose = (
-                    str(pre0_op.op_type) == "TRANSPOSE"
-                    and len(pre0_op.inputs) >= 2
-                    and len(pre0_op.outputs) == 1
-                    and str(pre0_op.outputs[0]) == in0_name
-                )
-            if pre1_idx is not None:
-                pre1_op = model_ir.operators[int(pre1_idx)]
-                pre1_is_transpose = (
-                    str(pre1_op.op_type) == "TRANSPOSE"
-                    and len(pre1_op.inputs) >= 2
-                    and len(pre1_op.outputs) == 1
-                    and str(pre1_op.outputs[0]) == in1_name
-                )
-
-            # Exactly one pre-transposed input.
-            if pre0_is_transpose == pre1_is_transpose:
-                continue
-
-            if pre0_is_transpose:
-                pre_idx = int(pre0_idx)
-                pre_op = pre0_op
-                transposed_input_name = in0_name
-                plain_input_name = in1_name
-                transpose_on_lhs = True
-            else:
-                pre_idx = int(pre1_idx)
-                pre_op = pre1_op
-                transposed_input_name = in1_name
-                plain_input_name = in0_name
-                transpose_on_lhs = False
-
-            if pre_op is None:
-                continue
-
-            transposed_users = [int(v) for v in consumers.get(transposed_input_name, [])]
-            if transposed_users != [int(mid_idx)] and set(transposed_users) != {int(mid_idx)}:
-                continue
-
-            out_users = [int(v) for v in consumers.get(out_name, []) if int(v) != int(mid_idx)]
-            if len(out_users) == 0:
-                continue
-
-            perm_pre = _read_transpose_perm(model_ir, pre_op)
-            if perm_pre is None:
-                continue
-            inv_perm = _invert_perm(perm_pre)
-            if inv_perm is None:
-                continue
-
-            post_idx = None
-            post_op = None
-            for user_idx in out_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) == "TRANSPOSE"
-                    and len(user_op.inputs) >= 2
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == out_name
-                ):
-                    perm_post = _read_transpose_perm(model_ir, user_op)
-                    if perm_post is not None and perm_post == inv_perm:
-                        post_idx = int(user_idx)
-                        post_op = user_op
-                        break
-            if post_idx is None or post_op is None:
-                continue
-
-            post_output_name = str(post_op.outputs[0])
-            if post_output_name in model_ir.outputs and out_name in model_ir.outputs:
-                # Avoid ambiguous observable output rewrites.
-                continue
-
-            # Find an existing transpose(plain_input, inv_perm) to reuse.
-            plain_users = [int(v) for v in consumers.get(plain_input_name, [])]
-            plain_transpose_idx = None
-            plain_transpose_out = None
-            for plain_user_idx in plain_users:
-                plain_user_op = model_ir.operators[int(plain_user_idx)]
-                if (
-                    str(plain_user_op.op_type) == "TRANSPOSE"
-                    and len(plain_user_op.inputs) >= 2
-                    and len(plain_user_op.outputs) == 1
-                    and str(plain_user_op.inputs[0]) == plain_input_name
-                ):
-                    perm_plain = _read_transpose_perm(model_ir, plain_user_op)
-                    if perm_plain is not None and perm_plain == inv_perm:
-                        plain_transpose_idx = int(plain_user_idx)
-                        plain_transpose_out = str(plain_user_op.outputs[0])
-                        break
-            if plain_transpose_idx is None or plain_transpose_out is None:
-                continue
-
-            raw_from_pre_name = str(pre_op.inputs[0])
-            if transpose_on_lhs:
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=mid_op,
-                    new_inputs=[raw_from_pre_name, plain_transpose_out],
-                )
-            else:
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=mid_op,
-                    new_inputs=[plain_transpose_out, raw_from_pre_name],
-                )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_outputs=[post_output_name],
-            )
-
-            out_tensor = model_ir.tensors.get(out_name, None)
-            post_out_tensor = model_ir.tensors.get(post_output_name, None)
-            if out_tensor is not None and post_out_tensor is not None:
-                post_out_tensor.dtype = str(out_tensor.dtype)
-                if post_out_tensor.quantization is None and out_tensor.quantization is not None:
-                    post_out_tensor.quantization = _clone_quantization(out_tensor.quantization)
-
-            extra_users = [int(v) for v in out_users if int(v) != int(post_idx)]
-            adapter_needed = len(extra_users) > 0 or out_name in model_ir.outputs
-            if adapter_needed:
-                adapter = OperatorIR(
-                    op_type="TRANSPOSE",
-                    inputs=[post_output_name, str(pre_op.inputs[1])],
-                    outputs=[out_name],
-                )
-
-            remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
-            shift = sum(1 for ridx in remove_indices if int(ridx) < int(mid_idx))
-            for ridx in remove_indices:
-                del model_ir.operators[int(ridx)]
-            mid_new_idx = int(mid_idx - shift)
-            if adapter_needed:
-                model_ir.operators.insert(int(mid_new_idx) + 1, adapter)
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {
-        "rewritten_transpose_binary_asymmetric_fanout_bridges": int(rewritten),
-    }
-
-
-def _optimize_transpose_binary_full_post_fanout_bridges(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold a strict transpose-binary-transpose fanout pattern.
-
-    Target:
-      T(P)(A) + T(P)(B) -> C
-      C -> T(inv(P)) -> C0
-      C -> T(inv(P)) -> C1
-      ...
-
-    Rewrite:
-      A + B -> C0
-      (all uses of C1... are rewired to C0)
-
-    Safety:
-    - Binary op has exactly 2 inputs / 1 output (ADD|SUB|MUL|DIV)
-    - Both inputs are produced by TRANSPOSE with identical permutation
-    - Both pre-transpose outputs are consumed only by the binary op
-    - All consumers of binary output are inverse TRANSPOSE ops
-    - No broadcasting ambiguity: all participating tensor shapes match exactly
-    - Intermediate tensors are not graph outputs
-    """
-    rewritten = 0
-    binary_ops = {"ADD", "SUB", "MUL", "DIV"}
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for mid_idx, mid_op in enumerate(model_ir.operators):
-            if str(mid_op.op_type) not in binary_ops:
-                continue
-            if len(mid_op.inputs) != 2 or len(mid_op.outputs) != 1:
-                continue
-
-            in0_name = str(mid_op.inputs[0])
-            in1_name = str(mid_op.inputs[1])
-            out_name = str(mid_op.outputs[0])
-
-            pre0_idx = producers.get(in0_name, None)
-            pre1_idx = producers.get(in1_name, None)
-            if pre0_idx is None or pre1_idx is None:
-                continue
-            # This rewrite targets two independent symmetric transpose branches.
-            # Shared-producer binary (e.g. MUL(x, x)) is out-of-scope and can
-            # cause duplicate index deletion if not excluded.
-            if int(pre0_idx) == int(pre1_idx):
-                continue
-            pre0_op = model_ir.operators[int(pre0_idx)]
-            pre1_op = model_ir.operators[int(pre1_idx)]
-            if str(pre0_op.op_type) != "TRANSPOSE" or str(pre1_op.op_type) != "TRANSPOSE":
-                continue
-            if len(pre0_op.inputs) < 2 or len(pre1_op.inputs) < 2:
-                continue
-            if len(pre0_op.outputs) != 1 or len(pre1_op.outputs) != 1:
-                continue
-            if str(pre0_op.outputs[0]) != in0_name or str(pre1_op.outputs[0]) != in1_name:
-                continue
-
-            # Pre-transposed tensors must be exclusive to the binary op.
-            if set(consumers.get(in0_name, [])) != {int(mid_idx)}:
-                continue
-            if set(consumers.get(in1_name, [])) != {int(mid_idx)}:
-                continue
-
-            perm_pre0 = _read_transpose_perm(model_ir, pre0_op)
-            perm_pre1 = _read_transpose_perm(model_ir, pre1_op)
-            if perm_pre0 is None or perm_pre1 is None:
-                continue
-            if perm_pre0 != perm_pre1:
-                continue
-
-            out_users = [int(v) for v in consumers.get(out_name, []) if int(v) != int(mid_idx)]
-            if len(out_users) < 2:
-                continue
-
-            post_indices: List[int] = []
-            post_output_names: List[str] = []
-            for user_idx in out_users:
-                post_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(post_op.op_type) != "TRANSPOSE"
-                    or len(post_op.inputs) < 2
-                    or len(post_op.outputs) != 1
-                    or str(post_op.inputs[0]) != out_name
-                ):
-                    post_indices = []
-                    break
-                perm_post = _read_transpose_perm(model_ir, post_op)
-                if perm_post is None or not _is_inverse_perm(perm_pre0, perm_post):
-                    post_indices = []
-                    break
-                post_indices.append(int(user_idx))
-                post_output_names.append(str(post_op.outputs[0]))
-            if len(post_indices) != len(out_users):
-                continue
-
-            if (
-                in0_name in model_ir.outputs
-                or in1_name in model_ir.outputs
-                or out_name in model_ir.outputs
-                or any(name in model_ir.outputs for name in post_output_names)
-            ):
-                continue
-
-            raw_in0_name = str(pre0_op.inputs[0])
-            raw_in1_name = str(pre1_op.inputs[0])
-            raw_in0_tensor = model_ir.tensors.get(raw_in0_name, None)
-            raw_in1_tensor = model_ir.tensors.get(raw_in1_name, None)
-            in0_tensor = model_ir.tensors.get(in0_name, None)
-            in1_tensor = model_ir.tensors.get(in1_name, None)
-            out_tensor = model_ir.tensors.get(out_name, None)
-            if not _all_per_tensor_quantized(
-                [raw_in0_tensor, raw_in1_tensor, in0_tensor, in1_tensor, out_tensor]
-            ):
-                continue
-
-            # Conservative shape guards with broadcast-aware validation.
-            raw_shape0 = list(raw_in0_tensor.shape) if raw_in0_tensor is not None else None
-            raw_shape1 = list(raw_in1_tensor.shape) if raw_in1_tensor is not None else None
-            raw_broadcast_shape = _broadcast_static_shapes(raw_shape0, raw_shape1)
-            if raw_broadcast_shape is None:
-                continue
-            mid_expected_shape = _permute_shape(list(raw_broadcast_shape), perm_pre0)
-            if mid_expected_shape is None:
-                continue
-
-            in_shape0 = list(in0_tensor.shape) if in0_tensor is not None else None
-            in_shape1 = list(in1_tensor.shape) if in1_tensor is not None else None
-            mid_broadcast_shape = _broadcast_static_shapes(in_shape0, in_shape1)
-            if mid_broadcast_shape is None:
-                continue
-            if not _shapes_match_if_known(mid_broadcast_shape, mid_expected_shape):
-                continue
-            out_shape = list(out_tensor.shape) if out_tensor is not None else None
-            if not _shapes_match_if_known(out_shape, mid_expected_shape):
-                continue
-
-            valid_post_shapes = True
-            for post_output_name in post_output_names:
-                post_tensor = model_ir.tensors.get(post_output_name, None)
-                post_shape = list(post_tensor.shape) if post_tensor is not None else None
-                if not _shapes_match_if_known(post_shape, raw_broadcast_shape):
-                    valid_post_shapes = False
-                    break
-            if not valid_post_shapes:
-                continue
-
-            canonical_post_output = str(post_output_names[0])
-            canonical_tensor = model_ir.tensors.get(canonical_post_output, None)
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_inputs=[raw_in0_name, raw_in1_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_outputs=[canonical_post_output],
-            )
-
-            if canonical_tensor is not None:
-                canonical_tensor.shape = [int(v) for v in list(raw_broadcast_shape)]
-                raw_sig0 = (
-                    list(raw_in0_tensor.shape_signature)
-                    if raw_in0_tensor is not None and raw_in0_tensor.shape_signature is not None
-                    else list(raw_shape0) if raw_shape0 is not None else None
-                )
-                raw_sig1 = (
-                    list(raw_in1_tensor.shape_signature)
-                    if raw_in1_tensor is not None and raw_in1_tensor.shape_signature is not None
-                    else list(raw_shape1) if raw_shape1 is not None else None
-                )
-                raw_broadcast_signature = _broadcast_static_shapes(raw_sig0, raw_sig1)
-                if raw_broadcast_signature is None:
-                    raw_broadcast_signature = [int(v) for v in list(raw_broadcast_shape)]
-                canonical_tensor.shape_signature = [int(v) for v in list(raw_broadcast_signature)]
-                if out_tensor is not None:
-                    canonical_tensor.dtype = str(out_tensor.dtype)
-                    canonical_tensor.quantization = _clone_quantization(out_tensor.quantization)
-
-            for post_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, post_output_name, canonical_post_output)
-
-            remove_indices = sorted(
-                list(set([int(pre0_idx), int(pre1_idx)] + [int(idx) for idx in post_indices])),
-                reverse=True,
-            )
-            for remove_idx in remove_indices:
-                del model_ir.operators[remove_idx]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_transpose_binary_full_post_fanout_bridges": int(rewritten)}
-
-
-def _optimize_transpose_binary_single_post_bridges_safe(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Conservative transpose-binary bridge folding with exactly one inverse post-transpose.
-
-    Target:
-      T(P)(A), T(P)(B) -> C
-      C -> T(inv(P)) -> C_raw
-      (C may also have extra non-transpose consumers)
-
-    Rewrite:
-      A, B -> C_raw
-      If C has extra consumers:
-        keep adapter T(P): C_raw -> C
-      else:
-        remove post-transpose.
-
-    This pass intentionally uses strict shape guards to avoid layout corruption.
-    """
-    rewritten = 0
-    binary_ops = {"ADD", "SUB", "MUL", "DIV"}
-    preserve_layout_boundary_marker = "__preserve_layout_boundary__"
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for mid_idx, mid_op in enumerate(model_ir.operators):
-            if str(mid_op.op_type) not in binary_ops:
-                continue
-            if len(mid_op.inputs) != 2 or len(mid_op.outputs) != 1:
-                continue
-
-            in0_name = str(mid_op.inputs[0])
-            in1_name = str(mid_op.inputs[1])
-            out_name = str(mid_op.outputs[0])
-
-            pre0_idx = producers.get(in0_name, None)
-            pre1_idx = producers.get(in1_name, None)
-            if pre0_idx is None or pre1_idx is None:
-                continue
-            # This rewrite assumes two independent transpose producers.
-            # Shared-producer binary (e.g. MUL(x, x)) can invalidate index removal
-            # ordering and leave dangling edges.
-            if int(pre0_idx) == int(pre1_idx):
-                continue
-            pre0_op = model_ir.operators[int(pre0_idx)]
-            pre1_op = model_ir.operators[int(pre1_idx)]
-            if str(pre0_op.op_type) != "TRANSPOSE" or str(pre1_op.op_type) != "TRANSPOSE":
-                continue
-            if len(pre0_op.inputs) < 2 or len(pre1_op.inputs) < 2:
-                continue
-            if len(pre0_op.outputs) != 1 or len(pre1_op.outputs) != 1:
-                continue
-            if str(pre0_op.outputs[0]) != in0_name or str(pre1_op.outputs[0]) != in1_name:
-                continue
-
-            if set(consumers.get(in0_name, [])) != {int(mid_idx)}:
-                continue
-            if set(consumers.get(in1_name, [])) != {int(mid_idx)}:
-                continue
-
-            perm_pre0 = _read_transpose_perm(model_ir, pre0_op)
-            perm_pre1 = _read_transpose_perm(model_ir, pre1_op)
-            if perm_pre0 is None or perm_pre1 is None:
-                continue
-            if perm_pre0 != perm_pre1:
-                continue
-
-            out_users = {int(v) for v in consumers.get(out_name, []) if int(v) != int(mid_idx)}
-            if len(out_users) == 0:
-                continue
-
-            post_candidates: List[int] = []
-            for user_idx in sorted(list(out_users)):
-                post_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(post_op.op_type) != "TRANSPOSE"
-                    or len(post_op.inputs) < 2
-                    or len(post_op.outputs) != 1
-                    or str(post_op.inputs[0]) != out_name
-                ):
-                    continue
-                perm_post = _read_transpose_perm(model_ir, post_op)
-                if perm_post is None or not _is_inverse_perm(perm_pre0, perm_post):
-                    continue
-                post_candidates.append(int(user_idx))
-
-            if len(post_candidates) != 1:
-                continue
-
-            post_idx = int(post_candidates[0])
-            post_op = model_ir.operators[post_idx]
-            post_out_name = str(post_op.outputs[0])
-            post_perm_name = str(post_op.inputs[1])
-            extra_users = set(out_users) - {int(post_idx)}
-
-            # Avoid ambiguous fanout rewrites if any extra fanout is another transpose.
-            if any(str(model_ir.operators[int(v)].op_type) == "TRANSPOSE" for v in extra_users):
-                continue
-
-            if in0_name in model_ir.outputs or in1_name in model_ir.outputs:
-                continue
-
-            raw_in0_name = str(pre0_op.inputs[0])
-            raw_in1_name = str(pre1_op.inputs[0])
-
-            raw_in0_tensor = model_ir.tensors.get(raw_in0_name, None)
-            raw_in1_tensor = model_ir.tensors.get(raw_in1_name, None)
-            in0_tensor = model_ir.tensors.get(in0_name, None)
-            in1_tensor = model_ir.tensors.get(in1_name, None)
-            out_tensor = model_ir.tensors.get(out_name, None)
-            post_out_tensor = model_ir.tensors.get(post_out_name, None)
-
-            if not _all_per_tensor_quantized(
-                [raw_in0_tensor, raw_in1_tensor, in0_tensor, in1_tensor, out_tensor, post_out_tensor]
-            ):
-                continue
-
-            raw_shape0 = list(raw_in0_tensor.shape) if raw_in0_tensor is not None else None
-            raw_shape1 = list(raw_in1_tensor.shape) if raw_in1_tensor is not None else None
-            # NOTE:
-            # Some optimized branches can retain stale static shapes in IR while runtime
-            # shapes are valid. For strict single-post bridge chains, rely on topology
-            # constraints and quantization compatibility instead of hard shape equality.
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_inputs=[raw_in0_name, raw_in1_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_outputs=[post_out_name],
-            )
-
-            if post_out_tensor is not None and out_tensor is not None:
-                post_out_tensor.dtype = str(out_tensor.dtype)
-                post_out_tensor.quantization = _clone_quantization(out_tensor.quantization)
-                if not _is_unknown_shape(raw_shape0):
-                    post_out_tensor.shape = [int(v) for v in list(raw_shape0)]
-                    raw_sig0 = (
-                        list(raw_in0_tensor.shape_signature)
-                        if raw_in0_tensor is not None and raw_in0_tensor.shape_signature is not None
-                        else list(raw_shape0)
-                    )
-                    post_out_tensor.shape_signature = [int(v) for v in list(raw_sig0)]
-
-            if len(extra_users) > 0:
-                post_opts = dict(post_op.options) if isinstance(post_op.options, dict) else {}
-                post_opts[preserve_layout_boundary_marker] = True
-                post_op.options = post_opts
-                perm_tensor = model_ir.tensors.get(post_perm_name, None)
-                if perm_tensor is not None:
-                    perm_tensor.data = np.asarray(perm_pre0, dtype=np.int32)
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=post_op,
-                    new_inputs=[post_out_name, post_perm_name],
-                )
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=post_op,
-                    new_outputs=[out_name],
-                )
-                remove_indices = sorted(list({int(pre0_idx), int(pre1_idx)}), reverse=True)
-            else:
-                remove_indices = sorted(list({int(pre0_idx), int(pre1_idx), int(post_idx)}), reverse=True)
-
-            for remove_idx in remove_indices:
-                del model_ir.operators[remove_idx]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_transpose_binary_single_post_bridges_safe": int(rewritten)}
-
-
-def _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold transpose-binary pattern when output fanout mixes:
-    - inverse TRANSPOSE consumers (layout adapters)
-    - non-TRANSPOSE consumers (legacy layout path)
-
-    Rewrite keeps one transpose adapter for legacy consumers and removes the
-    inverse transpose fanout consumers.
-    """
-    rewritten = 0
-    binary_ops = {"ADD", "SUB", "MUL", "DIV"}
-    preserve_layout_boundary_marker = "__preserve_layout_boundary__"
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for mid_idx, mid_op in enumerate(model_ir.operators):
-            if str(mid_op.op_type) not in binary_ops:
-                continue
-            if len(mid_op.inputs) != 2 or len(mid_op.outputs) != 1:
-                continue
-
-            in0_name = str(mid_op.inputs[0])
-            in1_name = str(mid_op.inputs[1])
-            out_name = str(mid_op.outputs[0])
-
-            pre0_idx = producers.get(in0_name, None)
-            pre1_idx = producers.get(in1_name, None)
-            if pre0_idx is None or pre1_idx is None:
-                continue
-            # This rewrite assumes two independent transpose producers.
-            # Shared-producer binary (e.g. MUL(x, x)) can invalidate index removal
-            # ordering and leave dangling edges.
-            if int(pre0_idx) == int(pre1_idx):
-                continue
-            pre0_op = model_ir.operators[int(pre0_idx)]
-            pre1_op = model_ir.operators[int(pre1_idx)]
-            if str(pre0_op.op_type) != "TRANSPOSE" or str(pre1_op.op_type) != "TRANSPOSE":
-                continue
-            if len(pre0_op.inputs) < 2 or len(pre1_op.inputs) < 2:
-                continue
-            if len(pre0_op.outputs) != 1 or len(pre1_op.outputs) != 1:
-                continue
-            if str(pre0_op.outputs[0]) != in0_name or str(pre1_op.outputs[0]) != in1_name:
-                continue
-
-            if set(consumers.get(in0_name, [])) != {int(mid_idx)}:
-                continue
-            if set(consumers.get(in1_name, [])) != {int(mid_idx)}:
-                continue
-
-            perm_pre0 = _read_transpose_perm(model_ir, pre0_op)
-            perm_pre1 = _read_transpose_perm(model_ir, pre1_op)
-            if perm_pre0 is None or perm_pre1 is None or perm_pre0 != perm_pre1:
-                continue
-
-            out_users = [int(v) for v in consumers.get(out_name, []) if int(v) != int(mid_idx)]
-            if len(out_users) < 2:
-                continue
-
-            post_indices: List[int] = []
-            post_output_names: List[str] = []
-            legacy_users: List[int] = []
-            valid = True
-            for user_idx in out_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) == "TRANSPOSE"
-                    and len(user_op.inputs) >= 2
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == out_name
-                ):
-                    perm_post = _read_transpose_perm(model_ir, user_op)
-                    if perm_post is None or not _is_inverse_perm(perm_pre0, perm_post):
-                        valid = False
-                        break
-                    post_indices.append(int(user_idx))
-                    post_output_names.append(str(user_op.outputs[0]))
-                else:
-                    legacy_users.append(int(user_idx))
-
-            if not valid:
-                continue
-            if len(post_indices) == 0 or len(legacy_users) == 0:
-                continue
-
-            if (
-                in0_name in model_ir.outputs
-                or in1_name in model_ir.outputs
-                or out_name in model_ir.outputs
-                or any(name in model_ir.outputs for name in post_output_names)
-            ):
-                continue
-
-            raw_in0_name = str(pre0_op.inputs[0])
-            raw_in1_name = str(pre1_op.inputs[0])
-            raw_in0_tensor = model_ir.tensors.get(raw_in0_name, None)
-            raw_in1_tensor = model_ir.tensors.get(raw_in1_name, None)
-            in0_tensor = model_ir.tensors.get(in0_name, None)
-            in1_tensor = model_ir.tensors.get(in1_name, None)
-            out_tensor = model_ir.tensors.get(out_name, None)
-            if not _all_per_tensor_quantized(
-                [raw_in0_tensor, raw_in1_tensor, in0_tensor, in1_tensor, out_tensor]
-            ):
-                continue
-
-            raw_shape0 = list(raw_in0_tensor.shape) if raw_in0_tensor is not None else None
-            raw_shape1 = list(raw_in1_tensor.shape) if raw_in1_tensor is not None else None
-            if not _shapes_match_if_known(raw_shape0, raw_shape1):
-                continue
-            in_shape0 = list(in0_tensor.shape) if in0_tensor is not None else None
-            in_shape1 = list(in1_tensor.shape) if in1_tensor is not None else None
-            if not _shapes_match_if_known(in_shape0, in_shape1):
-                continue
-            if not _is_unknown_shape(raw_shape0) and not _is_unknown_shape(in_shape0):
-                expected_trans_shape = _permute_shape(raw_shape0, perm_pre0)
-                if expected_trans_shape is None or not _shapes_equal(expected_trans_shape, in_shape0):
-                    continue
-
-            valid_post_shapes = True
-            for post_output_name in post_output_names:
-                post_tensor = model_ir.tensors.get(post_output_name, None)
-                post_shape = list(post_tensor.shape) if post_tensor is not None else None
-                if not _shapes_match_if_known(post_shape, raw_shape0):
-                    valid_post_shapes = False
-                    break
-            if not valid_post_shapes:
-                continue
-
-            keep_post_idx = int(post_indices[0])
-            keep_post_op = model_ir.operators[int(keep_post_idx)]
-            canonical_raw_name = str(keep_post_op.outputs[0])
-            keep_perm_name = str(keep_post_op.inputs[1])
-            canonical_raw_tensor = model_ir.tensors.get(canonical_raw_name, None)
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_inputs=[raw_in0_name, raw_in1_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_outputs=[canonical_raw_name],
-            )
-
-            if canonical_raw_tensor is not None and out_tensor is not None:
-                canonical_raw_tensor.dtype = str(out_tensor.dtype)
-                canonical_raw_tensor.quantization = _clone_quantization(out_tensor.quantization)
-                if not _is_unknown_shape(raw_shape0):
-                    canonical_raw_tensor.shape = [int(v) for v in list(raw_shape0)]
-                    raw_sig0 = (
-                        list(raw_in0_tensor.shape_signature)
-                        if raw_in0_tensor is not None and raw_in0_tensor.shape_signature is not None
-                        else list(raw_shape0)
-                    )
-                    canonical_raw_tensor.shape_signature = [int(v) for v in list(raw_sig0)]
-
-            for post_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, post_output_name, canonical_raw_name)
-
-            # Keep one adapter transpose for legacy consumers: raw -> original out layout.
-            keep_post_opts = dict(keep_post_op.options) if isinstance(keep_post_op.options, dict) else {}
-            keep_post_opts[preserve_layout_boundary_marker] = True
-            keep_post_op.options = keep_post_opts
-            keep_perm_tensor = model_ir.tensors.get(keep_perm_name, None)
-            if keep_perm_tensor is not None:
-                keep_perm_tensor.data = np.asarray(perm_pre0, dtype=np.int32)
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=keep_post_op,
-                new_inputs=[canonical_raw_name, keep_perm_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=keep_post_op,
-                new_outputs=[out_name],
-            )
-
-            remove_indices = sorted(
-                list(set([int(pre0_idx), int(pre1_idx)] + [int(idx) for idx in post_indices[1:]])),
-                reverse=True,
-            )
-            for remove_idx in remove_indices:
-                del model_ir.operators[remove_idx]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_transpose_binary_mixed_fanout_bridges_safe": int(rewritten)}
-
-
-def _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold symmetric pre-transpose binary pattern when output has only legacy consumers.
-
-    Pattern:
-      T(P)(A), T(P)(B) -> C
-      C -> legacy consumers only (no inverse-post transpose)
-
-    Rewrite:
-      A, B -> C_raw
-      T(P)(C_raw) -> C
-
-    Net effect: remove 2 pre-transposes and insert 1 adapter transpose.
-    """
-    rewritten = 0
-    binary_ops = {"ADD", "SUB", "MUL", "DIV"}
-    preserve_layout_boundary_marker = "__preserve_layout_boundary__"
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for mid_idx, mid_op in enumerate(model_ir.operators):
-            if str(mid_op.op_type) not in binary_ops:
-                continue
-            if len(mid_op.inputs) != 2 or len(mid_op.outputs) != 1:
-                continue
-
-            in0_name = str(mid_op.inputs[0])
-            in1_name = str(mid_op.inputs[1])
-            out_name = str(mid_op.outputs[0])
-
-            pre0_idx = producers.get(in0_name, None)
-            pre1_idx = producers.get(in1_name, None)
-            if pre0_idx is None or pre1_idx is None:
-                continue
-            # This rewrite assumes two independent transpose producers.
-            # Shared-producer binary (e.g. MUL(x, x)) can invalidate index removal
-            # ordering and leave dangling edges.
-            if int(pre0_idx) == int(pre1_idx):
-                continue
-            pre0_op = model_ir.operators[int(pre0_idx)]
-            pre1_op = model_ir.operators[int(pre1_idx)]
-            if str(pre0_op.op_type) != "TRANSPOSE" or str(pre1_op.op_type) != "TRANSPOSE":
-                continue
-            if len(pre0_op.inputs) < 2 or len(pre1_op.inputs) < 2:
-                continue
-            if len(pre0_op.outputs) != 1 or len(pre1_op.outputs) != 1:
-                continue
-            if str(pre0_op.outputs[0]) != in0_name or str(pre1_op.outputs[0]) != in1_name:
-                continue
-
-            if set(consumers.get(in0_name, [])) != {int(mid_idx)}:
-                continue
-            if set(consumers.get(in1_name, [])) != {int(mid_idx)}:
-                continue
-
-            perm_pre0 = _read_transpose_perm(model_ir, pre0_op)
-            perm_pre1 = _read_transpose_perm(model_ir, pre1_op)
-            if perm_pre0 is None or perm_pre1 is None or perm_pre0 != perm_pre1:
-                continue
-
-            out_users = [int(v) for v in consumers.get(out_name, []) if int(v) != int(mid_idx)]
-            if len(out_users) == 0:
-                continue
-
-            # This pass targets legacy-only fanout; inverse post-transpose is handled elsewhere.
-            has_inverse_post = False
-            for user_idx in out_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) == "TRANSPOSE"
-                    and len(user_op.inputs) >= 2
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == out_name
-                ):
-                    perm_post = _read_transpose_perm(model_ir, user_op)
-                    if perm_post is not None and _is_inverse_perm(perm_pre0, perm_post):
-                        has_inverse_post = True
-                        break
-            if has_inverse_post:
-                continue
-
-            if in0_name in model_ir.outputs or in1_name in model_ir.outputs:
-                continue
-
-            raw_in0_name = str(pre0_op.inputs[0])
-            raw_in1_name = str(pre1_op.inputs[0])
-
-            raw_in0_tensor = model_ir.tensors.get(raw_in0_name, None)
-            raw_in1_tensor = model_ir.tensors.get(raw_in1_name, None)
-            in0_tensor = model_ir.tensors.get(in0_name, None)
-            in1_tensor = model_ir.tensors.get(in1_name, None)
-            out_tensor = model_ir.tensors.get(out_name, None)
-            if not _all_per_tensor_quantized(
-                [raw_in0_tensor, raw_in1_tensor, in0_tensor, in1_tensor, out_tensor]
-            ):
-                continue
-
-            raw_shape0 = list(raw_in0_tensor.shape) if raw_in0_tensor is not None else None
-            raw_shape1 = list(raw_in1_tensor.shape) if raw_in1_tensor is not None else None
-            if not _shapes_match_if_known(raw_shape0, raw_shape1):
-                continue
-
-            # Prepare raw output tensor.
-            raw_out_name = f"{out_name}__raw"
-            suffix = 1
-            while raw_out_name in model_ir.tensors:
-                raw_out_name = f"{out_name}__raw_{suffix}"
-                suffix += 1
-
-            raw_sig0 = (
-                list(raw_in0_tensor.shape_signature)
-                if raw_in0_tensor is not None and raw_in0_tensor.shape_signature is not None
-                else raw_shape0
-            )
-            model_ir.tensors[raw_out_name] = TensorIR(
-                name=raw_out_name,
-                dtype=str(out_tensor.dtype) if out_tensor is not None else "INT8",
-                shape=[int(v) for v in list(raw_shape0)] if not _is_unknown_shape(raw_shape0) else [1],
-                shape_signature=(
-                    [int(v) for v in list(raw_sig0)]
-                    if raw_sig0 is not None and not _is_unknown_shape(raw_sig0)
-                    else [1]
-                ),
-                data=None,
-                is_variable=False,
-                quantization=_clone_quantization(out_tensor.quantization if out_tensor is not None else None),
-            )
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_inputs=[raw_in0_name, raw_in1_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=mid_op,
-                new_outputs=[raw_out_name],
-            )
-
-            insert_at = min(out_users)
-            remove_indices = sorted(list({int(pre0_idx), int(pre1_idx)}), reverse=True)
-            shift = sum(1 for idx in remove_indices if idx < insert_at)
-            for idx in remove_indices:
-                del model_ir.operators[idx]
-            adjusted_insert_at = int(insert_at - shift)
-            model_ir.operators.insert(
-                adjusted_insert_at,
-                OperatorIR(
-                    op_type="TRANSPOSE",
-                    inputs=[raw_out_name, str(pre0_op.inputs[1])],
-                    outputs=[out_name],
-                    options={preserve_layout_boundary_marker: True},
-                ),
-            )
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_transpose_binary_symmetric_legacy_only_bridges_safe": int(rewritten)}
+def _optimize_transpose_binary_asymmetric_fanout_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Dispatch the indexed asymmetric fan-out bridge owner."""
+
+    return _optimize_transpose_binary_asymmetric_fanout_bridges_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
+
+
+def _optimize_transpose_binary_full_post_fanout_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Dispatch the indexed full-post fan-out bridge owner."""
+
+    return _optimize_transpose_binary_full_post_fanout_bridges_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
+
+
+def _optimize_transpose_binary_single_post_bridges_safe(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Dispatch the indexed single-post bridge owner."""
+
+    return _optimize_transpose_binary_single_post_bridges_safe_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
+
+
+def _optimize_transpose_binary_mixed_fanout_bridges_safe(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Dispatch the indexed mixed fan-out bridge owner."""
+
+    return _optimize_transpose_binary_mixed_fanout_bridges_safe_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
+
+
+def _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Dispatch the indexed legacy-only bridge owner."""
+
+    return _optimize_transpose_binary_symmetric_legacy_only_bridges_safe_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_maximum_minimum_relu0to1_chains(
@@ -32453,11 +31604,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
 
     def _run_safe_binary_bridge_recovery_sequence() -> None:
-        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
-        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
-        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
-        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
-        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+        _run_safe_binary_bridge_recovery_pass(
+            model_ir,
+            layout_state=session.layout_state,
+        )
 
     def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
         _optimize_dequant_hardsigmoid_quantize_chains(

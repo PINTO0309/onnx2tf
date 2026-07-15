@@ -654,6 +654,15 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
 
 
 def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_bridge_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -669,13 +678,36 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
-        "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe",
-        "_optimize_transpose_binary_single_post_bridges_safe",
-        "_optimize_transpose_binary_mixed_fanout_bridges_safe",
-        "_optimize_transpose_binary_asymmetric_fanout_bridges",
-        "_optimize_transpose_binary_full_post_fanout_bridges",
+    expected_phases = [
+        "_SAFE_LEGACY_PHASE",
+        "_SAFE_SINGLE_POST_PHASE",
+        "_SAFE_MIXED_FANOUT_PHASE",
+        "_SAFE_ASYMMETRIC_FANOUT_PHASE",
+        "_SAFE_FULL_POST_FANOUT_PHASE",
     ]
+    phase_assignment = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_SAFE_PHASES"
+            for target in node.targets
+        )
+    )
+    assert isinstance(phase_assignment.value, ast.Tuple)
+    assert [
+        element.id
+        for element in phase_assignment.value.elts
+        if isinstance(element, ast.Name)
+    ] == expected_phases
+    assert "def _resolve_multi_post(" in owner_source
+    assert "def _resolve_asymmetric_fanout(" in owner_source
+    assert "def _apply_multi_post(" in owner_source
+    assert "def _apply_asymmetric_fanout(" in owner_source
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "while True" not in owner_source
+
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -683,7 +715,49 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert [call.func.id for call in helper_calls] == [
+        "_run_safe_binary_bridge_recovery_pass"
+    ]
+    layout_keyword = next(
+        keyword
+        for keyword in helper_calls[0].keywords
+        if keyword.arg == "layout_state"
+    )
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert layout_keyword.value.attr == "layout_state"
+
+    compatibility_dispatchers = {
+        "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe":
+            "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe_pass",
+        "_optimize_transpose_binary_single_post_bridges_safe":
+            "_optimize_transpose_binary_single_post_bridges_safe_pass",
+        "_optimize_transpose_binary_mixed_fanout_bridges_safe":
+            "_optimize_transpose_binary_mixed_fanout_bridges_safe_pass",
+        "_optimize_transpose_binary_asymmetric_fanout_bridges":
+            "_optimize_transpose_binary_asymmetric_fanout_bridges_pass",
+        "_optimize_transpose_binary_full_post_fanout_bridges":
+            "_optimize_transpose_binary_full_post_fanout_bridges_pass",
+    }
+    for wrapper_name, pass_name in compatibility_dispatchers.items():
+        wrapper = next(
+            node
+            for node in lowering_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+        )
+        assert len(wrapper.body) == 2
+        dispatch = wrapper.body[1]
+        assert isinstance(dispatch, ast.Return)
+        call = next(
+            node for node in ast.walk(dispatch) if isinstance(node, ast.Call)
+        )
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == pass_name
+        assert {keyword.arg for keyword in call.keywords} == {
+            "graph_index",
+            "layout_state",
+            "max_rewrites",
+            "candidate",
+        }
 
     quantized_helper = next(
         node

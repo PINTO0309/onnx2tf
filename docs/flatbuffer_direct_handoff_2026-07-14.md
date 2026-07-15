@@ -8,17 +8,17 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for a Goal pause; work resumes only after an explicit instruction and continues
 with coherent commits and pushes without opening a pull request.
 
-The latest implementation unit moves the transpose/binary bridge compatibility
-path to `passes/binary_bridge_layout.py`. The former 650-line full-map fixed-
-point mutator is now a 17-line compatibility dispatcher over bounded symmetric
-and asymmetric indexed resolvers. The extraction preserves the three active
-symmetric output modes and the one-sided bridge, removes the permanently
-disabled Pattern C body, and fixes two unsafe legacy properties: a no-post
-candidate can no longer rewire binary inputs before its later guards pass, and
-an asymmetric candidate cannot reuse a Transpose before the replacement plain
-input exists. The five short representative production models audited before
-extraction all reported zero matches, and the selected YuNet artifacts remain
-byte-identical to the preceding commit.
+The latest implementation unit moves the five late safe binary recovery modes
+into the same indexed `passes/binary_bridge_layout.py` owner. Their former 938
+lines of independent full-map fixed-point mutation are five 17-line
+compatibility dispatchers, while every production sequence call now reaches
+one ordered five-phase owner and supplies Session LayoutState. The extraction
+preserves the late layout-boundary marker, multi-post alias handling, existing
+plain-side Transpose reuse, and the exact historical phase order. It also
+removes shared inverse-permutation mutation and rejects producer-after-
+consumer adapter placement. A five-model audit found only two active rewrites,
+both legacy-only SiNet ADD islands, and the indexed owner preserves both with
+byte-identical SiNet artifacts.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -41,7 +41,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 119 coherent continuations:
+The current `fb-refactor5` work contains 120 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -309,6 +309,11 @@ The current `fb-refactor5` work contains 119 coherent continuations:
   synthesized legacy-adapter, and asymmetric forms, and applies every accepted
   rewrite only after permutation, source, shape, quantization, public-boundary,
   and graph-order contracts have been resolved and revalidated.
+- the current checkpoint folds the five later safe binary recovery helpers
+  into the same indexed owner, preserves their legacy-only, single-post,
+  mixed multi-post, asymmetric fan-out, and full-post phase order, and shares
+  one differential index per sequence invocation rather than rebuilding five
+  producer/consumer maps after every rewrite.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -328,7 +333,7 @@ The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/binary_bridge_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_binary_bridge_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_binary_bridge_recovery.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -973,6 +978,18 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   retains operand order for SUB and DIV and rejects a plain source produced
   after the Transpose it would reuse. The disabled Pattern C implementation is
   intentionally absent rather than carried as unreachable production code.
+- The later safe recovery sequence is not five independent owners. One
+  `run_safe_binary_bridge_recovery` call retains the exact legacy-only,
+  single-post, mixed fan-out, asymmetric fan-out, and full-post order on one
+  differential index. The 32-rewrite bound applies per phase. The first two
+  phases reuse the strict symmetric plan and add the historical preserved-
+  boundary marker only at this late recovery point. Mixed and full-post modes
+  share one multi-post plan and canonical-first-post alias contract.
+  Asymmetric fan-out requires an already-earlier inverse Transpose of the plain
+  operand and preserves SUB/DIV order. Retained adapters reference the typed
+  pre-permutation tensor rather than changing a shared inverse constant. All
+  modes re-resolve their complete tensor/operator contracts before mutation,
+  and pruning/LayoutState synchronization run once after the sequence.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -3801,6 +3818,61 @@ The temporary detached worktree and both output directories were removed.
 Scoped Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
 conversion was run.
 
+The indexed safe binary recovery checkpoint replaces the five helpers called
+by `_run_safe_binary_bridge_recovery_sequence`. Before extraction, each helper
+was observed four times per model in the ordered pipelines for
+`face_detection_yunet_2023mar.onnx`, `FastestDet.onnx`,
+`human_segmentation_pphumanseg_2021oct_org.onnx`,
+`osnet025_Nx3x256x128.onnx`, and `sinet_320_op.onnx`. Asymmetric fan-out,
+full-post fan-out, single-post, and mixed fan-out returned zero in all twenty
+calls each. Legacy-only returned zero except for the first SiNet invocation,
+where it rewrote exactly `Add_52` and `Add_109`.
+
+The five modes now run through one indexed owner in their unchanged order.
+Legacy-only and single-post reuse the strict symmetric plan while retaining
+the late `__preserve_layout_boundary__` contract. Mixed and full-post fan-out
+share a multi-post plan: the first post output is canonical, later aliases are
+rewired through indexed consumers, and mixed mode keeps one verified adapter
+before all legacy users. Its permutation input changes to the proven pre-
+permutation tensor rather than overwriting the potentially shared inverse
+constant. Asymmetric fan-out retains its separate existing-plain-Transpose
+contract and rejects that Transpose when it would occur after the binary.
+
+Typed permutations, source provenance, unique producers, exact consumer
+multiplicity, graph order, public boundaries, fused activation, dtype,
+per-tensor quantization, static broadcast, dynamic signatures, options,
+metadata, aliases, and removal/insertion indices are captured in immutable
+plans and re-resolved before apply. Each phase has a configurable 32-rewrite
+ceiling. One `ModelIRGraphIndex` is reused across all selected phases, and
+pruning plus Session LayoutState synchronization run once afterward. Five
+lowerer compatibility helpers remain as 17-line dispatchers; production uses
+the single ordered entry point.
+
+The two focused binary owners and the complete architecture suite passed
+together with `234 passed in 44.37s`, comprising 22 general bridge tests, 19
+safe recovery tests, and 193 architecture tests. The safe recovery suite
+covers all four binary operations for mixed/full multi-post fan-out,
+order-sensitive asymmetric SUB/DIV on both sides, phase stats, candidate and
+rewrite limits, retained-boundary markers, shared inverse constants,
+differential-index freshness, LayoutState, public/order rejection, per-axis
+quantization, idempotence, and exact numerical equivalence. The selected 23
+adjacent direct-builder tests passed with `23 passed, 732 deselected in 1.21s`,
+including the four no-post boundary regressions. TensorFlow-import-blocked
+direct, default, and `-cotof` conversion
+passed sequentially with `3 passed in 3.75s`.
+
+The indexed production sequence still reports two legacy-only rewrites in the
+first SiNet invocation and zero for every other phase/invocation. Sequential
+conversion from preceding commit `53381952` and the current implementation
+emitted byte-identical files: float32 remains 449,824 bytes with SHA-256
+`40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`,
+float16 remains 253,452 bytes with SHA-256
+`180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`,
+and the 182,687-byte correspondence report remains
+`24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`.
+The schema outputs also match. The detached worktree and temporary output
+directories were removed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3847,14 +3919,13 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. At resumption, first audit the five helpers called by
-   `_run_safe_binary_bridge_recovery_sequence`, beginning with the 190-line
-   `_optimize_transpose_binary_asymmetric_fanout_bridges`. Record overlap with
-   the new general bridge owner, active match counts on the same short
-   representative models, phase-order dependencies, and distinct fan-out
-   contracts before deciding whether the sequence should share one indexed
-   owner. Do not begin that implementation until the characterization is
-   recorded.
+3. At resumption, first audit the remaining 218-line
+   `_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw`
+   helper and its two production calls. Record its active match counts on the
+   same short representatives, its Split/channelwise guards, and its ordering
+   dependency on the new general/safe binary owners before deciding whether it
+   belongs in `binary_bridge_layout.py` or a dedicated Split-layout owner. Do
+   not begin implementation until that characterization is recorded.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
