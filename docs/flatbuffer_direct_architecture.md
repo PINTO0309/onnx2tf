@@ -5706,6 +5706,49 @@ loop. The former 683-line lowerer helper is a 17-line compatibility dispatcher
 and all three production calls supply LayoutState. Matching contains neither a
 model name nor a fixed spatial size.
 
+The general symmetric and asymmetric Transpose/binary compatibility path is
+owned by `passes/binary_bridge_layout.py`. The former 650-line lowerer helper
+is a 17-line dispatcher, and its one non-QDQ production call supplies the
+Session LayoutState. A pre-extraction audit found zero symmetric and zero
+asymmetric matches in each of five short representative production models, so
+the owner preserves the proven compatibility topologies without broadening
+them from model-specific evidence.
+
+Symmetric matching starts from a plain ADD, SUB, MUL, or DIV. Both inputs must
+be private outputs of distinct Transposes with the same typed permutation. The
+owner retains three output contracts. A sole inverse post is removed together
+with both pre-adapters. With later legacy-layout users, the post is retained
+and reversed to adapt the new raw-layout binary output back to the old tensor
+name. With no inverse post, a uniquely named raw binary output and one adapter
+are inserted immediately before the first existing legacy consumer. The
+permanently disabled former Pattern C implementation is not part of the new
+production owner.
+
+Asymmetric matching requires exactly one private pre-Transpose and one sole
+inverse post-Transpose. The pre operator is reused to transform the plain
+operand with the inverse permutation, then the binary consumes the original
+raw operand and the transformed plain operand in the order required by the
+original expression. SUB and DIV therefore remain order-sensitive. The plain
+operand must already exist before the reused Transpose; this explicit guard
+prevents a producer-after-consumer graph that the raw helper could create.
+
+Both resolvers require unique producers, resolved graph-input/constant/earlier
+operator sources, exact consumer multiplicity, dependency order, protected
+public boundaries, no fused activation, immutable INT32/INT64 permutation
+constants, same dtype, per-tensor quantization, static broadcast consistency,
+and compatible dynamic signatures. Mixed fan-out uses the already-proven pre
+permutation tensor instead of mutating the possibly shared post constant. The
+legacy-only raw tensor shape is derived from the broadcast contract, and its
+adapter insertion index is preflighted before any mutation.
+
+Every complete plan is re-resolved immediately before apply. One differential
+`ModelIRGraphIndex`, graph-ordered binary candidates, symmetric-before-
+asymmetric phase priority, a configurable 32-rewrite ceiling, success-only
+pruning, and LayoutState synchronization replace the repeated full-map
+producer/consumer rebuild and unbounded `while True` loop. The no-post path no
+longer rewires inputs before later tensor and quantization guards, so a rejected
+candidate is a transactional no-op.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

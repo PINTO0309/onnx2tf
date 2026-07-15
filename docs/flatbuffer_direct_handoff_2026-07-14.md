@@ -8,16 +8,17 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for a Goal pause; work resumes only after an explicit instruction and continues
 with coherent commits and pushes without opening a pull request.
 
-The latest implementation unit moves the dormant SiNet SA/PA MirrorPad
-compatibility path to `passes/sinet_sa_pa_mirrorpad_layout.py`. The former
-683-line full-map fixed-point mutator is now a 17-line compatibility dispatcher
-over one bounded indexed matcher and transaction owner. It proves the Mean/
-ReduceMax spatial-attention branch, external channel-attention input, rank-five
-position-attention merge, optional gate adapter, source-side Mul layout,
-constant ownership, public boundaries, and every removable adapter before
-mutation. Both legacy and indexed owners match zero candidates in the current
-real SiNet ordered pipeline, and the production artifacts remain byte-
-identical.
+The latest implementation unit moves the transpose/binary bridge compatibility
+path to `passes/binary_bridge_layout.py`. The former 650-line full-map fixed-
+point mutator is now a 17-line compatibility dispatcher over bounded symmetric
+and asymmetric indexed resolvers. The extraction preserves the three active
+symmetric output modes and the one-sided bridge, removes the permanently
+disabled Pattern C body, and fixes two unsafe legacy properties: a no-post
+candidate can no longer rewire binary inputs before its later guards pass, and
+an asymmetric candidate cannot reuse a Transpose before the replacement plain
+input exists. The five short representative production models audited before
+extraction all reported zero matches, and the selected YuNet artifacts remain
+byte-identical to the preceding commit.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -40,7 +41,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 118 coherent continuations:
+The current `fb-refactor5` work contains 119 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -303,6 +304,11 @@ The current `fb-refactor5` work contains 118 coherent continuations:
   path to a dedicated indexed owner, validates the singleton-channel condition
   required for numerical equivalence, preserves both direct-NHWC and legacy-
   NCHW Mul outputs, and removes five or six adapters as one transaction.
+- the latest checkpoint moves the general transpose/binary bridge path to a
+  dedicated indexed owner, preserves symmetric single-post, mixed-fan-out,
+  synthesized legacy-adapter, and asymmetric forms, and applies every accepted
+  rewrite only after permutation, source, shape, quantization, public-boundary,
+  and graph-order contracts have been resolved and revalidated.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -321,8 +327,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/sinet_sa_pa_mirrorpad_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_sinet_sa_pa_mirrorpad_layout.py`;
+- `onnx2tf/tflite_builder/passes/binary_bridge_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_binary_bridge_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -952,6 +958,21 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   per-tensor quantization, pruning, lineage, and stats remain unchanged. A
   bounded `_match_logistic_gate_branch` helper isolates backward gate matching
   while preserving incomplete-chain fallback and duplicate-branch rejection.
+- General transpose/binary bridge folding now has one TensorFlow-free owner in
+  `passes/binary_bridge_layout.py`. Symmetric candidates are processed before
+  asymmetric candidates to preserve the former phase priority. A supplied
+  index is reused, candidates are fixed in graph order, and at most 32
+  accepted rewrites are applied. Typed immutable permutations, unique source
+  provenance, exact private pre-adapter use, producer-before-consumer order,
+  per-tensor quantization, dtype, static broadcast, dynamic signature, public
+  boundaries, output fan-out, and every insertion/removal index are resolved
+  before mutation and re-resolved immediately before apply. The mixed-fan-out
+  form reuses an existing pre-permutation constant instead of mutating the
+  possibly shared post-permutation buffer. The legacy-only form creates and
+  inserts its adapter only after the complete plan passes. The asymmetric form
+  retains operand order for SUB and DIV and rejects a plain source produced
+  after the Transpose it would reuse. The disabled Pattern C implementation is
+  intentionally absent rather than carried as unreachable production code.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -3731,6 +3752,55 @@ The byte identity preserves the recorded sequential `-cotof` evidence:
 Scoped Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
 conversion was run.
 
+The indexed transpose/binary bridge checkpoint moves
+`_optimize_transpose_binary_bridges` to
+`passes/binary_bridge_layout.py`. A pre-extraction sequential audit ran the
+legacy helper once on each of `face_detection_yunet_2023mar.onnx`,
+`FastestDet.onnx`, `human_segmentation_pphumanseg_2021oct_org.onnx`,
+`osnet025_Nx3x256x128.onnx`, and `sinet_320_op.onnx`. Both the symmetric and
+asymmetric counters were zero for all five models. QDQ graphs continue to skip
+this production call exactly as before.
+
+The new owner retains the active semantic families only. Symmetric mode
+supports one inverse post with no extra fan-out, one inverse post plus later
+legacy-layout consumers, and no inverse post plus a synthesized adapter before
+the first legacy consumer. Asymmetric mode moves the inverse permutation to
+the plain operand and preserves the original operand order. The permanently
+disabled Pattern C body was removed.
+
+Every candidate now requires a plain binary operation, typed INT32/INT64
+permutation constants, exact inverses, unique producers, resolved sources,
+private intermediate tensors, dependency order, public-output preservation,
+same dtype, per-tensor quantization, static broadcast consistency, and dynamic
+signature consistency. Mixed fan-out no longer mutates the post permutation
+buffer; it references the already-proven pre permutation. A complete plan is
+resolved again immediately before apply. This removes the former no-post
+partial-mutation bug and rejects asymmetric rewrites whose replacement plain
+source is not available before the reused Transpose.
+
+Focused owner and existing direct-lowering coverage passed together with
+`42 passed, 735 deselected in 1.12s`. The new 22-test owner suite covers all
+four binary operations in all three symmetric modes, exact numerical
+equivalence, asymmetric SUB/DIV on both operand sides, idempotence,
+candidate-only and zero-limit operation, per-axis quantization, fused
+activation, public boundary, duplicate producer, late-source rejection,
+differential-index freshness, invariant validation, and LayoutState
+synchronization. The complete architecture suite passed with
+`193 passed in 44.80s`. TensorFlow-import-blocked direct, default, and `-cotof`
+conversion passed sequentially with `3 passed in 3.84s`.
+
+One sequential YuNet conversion was run both from preceding commit `c09b8b88`
+and from the current implementation. Every emitted file was byte-identical.
+The 236,564-byte float32 artifact has SHA-256
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+the 131,120-byte float16 artifact has SHA-256
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+and the 105,578-byte correspondence report has SHA-256
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`.
+The temporary detached worktree and both output directories were removed.
+Scoped Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
+conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3743,6 +3813,10 @@ conversion was run.
   This checkpoint uses the existing scoped exclusions for those categories;
   the changed helper owner/tests pass Ruff normally and all changed Python
   files pass syntax compilation.
+- A whole-file Ruff run on `lower_from_onnx2tf.py` reports 14 pre-existing
+  unused-local (`F841`) findings outside this extracted helper. The changed
+  lowerer passes Ruff with that inherited category ignored; the new owner and
+  both changed test files pass Ruff without exclusions.
 - The optional PyTorch exporter suite runs when the host's Python 3.10
   `LD_LIBRARY_PATH` and `PYTHONPATH` are removed from the command environment.
   The focused results, restored native-codegen bindings, real-model artifact
@@ -3773,12 +3847,14 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. At resumption, first audit the remaining 650-line
-   `_optimize_transpose_binary_bridges` helper and its sole production call.
-   Classify its binary subfamilies, determine whether it is an intended
-   dispatcher or still owns independent full-map mutation loops, and measure
-   active match counts before selecting an extraction boundary. Do not begin
-   implementation until that characterization is recorded.
+3. At resumption, first audit the five helpers called by
+   `_run_safe_binary_bridge_recovery_sequence`, beginning with the 190-line
+   `_optimize_transpose_binary_asymmetric_fanout_bridges`. Record overlap with
+   the new general bridge owner, active match counts on the same short
+   representative models, phase-order dependencies, and distinct fan-out
+   contracts before deciding whether the sequence should share one indexed
+   owner. Do not begin that implementation until the characterization is
+   recorded.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
