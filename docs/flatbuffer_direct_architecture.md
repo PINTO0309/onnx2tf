@@ -5857,6 +5857,50 @@ unsafe no-op contracts. A sequential YuNet comparison against the preceding
 source checkpoint emitted byte-identical float32, float16, correspondence, and
 schema artifacts.
 
+The direct Split channelwise tail now shares that indexed owner while retaining
+a separate root plan. It recognizes one exact private NHWC-to-NCHW Transpose
+feeding a channel Split directly, then permits the same closed unary, binary,
+Concat, and downstream Split closure plus the historically supported Slice
+family. The former lowerer implementation is a compatibility dispatcher; its
+two ordered production positions and stats key are unchanged, and both calls
+supply Session `LayoutState`.
+
+Slice propagation requires an exact three-input, one-output rank-four Slice.
+Begin and size must be immutable typed INT32 or INT64 four-element constants,
+the declared dtypes must agree, and the original NCHW and converted NHWC Slice
+results must both agree with static output metadata and compatible dynamic
+signatures. Begin and size are permuted from `[N,C,H,W]` to `[N,H,W,C]` only as
+part of the complete tail transaction. Constants used exclusively by planned
+Slice input slots may change in place; constants with any unrelated consumer
+receive one deterministic shared clone for all planned uses. Conflicting roles,
+producer-backed constants, variables, public constants, invalid bounds, dtype
+mismatches, and per-axis quantization reject the candidate.
+
+Closure discovery begins only from root Split outputs. The raw Transpose input
+is deliberately not treated as converted closure state, so unrelated consumers
+of that NHWC source remain untouched. Root and downstream Split axes use the
+same copy-on-write INT32/INT64 contract as the binary-root family. Unsupported
+closure consumers, dead converted branches, public intermediates, multiple
+outputs, duplicate producers, stale order, and shared Transpose outputs reject
+the entire plan before mutation.
+
+The common immutable tail plan owns metadata, Split-axis updates, Concat-axis
+updates, grouped Slice-constant updates, the accepted closure, and the sole
+terminal output adapter. It is resolved again immediately before apply and
+preflighted against every input/output slot and allocated name. Differential
+graph-index updates, differential LayoutState synchronization, a configurable
+32-rewrite ceiling, and success-only pruning preserve the same bounded
+transactional contract as the binary-root family.
+
+Pre-extraction characterization observed zero direct-root matches in all
+runtime invocations on the same five short representatives. Twenty focused
+tests cover INT32 and INT64 constants, static and dynamic signatures, numerical
+equivalence, grouped shared-constant cloning, an unrelated source consumer,
+candidate limits, idempotence, and thirteen unsafe transactional no-op cases.
+The direct and binary-root suites pass together, and a sequential YuNet
+comparison against the preceding checkpoint emits byte-identical float32,
+float16, correspondence, and schema artifacts.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

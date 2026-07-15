@@ -150,6 +150,7 @@ from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
 )
 from onnx2tf.tflite_builder.passes.split_channelwise_layout import (
     optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw as _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw_pass,
+    optimize_transpose_split_channelwise_tail_to_single_post_nchw as _optimize_transpose_split_channelwise_tail_to_single_post_nchw_pass,
 )
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
@@ -22621,181 +22622,21 @@ def _optimize_transpose_unary_split_concat_single_post_nchw(model_ir: ModelIR) -
     return {"optimized_transpose_unary_split_concat_single_post_nchw": int(rewritten)}
 
 
-def _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Propagate NHWC through a local channelwise tail that currently starts with
-    a NHWC->NCHW transpose feeding a channel SPLIT.
-    """
-    optimized = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    unary_ops = {"RELU", "RELU6", "RELU_0_TO_1", "LOGISTIC", "HARD_SWISH", "LEAKY_RELU", "TANH", "NEG", "EXP"}
-    binary_ops = {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM"}
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    def _is_probably_nhwc_tensor(name: str) -> bool:
-        tensor = model_ir.tensors.get(str(name), None)
-        if tensor is None or not _is_fully_known_positive_shape(tensor.shape):
-            return False
-        shape = [int(v) for v in list(tensor.shape)]
-        if len(shape) != 4:
-            return False
-        if int(shape[1]) <= 4 and int(shape[2]) > 4 and int(shape[3]) > 4:
-            return False
-        return True
-
-    def _rewrite_channel_slice_axis1_to_axis3(op: OperatorIR) -> bool:
-        if str(op.op_type) != "SLICE" or len(op.inputs) < 3:
-            return False
-        begin_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-        size_tensor = model_ir.tensors.get(str(op.inputs[2]), None)
-        begin_vals = _read_const_ints_from_tensor(begin_tensor)
-        size_vals = _read_const_ints_from_tensor(size_tensor)
-        if begin_vals is None or size_vals is None or len(begin_vals) != 4 or len(size_vals) != 4:
-            return False
-        new_begin = [int(begin_vals[0]), int(begin_vals[2]), int(begin_vals[3]), int(begin_vals[1])]
-        new_size = [int(size_vals[0]), int(size_vals[2]), int(size_vals[3]), int(size_vals[1])]
-        _write_const_ints_to_tensor(begin_tensor, new_begin)
-        _write_const_ints_to_tensor(size_tensor, new_size)
-        return True
-
-    while True:
-        changed = False
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-            pre_in_name = str(pre_op.inputs[0])
-            pre_out_name = str(pre_op.outputs[0])
-            split_users = [int(v) for v in consumers.get(pre_out_name, [])]
-            if len(split_users) != 1:
-                continue
-            split_idx = int(split_users[0])
-            split_op = model_ir.operators[int(split_idx)]
-            if str(split_op.op_type) != "SPLIT" or len(split_op.inputs) < 2:
-                continue
-            axis_vals = _read_const_ints_from_tensor(model_ir.tensors.get(str(split_op.inputs[0]), None))
-            if axis_vals is None or len(axis_vals) != 1 or int(axis_vals[0]) != 1:
-                continue
-
-            _replace_operator_input_at(model_ir=model_ir, op=split_op, input_index=1, new_input_name=pre_in_name)
-            axis_tensor = model_ir.tensors.get(str(split_op.inputs[0]), None)
-            if axis_tensor is not None:
-                if set(int(v) for v in consumers.get(str(split_op.inputs[0]), [])) == {int(split_idx)}:
-                    _write_const_ints_to_tensor(axis_tensor, [3])
-
-            nhwc_tensors = {str(pre_in_name)}
-            for out_name in list(split_op.outputs):
-                _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(out_name), None), perm_nchw_to_nhwc)
-                nhwc_tensors.add(str(out_name))
-
-            propagated = True
-            while propagated:
-                propagated = False
-                for op in model_ir.operators:
-                    if len(op.outputs) != 1:
-                        continue
-                    out_name = str(op.outputs[0])
-                    if out_name in nhwc_tensors:
-                        continue
-                    op_type = str(op.op_type)
-                    if op_type in unary_ops and len(op.inputs) == 1 and str(op.inputs[0]) in nhwc_tensors:
-                        _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(out_name, None), perm_nchw_to_nhwc)
-                        nhwc_tensors.add(out_name)
-                        propagated = True
-                        continue
-                    if op_type in binary_ops and len(op.inputs) == 2:
-                        tensor_inputs = [str(v) for v in list(op.inputs) if model_ir.tensors.get(str(v), None) is not None and model_ir.tensors[str(v)].data is None]
-                        if len(tensor_inputs) == 0:
-                            continue
-                        if all(name in nhwc_tensors or _is_probably_nhwc_tensor(name) for name in tensor_inputs):
-                            _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(out_name, None), perm_nchw_to_nhwc)
-                            nhwc_tensors.add(out_name)
-                            propagated = True
-                        continue
-                    if op_type == "CONCATENATION" and len(op.inputs) > 0 and all(str(v) in nhwc_tensors for v in list(op.inputs)):
-                        axis = int(op.options.get("axis", -1))
-                        if axis in {1, -3}:
-                            op.options["axis"] = 3
-                        _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(out_name, None), perm_nchw_to_nhwc)
-                        nhwc_tensors.add(out_name)
-                        propagated = True
-                        continue
-                    if op_type == "SPLIT" and len(op.inputs) >= 2 and str(op.inputs[1]) in nhwc_tensors:
-                        axis_tensor_local = model_ir.tensors.get(str(op.inputs[0]), None)
-                        axis_vals_local = _read_const_ints_from_tensor(axis_tensor_local)
-                        if axis_vals_local is None or len(axis_vals_local) != 1 or int(axis_vals_local[0]) not in {1, 3}:
-                            continue
-                        if int(axis_vals_local[0]) == 1:
-                            axis_users = [int(v) for v in consumers.get(str(op.inputs[0]), [])]
-                            if set(axis_users) == {int(next(idx for idx, candidate in enumerate(model_ir.operators) if candidate is op))}:
-                                _write_const_ints_to_tensor(axis_tensor_local, [3])
-                            else:
-                                axis_name = _unique_tensor_name(f"{str(op.inputs[0])}_nhwc")
-                                model_ir.tensors[axis_name] = TensorIR(
-                                    name=axis_name,
-                                    dtype=str(axis_tensor_local.dtype),
-                                    shape=[1],
-                                    shape_signature=[1],
-                                    data=np.asarray([3], dtype=np.int32),
-                                    is_variable=False,
-                                    quantization=_clone_quantization(axis_tensor_local.quantization),
-                                )
-                                _set_operator_inputs(
-                                    model_ir=model_ir,
-                                    op=op,
-                                    new_inputs=[axis_name, str(op.inputs[1])],
-                                )
-                        for split_out_name in list(op.outputs):
-                            _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(split_out_name), None), perm_nchw_to_nhwc)
-                            nhwc_tensors.add(str(split_out_name))
-                        propagated = True
-                        continue
-                    if op_type == "SLICE" and len(op.inputs) >= 3 and str(op.inputs[0]) in nhwc_tensors:
-                        if _rewrite_channel_slice_axis1_to_axis3(op):
-                            _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(out_name, None), perm_nchw_to_nhwc)
-                            nhwc_tensors.add(out_name)
-                            propagated = True
-
-            output_name = str(model_ir.outputs[0]) if len(model_ir.outputs) == 1 else ""
-            if output_name != "" and output_name in nhwc_tensors:
-                prod_idx = producers.get(output_name, None)
-                if prod_idx is not None:
-                    prod_op = model_ir.operators[int(prod_idx)]
-                    output_nhwc_name = _unique_tensor_name(f"{output_name}_nhwc")
-                    out_tensor = model_ir.tensors.get(output_name, None)
-                    if out_tensor is not None and _is_fully_known_positive_shape(out_tensor.shape):
-                        nhwc_shape = [int(v) for v in list(out_tensor.shape)]
-                        nhwc_sig = [int(v) for v in list(out_tensor.shape_signature)] if out_tensor.shape_signature is not None else list(nhwc_shape)
-                        model_ir.tensors[output_nhwc_name] = TensorIR(name=output_nhwc_name, dtype=str(out_tensor.dtype), shape=list(nhwc_shape), shape_signature=list(nhwc_sig), data=None, is_variable=False, quantization=_clone_quantization(out_tensor.quantization))
-                        _set_operator_outputs(model_ir=model_ir, op=prod_op, new_outputs=[output_nhwc_name])
-                        perm_name = _unique_tensor_name(f"{output_name}_perm")
-                        model_ir.tensors[perm_name] = TensorIR(name=perm_name, dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray(perm_nhwc_to_nchw, dtype=np.int32), is_variable=False)
-                        model_ir.operators.insert(int(prod_idx) + 1, OperatorIR(op_type="TRANSPOSE", inputs=[output_nhwc_name, perm_name], outputs=[output_name], options={}))
-
-            del model_ir.operators[int(pre_idx)]
-            optimized += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if optimized > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_split_channelwise_tail_to_single_post_nchw": int(optimized)}
+def _optimize_transpose_split_channelwise_tail_to_single_post_nchw(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_split_channelwise_tail_to_single_post_nchw_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(
@@ -31490,7 +31331,10 @@ def lower_onnx_to_ir(
         _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
         _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
         _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
-        _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
+        _optimize_transpose_split_channelwise_tail_to_single_post_nchw(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(
             model_ir,
             layout_state=session.layout_state,
@@ -31519,7 +31363,10 @@ def lower_onnx_to_ir(
         _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
         _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
         _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
-        _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
+        _optimize_transpose_split_channelwise_tail_to_single_post_nchw(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(
             model_ir,
             layout_state=session.layout_state,

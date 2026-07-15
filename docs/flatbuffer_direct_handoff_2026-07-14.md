@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves the binary/Split channelwise tail into
+The latest implementation unit moves the direct Split channelwise tail into
 the dedicated indexed `passes/split_channelwise_layout.py` owner. The former
-218-line full-map fixed-point helper is a thin compatibility dispatcher, both
-production sequence positions supply Session LayoutState, and closure discovery
-is now an edge-bounded consumer worklist. The extraction preserves all six
-binary operations, operand order, channel Split/Concat propagation, shared
-axis constants, and the public NCHW output while making every accepted rewrite
-one revalidated transaction.
+mixed full-map fixed-point helper is a thin compatibility dispatcher, both
+production sequence positions supply Session LayoutState, and the direct root
+shares the proven closed-tail machinery without sharing unsafe source state.
+The extraction makes downstream Slice constants transactional, preserves
+shared constants through deterministic copy-on-write, and keeps unrelated
+consumers of the original NHWC source untouched.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -73,6 +73,40 @@ TensorFlow import was added. There is no source-file 2,000-line Goal
 requirement; the 2,000 threshold applies only to ONNX operation-count Tier
 classification.
 
+### Direct Split root continuation
+
+The adjacent
+`_optimize_transpose_split_channelwise_tail_to_single_post_nchw` helper is now
+also extracted. Its two production positions and stats key are unchanged. A
+separate immutable direct-root plan proves the private NHWC-to-NCHW Transpose,
+the channel Split, and the shared closed-tail contract before the first write.
+Only Split outputs seed closure traversal, so unrelated consumers of the raw
+NHWC source are no longer accidentally classified as converted tensors.
+
+The shared closure now optionally plans rank-four Slice operations. Typed
+INT32/INT64 begin and size constants, bounds, original NCHW result metadata,
+converted NHWC metadata, and dynamic signatures are all validated. A constant
+changes in place only when every actual consumer slot is one of the planned
+Slice uses with the same replacement. Otherwise every planned use shares one
+deterministic clone, preserving both declared and NumPy dtype. Invalid or
+conflicting constants reject the whole candidate without mutation.
+
+The root Split axis uses the existing copy-on-write contract, the public output
+keeps its original NCHW shape/layout, and one private NHWC producer output feeds
+the terminal adapter. All metadata, axis, Concat, Slice-constant, graph-index,
+and LayoutState changes are applied only after full re-resolution and
+preflight. The configurable 32-rewrite ceiling and edge-bounded consumer queue
+replace the old unbounded fixed-point scans.
+
+The 20-test direct-root suite and 33-test binary-root suite pass together. The
+two preceding binary owners, both Split-root suites, and the complete
+architecture suite pass with `288 passed in 44.74s`. TensorFlow-import-blocked
+explicit direct, default direct, and `-cotof` conversion pass with `3 passed in
+3.85s`. A sequential YuNet comparison against `5f8e662a` emits five
+byte-identical files with the same float32, float16, and correspondence hashes
+recorded above. The detached worktree and temporary outputs were removed; no
+Tier corpus run was performed.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -90,7 +124,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 121 coherent implementation
+The current `fb-refactor5` work contains 122 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -369,6 +403,11 @@ continuations:
   consumer worklist, preserves all six binary operations and the public NCHW
   output, and applies Split axes, Concat options, metadata, and the terminal
   adapter as one revalidated transaction.
+- the current checkpoint moves the direct Split channelwise tail to the same
+  indexed owner under a separate root plan, adds fully transactional Slice
+  begin/size remapping with copy-on-write for shared constants, stops unrelated
+  source consumers from entering the closure, and preserves the original
+  public NCHW contract through the common terminal adapter.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -388,7 +427,7 @@ The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/split_channelwise_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_split_channelwise_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_split_channelwise_direct_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -412,6 +451,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 - Split axis constants are immutable plan inputs. Private axes change in place;
   shared axes receive deterministic clones that preserve both TensorIR and
   NumPy INT32/INT64 dtype. Every plan is re-resolved before these writes.
+- The direct Split root seeds closure discovery from Split outputs, not from
+  the original NHWC Transpose input. Unrelated raw-source consumers remain
+  untouched and do not affect the accepted tail.
+- Slice begin/size tensors are grouped by identity across all planned uses.
+  They change in place only if every real consumer slot participates with the
+  same value; otherwise planned uses share one deterministic typed clone.
+  Invalid bounds, conflicting roles, mutable constants, and per-axis
+  quantization reject the transaction.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -3942,6 +3989,53 @@ and the 182,687-byte correspondence report remains
 The schema outputs also match. The detached worktree and temporary output
 directories were removed. No Tier corpus conversion was run.
 
+The indexed direct Split-root checkpoint replaces the former mixed
+match/mutate/fixed-point helper with a separate direct-root plan and the common
+closed-tail resolver in `passes/split_channelwise_layout.py`. Pre-extraction
+characterization recorded zero matches in every invocation: four each on
+YuNet, FastestDet, HumanSeg, and OSNet, and eight on SiNet. The helper remains
+in both unchanged ordered production positions as a thin dispatcher and now
+receives Session LayoutState.
+
+The direct-root plan validates a typed private `[0,3,1,2]` Transpose, a sole
+channel Split consumer, Split-axis copy-on-write, unique producers, graph
+order, rank-four shape and dynamic-signature relationships, dtype,
+per-tensor quantization, and the complete closed tail. Only root Split outputs
+seed the closure. Unary, binary, Concat, downstream Split, and exact rank-four
+Slice operations may propagate NHWC; unsupported consumers and dead branches
+reject the candidate.
+
+Slice begin/size constants are planned without mutation, validated against the
+old and new layout, and grouped by tensor identity. Exclusive same-value uses
+may update in place. Any unrelated consumer causes one deterministic shared
+clone for all planned slots, retaining actual INT32 or INT64 NumPy dtype.
+Conflicting roles, variables, producer-backed/public/missing constants, bounds
+errors, dtype mismatches, public intermediates, duplicate producers, and stale
+consumer order are transactional no-ops.
+
+The new direct suite passed with `20 passed`; it and the binary-root suite
+passed together with `53 passed in 0.51s`. The two indexed binary bridge
+suites, both Split-root suites, and all architecture tests passed with
+`288 passed in 44.74s`. Coverage includes exact semantics for INT32 and INT64
+constants with static and dynamic signatures, shared Split and Slice constant
+cloning, an unrelated source consumer, candidate and rewrite limits,
+idempotence, differential graph-index freshness, LayoutState validation, and
+thirteen unsafe no-op cases. TensorFlow-import-blocked explicit direct,
+default direct, and `-cotof` conversion passed sequentially with `3 passed in
+3.85s`.
+
+One sequential YuNet conversion was run from source checkpoint `5f8e662a` and
+from the current implementation. All five emitted files were byte-identical.
+Float32 remains
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16 remains
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+and the correspondence report remains
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`.
+Both schema hashes also match. The detached worktree and temporary outputs were
+removed. Scoped Ruff, syntax compilation, and `git diff --check` passed. No
+Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3975,12 +4069,12 @@ The full Goal is not complete. The fast-precanonicalize orchestrator still has
 orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
-The immediately preceding nonbinary
-`_optimize_transpose_split_channelwise_tail_to_single_post_nchw` helper remains
-an approximately 175-line mixed match/mutate/propagate implementation with
-full-graph fixed-point scans. It additionally owns downstream SLICE constant
-rewrites. It has not yet received the same production match-count and
-transactional-contract audit as the binary/Split owner.
+The immediately preceding
+`_optimize_transpose_unary_split_concat_single_post_nchw` helper remains a raw
+mixed match/mutate implementation. Its exact unary/Split/Concat topology,
+constant ownership, public-output behavior, active production match counts,
+and ordering dependency on the two indexed Split-root owners have not yet
+received the same transactional-contract audit.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -3992,15 +4086,14 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. First audit the adjacent
-   `_optimize_transpose_split_channelwise_tail_to_single_post_nchw` helper, its
-   two production sequence positions, active match counts on the same five
-   short representatives, downstream SLICE behavior, public-output handling,
-   and ordering dependency on the new binary/Split owner. Do not implement
-   until that characterization is recorded.
-3. If the audit confirms the shared semantic boundary, extend
-   `split_channelwise_layout.py` with a separately planned nonbinary root while
-   sharing only proven axis/closure primitives. Keep every constant rewrite
-   transactional, especially shared SLICE begin/size tensors. Use focused
+   `_optimize_transpose_unary_split_concat_single_post_nchw` helper, its two
+   production sequence positions, active match counts on the same five short
+   representatives, its Split-axis and Concat-axis ownership, public-output
+   handling, and ordering dependency on the two indexed Split-root owners. Do
+   not implement until that characterization is recorded.
+3. If the audit identifies a safe semantic boundary, add a separately planned
+   unary-root family while reusing only the already-proven typed-axis,
+   metadata, adapter, graph-index, and LayoutState primitives. Use focused
    synthetic checks and one short sequential production comparison; do not run
    a Tier corpus unless explicitly requested.
 4. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
