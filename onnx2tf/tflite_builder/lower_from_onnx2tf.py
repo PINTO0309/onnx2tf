@@ -148,6 +148,9 @@ from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_symmetric_legacy_only_bridges_safe as _optimize_transpose_binary_symmetric_legacy_only_bridges_safe_pass,
     run_safe_binary_bridge_recovery as _run_safe_binary_bridge_recovery_pass,
 )
+from onnx2tf.tflite_builder.passes.conv_output_passthrough_layout import (
+    optimize_transposeconv_output_nhwc_passthrough_chains as _optimize_transposeconv_output_nhwc_passthrough_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.split_channelwise_layout import (
     optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw as _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw_pass,
     optimize_transpose_split_channelwise_tail_to_single_post_nchw as _optimize_transpose_split_channelwise_tail_to_single_post_nchw_pass,
@@ -21461,322 +21464,21 @@ def _optimize_transpose_axis3_const_concat_bridge_nhwc_chains(model_ir: ModelIR)
     return _optimize_transpose_axis3_const_concat_bridge_nhwc_chains_pass(model_ir)
 
 
-def _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Propagate NHWC through transpose wrappers around Conv-family outputs.
-
-    Target:
-      Y_nhwc(from CONV_2D|DEPTHWISE_CONV_2D|TRANSPOSE_CONV)
-        --TRANSPOSE(0,3,1,2)--> Y_nchw
-      Y_nchw --(QUANTIZE|DEQUANTIZE|RELU|RELU6|ADD|SUB|MUL|DIV|MAXIMUM|MINIMUM)*--> Z_nchw
-      Z_nchw --TRANSPOSE(0,2,3,1)--> Z_nhwc
-
-    Rewrite:
-      Y_nhwc --(same chain with NHWC metadata/constants)*--> Z_nhwc
-
-    Safety:
-    - Leading transpose input must be produced by CONV_2D, DEPTHWISE_CONV_2D, or TRANSPOSE_CONV.
-    - Chain must be strictly linear and end with exactly one inverse transpose.
-    - Binary side inputs must be constants and broadcast-safe after NCHW->NHWC remap.
-    - Activation quantization must remain per-tensor.
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    unary_passthrough_ops = {
-        "QUANTIZE",
-        "DEQUANTIZE",
-        "CAST",
-        "RELU",
-        "RELU6",
-        "RELU_0_TO_1",
-        "HARD_SWISH",
-    }
-    binary_passthrough_ops = {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM"}
-
-    def _unique_tensor_name(base: str) -> str:
-        candidate = str(base)
-        suffix = 1
-        while candidate in model_ir.tensors:
-            candidate = f"{base}_{suffix}"
-            suffix += 1
-        return candidate
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_input_name in model_outputs or pre_output_name in model_outputs:
-                continue
-
-            pre_input_prod_idx = producers.get(pre_input_name, None)
-            if pre_input_prod_idx is None:
-                continue
-            pre_input_prod_op = model_ir.operators[int(pre_input_prod_idx)]
-            if str(pre_input_prod_op.op_type) not in {
-                "CONV_2D",
-                "DEPTHWISE_CONV_2D",
-                "TRANSPOSE_CONV",
-            }:
-                continue
-
-            chain_indices: List[int] = []
-            chain_ops: List[OperatorIR] = []
-            chain_output_names: List[str] = []
-            chain_binary_specs: List[Tuple[int, int, str, str]] = []
-            current_tensor = pre_output_name
-            chain_build_valid = True
-
-            while True:
-                current_users = [int(v) for v in consumers.get(current_tensor, [])]
-                if len(current_users) != 1:
-                    break
-                op_idx = int(current_users[0])
-                op = model_ir.operators[int(op_idx)]
-                op_type = str(op.op_type)
-
-                if op_type in unary_passthrough_ops:
-                    if len(op.inputs) != 1 or len(op.outputs) != 1:
-                        break
-                    if str(op.inputs[0]) != current_tensor:
-                        break
-                    out_name = str(op.outputs[0])
-                    if out_name in model_outputs:
-                        chain_build_valid = False
-                        break
-                    out_tensor = model_ir.tensors.get(out_name, None)
-                    if out_tensor is not None and not _is_per_tensor_quantization(out_tensor.quantization):
-                        chain_build_valid = False
-                        break
-                    chain_indices.append(int(op_idx))
-                    chain_ops.append(op)
-                    chain_output_names.append(out_name)
-                    current_tensor = out_name
-                    continue
-
-                if op_type in binary_passthrough_ops:
-                    if len(op.inputs) != 2 or len(op.outputs) != 1:
-                        break
-                    input_0 = str(op.inputs[0])
-                    input_1 = str(op.inputs[1])
-                    if input_0 == current_tensor:
-                        side_input_index = 1
-                        side_input_name = input_1
-                    elif input_1 == current_tensor:
-                        side_input_index = 0
-                        side_input_name = input_0
-                    else:
-                        break
-
-                    side_tensor = model_ir.tensors.get(side_input_name, None)
-                    if side_tensor is None or side_tensor.data is None:
-                        break
-                    if not _is_per_tensor_quantization(side_tensor.quantization):
-                        break
-
-                    side_data = np.asarray(side_tensor.data)
-                    if int(side_data.size) != 1:
-                        if side_data.ndim != 4:
-                            break
-                        current_tensor_ir = model_ir.tensors.get(current_tensor, None)
-                        if (
-                            current_tensor_ir is None
-                            or not _is_fully_known_positive_shape(current_tensor_ir.shape)
-                            or len(list(current_tensor_ir.shape)) != 4
-                        ):
-                            break
-                        nchw_shape = [int(v) for v in list(current_tensor_ir.shape)]
-                        side_shape = [int(v) for v in list(side_data.shape)]
-                        if _broadcast_static_shapes(nchw_shape, side_shape) is None:
-                            break
-                        side_shape_nhwc = _permute_shape(side_shape, perm_nchw_to_nhwc)
-                        nchw_to_nhwc_shape = _permute_shape(nchw_shape, perm_nchw_to_nhwc)
-                        if side_shape_nhwc is None or nchw_to_nhwc_shape is None:
-                            break
-                        if _broadcast_static_shapes(nchw_to_nhwc_shape, side_shape_nhwc) is None:
-                            break
-
-                    out_name = str(op.outputs[0])
-                    if out_name in model_outputs:
-                        chain_build_valid = False
-                        break
-                    out_tensor = model_ir.tensors.get(out_name, None)
-                    if out_tensor is not None and not _is_per_tensor_quantization(out_tensor.quantization):
-                        chain_build_valid = False
-                        break
-
-                    chain_indices.append(int(op_idx))
-                    chain_ops.append(op)
-                    chain_output_names.append(out_name)
-                    chain_binary_specs.append((int(op_idx), int(side_input_index), side_input_name, current_tensor))
-                    current_tensor = out_name
-                    continue
-
-                break
-
-            if len(chain_ops) == 0 or not chain_build_valid:
-                continue
-
-            tail_users = [int(v) for v in consumers.get(current_tensor, [])]
-            if len(tail_users) != 1:
-                continue
-            post_idx = int(tail_users[0])
-            if post_idx in set(chain_indices):
-                continue
-            post_op = model_ir.operators[int(post_idx)]
-            if str(post_op.op_type) != "TRANSPOSE" or len(post_op.inputs) < 2 or len(post_op.outputs) != 1:
-                continue
-            if str(post_op.inputs[0]) != current_tensor:
-                continue
-            if _read_transpose_perm(model_ir, post_op) != perm_nchw_to_nhwc:
-                continue
-
-            post_output_name = str(post_op.outputs[0])
-            if post_output_name in model_outputs:
-                continue
-
-            linear_ok = True
-            previous_tensor_name = pre_output_name
-            chain_index_to_pos = {int(idx): pos for pos, idx in enumerate(chain_indices)}
-            for op_idx, op in zip(chain_indices, chain_ops):
-                if previous_tensor_name not in set(str(v) for v in op.inputs):
-                    linear_ok = False
-                    break
-                out_name = str(op.outputs[0]) if len(op.outputs) > 0 else ""
-                if out_name == "":
-                    linear_ok = False
-                    break
-                expected_users = [int(v) for v in consumers.get(out_name, [])]
-                pos = int(chain_index_to_pos[int(op_idx)])
-                if pos < len(chain_indices) - 1:
-                    if expected_users != [int(chain_indices[pos + 1])]:
-                        linear_ok = False
-                        break
-                else:
-                    if expected_users != [int(post_idx)]:
-                        linear_ok = False
-                        break
-                previous_tensor_name = out_name
-            if not linear_ok:
-                continue
-
-            tensors_for_quant_validation: List[Optional[TensorIR]] = [
-                model_ir.tensors.get(pre_input_name, None),
-                model_ir.tensors.get(pre_output_name, None),
-            ] + [model_ir.tensors.get(name, None) for name in chain_output_names]
-            if not _all_per_tensor_quantized(tensors_for_quant_validation):
-                continue
-
-            chain_index_set = set(int(v) for v in chain_indices)
-            const_rewrite_ok = True
-            for op_idx, side_input_index, side_input_name, _ in chain_binary_specs:
-                side_tensor = model_ir.tensors.get(side_input_name, None)
-                if side_tensor is None or side_tensor.data is None:
-                    const_rewrite_ok = False
-                    break
-                side_data = np.asarray(side_tensor.data)
-                if int(side_data.size) == 1:
-                    continue
-                if side_data.ndim != 4:
-                    const_rewrite_ok = False
-                    break
-
-                permuted_data = np.transpose(side_data, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-                side_users = [int(v) for v in consumers.get(side_input_name, [])]
-                shared_outside_chain = any(int(u) not in chain_index_set for u in side_users)
-
-                target_const_name = str(side_input_name)
-                if shared_outside_chain:
-                    target_const_name = _unique_tensor_name(f"{side_input_name}_nhwc")
-                    model_ir.tensors[target_const_name] = TensorIR(
-                        name=target_const_name,
-                        dtype=str(side_tensor.dtype),
-                        shape=[int(v) for v in list(permuted_data.shape)],
-                        shape_signature=[int(v) for v in list(permuted_data.shape)],
-                        data=np.asarray(permuted_data),
-                        is_variable=False,
-                        quantization=_clone_quantization(side_tensor.quantization),
-                    )
-                else:
-                    side_tensor.data = np.asarray(permuted_data)
-                    side_tensor.shape = [int(v) for v in list(permuted_data.shape)]
-                    side_tensor.shape_signature = [int(v) for v in list(permuted_data.shape)]
-
-                _replace_operator_input_at(
-                    model_ir=model_ir,
-                    op=model_ir.operators[int(op_idx)],
-                    input_index=int(side_input_index),
-                    new_input_name=target_const_name,
-                )
-
-            if not const_rewrite_ok:
-                continue
-
-            old_last_name = str(chain_ops[-1].outputs[0])
-            old_last_tensor = model_ir.tensors.get(old_last_name, None)
-            post_output_tensor = model_ir.tensors.get(post_output_name, None)
-
-            first_op = chain_ops[0]
-            first_input_names = [str(v) for v in first_op.inputs]
-            if first_input_names[0] == pre_output_name:
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=first_op,
-                    new_inputs=[pre_input_name] + first_input_names[1:],
-                )
-            elif len(first_input_names) > 1 and first_input_names[1] == pre_output_name:
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=first_op,
-                    new_inputs=[first_input_names[0], pre_input_name],
-                )
-            else:
-                continue
-
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=chain_ops[-1],
-                new_outputs=[post_output_name],
-            )
-
-            for out_name in chain_output_names[:-1]:
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(out_name, None),
-                    perm_nchw_to_nhwc,
-                )
-
-            if post_output_tensor is not None:
-                if old_last_tensor is not None:
-                    post_output_tensor.dtype = str(old_last_tensor.dtype)
-                    post_output_tensor.quantization = _clone_quantization(old_last_tensor.quantization)
-                _permute_tensor_metadata_if_rank_matches(
-                    post_output_tensor,
-                    perm_nchw_to_nhwc,
-                )
-
-            remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
-            for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_transposeconv_output_nhwc_passthrough_chains": int(rewritten)}
+def _optimize_transposeconv_output_nhwc_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_transposeconv_output_nhwc_passthrough_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -30874,7 +30576,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
         _run_gate_layout_pass_cluster()
-        _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
+        _optimize_transposeconv_output_nhwc_passthrough_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
         _run_transpose_unary_fanout_layout_pass_cluster()
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)

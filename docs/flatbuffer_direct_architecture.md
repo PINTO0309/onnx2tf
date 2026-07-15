@@ -5999,6 +5999,58 @@ nineteen unsafe transactional no-op contracts. A sequential YuNet comparison
 against the preceding checkpoint emits byte-identical float32, float16,
 correspondence, and schema artifacts.
 
+Conv-family output passthrough chains are owned by
+`passes/conv_output_passthrough_layout.py`. The owner recognizes a private
+NHWC-to-NCHW Transpose produced by Conv2D, DepthwiseConv2D, or TransposeConv,
+one or more strictly linear unary/binary operations, and one inverse
+NCHW-to-NHWC Transpose whose output remains an intermediate tensor. The former
+316-line lowerer helper is a thin dispatcher in its unchanged ordered position
+and receives Session `LayoutState`.
+
+Both permutation tensors must be immutable typed INT32/INT64 constants. The
+resolver proves producer uniqueness and order, the exact rank-four shape and
+dynamic-signature relation across each adapter, private intermediate tensors,
+one-consumer linearity, per-tensor quantization, existing output metadata, and
+consumer order after the inverse adapter. QUANTIZE, DEQUANTIZE, CAST, RELU,
+RELU6, RELU_0_TO_1, and HARD_SWISH retain their unary semantics. ADD, SUB,
+MUL, DIV, MAXIMUM, and MINIMUM retain their operand slots, so asymmetric SUB
+and DIV are not reordered.
+
+Non-scalar binary side inputs must be private immutable rank-four constants
+whose data, TensorIR shape/signature, dtype, original NCHW broadcast, converted
+NHWC broadcast, and output contract all agree. Exclusive constants are
+transposed in place. A constant with any consumer outside the accepted chain
+receives one deterministic NHWC clone shared by all planned slots; the legacy
+constant and unrelated consumers remain unchanged. This grouping also avoids
+the raw helper's repeated in-place transpose when one constant appears more
+than once in a chain.
+
+Every input/output rewrite, constant update, tensor/operator contract,
+metadata update, and adapter removal belongs to one immutable plan that is
+fully resolved again immediately before apply. The surviving inverse-adapter
+output takes the converted final chain shape/signature and dtype/quantization
+directly from the former chain output; it is not blindly permuted from possibly
+stale existing metadata. One differential `ModelIRGraphIndex`, a candidate
+list bounded by the current Transpose count, an optional explicit rewrite
+limit, success-only pruning, and differential LayoutState updates replace the
+repeated full-map rebuild and unbounded fixed-point loop.
+
+Pre-extraction sequential characterization observed four invocations per
+representative. Only the first was active: YuNet rewrote 10 chains, FastestDet
+23, HumanSeg 27, OSNet 63, and SiNet zero. All 123 active chains were
+Conv2D/DepthwiseConv2D followed by RELU, while the full historical unary,
+binary, and TransposeConv capability remains covered synthetically. The
+separate channel-one TransposeConv/Squeeze terminal helper matched zero in all
+20 invocations and remains a distinct semantic family.
+
+Fifty-six focused tests cover all three producer types, all seven unary types,
+all six binary types in both operand positions, exact numerical equivalence,
+dynamic signatures, grouped shared-constant cloning, candidate limits,
+idempotence, GraphIndex/LayoutState integrity, and twenty unsafe transactional
+no-op contracts. Sequential comparisons against the preceding checkpoint emit
+byte-identical float32, float16, correspondence, and schema artifacts for all
+four active representatives.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
