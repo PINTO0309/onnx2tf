@@ -339,8 +339,11 @@ def plan_nhwc_instance_norm_constant_updates(
     bias_input_index: int,
     channel_count: int,
     public_names: AbstractSet[str],
+    additional_coefficient_uses: Sequence[
+        Tuple[str, OperatorIR, int]
+    ] = (),
 ) -> Optional[Tuple[ConstantUpdate, ...]]:
-    """Plan Mean-axis and affine updates shared by NHWC InstanceNorm owners."""
+    """Plan all Mean-axis and affine updates for one NHWC rewrite."""
 
     axes_uses: dict[str, list[ConstantUse]] = {}
     axes_uses.setdefault(core.mean1_axes_name, []).append(
@@ -381,6 +384,10 @@ def plan_nhwc_instance_norm_constant_updates(
     coefficient_uses.setdefault(str(bias_name), []).append(
         ConstantUse(bias_operator, int(bias_input_index))
     )
+    for coefficient_name, operator, input_index in additional_coefficient_uses:
+        coefficient_uses.setdefault(str(coefficient_name), []).append(
+            ConstantUse(operator, int(input_index))
+        )
     dtype = str(core.x.tensor.dtype)
     for coefficient_name, uses in coefficient_uses.items():
         if not constant_is_private_and_unquantized(

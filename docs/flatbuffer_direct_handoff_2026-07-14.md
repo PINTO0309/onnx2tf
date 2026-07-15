@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the dual-pre-Transpose
-`InstanceNorm -> bias ADD -> residual ADD` rewrite to
-`passes/instance_norm_residual_add_layout.py` and reduces its former 475-line
-raw mutator to a 19-line compatibility dispatcher. The decomposition matcher
-and complete Mean-axis/affine constant transaction are shared with the existing
-post-bias and four pre/post tail modes through
-`passes/decomposed_instance_norm.py`. All six decomposed-InstanceNorm layout
-paths now use indexed, side-effect-free matching before mutation.
+The latest implementation unit moves the
+`InstanceNorm -> residual ADD -> two MULs -> CONCAT` rewrite to
+`passes/instance_norm_residual_mul_concat_layout.py` and reduces its former
+501-line raw mutator to a 19-line compatibility dispatcher. The decomposition
+matcher and complete Mean-axis/scale/bias/tail-coefficient transaction are
+shared with the existing residual-ADD, post-bias, and four pre/post tail modes
+through `passes/decomposed_instance_norm.py`. All seven decomposed-InstanceNorm
+layout paths now use indexed, side-effect-free matching before mutation.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,8 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains one hundred one coherent
-continuations:
+The current `fb-refactor5` work contains 102 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -2725,6 +2724,52 @@ import, direct conversion, and `-cotof` passed sequentially with
 `3 passed in 4.21s`. Scoped Ruff, syntax compilation, and `git diff --check`
 passed. No Tier corpus conversion was run.
 
+The indexed residual-MUL/CONCAT InstanceNormalization checkpoint moves the
+next three-Transpose tail to
+`passes/instance_norm_residual_mul_concat_layout.py`. It validates the direct
+decomposed core and bias, the first NCHW-to-NHWC bridge, one same-contract
+residual ADD, exactly two tail MUL branches, one multiplicity-preserving
+channel-axis CONCAT, and the final NCHW-to-NHWC bridge. The historical helper
+name mentions Conv, but the indexed owner intentionally preserves the actual
+legacy boundary: the former final-Transpose output may be a public output or
+feed any later graph-ordered consumers, with no required Conv operator.
+
+On success, all three Transposes are removed, the normalization and residual
+tail run in NHWC, both tail-MUL outputs and CONCAT metadata are permuted, the
+CONCAT axis changes from 1 to 3, and CONCAT directly produces the preserved
+final output name. Dynamic height, width, and channel signatures, downstream
+fan-out, repeated input slots, public outputs, and existing CONCAT option fields
+are retained. The common constant planner now accepts additional coefficient
+uses and plans both Mean axes, scale, bias, and both tail coefficients as one
+transaction. Shared constants update once, unrelated users receive a
+deterministic clone, and a late invalid tail coefficient can no longer leave
+earlier axes or affine constants partially modified.
+
+The owner requires exact producer, consumer multiplicity, graph-order,
+shape/signature, dtype, quantization, typed-permutation, output-renaming, and
+public-boundary contracts. It compares CONCAT inputs with `Counter`, uses one
+differential `ModelIRGraphIndex`, scans candidates in graph order with a
+32-rewrite ceiling, prunes only after success, and synchronizes the Session
+`LayoutState`. Its former 501-line lowerer mutator is a 19-line dispatcher. All
+four production calls pass LayoutState, and the repeated normalization loop
+shares `residual_graph_index` with the preceding residual-ADD owner.
+
+Focused coverage includes thirty-two FLOAT16/FLOAT32 logical-equivalence
+variants across direct/produced main and residual sources, shared/separate and
+positive/negative/reversed Mean axes, commuted operands, scalar/NCHW/NHWC
+coefficients, and both CONCAT orders; three dynamic-signature cases; fan-out
+and repeated input slots; public final output; shared-constant cloning; one
+coefficient shared by all four affine uses; two-chain capped execution;
+fifty-seven transactional unsafe cases; clone collision; and preflight/no-index
+behavior. The new owner, adjacent five InstanceNorm owner groups,
+direct-builder characterizations, and ownership checks passed with
+`497 passed in 2.99s`. The full architecture suite passed with
+`178 passed in 54.41s`; thirteen selected InstanceNorm direct-builder tests
+passed with `13 passed, 742 deselected in 1.44s`; TensorFlow-import-blocked
+import, direct conversion, and `-cotof` passed sequentially with
+`3 passed in 4.22s`. Scoped Ruff, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -2767,12 +2812,12 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 501-line
-   `_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains`
-   helper next. Reuse the common decomposed-InstanceNormalization matcher only
-   for its exact core; keep residual-MUL, CONCAT, Conv, and output-adapter
-   topology in a separate bounded owner unless characterization proves a shared
-   contract.
+3. Audit the adjacent 712-line
+   `_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains`
+   helper next. Determine which of its two statistical branches exactly match
+   the common decomposed-InstanceNormalization core, and keep the dual-stat,
+   residual-ADD, Resize, and output-boundary topology in a separate bounded
+   owner unless characterization proves a narrower shared contract.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

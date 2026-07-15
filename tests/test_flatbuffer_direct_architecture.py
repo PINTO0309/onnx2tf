@@ -3533,6 +3533,82 @@ def test_indexed_instance_norm_residual_add_owner_has_one_adapter_contract() -> 
     assert graph_keyword.value.id == "residual_graph_index"
 
 
+def test_indexed_instance_norm_residual_mul_concat_owner_is_transactional() -> None:
+    pass_root = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes"
+    common_source = (pass_root / "decomposed_instance_norm.py").read_text(
+        encoding="utf-8"
+    )
+    owner_source = (
+        pass_root / "instance_norm_residual_mul_concat_layout.py"
+    ).read_text(encoding="utf-8")
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = (
+        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
+    )
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+
+    assert "additional_coefficient_uses" in common_source
+    assert "plan_nhwc_instance_norm_constant_updates(" in owner_source
+    assert "additional_coefficient_uses=" in owner_source
+    assert "match_decomposed_instance_norm_core(" in owner_source
+    assert "Counter(concat_inputs)" in owner_source
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "while True" not in owner_source
+    assert len(wrapper.body) == 2
+    dispatch = wrapper.body[1]
+    assert isinstance(dispatch, ast.Return)
+    call = next(node for node in ast.walk(dispatch) if isinstance(node, ast.Call))
+    assert isinstance(call.func, ast.Name)
+    assert (
+        call.func.id
+        == "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains_pass"
+    )
+    assert {keyword.arg for keyword in call.keywords} == {
+        "graph_index",
+        "layout_state",
+        "max_rewrites",
+        "candidate",
+    }
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 4
+    assert all(
+        any(keyword.arg == "layout_state" for keyword in call.keywords)
+        for call in production_calls
+    )
+    indexed_calls = [
+        call
+        for call in production_calls
+        if any(keyword.arg == "graph_index" for keyword in call.keywords)
+    ]
+    assert len(indexed_calls) == 1
+    graph_keyword = next(
+        keyword
+        for keyword in indexed_calls[0].keywords
+        if keyword.arg == "graph_index"
+    )
+    assert isinstance(graph_keyword.value, ast.Name)
+    assert graph_keyword.value.id == "residual_graph_index"
+
+
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

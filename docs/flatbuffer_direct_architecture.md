@@ -5047,6 +5047,39 @@ same live index used by the adjacent post-bias owner, and both production calls
 supply the Session `LayoutState`. No full producer/consumer-map rebuild or
 unbounded fixed-point loop remains in this path.
 
+The following residual-MUL/CONCAT InstanceNormalization tail is owned by
+`passes/instance_norm_residual_mul_concat_layout.py`. Its strict prefix is the
+same direct NCHW decomposed core and bias ADD, followed by an
+`NCHW -> NHWC` Transpose and a residual ADD. The tail has exactly two MUL users
+of that ADD, two scalar or channelwise coefficients, one channel-axis CONCAT,
+and a final `NCHW -> NHWC` Transpose. The compatibility name retains its
+historical `...concat_conv...` spelling, but the owner deliberately preserves
+the legacy contract by not requiring a Conv consumer: the final tensor may be
+a public graph output or feed any later, graph-ordered consumers.
+
+All three Transposes are removed in one transaction. The normalization core,
+bias ADD, residual ADD, and both tail MULs execute in NHWC; the MUL outputs and
+CONCAT metadata are permuted to NHWC; the CONCAT axis changes from 1 to 3; and
+the CONCAT directly produces the former final-Transpose output name. Exact
+shape/signature permutations, including dynamic height, width, or channel,
+preserve the existing public and downstream tensor contract. CONCAT inputs are
+compared with multiplicity rather than as a set, so duplicated or missing
+branches cannot match accidentally.
+
+`plan_nhwc_instance_norm_constant_updates` accepts additional coefficient uses
+for this owner and plans both Mean axes, scale, bias, and the two tail-MUL
+coefficients together before mutation. A constant shared by any subset of
+those four affine sites is updated once; unrelated consumers receive one
+deterministic clone. Invalid, non-finite, produced, public, quantized, mixed-
+dtype, wrongly shaped, or colliding constants reject the whole transaction.
+One `ModelIRGraphIndex` proves every producer, consumer multiplicity, graph
+order, tensor, permutation, public boundary, and output-renaming contract. The
+owner uses a bounded graph-order scan, a 32-rewrite ceiling, differential index
+updates, success-only pruning, and Session `LayoutState` synchronization. Its
+former 501-line lowerer mutator is now a 19-line dispatcher; all four production
+calls supply LayoutState, and the repeated recovery loop reuses its live
+`residual_graph_index`.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
