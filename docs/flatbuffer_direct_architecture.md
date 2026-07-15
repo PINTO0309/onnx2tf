@@ -6585,6 +6585,51 @@ architecture gate passes 542 tests, TensorFlow-blocked direct/default/`-cotof`
 passes three tests sequentially, and YuNet reproduces its five fixed artifacts.
 No Tier corpus was run for this checkpoint.
 
+Split/mixed-Concat fan-in recovery is owned by
+`passes/split_mixed_concat_layout.py`. The former lowerer helper rebuilt full
+producer/consumer maps inside an unbounded fixed-point loop. It is now one thin
+dispatcher at each of its three unchanged source positions, and every
+production call receives the Session `LayoutState`.
+
+The indexed root is a private rank-four channel-axis Concat with at least one
+direct Split output. Every other input must be another output of an accepted
+Split or the exclusive result of a typed NHWC-to-NCHW adapter. All Split
+outputs are classified as a unit: they may feed the target Concat directly or
+private typed NCHW-to-NHWC aliases, but public or unrelated consumers reject
+the entire transaction. This keeps the following general input-chain helper a
+separate ordered family instead of allowing either pass to consume a partial
+match owned by the other.
+
+The resolver proves rank-four static/dynamic views, dtype, per-tensor
+quantization, explicit or unknown physical layout, graph order, producer
+uniqueness, exact consumer slots, typed INT32/INT64 permutation constants, and
+the derived NHWC Concat view. A Split axis must be an immutable scalar typed
+constant normalized to channel axis one. It changes in place only when the
+Split owns its only consumer slot; otherwise the plan creates one deterministic
+dtype-preserving axis-three clone. Produced, variable, public, malformed, or
+per-axis-quantized values are rejected.
+
+The plan owns each pre-Split adapter, Split input and output metadata update,
+alias rewire, direct-adapter removal, Concat input/axis/output change, terminal
+NCHW compatibility adapter, tensor contract, operator contract, and public
+graph boundary. The same Concat is resolved again immediately before apply.
+One differential `ModelIRGraphIndex` maintains the rewrites, removals, and
+insertions; graph-ordered Concat candidates, candidate-only operation, and an
+explicit rewrite limit replace the raw scan and fixed-point loop. Converted
+tensors are recorded in both TensorIR and Session `LayoutState`.
+
+Seven sequential short Tier 0-4 characterization models containing Split and
+Concat produced no runtime match for this specialized family, while the
+following general input-chain family retained its existing matches. The active
+contract is therefore fixed synthetically rather than broadened to absorb
+production patterns owned elsewhere. Sixteen dedicated tests cover active and
+all-Split forms, dynamic signatures, negative axes, shared axis cloning,
+public/fan-out/quantization/producer guards, stale-plan rejection, candidate
+limits, repeated sweeps, and index/layout integrity. The adjacent owner and
+architecture gate passes 524 tests. Sequential `-cotof` validation preserves
+the managed values for `yolov9` (`3.0517578125e-05`) and `sgscsh`
+(`2.5331974029541016e-07`).
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

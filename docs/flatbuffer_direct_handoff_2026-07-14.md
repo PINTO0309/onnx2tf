@@ -8,17 +8,76 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves StridedSlice/Concat NHWC fan-in recovery
+The latest implementation unit moves Split/mixed-Concat NHWC fan-in recovery
 into the TensorFlow-free indexed
-`passes/stridedslice_concat_layout.py` owner. Its former 280-line full-map,
-unbounded fixed-point helper is now a thin dispatcher at both unchanged
-production positions. The owner resolves an immutable whole-group plan,
-re-resolves the complete contract before apply, and maintains one differential
-`ModelIRGraphIndex` plus the Session `LayoutState` through every rewrite.
+`passes/split_mixed_concat_layout.py` owner. Its former 432-line full-map,
+unbounded fixed-point helper is now a thin compatibility dispatcher at all
+three unchanged source positions. The owner resolves an immutable whole-group
+plan, re-resolves the complete contract before apply, and maintains one
+differential `ModelIRGraphIndex` plus the Session `LayoutState` through every
+rewrite.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
+
+### Split/mixed-Concat continuation — 2026-07-16
+
+The extracted owner starts from graph-ordered channel-axis Concat candidates
+instead of rebuilding complete producer and consumer maps. Every Concat input
+must be classified as either a private typed NHWC-to-NCHW adapter or a direct
+output of a channel-axis Split. At least one Split root is mandatory. The
+resolver proves rank-four static and dynamic views, dtype, per-tensor
+quantization, explicit or unknown layout, producer uniqueness, graph order,
+exact consumer ownership, typed INT32/INT64 permutation and Split-axis
+constants, the derived NHWC Concat result, and the private terminal boundary
+before a plan exists.
+
+All outputs of each accepted Split are classified together. An output may feed
+the target Concat directly or feed one or more private NCHW-to-NHWC adapters;
+any unrelated or public consumer rejects the complete group. Adapter aliases
+are rewired to the converted Split output only after revalidation. Shared
+Split-axis constants receive one deterministic dtype-preserving clone, while
+an axis with exactly one owned consumer slot changes in place. Produced,
+variable, public, malformed, or per-axis-quantized constants and tensors are
+not rewritten.
+
+The immutable plan records all axis ownership, new Split-input adapters,
+converted output metadata, direct-input adapter removals, alias rewrites,
+Concat axis/output changes, the terminal NCHW compatibility adapter, and full
+tensor/operator and graph-boundary contracts. The same Concat is resolved
+again immediately before mutation. Candidate-only operation and an explicit
+rewrite limit use the production entry point; inserted and removed operators
+update one differential graph index. Converted tensors are recorded in both
+TensorIR and Session `LayoutState`, and success-only pruning preserves the
+legacy zero-match side effect.
+
+Before extraction, seven short Tier 0-4 models containing both ONNX Split and
+Concat were converted sequentially under an instrumented helper:
+`alike_t_opset11_192x320`, `yolov9_n_wholebody_with_wheelchair_post`,
+`sgscsh`, `best`, `mobileformer`, `parseq-tiny`, and `LINEA`. The mixed helper
+remained zero-match in every runtime invocation. The immediately following
+input-chain helper remained active where expected, including three first-sweep
+groups in `yolov9` and two later-sweep groups in `sgscsh`; extraction therefore
+did not absorb or pre-empt that separate family.
+
+Sixteen dedicated tests cover the active mixed and all-Split forms, dynamic
+signatures, negative axes, shared-axis cloning, explicit layouts, public
+boundaries, fan-out, per-axis quantization, produced and duplicate producers,
+stale-plan rejection, candidate limits, idempotence, GraphIndex/LayoutState
+integrity, the compatibility dispatcher, and repeated production sweeps. The
+new owner, adjacent Split/Concat owners, boundary-input checks, complete
+architecture suite, and TensorFlow import blocker pass together with `524
+passed in 51.68s`. Scoped Ruff, syntax compilation, and `git diff --check`
+pass.
+
+Two post-extraction `-cotof` checks ran sequentially. `yolov9` remains a pass
+with maximum absolute error `3.0517578125e-05`; `sgscsh` remains a pass with
+maximum absolute error `2.5331974029541016e-07`. Both exactly reproduce the
+managed quick-profile accuracy values and remain well below `1e-1`. No
+TensorFlow import, new dependency, parallel inference, SWAP, timeout, or Tier
+corpus run was introduced. Temporary characterization and conversion outputs
+were removed.
 
 ## Continuation snapshot — 2026-07-16
 
@@ -5346,11 +5405,12 @@ production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
 The unquantized pseudo-Swish, tanh-GELU, center/size/offset, pseudo-LeakyReLU,
-PReLU, connected elementwise/Concat, and StridedSlice/Concat recovery helpers
-are now indexed at their unchanged production positions. The next standalone
-raw recovery helper in this ordered prefix is
-`_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains`;
-it has three production positions and has not yet been characterized or
+PReLU, connected elementwise/Concat, StridedSlice/Concat, and Split/mixed-
+Concat recovery helpers are now indexed at their unchanged production
+positions. The next standalone raw recovery helper in this ordered prefix is
+`_optimize_transpose_input_chains_pre_concat_to_single_post_adapter`; it has
+three direct production positions and is also referenced by the conservative
+safe-transpose fallback bundle. It has not yet been fully characterized or
 changed. The composite pre-Concat dispatcher still retains its previously
 documented legacy-family fallback after the indexed families.
 
@@ -5364,12 +5424,13 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. Characterize
-   `_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains`
-   at all three unchanged ordered positions. Fix its runtime match set,
-   Split-axis ownership, mixed direct/post-adapter input classification,
-   terminal compatibility adapter, and interaction with the immediately
-   following input-chain helper before selecting a bounded semantic owner. Do
-   not modify it during characterization.
+   `_optimize_transpose_input_chains_pre_concat_to_single_post_adapter` at all
+   three direct production positions and through the conservative safe-
+   transpose fallback bundle. Fix its runtime match set, optional unary and
+   singleton-Reshape input classification, shared adapter ownership, terminal
+   compatibility boundary, and interaction with the preceding indexed
+   Split/mixed-Concat owner before selecting a bounded semantic owner. Do not
+   modify it during characterization.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
