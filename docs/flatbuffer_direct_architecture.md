@@ -5225,6 +5225,46 @@ Session `LayoutState` is synchronized. The former 278-line lowerer helper is a
 four-line Pad compatibility wrapper remains independently owned by
 `passes/pad_layout.py` because its topology and constant contracts differ.
 
+The strict two-stage SiNet Shuffle residual island is owned by
+`passes/sinet_shuffle_residual_layout.py`. Its one candidate spans five layout
+adapters and the complete graph
+`ADD -> MUL -> ADD -> PRELU -> {post Transpose, channel Concat} -> MUL -> ADD
+-> PRELU -> post Transpose`. The owner matches from the terminal post-
+Transpose, proves all thirteen operators with one `ModelIRGraphIndex`, and
+rewrites the two residual inputs, the independent Concat input, both affine/
+PReLU stages, and the Concat axis as one transaction. The three input adapters
+and both post adapters are removed only after the complete plan is re-resolved.
+
+Every intermediate must have one unique producer, exact consumer
+multiplicity, valid dependency order, and no public boundary role. The first
+PReLU output must have exactly the intended Concat and inverse-Transpose uses;
+the second PReLU output must feed only its inverse Transpose. Arbitrary later
+fan-out and repeated input slots from the two canonical post outputs remain
+unchanged. Both residual inputs must have identical concrete and dynamic
+contracts. The independent branch, residual branch, and channel-axis Concat
+must agree in batch and spatial dimensions, including conservative propagation
+of unknown signature axes. All data tensors are rank-four, unquantized,
+FLOAT16/FLOAT32/FLOAT64 tensors of one dtype; permutation tensors are typed,
+private, exact constants; binary/Concat/PReLU fused activations must be NONE.
+
+Six scalar or NCHW/NHWC channel constants cover both MUL, ADD, and PReLU
+stages. Constant roles are grouped by tensor identity before mutation. A
+constant reused by several roles is updated once, even across both stages;
+unrelated consumers receive one deterministic `_nhwc` clone. Produced,
+public, variable, quantized, non-finite, wrongly typed or shaped constants
+reject the whole candidate. Clone names, all mutation indices, output tensors,
+and removable operators are preflighted before the first write.
+
+The existing post-Transpose tensors remain the authoritative public-facing
+contracts. The first stage's ADD/MUL/ADD intermediates adopt the first post
+tensor's exact shape, signature, and layouts; the Concat and second stage's
+MUL/ADD intermediates adopt the second post tensor's contract. The PReLU
+operators produce those canonical names directly, so neither canonical tensor
+is permuted or overwritten. A graph-ordered candidate snapshot, configurable
+32-rewrite ceiling, success-only pruning, and Session `LayoutState` sync
+replace the legacy unbounded full-map loop. The former 482-line lowerer helper
+is a 17-line dispatcher and its production call supplies LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

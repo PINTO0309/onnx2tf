@@ -3880,6 +3880,70 @@ def test_indexed_affine_post_add_layout_owner_is_bounded_and_separate_from_pad()
     )
 
 
+def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> None:
+    pass_root = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes"
+    owner_source = (pass_root / "sinet_shuffle_residual_layout.py").read_text(
+        encoding="utf-8"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = "_optimize_sinet_shuffle_residual_transpose_chains"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+
+    assert "def _resolve_candidate(" in owner_source
+    assert "def _apply_plan(" in owner_source
+    assert "def _plan_constants(" in owner_source
+    assert "Counter(" in owner_source
+    assert "metadata_updates" in owner_source
+    assert "post1_tensor" in owner_source
+    assert "post2_tensor" in owner_source
+    assert "max_rewrites" in owner_source
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "while True" not in owner_source
+    assert len(wrapper.body) == 2
+    dispatch = wrapper.body[1]
+    assert isinstance(dispatch, ast.Return)
+    call = next(node for node in ast.walk(dispatch) if isinstance(node, ast.Call))
+    assert isinstance(call.func, ast.Name)
+    assert (
+        call.func.id
+        == "_optimize_sinet_shuffle_residual_transpose_chains_pass"
+    )
+    assert {keyword.arg for keyword in call.keywords} == {
+        "graph_index",
+        "layout_state",
+        "max_rewrites",
+        "candidate",
+    }
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+    layout_keyword = next(
+        keyword
+        for keyword in production_calls[0].keywords
+        if keyword.arg == "layout_state"
+    )
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert layout_keyword.value.attr == "layout_state"
+
+
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
