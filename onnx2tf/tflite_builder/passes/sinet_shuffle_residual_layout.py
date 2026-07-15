@@ -415,6 +415,52 @@ def _plan_constants(
     return tuple(plans)
 
 
+def _apply_constant_plans(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    plans: Tuple[_ConstantPlan, ...],
+) -> None:
+    for constant in plans:
+        target = constant.tensor
+        if constant.clone_name is not None:
+            target = TensorIR(
+                name=str(constant.clone_name),
+                dtype=str(constant.tensor.dtype),
+                shape=[int(value) for value in constant.data.shape],
+                shape_signature=[int(value) for value in constant.data.shape],
+                data=np.asarray(constant.data),
+                is_variable=False,
+                quantization=None,
+                logical_layout=str(constant.tensor.logical_layout),
+                physical_layout=str(constant.tensor.physical_layout),
+                onnx_tensor_name=constant.tensor.onnx_tensor_name,
+            )
+            model_ir.tensors[str(constant.clone_name)] = target
+            for use in constant.uses:
+                _replace_operator_input_at(
+                    model_ir=model_ir,
+                    op=use.operator,
+                    input_index=int(use.input_index),
+                    new_input_name=str(constant.clone_name),
+                    graph_index=graph_index,
+                )
+        target.data = np.asarray(constant.data)
+        target.shape = [int(value) for value in constant.data.shape]
+        target.shape_signature = [int(value) for value in constant.data.shape]
+
+
+def _apply_metadata_updates(
+    model_ir: ModelIR,
+    updates: Tuple[_MetadataUpdate, ...],
+) -> None:
+    for update in updates:
+        tensor = model_ir.tensors[update.name]
+        tensor.shape = [int(value) for value in update.shape]
+        tensor.shape_signature = [int(value) for value in update.signature]
+        tensor.logical_layout = str(update.logical_layout)
+        tensor.physical_layout = str(update.physical_layout)
+
+
 def _metadata_update(
     name: str,
     canonical: TensorIR,
@@ -1514,33 +1560,7 @@ def _apply_late_plan(
     ):
         return False
 
-    for constant in plan.constant_plans:
-        target = constant.tensor
-        if constant.clone_name is not None:
-            target = TensorIR(
-                name=str(constant.clone_name),
-                dtype=str(constant.tensor.dtype),
-                shape=[int(value) for value in constant.data.shape],
-                shape_signature=[int(value) for value in constant.data.shape],
-                data=np.asarray(constant.data),
-                is_variable=False,
-                quantization=None,
-                logical_layout=str(constant.tensor.logical_layout),
-                physical_layout=str(constant.tensor.physical_layout),
-                onnx_tensor_name=constant.tensor.onnx_tensor_name,
-            )
-            model_ir.tensors[str(constant.clone_name)] = target
-            for use in constant.uses:
-                _replace_operator_input_at(
-                    model_ir=model_ir,
-                    op=use.operator,
-                    input_index=int(use.input_index),
-                    new_input_name=str(constant.clone_name),
-                    graph_index=graph_index,
-                )
-        target.data = np.asarray(constant.data)
-        target.shape = [int(value) for value in constant.data.shape]
-        target.shape_signature = [int(value) for value in constant.data.shape]
+    _apply_constant_plans(model_ir, graph_index, plan.constant_plans)
 
     graph_index.replace_operator_inputs(int(add0_index), plan.add0_inputs)
     graph_index.replace_operator_outputs(
@@ -1555,12 +1575,7 @@ def _apply_late_plan(
         int(root_index),
         [plan.post1_output_name, str(plan.root.inputs[1])],
     )
-    for update in plan.metadata_updates:
-        tensor = model_ir.tensors[update.name]
-        tensor.shape = [int(value) for value in update.shape]
-        tensor.shape_signature = [int(value) for value in update.signature]
-        tensor.logical_layout = str(update.logical_layout)
-        tensor.physical_layout = str(update.physical_layout)
+    _apply_metadata_updates(model_ir, plan.metadata_updates)
     graph_index.remove_operators([int(index) for index in remove_indices])
     return True
 
@@ -1653,33 +1668,7 @@ def _apply_plan(
     ):
         return False
 
-    for constant in plan.constant_plans:
-        target = constant.tensor
-        if constant.clone_name is not None:
-            target = TensorIR(
-                name=str(constant.clone_name),
-                dtype=str(constant.tensor.dtype),
-                shape=[int(value) for value in constant.data.shape],
-                shape_signature=[int(value) for value in constant.data.shape],
-                data=np.asarray(constant.data),
-                is_variable=False,
-                quantization=None,
-                logical_layout=str(constant.tensor.logical_layout),
-                physical_layout=str(constant.tensor.physical_layout),
-                onnx_tensor_name=constant.tensor.onnx_tensor_name,
-            )
-            model_ir.tensors[str(constant.clone_name)] = target
-            for use in constant.uses:
-                _replace_operator_input_at(
-                    model_ir=model_ir,
-                    op=use.operator,
-                    input_index=int(use.input_index),
-                    new_input_name=str(constant.clone_name),
-                    graph_index=graph_index,
-                )
-        target.data = np.asarray(constant.data)
-        target.shape = [int(value) for value in constant.data.shape]
-        target.shape_signature = [int(value) for value in constant.data.shape]
+    _apply_constant_plans(model_ir, graph_index, plan.constant_plans)
 
     graph_index.replace_operator_inputs(int(add0_index), plan.add0_inputs)
     graph_index.replace_operator_inputs(int(concat2_index), plan.concat2_inputs)
@@ -1693,12 +1682,7 @@ def _apply_plan(
         [plan.post2_output_name],
     )
 
-    for update in plan.metadata_updates:
-        tensor = model_ir.tensors[update.name]
-        tensor.shape = [int(value) for value in update.shape]
-        tensor.shape_signature = [int(value) for value in update.signature]
-        tensor.logical_layout = str(update.logical_layout)
-        tensor.physical_layout = str(update.physical_layout)
+    _apply_metadata_updates(model_ir, plan.metadata_updates)
 
     graph_index.remove_operators([int(index) for index in remove_indices])
     return True
@@ -2062,33 +2046,7 @@ def _apply_postmul_plan(
     ):
         return False
 
-    for constant in plan.constant_plans:
-        target = constant.tensor
-        if constant.clone_name is not None:
-            target = TensorIR(
-                name=str(constant.clone_name),
-                dtype=str(constant.tensor.dtype),
-                shape=[int(value) for value in constant.data.shape],
-                shape_signature=[int(value) for value in constant.data.shape],
-                data=np.asarray(constant.data),
-                is_variable=False,
-                quantization=None,
-                logical_layout=str(constant.tensor.logical_layout),
-                physical_layout=str(constant.tensor.physical_layout),
-                onnx_tensor_name=constant.tensor.onnx_tensor_name,
-            )
-            model_ir.tensors[str(constant.clone_name)] = target
-            for use in constant.uses:
-                _replace_operator_input_at(
-                    model_ir=model_ir,
-                    op=use.operator,
-                    input_index=int(use.input_index),
-                    new_input_name=str(constant.clone_name),
-                    graph_index=graph_index,
-                )
-        target.data = np.asarray(constant.data)
-        target.shape = [int(value) for value in constant.data.shape]
-        target.shape_signature = [int(value) for value in constant.data.shape]
+    _apply_constant_plans(model_ir, graph_index, plan.constant_plans)
 
     graph_index.replace_operator_inputs(int(add0_index), prefix.add0_inputs)
     graph_index.replace_operator_inputs(
@@ -2104,12 +2062,7 @@ def _apply_postmul_plan(
         int(mul2_index),
         [plan.post2_output_name],
     )
-    for update in plan.metadata_updates:
-        tensor = model_ir.tensors[update.name]
-        tensor.shape = [int(value) for value in update.shape]
-        tensor.shape_signature = [int(value) for value in update.signature]
-        tensor.logical_layout = str(update.logical_layout)
-        tensor.physical_layout = str(update.physical_layout)
+    _apply_metadata_updates(model_ir, plan.metadata_updates)
     graph_index.remove_operators([int(index) for index in remove_indices])
     return True
 

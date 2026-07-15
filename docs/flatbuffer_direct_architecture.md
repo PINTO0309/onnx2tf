@@ -5328,6 +5328,48 @@ ceiling, success-only pruning, and optional Session `LayoutState`
 synchronization. The former 331-line raw helper is a 17-line compatibility
 dispatcher and its production call supplies the Session LayoutState.
 
+The deep-skip Resize/affine residual island is isolated in
+`passes/sinet_deep_skip_layout.py`. Its matcher is deliberately staged into
+three bounded semantic resolvers: the terminal Concat/MUL/post-Transpose/
+ADD/PReLU tail, the central ADD/MUL/ADD/PReLU residual stage, and the
+Resize-plus-affine dual branch feeding the first Concat. A final resolver joins
+those locally proven contracts and applies one all-or-nothing transaction; no
+stage mutates a partially matched graph.
+
+Four private NHWC/NCHW adapters are removed. The Resize branch's MUL/ADD,
+both channel Concats, the central residual stage, and the terminal MUL move to
+NHWC. The terminal ADD/PReLU remains on its existing canonical NHWC tensors.
+The central residual input may be either an already annotated channel-last
+tensor or an NCHW tensor with one explicit earlier NCHW-to-NHWC adapter. The
+former 40-by-40 shape-name heuristic is not used: relational shape and dynamic
+signature equality, typed permutations, and the tensor's logical/physical
+layout select the form.
+
+Each intermediate has one unique producer, exact consumer multiplicity, and
+valid dependency order. Concat shapes and signatures are derived on axis 1 in
+the original NCHW graph and axis 3 in the target NHWC graph. The Resize source,
+independent branch, central residual, skip branch, and terminal canonical post
+tensor must agree in batch and spatial axes, including conservative unknown
+signature propagation. All activation tensors are unquantized rank-four
+FLOAT16/FLOAT32/FLOAT64 tensors of one dtype; fused activations and public
+intermediate boundaries reject the complete candidate.
+
+Six NCHW-side affine/PReLU constants are validated against both the original
+NCHW broadcast and the rotated NHWC broadcast. The terminal ADD/PReLU
+constants use the canonical NHWC contract. Constant roles are grouped by
+tensor identity across the entire island; unrelated consumers receive one
+deterministic clone, and conflicting shared orientations reject the plan. The
+SiNet owners share one constant-application and one metadata-application
+implementation so clone rewiring and layout updates cannot diverge.
+
+The complete graph is re-resolved before apply. Clone names, four removals,
+five input changes, both Concat axes, and every metadata target are preflighted
+before the first write. One differential `ModelIRGraphIndex`, graph-ordered
+candidates, a configurable 32-rewrite ceiling, success-only pruning, and
+Session `LayoutState` synchronization replace the legacy unbounded full-map
+loop. The former 641-line lowerer helper is a 17-line dispatcher and its
+production call supplies LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
