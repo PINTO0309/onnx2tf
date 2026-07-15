@@ -3898,6 +3898,9 @@ def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> 
 
     assert "def _resolve_candidate(" in owner_source
     assert "def _apply_plan(" in owner_source
+    assert "def _resolve_prefix(" in owner_source
+    assert "def _resolve_postmul_candidate(" in owner_source
+    assert "def _apply_postmul_plan(" in owner_source
     assert "def _plan_constants(" in owner_source
     assert "Counter(" in owner_source
     assert "metadata_updates" in owner_source
@@ -3942,6 +3945,57 @@ def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> 
     )
     assert isinstance(layout_keyword.value, ast.Attribute)
     assert layout_keyword.value.attr == "layout_state"
+
+    postmul_wrapper_name = (
+        "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
+    )
+    postmul_wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == postmul_wrapper_name
+    )
+    assert len(postmul_wrapper.body) == 2
+    postmul_dispatch = postmul_wrapper.body[1]
+    assert isinstance(postmul_dispatch, ast.Return)
+    postmul_call = next(
+        node for node in ast.walk(postmul_dispatch) if isinstance(node, ast.Call)
+    )
+    assert isinstance(postmul_call.func, ast.Name)
+    assert (
+        postmul_call.func.id
+        == "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass"
+    )
+    assert {keyword.arg for keyword in postmul_call.keywords} == {
+        "graph_index",
+        "layout_state",
+        "max_rewrites",
+        "candidate",
+    }
+    postmul_production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == postmul_wrapper_name
+    ]
+    assert len(postmul_production_calls) == 2
+    postmul_layout_values = [
+        next(
+            keyword.value
+            for keyword in call.keywords
+            if keyword.arg == "layout_state"
+        )
+        for call in postmul_production_calls
+    ]
+    assert any(
+        isinstance(value, ast.Constant) and value.value is None
+        for value in postmul_layout_values
+    )
+    assert any(
+        isinstance(value, ast.Attribute) and value.attr == "layout_state"
+        for value in postmul_layout_values
+    )
 
 
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:

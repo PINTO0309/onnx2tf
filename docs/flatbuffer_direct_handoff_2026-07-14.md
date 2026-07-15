@@ -8,12 +8,11 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the complete two-stage SiNet Shuffle
-residual NHWC recovery to `passes/sinet_shuffle_residual_layout.py` and reduces
-its former 482-line raw mutator to a 17-line compatibility dispatcher. It
-validates all thirteen operators, six constant roles, two canonical post
-outputs, Concat layout, fan-out, and dynamic signatures before mutation. The
-production call now synchronizes the Session LayoutState.
+The latest implementation unit adds the paired post-MUL SiNet Shuffle variant
+to `passes/sinet_shuffle_residual_layout.py`, extracts the common nine-operator
+residual prefix used by both owners, and reduces the second former 470-line raw
+mutator to a 17-line compatibility dispatcher. The variant validates the
+partially restored NHWC ADD/PReLU tail and preserves its canonical tensors.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -36,7 +35,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 107 coherent continuations:
+The current `fb-refactor5` work contains 108 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -256,9 +255,9 @@ The current `fb-refactor5` work contains 107 coherent continuations:
   the same indexed owner with a transactional local compatibility adapter;
 - `50278afa` moves the Squeeze/unary/Reshape tail to the same indexed owner
   with a transactional second-Reshape constant and output-name rewrite;
-- the current checkpoint moves the two-stage SiNet Shuffle residual island to
-  a bounded indexed owner, groups all six affine/PReLU constant roles, keeps
-  both post-Transpose tensors authoritative, and removes the legacy raw
+- the current checkpoint extracts the common SiNet Shuffle residual prefix,
+  moves the paired post-MUL Transpose variant to the same indexed module,
+  preserves the already-NHWC ADD/PReLU tail, and removes its second legacy raw
   mutator from the compatibility dispatcher.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
@@ -3034,6 +3033,51 @@ TensorFlow-import-blocked direct, default, and `-cotof` conversion passed
 sequentially with `3 passed, 8 deselected in 3.65s`. Scoped Ruff, syntax
 compilation, and `git diff --check` passed. No Tier corpus conversion was run.
 
+The paired post-MUL SiNet checkpoint moves
+`_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains` to the same
+`passes/sinet_shuffle_residual_layout.py` owner. Its first nine operators are
+identical to the full-tail island, so both variants now use one
+`_resolve_prefix` implementation for the three input adapters, first
+ADD/MUL/ADD/PReLU stage, side post adapter, channel Concat, shape/signature
+proof, three constant roles, canonical first-post metadata, public boundaries,
+fan-out, and graph order. This removes the risk that fixes to the formerly
+duplicated residual prefix diverge between the two legacy helpers.
+
+The variant-specific tail proves
+`Concat(NCHW) -> MUL -> post-MUL Transpose(NHWC) -> ADD -> PReLU`. The MUL and
+post output are private and have exact producer/consumer multiplicity; the ADD
+has one exact PReLU consumer. The final PReLU output may remain a public output
+or keep later graph-ordered fan-out. Concrete and dynamic contracts require
+the MUL output to equal the NCHW Concat, and the post, ADD, and PReLU outputs to
+share the exact NHWC permutation. All tail tensors share the prefix floating
+dtype and are unquantized. Fused activations, duplicate producers, invalid
+order, partial fan-out, public intermediates, and stale metadata reject the
+complete plan.
+
+The shared six-role constant transaction rotates or retains the first-stage
+constants, the second MUL constant, and the already-NHWC ADD/PReLU constants
+together. Sharing, external clones, constant provenance, dtype, finiteness,
+shape, signature, quantization, collision, and variable state use the same
+contract as the full-tail owner. The MUL produces the existing post-Transpose
+name directly. The post tensor, ADD output, final PReLU output, and their
+provenance remain untouched; only the Concat intermediate adopts the canonical
+post contract. Both plans are re-resolved before apply, and all mutations and
+five removals are preflighted before the first write.
+
+Variant-focused coverage adds twenty-four FLOAT16/FLOAT32/FLOAT64 numerical
+equivalence combinations across scalar/mixed raw constants, commuted operands
+and Concat inputs, and both legal post/Concat orders; two legacy raw tail
+constant cases; external MUL-constant cloning; candidate-only and capped
+execution; twenty-seven transactional unsafe tail contracts; clone collision;
+and no-index preflight. The combined two-owner focused suite plus the existing
+direct-builder characterization passed with `148 passed in 0.88s`; the full
+architecture suite passed with `183 passed in 50.63s`; the selected SiNet
+direct-builder characterization passed with
+`1 passed, 754 deselected in 0.47s`; and TensorFlow-import-blocked direct,
+default, and `-cotof` conversion passed sequentially with
+`3 passed, 8 deselected in 3.54s`. Scoped Ruff, syntax compilation, and
+`git diff --check` passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3076,12 +3120,12 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 470-line
-   `_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains` helper next.
-   Characterize its partially restored second-stage layout, post-MUL adapter,
-   ADD/PReLU constant ownership, output contract, fan-out, and graph-order
-   boundaries before extracting a bounded semantic owner. Reuse the shared
-   SiNet residual contracts where the topology is identical.
+3. Audit the adjacent 331-line
+   `_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains` helper next.
+   Characterize its residual source selection, pre-ADD adapters, affine/PReLU
+   constants, terminal output contract, fan-out, and graph-order boundaries
+   before extracting a bounded semantic owner. Reuse the new common SiNet
+   residual and constant contracts where the topology agrees.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

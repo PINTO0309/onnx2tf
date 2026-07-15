@@ -5265,6 +5265,32 @@ is permuted or overwritten. A graph-ordered candidate snapshot, configurable
 replace the legacy unbounded full-map loop. The former 482-line lowerer helper
 is a 17-line dispatcher and its production call supplies LayoutState.
 
+The paired partially restored SiNet variant shares the same
+`_resolve_prefix` contract. Its variant-specific tail is
+`Concat(NCHW) -> MUL -> Transpose(NHWC) -> ADD -> PRELU`; only the MUL and
+Concat move from NCHW to NHWC, while the ADD/PReLU tail already has the target
+layout. The terminal root is the post-MUL Transpose. It must be private, have
+one exact MUL producer and one exact ADD consumer, and the ADD must have one
+exact PReLU consumer. The final PReLU output may be a public output or retain
+arbitrary later fan-out and repeated slots.
+
+The MUL now produces the existing post-Transpose tensor name directly. That
+canonical tensor, the ADD output, and the final PReLU output remain unchanged;
+only the Concat intermediate adopts the canonical post tensor's shape,
+signature, and layouts. The same grouped six-role constant transaction handles
+the first-stage affine/PReLU constants, the pre-Transpose MUL constant, and the
+already-NHWC ADD/PReLU constants. Raw channel constants accepted by the legacy
+recovery path are normalized in the same all-or-nothing plan.
+
+The owner re-resolves the shared prefix and variant tail immediately before
+apply, preflights every constant clone, operator mutation, output rewrite,
+metadata update, and five-adapter removal, and updates one differential index.
+Its graph-order traversal is capped at 32 rewrites, with success-only pruning
+and optional LayoutState synchronization. The former 470-line lowerer helper
+is a 17-line dispatcher. The primary production call supplies the Session
+LayoutState; the independently inferred fallback IR call passes the explicit
+`None` boundary.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

@@ -12,7 +12,10 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     _apply_plan,
+    _apply_postmul_plan,
     _resolve_candidate,
+    _resolve_postmul_candidate,
+    optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains,
     optimize_sinet_shuffle_residual_transpose_chains,
 )
 
@@ -911,4 +914,350 @@ def test_sinet_shuffle_residual_preflight_avoids_graph_index(
 
     assert optimize_sinet_shuffle_residual_transpose_chains(model_ir) == {
         "optimized_sinet_shuffle_residual_transpose_chains": 0
+    }
+
+
+def _postmul_model(
+    *,
+    dtype: str = "FLOAT32",
+    constant_mode: str = "raw",
+    reversed_inputs: bool = False,
+    post1_after_concat: bool = False,
+) -> tuple[ModelIR, dict[str, object]]:
+    model_ir, names = _model(
+        dtype=dtype,
+        constant_mode=constant_mode,
+        reversed_inputs=reversed_inputs,
+        post1_after_concat=post1_after_concat,
+    )
+    post2 = names["post2_op"]
+    mul2 = names["mul2_op"]
+    add2 = names["add2_op"]
+    model_ir.operators.remove(post2)
+    model_ir.operators.insert(model_ir.operators.index(mul2) + 1, post2)
+    post2.inputs[0] = str(names["mul2_out"])
+    add2.inputs = [
+        str(names["post2_out"])
+        if str(name) == str(names["mul2_out"])
+        else str(name)
+        for name in add2.inputs
+    ]
+    post2_tensor = model_ir.tensors[str(names["post2_out"])]
+    for key in ("add2_out", "prelu2_out"):
+        tensor = model_ir.tensors[str(names[key])]
+        tensor.shape = list(post2_tensor.shape)
+        tensor.shape_signature = list(post2_tensor.shape_signature or post2_tensor.shape)
+        tensor.logical_layout = "NHWC"
+        tensor.physical_layout = "NHWC"
+    if constant_mode == "raw":
+        for key in ("add2_const", "alpha2"):
+            tensor = model_ir.tensors[str(names[key])]
+            tensor.data = np.transpose(
+                np.asarray(tensor.data),
+                _POST_PERM,
+            ).astype(_NP_DTYPES[dtype], copy=False)
+            tensor.shape = list(tensor.data.shape)
+            tensor.shape_signature = list(tensor.data.shape)
+    final = next(
+        operator
+        for operator in model_ir.operators
+        if operator.outputs == [str(names["z"])]
+    )
+    final.inputs = [str(names["prelu2_out"])]
+    names["root"] = post2
+    return model_ir, names
+
+
+@pytest.mark.parametrize("dtype", ("FLOAT16", "FLOAT32", "FLOAT64"))
+@pytest.mark.parametrize("constant_mode", ("scalar", "raw"))
+@pytest.mark.parametrize("reversed_inputs", (False, True))
+@pytest.mark.parametrize("post1_after_concat", (False, True))
+def test_sinet_shuffle_postmul_is_indexed_and_numerically_equivalent(
+    dtype: str,
+    constant_mode: str,
+    reversed_inputs: bool,
+    post1_after_concat: bool,
+) -> None:
+    model_ir, names = _postmul_model(
+        dtype=dtype,
+        constant_mode=constant_mode,
+        reversed_inputs=reversed_inputs,
+        post1_after_concat=post1_after_concat,
+    )
+    original = copy.deepcopy(model_ir)
+    input_values = {
+        str(names[key]): np.asarray(
+            np.linspace(
+                -0.75 + index * 0.1,
+                0.95 + index * 0.1,
+                num=int(np.prod(model_ir.tensors[str(names[key])].shape)),
+                dtype=np.float64,
+            ).reshape(model_ir.tensors[str(names[key])].shape),
+            dtype=_NP_DTYPES[dtype],
+        )
+        for index, key in enumerate(("a", "x", "y"))
+    }
+    expected = _evaluate(original, input_values)
+    post1 = copy.deepcopy(model_ir.tensors[str(names["post1_out"])])
+    post2 = copy.deepcopy(model_ir.tensors[str(names["post2_out"])])
+    add2 = copy.deepcopy(model_ir.tensors[str(names["add2_out"])])
+    prelu2 = copy.deepcopy(model_ir.tensors[str(names["prelu2_out"])])
+    graph_index = ModelIRGraphIndex(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+
+    stats = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+    assert stats == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 1
+    }
+    assert not any(operator.op_type == "TRANSPOSE" for operator in model_ir.operators)
+    assert names["mul2_op"].outputs == [str(names["post2_out"])]
+    assert str(names["post2_out"]) in names["add2_op"].inputs
+    assert names["prelu2_op"].outputs == [str(names["prelu2_out"])]
+    concat = names["concat2_op"]
+    assert int(concat.options["axis"]) == 3
+    assert str(names["a"]) in concat.inputs
+    assert str(names["post1_out"]) in concat.inputs
+    actual = _evaluate(model_ir, input_values)
+    tolerance = 3e-3 if dtype == "FLOAT16" else 1e-7
+    for output_name in model_ir.outputs:
+        np.testing.assert_allclose(
+            actual[output_name],
+            expected[output_name],
+            rtol=tolerance,
+            atol=tolerance,
+        )
+    assert model_ir.tensors[str(names["post1_out"])] == post1
+    assert model_ir.tensors[str(names["post2_out"])] == post2
+    assert model_ir.tensors[str(names["add2_out"])] == add2
+    assert model_ir.tensors[str(names["prelu2_out"])] == prelu2
+    for key in ("add0_out", "mul1_out", "add1_out"):
+        assert model_ir.tensors[str(names[key])].shape == post1.shape
+    assert model_ir.tensors[str(names["concat2_out"])].shape == post2.shape
+    _assert_index_current(model_ir, graph_index)
+    assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+@pytest.mark.parametrize("reversed_inputs", (False, True))
+def test_sinet_shuffle_postmul_preserves_legacy_raw_nhwc_tail_constants(
+    reversed_inputs: bool,
+) -> None:
+    model_ir, names = _postmul_model(
+        constant_mode="raw",
+        reversed_inputs=reversed_inputs,
+    )
+    for key in ("add2_const", "alpha2"):
+        tensor = model_ir.tensors[str(names[key])]
+        tensor.data = np.transpose(np.asarray(tensor.data), _PRE_PERM)
+        tensor.shape = list(tensor.data.shape)
+        tensor.shape_signature = list(tensor.data.shape)
+
+    first = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(model_ir)
+    second = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(model_ir)
+
+    assert first == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 1
+    }
+    assert second == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 0
+    }
+
+
+def test_sinet_shuffle_postmul_clones_shared_mul_constant_once() -> None:
+    model_ir, names = _postmul_model()
+    constant_name = str(names["mul2_const"])
+    original = np.asarray(model_ir.tensors[constant_name].data).copy()
+    _mutate_fanout(model_ir, names, "mul2_const")
+
+    stats = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 1
+    }
+    np.testing.assert_array_equal(model_ir.tensors[constant_name].data, original)
+    clone_name = f"{constant_name}_nhwc"
+    assert clone_name in names["mul2_op"].inputs
+    assert model_ir.tensors[clone_name].shape == [1, 1, 1, 6]
+
+
+def test_sinet_shuffle_postmul_honors_candidate_and_total_cap() -> None:
+    model_ir = ModelIR("bounded_sinet_shuffle_postmul")
+    first = _add_chain(model_ir, prefix="first_")
+    second = _add_chain(model_ir, prefix="second_")
+    for names in (first, second):
+        post2 = names["post2_op"]
+        mul2 = names["mul2_op"]
+        add2 = names["add2_op"]
+        model_ir.operators.remove(post2)
+        model_ir.operators.insert(model_ir.operators.index(mul2) + 1, post2)
+        post2.inputs[0] = str(names["mul2_out"])
+        add2.inputs = [
+            str(names["post2_out"])
+            if str(name) == str(names["mul2_out"])
+            else str(name)
+            for name in add2.inputs
+        ]
+        post2_tensor = model_ir.tensors[str(names["post2_out"])]
+        for key in ("add2_out", "prelu2_out"):
+            tensor = model_ir.tensors[str(names[key])]
+            tensor.shape = list(post2_tensor.shape)
+            tensor.shape_signature = list(post2_tensor.shape_signature or post2_tensor.shape)
+        for key in ("add2_const", "alpha2"):
+            tensor = model_ir.tensors[str(names[key])]
+            tensor.data = np.transpose(np.asarray(tensor.data), _POST_PERM)
+            tensor.shape = list(tensor.data.shape)
+            tensor.shape_signature = list(tensor.data.shape)
+        final = next(
+            operator
+            for operator in model_ir.operators
+            if operator.outputs == [str(names["z"])]
+        )
+        final.inputs = [str(names["prelu2_out"])]
+        names["root"] = post2
+
+    candidate_stats = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+        model_ir,
+        candidate=second["root"],
+    )
+    capped_stats = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+        model_ir,
+        max_rewrites=1,
+    )
+
+    assert candidate_stats == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 1
+    }
+    assert capped_stats == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 1
+    }
+    assert ModelIRGraphIndex(model_ir).operator_index(first["root"]) is None
+    assert ModelIRGraphIndex(model_ir).operator_index(second["root"]) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda model, names: _mutate_fused(model, names, "mul2_op"),
+        lambda model, names: _mutate_fused(model, names, "add2_op"),
+        lambda model, names: _mutate_fused(model, names, "prelu2_op"),
+        lambda model, names: _mutate_public(model, names, "mul2_out"),
+        lambda model, names: _mutate_public(model, names, "post2_out"),
+        lambda model, names: _mutate_public(model, names, "add2_out"),
+        lambda model, names: _mutate_public(model, names, "mul2_const"),
+        lambda model, names: _mutate_quantized(model, names, "mul2_out"),
+        lambda model, names: _mutate_quantized(model, names, "post2_out"),
+        lambda model, names: _mutate_quantized(model, names, "add2_out"),
+        lambda model, names: _mutate_quantized(model, names, "prelu2_out"),
+        lambda model, names: _mutate_quantized(model, names, "add2_const"),
+        lambda model, names: setattr(
+            model.tensors[str(names["prelu2_out"])],
+            "dtype",
+            "FLOAT16",
+        ),
+        lambda model, names: _mutate_nonfinite(model, names, "mul2_const"),
+        lambda model, names: _mutate_nonfinite(model, names, "add2_const"),
+        lambda model, names: _mutate_fanout(model, names, "mul2_out"),
+        lambda model, names: _mutate_fanout(model, names, "post2_out"),
+        lambda model, names: _mutate_fanout(model, names, "add2_out"),
+        lambda model, names: _mutate_wrong_perm(model, names, "post2_perm"),
+        lambda model, names: setattr(
+            model.tensors[str(names["mul2_const"])],
+            "is_variable",
+            True,
+        ),
+        lambda model, names: setattr(
+            model.tensors[str(names["alpha2"])],
+            "data",
+            None,
+        ),
+        lambda model, names: setattr(
+            model.tensors[str(names["mul2_out"])],
+            "shape_signature",
+            [-1, 6, -1, 2],
+        ),
+        lambda model, names: setattr(
+            model.tensors[str(names["post2_out"])],
+            "shape",
+            [1, 3, 2, 6],
+        ),
+        lambda model, names: setattr(
+            model.tensors[str(names["add2_out"])],
+            "shape_signature",
+            [-1, 3, 2, 6],
+        ),
+        lambda model, names: names["prelu2_op"].inputs.append(
+            str(names["alpha2"])
+        ),
+        lambda model, names: model.operators.append(
+            OperatorIR(
+                "IDENTITY",
+                [str(names["concat2_out"])],
+                [str(names["mul2_out"])],
+            )
+        ),
+        lambda model, names: model.operators.insert(
+            model.operators.index(names["post2_op"]),
+            model.operators.pop(model.operators.index(names["add2_op"])),
+        ),
+    ),
+)
+def test_sinet_shuffle_postmul_rejects_unsafe_tail_transactionally(
+    mutation: _Mutation,
+) -> None:
+    model_ir, names = _postmul_model()
+    mutation(model_ir, names)
+    before = _fingerprint(model_ir)
+
+    stats = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 0
+    }
+    assert _fingerprint(model_ir) == before
+
+
+def test_sinet_shuffle_postmul_apply_preflight_rejects_clone_collision() -> None:
+    model_ir, names = _postmul_model()
+    _mutate_fanout(model_ir, names, "mul2_const")
+    graph_index = ModelIRGraphIndex(model_ir)
+    plan = _resolve_postmul_candidate(model_ir, graph_index, names["root"])
+    assert plan is not None
+    clone_name = next(
+        constant.clone_name
+        for constant in plan.constant_plans
+        if constant.clone_name is not None
+    )
+    assert clone_name is not None
+    model_ir.tensors[clone_name] = _tensor(
+        clone_name,
+        dtype="FLOAT32",
+        shape=(),
+        data=np.asarray(0.0, dtype=np.float32),
+    )
+    before = _fingerprint(model_ir)
+
+    assert not _apply_postmul_plan(model_ir, graph_index, plan)
+    assert _fingerprint(model_ir) == before
+
+
+def test_sinet_shuffle_postmul_preflight_avoids_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("no_sinet_shuffle_postmul")
+    model_ir.operators = [OperatorIR("TRANSPOSE", ["x", "p"], ["y"])]
+
+    def fail_index(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("index should not be allocated")
+
+    monkeypatch.setattr(shuffle_module, "ModelIRGraphIndex", fail_index)
+
+    assert optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+        model_ir
+    ) == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 0
     }
