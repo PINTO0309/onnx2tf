@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the two-Concat SiNet affine tail to
-`passes/sinet_tail_concat_layout.py`. The former 654-line raw mutator is now a
-17-line compatibility dispatcher over one bounded indexed matcher and
-transaction owner. It reuses the preceding adapter/Resize-affine contracts,
-then proves both residual stages, two Concat axes, eight grouped constants,
-post aliases, and legacy fan-out before removing four input adapters and all
-equivalent post adapters. The pre-existing and indexed pipelines serialize
-byte-identical float32 and float16 SiNet artifacts.
+The latest implementation unit moves the active SiNet Softmax-mask residual
+tail to `passes/sinet_softmax_mask_layout.py`. The former 612-line raw mutator
+is now a 17-line compatibility dispatcher over one bounded indexed matcher and
+transaction owner. It proves the Softmax permutation pair, ReduceMax axis,
+SUB/Reshape mask, six grouped transformed constants, side/main residual
+composition, post aliases, and legacy fan-out before removing five adapters.
+The pre-existing and indexed pipelines serialize byte-identical float32 and
+float16 SiNet artifacts.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -38,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 115 coherent continuations:
+The current `fb-refactor5` work contains 116 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -288,6 +288,10 @@ The current `fb-refactor5` work contains 115 coherent continuations:
   indexed owner, reuses the adapter/Resize branch contracts, validates both
   residual stages and eight constants, and preserves post aliases plus final
   legacy NCHW consumers transactionally.
+- the current checkpoint moves the active Softmax-mask residual tail to a
+  dedicated indexed owner, validates the channel Softmax and mask-shape axis
+  transforms plus six grouped constants, and preserves post aliases and final
+  legacy NCHW consumers in one preflighted transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -306,8 +310,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/sinet_tail_concat_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_sinet_tail_concat_layout.py`;
+- `onnx2tf/tflite_builder/passes/sinet_softmax_mask_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_sinet_softmax_mask_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -3517,6 +3521,66 @@ TensorFlow-import-blocked direct, default, and `-cotof` conversion passed
 sequentially with `3 passed in 3.67s`. Scoped Ruff, syntax compilation, and
 `git diff --check` passed. No Tier corpus conversion was run.
 
+The indexed Softmax-mask checkpoint moves
+`_optimize_sinet_softmax_mask_residual_nhwc_tail_chains` to
+`passes/sinet_softmax_mask_layout.py`. The active real-model island has two
+private NHWC-to-NCHW input adapters. Its main MUL/ADD result enters a
+`[0,3,2,1] -> Softmax(axis=3) -> [0,3,2,1]` wrapper, then
+ReduceMax/SUB/Reshape/MUL forms the mask applied to the side PReLU branch
+before the final residual ADD and post adapter.
+
+The first graph-ordered post output supplies the authoritative NHWC contract.
+All NCHW, NWHC, reduced-rank, and singleton-channel mask shapes and dynamic
+signatures are derived from it. The rewrite removes both input adapters, both
+Softmax wrapper adapters, and every equivalent terminal adapter. Softmax
+directly consumes the main NHWC affine result and produces the former
+soft-back tensor, ReduceMax axis `[1]` becomes `[3]`, and Reshape target
+`[N,1,H,W]` becomes `[N,H,W,1]` without a fixed spatial size.
+
+The main MUL/ADD constants, side PReLU alpha, and mask expansion constant must
+be finite same-dtype broadcasts both before and after explicit rotation. The
+ReduceMax axis and Reshape target constants preserve their original INT32 or
+INT64 dtype. All six transformed roles are grouped by identity, so unrelated
+consumers receive deterministic clones and conflicting shared roles reject
+the plan. The SUB singleton is strictly validated but left unchanged.
+
+Equivalent post aliases preserve every repeated downstream input slot. Later
+consumers of the former NCHW residual receive one inverse adapter inserted
+before their first use. Typed permutations, producer uniqueness, exact fan-
+out, dependency order, public boundaries, fused activation, Softmax beta,
+ReduceMax keep-dims, FLOAT16/FLOAT32/FLOAT64 dtype, quantization, layout,
+shape, and signature are all checked before mutation. The complete plan is
+re-resolved before apply, and clone names, mutation/removal indices, reshape
+options, alias slots, metadata targets, and legacy-adapter insertion are
+preflighted before the first write.
+
+One differential graph index, graph-ordered candidates, a 32-rewrite ceiling,
+success-only pruning, and LayoutState synchronization replace the full-map
+fixed-point loop. The sole production call retains its ordered recovery
+position and now supplies Session LayoutState. Focused coverage passed with
+`50 passed in 0.53s`; combined with all preceding indexed SiNet suites it
+passed with `616 passed in 1.53s`. Coverage includes eighteen numerical-
+equivalence combinations over all three floating dtypes,
+scalar/channel/full constants, both operand orders, dynamic signatures,
+idempotence, post aliases, repeated
+alias and legacy slots, no-legacy operation, external float and integer
+constant cloning, candidate-only and capped execution, twenty-five unsafe
+contracts, stale-plan and clone-collision revalidation, no-index preflight,
+differential-index validation, and LayoutState validation.
+
+The sequential production integration applied this owner once in each of the
+float32 and float16 ModelIR builds. The output remains byte-identical: the
+449,824-byte float32 artifact has SHA-256
+`40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`,
+and the 253,452-byte float16 artifact has SHA-256
+`180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`.
+This preserves the recorded sequential `-cotof` evidence:
+`max_abs=2.57205e-09`, `rmse=9.15391e-11`, `cosine=1`, and `pass=True`.
+The full architecture suite passed with `190 passed in 48.85s`, and
+TensorFlow-import-blocked direct, default, and `-cotof` conversion passed
+sequentially with `3 passed in 3.80s`. Scoped Ruff, syntax compilation, and
+`git diff --check` passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3546,6 +3610,11 @@ The full Goal is not complete. The fast-precanonicalize orchestrator still has
 orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
+The remaining raw SiNet-specific lowerer is the 808-line
+`_optimize_sinet_mix_attention_double_logistic_nhwc_chains` helper. Its
+multi-branch attention topology and actual ordered-pipeline match count have
+not yet been characterized for indexed extraction.
+
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
 regression work also remains subject to the original refactor plan and its
@@ -3559,13 +3628,13 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 612-line
-   `_optimize_sinet_softmax_mask_residual_nhwc_tail_chains` helper next.
-   Characterize its Softmax axis transforms, ReduceMax/Sub/Reshape mask,
-   broadcast constants, side/main residual composition, terminal output
-   ownership, and actual real-model match count before extracting a bounded
-   owner. Reuse existing typed-permutation, constant, and metadata helpers only
-   where their semantic contracts are identical.
+3. Audit the remaining 808-line
+   `_optimize_sinet_mix_attention_double_logistic_nhwc_chains` helper next.
+   Characterize both Logistic attention branches, layout/axis transforms,
+   constant ownership, fan-out, terminal output ownership, and actual
+   real-model match count before extracting a bounded owner. Reuse indexed
+   typed-permutation, constant, and metadata helpers only where their semantic
+   contracts are identical.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

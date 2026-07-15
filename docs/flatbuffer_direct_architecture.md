@@ -5571,6 +5571,45 @@ fixed-point loop. The former 654-line lowerer helper is a 17-line compatibility
 dispatcher and its sole production call supplies LayoutState. No model name or
 fixed spatial dimension participates in matching.
 
+The late SiNet Softmax-mask residual island is owned by
+`passes/sinet_softmax_mask_layout.py`. It proves two private NHWC-to-NCHW
+input adapters. The main branch applies MUL/ADD, wraps a channel Softmax in
+the self-inverse `[0,3,2,1]` permutation, reduces its channel maximum, forms a
+singleton-channel mask through SUB/Reshape/MUL, and combines that mask with a
+PReLU side branch before the residual ADD and one or more post adapters.
+
+The first graph-ordered post output is the authoritative NHWC contract. Every
+main, side, mask, and residual NCHW tensor must be its exact rank-four
+permutation; the Softmax wrapper has the derived NWHC contract, and the
+ReduceMax/SUB/Reshape contracts are derived by removing and reinserting the
+channel dimension. The rewrite removes both input adapters, both Softmax
+wrapper adapters, and every equivalent terminal adapter. Softmax directly
+consumes and produces NHWC tensors, ReduceMax axis 1 becomes axis 3, and the
+Reshape target changes from `[N,1,H,W]` to `[N,H,W,1]`.
+
+Three affine/PReLU constants and the full mask-expansion constant must be
+finite same-dtype broadcasts in the original NCHW graph and after explicit
+NHWC rotation. The two integer axis/shape constants retain their original
+INT32 or INT64 dtype. All six transformed constants are grouped by identity;
+unrelated consumers receive deterministic clones and incompatible shared
+roles reject the candidate. The SUB singleton is validated but never mutated.
+
+Post aliases retain every repeated downstream slot. Later consumers of the
+former final NCHW residual receive one inverse adapter before their first use.
+Typed permutations, unique producers, exact private fan-out, dependency order,
+public boundaries, Softmax axis and finite beta, ReduceMax keep-dims behavior,
+plain fused activations, FLOAT16/FLOAT32/FLOAT64 dtype, quantization, layout,
+shape, and dynamic signature are complete preconditions.
+
+The complete plan is resolved again before apply. Constant clone names,
+mutation/removal indices, reshape options, alias slots, metadata targets, and
+optional legacy-adapter insertion are preflighted before the first write. One
+differential graph index, graph-order candidates, a configurable 32-rewrite
+ceiling, success-only pruning, and Session LayoutState synchronization replace
+the former full-map fixed-point loop. The former 612-line lowerer helper is a
+17-line compatibility dispatcher and its sole production call supplies
+LayoutState. Matching contains neither a model name nor a fixed spatial size.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
