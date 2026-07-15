@@ -180,6 +180,9 @@ from onnx2tf.tflite_builder.passes.prelu_passthrough_layout import (
 from onnx2tf.tflite_builder.passes.elementwise_concat_layout import (
     optimize_transpose_elementwise_concat_conv_nhwc_groups as _optimize_transpose_elementwise_concat_conv_nhwc_groups_pass,
 )
+from onnx2tf.tflite_builder.passes.stridedslice_concat_layout import (
+    optimize_transpose_stridedslice_pre_concat_nhwc_chains as _optimize_transpose_stridedslice_pre_concat_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
@@ -8909,280 +8912,21 @@ def _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir: ModelIR) -> 
     return {"optimized_transpose_shape_extract_nhwc_to_nchw_chains": int(optimized)}
 
 
-def _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Eliminate NCHW round-trips around stride-slice fan-in concat blocks.
-
-    Target:
-      X_nhwc --TRANSPOSE(0,3,1,2)--> X_nchw
-      X_nchw --STRIDED_SLICE(...)--> s_i_nchw   (all consumed by one CONCAT axis=1)
-      CONCAT(axis=1, [s_i_nchw...]) --> y_nchw
-      y_nchw --TRANSPOSE(0,2,3,1)--> y_nhwc
-
-    Rewrite:
-      X_nhwc --STRIDED_SLICE'(NHWC params)--> s_i_nhwc
-      CONCAT(axis=3, [s_i_nhwc...]) --> y_nhwc
-
-    If legacy NCHW consumers of `y_nchw` exist, keep one adapter:
-      y_nhwc --TRANSPOSE(0,3,1,2)--> y_nchw
-    """
-    optimized = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    def _is_supported_stridedslice(op: OperatorIR) -> bool:
-        if str(op.op_type) != "STRIDED_SLICE":
-            return False
-        if len(op.inputs) != 4 or len(op.outputs) != 1:
-            return False
-        opts = op.options if isinstance(op.options, dict) else {}
-        if int(opts.get("beginMask", 0)) != 0:
-            return False
-        if int(opts.get("endMask", 0)) != 0:
-            return False
-        if int(opts.get("ellipsisMask", 0)) != 0:
-            return False
-        if int(opts.get("newAxisMask", 0)) != 0:
-            return False
-        if int(opts.get("shrinkAxisMask", 0)) != 0:
-            return False
-        if bool(opts.get("offset", False)):
-            return False
-        return True
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_output_name in model_outputs:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) < 2:
-                continue
-
-            slice_indices: List[int] = []
-            slice_output_names: List[str] = []
-            stridedslice_consts: List[Tuple[str, str, str]] = []
-            valid_slices = True
-            for user_idx in pre_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if not _is_supported_stridedslice(user_op):
-                    valid_slices = False
-                    break
-                if str(user_op.inputs[0]) != pre_output_name:
-                    valid_slices = False
-                    break
-                out_name = str(user_op.outputs[0])
-                if out_name in model_outputs:
-                    valid_slices = False
-                    break
-
-                begin_name = str(user_op.inputs[1])
-                end_name = str(user_op.inputs[2])
-                strides_name = str(user_op.inputs[3])
-                begin_tensor = model_ir.tensors.get(begin_name, None)
-                end_tensor = model_ir.tensors.get(end_name, None)
-                strides_tensor = model_ir.tensors.get(strides_name, None)
-                begin_vals = _read_const_ints_from_tensor(begin_tensor)
-                end_vals = _read_const_ints_from_tensor(end_tensor)
-                strides_vals = _read_const_ints_from_tensor(strides_tensor)
-                if begin_vals is None or end_vals is None or strides_vals is None:
-                    valid_slices = False
-                    break
-                if len(begin_vals) != 4 or len(end_vals) != 4 or len(strides_vals) != 4:
-                    valid_slices = False
-                    break
-                if any(int(v) == 0 for v in strides_vals):
-                    valid_slices = False
-                    break
-                # Avoid mutating shared constants.
-                if set(int(v) for v in consumers.get(begin_name, [])) != {int(user_idx)}:
-                    valid_slices = False
-                    break
-                if set(int(v) for v in consumers.get(end_name, [])) != {int(user_idx)}:
-                    valid_slices = False
-                    break
-                if set(int(v) for v in consumers.get(strides_name, [])) != {int(user_idx)}:
-                    valid_slices = False
-                    break
-
-                slice_indices.append(int(user_idx))
-                slice_output_names.append(out_name)
-                stridedslice_consts.append((begin_name, end_name, strides_name))
-
-            if not valid_slices:
-                continue
-
-            concat_idx: Optional[int] = None
-            for slice_out_name in slice_output_names:
-                users = [int(v) for v in consumers.get(slice_out_name, [])]
-                if len(users) != 1:
-                    concat_idx = None
-                    break
-                if concat_idx is None:
-                    concat_idx = int(users[0])
-                elif int(concat_idx) != int(users[0]):
-                    concat_idx = None
-                    break
-            if concat_idx is None:
-                continue
-
-            concat_op = model_ir.operators[int(concat_idx)]
-            if str(concat_op.op_type) != "CONCATENATION" or len(concat_op.outputs) != 1:
-                continue
-            concat_axis_old = int(concat_op.options.get("axis", 1))
-            if concat_axis_old < 0:
-                concat_axis_old += 4
-            if concat_axis_old != 1:
-                continue
-
-            concat_inputs = [str(v) for v in list(concat_op.inputs)]
-            if len(concat_inputs) != len(slice_output_names):
-                continue
-            if set(concat_inputs) != set(slice_output_names):
-                continue
-
-            concat_out_name = str(concat_op.outputs[0])
-            concat_users = [int(v) for v in consumers.get(concat_out_name, []) if int(v) != int(concat_idx)]
-            if len(concat_users) == 0:
-                continue
-
-            post_indices: List[int] = []
-            post_output_names: List[str] = []
-            legacy_users: List[int] = []
-            valid_posts = True
-            for user_idx in concat_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) == "TRANSPOSE"
-                    and len(user_op.inputs) >= 2
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == concat_out_name
-                    and _read_transpose_perm(model_ir, user_op) == perm_nchw_to_nhwc
-                    and str(user_op.outputs[0]) not in model_outputs
-                ):
-                    post_indices.append(int(user_idx))
-                    post_output_names.append(str(user_op.outputs[0]))
-                else:
-                    legacy_users.append(int(user_idx))
-            if not valid_posts or len(post_indices) == 0:
-                continue
-
-            # Rewrite all STRIDED_SLICE params/layout from NCHW to NHWC.
-            rewrite_ok = True
-            for slice_idx, (begin_name, end_name, strides_name), slice_out_name in zip(
-                slice_indices,
-                stridedslice_consts,
-                slice_output_names,
-            ):
-                slice_op = model_ir.operators[int(slice_idx)]
-                begin_tensor = model_ir.tensors.get(begin_name, None)
-                end_tensor = model_ir.tensors.get(end_name, None)
-                strides_tensor = model_ir.tensors.get(strides_name, None)
-                begin_vals = _read_const_ints_from_tensor(begin_tensor)
-                end_vals = _read_const_ints_from_tensor(end_tensor)
-                strides_vals = _read_const_ints_from_tensor(strides_tensor)
-                if begin_vals is None or end_vals is None or strides_vals is None:
-                    rewrite_ok = False
-                    break
-                begin_nhwc = _permute_shape(begin_vals, perm_nchw_to_nhwc)
-                end_nhwc = _permute_shape(end_vals, perm_nchw_to_nhwc)
-                strides_nhwc = _permute_shape(strides_vals, perm_nchw_to_nhwc)
-                if begin_nhwc is None or end_nhwc is None or strides_nhwc is None:
-                    rewrite_ok = False
-                    break
-                _write_const_ints_to_tensor(begin_tensor, [int(v) for v in begin_nhwc])
-                _write_const_ints_to_tensor(end_tensor, [int(v) for v in end_nhwc])
-                _write_const_ints_to_tensor(strides_tensor, [int(v) for v in strides_nhwc])
-                _replace_operator_input_at(
-                    model_ir=model_ir,
-                    op=slice_op,
-                    input_index=0,
-                    new_input_name=pre_input_name,
-                )
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(slice_out_name, None),
-                    perm_nchw_to_nhwc,
-                )
-
-            if not rewrite_ok:
-                continue
-
-            concat_op.options["axis"] = 3
-            canonical_post_output_name = str(post_output_names[0])
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=concat_op,
-                new_outputs=[canonical_post_output_name],
-            )
-            for alias_post_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_post_output_name, canonical_post_output_name)
-
-            old_concat_tensor = model_ir.tensors.get(concat_out_name, None)
-            canonical_post_tensor = model_ir.tensors.get(canonical_post_output_name, None)
-            if old_concat_tensor is not None and canonical_post_tensor is not None:
-                canonical_post_tensor.dtype = str(old_concat_tensor.dtype)
-                canonical_post_tensor.quantization = _clone_quantization(old_concat_tensor.quantization)
-                canonical_post_tensor.shape = [int(v) for v in list(old_concat_tensor.shape)]
-                canonical_post_tensor.shape_signature = (
-                    [int(v) for v in list(old_concat_tensor.shape_signature)]
-                    if old_concat_tensor.shape_signature is not None
-                    else [int(v) for v in list(old_concat_tensor.shape)]
-                )
-                _permute_tensor_metadata_if_rank_matches(
-                    canonical_post_tensor,
-                    perm_nchw_to_nhwc,
-                )
-
-            preserve_nchw_adapter = len(legacy_users) > 0 or concat_out_name in model_outputs
-            if preserve_nchw_adapter:
-                keep_post_idx = int(post_indices[0])
-                keep_post_op = model_ir.operators[int(keep_post_idx)]
-                keep_perm_name = str(keep_post_op.inputs[1])
-                keep_perm_tensor = model_ir.tensors.get(keep_perm_name, None)
-                if keep_perm_tensor is not None:
-                    keep_perm_tensor.data = np.asarray(perm_nhwc_to_nchw, dtype=np.int32)
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=keep_post_op,
-                    new_inputs=[canonical_post_output_name, keep_perm_name],
-                )
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=keep_post_op,
-                    new_outputs=[concat_out_name],
-                )
-                post_remove_indices = [int(v) for v in post_indices[1:]]
-            else:
-                post_remove_indices = [int(v) for v in post_indices]
-
-            remove_indices = sorted(
-                list({int(pre_idx), *post_remove_indices}),
-                reverse=True,
-            )
-            for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
-
-            optimized += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_stridedslice_pre_concat_nhwc_chains": int(optimized)}
+def _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Any = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_stridedslice_pre_concat_nhwc_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir: ModelIR) -> Dict[str, int]:
@@ -27669,7 +27413,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
@@ -28128,7 +27875,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)

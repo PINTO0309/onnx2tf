@@ -8,12 +8,12 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves elementwise/Concat/Conv NHWC group
-recovery into the TensorFlow-free indexed
-`passes/elementwise_concat_layout.py` owner. Its former 482-line full-map,
+The latest implementation unit moves StridedSlice/Concat NHWC fan-in recovery
+into the TensorFlow-free indexed
+`passes/stridedslice_concat_layout.py` owner. Its former 280-line full-map,
 unbounded fixed-point helper is now a thin dispatcher at both unchanged
-production positions. The owner resolves an immutable connected-group plan,
-re-resolves the full contract before apply, and maintains one differential
+production positions. The owner resolves an immutable whole-group plan,
+re-resolves the complete contract before apply, and maintains one differential
 `ModelIRGraphIndex` plus the Session `LayoutState` through every rewrite.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
@@ -62,6 +62,51 @@ FastestDet, and HumanSeg conversions reproduce all fifteen fixed float32,
 float16, correspondence, and schema artifact hashes. Scoped Ruff, syntax
 compilation, and `git diff --check` pass. Temporary comparison worktrees and
 outputs were removed. No Tier corpus was run.
+
+### StridedSlice/Concat continuation
+
+The indexed owner accepts only one private rank-four NHWC-to-NCHW adapter whose
+entire fan-out consists of at least two supported `STRIDED_SLICE` operators.
+Every slice must use four distinct, immutable typed INT32/INT64 begin/end/
+stride constants, a nonzero stride vector, zero masks, and no offset. Every
+slice output must feed exactly one common channel-axis Concat, and at least one
+private NCHW-to-NHWC post adapter must establish the removable round trip.
+
+Static and dynamic views, dtype, per-tensor quantization, layout, producer
+uniqueness, graph order, exact consumer slots, Concat shape/signature, every
+post alias, and every legacy boundary are fixed before a plan exists. All
+constants, Slice input rewrites, output metadata, Concat axis/output changes,
+alias rewrites, adapter reuse/removal, tensor contracts, and operator contracts
+belong to immutable plan state and are fully resolved again immediately before
+apply. Graph-ordered Transpose candidates and an optional rewrite limit replace
+the raw fixed-point loop; pruning still runs once on every invocation to retain
+the historical zero-match contract.
+
+The ordinary and multi-post synthetic active forms produce the exact same
+non-layout ModelIR digest as source checkpoint `44f3b2ca`, including tensor
+lineage metadata and event ordering. Converted Slice and Concat tensors now
+carry explicit NHWC in TensorIR and Session LayoutState. A retained NCHW
+boundary reuses the already-proven typed pre-permutation rather than overwriting
+the first post-permutation buffer as INT32; shared post-permutation users remain
+unchanged. Conflicting constant roles and a legacy consumer ordered before the
+retained adapter reject the complete transaction.
+
+Pre- and post-extraction characterization reached the helper five times on
+each of YuNet, FastestDet, HumanSeg, OSNet, and SiNet. All 25 invocations remain
+zero-match with unchanged operator and tensor counts. Fifty-eight focused tests
+cover typed constants and permutations, dynamic signatures, negative axes,
+multiple post aliases, repeated input slots, public and legacy boundaries,
+shared post permutations, numerical equivalence, candidate limits,
+idempotence, GraphIndex/LayoutState integrity, lineage compatibility, zero-
+match pruning, and forty-two unsafe transactional no-op cases.
+
+The new owner, adjacent pre-Concat Slice/Split and Split/Conv/Concat owners,
+elementwise/Concat owner, and complete architecture suite pass together with
+`542 passed in 40.54s`. TensorFlow-import-blocked explicit direct, default
+direct, and direct `-cotof` conversion pass sequentially with `3 passed in
+4.01s`. One sequential YuNet conversion reproduces all five fixed artifacts.
+Scoped Ruff, syntax compilation, and `git diff --check` pass. Temporary
+comparison worktrees and outputs were removed. No Tier corpus was run.
 
 ## Continuation snapshot — 2026-07-15
 
@@ -677,7 +722,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 135 coherent implementation
+The current `fb-refactor5` work contains 136 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -1016,6 +1061,10 @@ continuations:
   edge-bounded immutable group plans, preserves every unary/binary and legacy
   boundary form, and records converted layout consistently in TensorIR and
   Session LayoutState.
+- the current checkpoint moves StridedSlice/Concat fan-in recovery to a
+  dedicated indexed owner, proves every typed Slice parameter and whole-group
+  boundary before mutation, preserves ordinary/alias lineage exactly, and
+  replaces unsafe post-permutation mutation with typed pre-permutation reuse.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -1034,8 +1083,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/elementwise_concat_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_elementwise_concat_layout.py`;
+- `onnx2tf/tflite_builder/passes/stridedslice_concat_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_stridedslice_concat_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -1874,6 +1923,26 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   constants, and emitted artifacts remain identical to the preceding
   checkpoint, while TensorIR and Session LayoutState no longer disagree about
   the converted physical view.
+- StridedSlice fan-in is one whole-group transaction rooted at the shared
+  pre-Transpose. The pass does not rewrite an individual Slice unless every
+  pre-adapter consumer is a supported Slice, every Slice output joins the same
+  Concat exactly once, and every Concat boundary has been classified.
+- Begin, end, and stride vectors must be distinct immutable rank-four INT32 or
+  INT64 constants whose TensorIR dtype, NumPy dtype, shape/signature, producer,
+  public ownership, and exact consumer slots agree. Zero strides or conflicting
+  parameter roles reject the whole candidate before any constant changes.
+- Multiple private post adapters collapse to the first output while preserving
+  the legacy `replace_operator_input_at`, output-rename, alias-replacement, and
+  pruning lineage-event order. This keeps active-path correspondence behavior
+  unchanged rather than treating report stability as incidental.
+- A required NCHW compatibility boundary reuses the typed pre-permutation. The
+  raw helper changed the first post-permutation buffer to an INT32 opposite
+  permutation even when that tensor was INT64 or shared. The indexed owner
+  leaves every post-permutation and unrelated consumer untouched.
+- A retained inverse adapter must already precede every legacy consumer.
+  Stale order is rejected transactionally instead of emitting a consumer before
+  its new producer. Public Concat outputs and later public post paths remain
+  supported through the same local boundary.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -5197,6 +5266,42 @@ and
 Scoped Ruff, syntax compilation, and `git diff --check` pass. Temporary
 worktrees and outputs were removed. No Tier corpus was run.
 
+The StridedSlice/Concat checkpoint passed all 58 dedicated cases. The new
+owner, adjacent pre-Concat Slice/Split and Split/Conv/Concat owners,
+elementwise/Concat owner, and the complete architecture suite passed together:
+
+```text
+542 passed in 40.54s
+```
+
+TensorFlow import blocking was exercised sequentially for explicit direct,
+default direct, and direct `-cotof` conversion:
+
+```text
+3 passed in 4.01s
+```
+
+Pre/post characterization preserved five zero-match invocations on each of
+YuNet, FastestDet, HumanSeg, OSNet, and SiNet, with unchanged operator and
+tensor counts in all 25 calls. The ordinary and multi-post synthetic active
+forms reproduce the exact source-checkpoint non-layout ModelIR digest including
+lineage metadata:
+
+```text
+basic:   1b3187150bd2819fe9e2324568dad0582c7227e12d0509e1820929fe5e438ca6
+aliases: 02a2db7154cc74250a8c8f2f7a14edf2293cd4c80bc14f48f7b86b41c26ad801
+```
+
+One sequential YuNet conversion reproduced float32
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+correspondence
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`,
+and the two fixed schema hashes. Scoped Ruff, syntax compilation, and
+`git diff --check` pass. Temporary comparison worktrees and outputs were
+removed. No Tier corpus was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -5241,12 +5346,13 @@ production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
 The unquantized pseudo-Swish, tanh-GELU, center/size/offset, pseudo-LeakyReLU,
-PReLU, and connected elementwise/Concat recovery helpers are now indexed at
-their unchanged production positions. The next standalone raw recovery helper
-in this ordered prefix is
-`_optimize_transpose_stridedslice_pre_concat_nhwc_chains`; it has not yet been
-characterized or changed. The composite pre-Concat dispatcher still retains
-its previously documented legacy-family fallback after the indexed families.
+PReLU, connected elementwise/Concat, and StridedSlice/Concat recovery helpers
+are now indexed at their unchanged production positions. The next standalone
+raw recovery helper in this ordered prefix is
+`_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains`;
+it has three production positions and has not yet been characterized or
+changed. The composite pre-Concat dispatcher still retains its previously
+documented legacy-family fallback after the indexed families.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -5258,11 +5364,12 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. Characterize
-   `_optimize_transpose_stridedslice_pre_concat_nhwc_chains` at its unchanged
-   ordered position after indexed pre-Concat and NDHWC-Concat cleanup. Fix its
-   runtime match set, legacy-boundary behavior, typed Slice-constant ownership,
-   and interaction with the following mixed-Split helper before selecting a
-   bounded semantic owner. Do not modify it during characterization.
+   `_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains`
+   at all three unchanged ordered positions. Fix its runtime match set,
+   Split-axis ownership, mixed direct/post-adapter input classification,
+   terminal compatibility adapter, and interaction with the immediately
+   following input-chain helper before selecting a bounded semantic owner. Do
+   not modify it during characterization.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

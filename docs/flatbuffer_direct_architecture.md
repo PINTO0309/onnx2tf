@@ -6524,6 +6524,67 @@ HumanSeg one group in the first call; the other twenty-two calls were
 zero-match. YuNet, FastestDet, and HumanSeg reproduce their fifteen fixed
 artifacts. No Tier corpus was run for this checkpoint.
 
+StridedSlice/Concat fan-in recovery is owned by
+`passes/stridedslice_concat_layout.py`. The former lowerer helper rebuilt full
+producer/consumer maps inside an unbounded fixed-point loop, changed Slice
+constants and metadata before validating the full group, and rewrote the first
+post-permutation buffer when a legacy NCHW boundary had to survive. Both
+ordered production positions now call one thin dispatcher with Session
+`LayoutState`.
+
+The candidate root is one typed private NHWC-to-NCHW Transpose with at least
+two consumers. Its entire output fan-out must consist of supported rank-four
+`STRIDED_SLICE` operations. Each Slice has four distinct inputs, zero masks,
+no offset, and one immutable nonzero stride vector. Begin, end, and stride
+constants must be rank-four INT32 or INT64 values whose TensorIR dtype, NumPy
+dtype, static/dynamic shape, producer state, public ownership, and complete
+consumer-slot set agree. Each constant is exclusive to its one Slice and the
+three roles are distinct; shared or conflicting roles reject the transaction
+before mutation.
+
+Every Slice output is private, rank four, and consumed exactly once by the
+same channel-axis Concat. The resolver proves producer order, dtype,
+per-tensor quantization, old NCHW and new NHWC views, Concat input uniqueness,
+static/dynamic Concat result, output metadata, and all post consumers. At least
+one private typed NCHW-to-NHWC post adapter is required. Additional private
+posts are aliases of the first canonical NHWC output; repeated downstream
+input slots are recorded explicitly. Arbitrary later NCHW consumers and a
+public Concat output are preserved through one local inverse adapter.
+
+All constant updates, Slice rewrites, metadata changes, Concat axis/output
+changes, post aliases, compatibility-boundary changes, removals, and complete
+tensor/operator contracts belong to one immutable plan. The same seed is
+fully resolved a second time immediately before apply. One differential
+`ModelIRGraphIndex`, a graph-ordered Transpose candidate list, candidate-only
+operation, and an optional rewrite limit replace the full scans and unbounded
+loop. Pruning still runs once at owner exit, including zero-match calls, to
+preserve the historical side effect.
+
+Ordinary and multi-post active forms retain byte-identical non-layout ModelIR
+digests against the raw helper, including lineage metadata and event order.
+Slice input rewrites retain the historical `replace_operator_input_at` event;
+each alias retains one group-level replacement event even when the downstream
+operator repeats that alias in multiple slots. TensorIR and Session
+`LayoutState` now record converted Slice and Concat tensors as NHWC.
+
+When a compatibility boundary is required, the owner reuses the already-
+proven typed pre-permutation. The raw helper instead overwrote the first post
+buffer with an INT32 opposite permutation, even when the buffer was INT64 or
+shared. The indexed owner never changes that post buffer or unrelated users.
+It also rejects a legacy consumer ordered before the adapter that would become
+its producer, preventing an invalid topological result.
+
+Fifty-eight focused tests cover INT32/INT64 parameters and permutations,
+dynamic signatures, negative axes, multiple post aliases, repeated slots,
+legacy/public boundaries, shared post buffers, exact numerical equivalence,
+candidate limits, idempotence, GraphIndex/LayoutState integrity, lineage
+compatibility, zero-match pruning, and forty-two transactional rejection
+cases. Pre/post characterization observed five zero-match calls on each of
+YuNet, FastestDet, HumanSeg, OSNet, and SiNet. The related owner and complete
+architecture gate passes 542 tests, TensorFlow-blocked direct/default/`-cotof`
+passes three tests sequentially, and YuNet reproduces its five fixed artifacts.
+No Tier corpus was run for this checkpoint.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
