@@ -5746,6 +5746,9 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
     side_owner_name = (
         "_optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains"
     )
+    unary_reshape_owner_name = (
+        "_optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains"
+    )
 
     def _functions(path: Path) -> dict[str, ast.FunctionDef]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -5767,6 +5770,11 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
         for node in ast.walk(compatibility)
         if isinstance(node, ast.Name)
     }
+    assert f"{unary_reshape_owner_name}_pass" in {
+        node.id
+        for node in ast.walk(compatibility)
+        if isinstance(node, ast.Name)
+    }
     owner_functions = _functions(pass_path)
     owner = owner_functions[owner_name]
     owner_calls = {
@@ -5774,6 +5782,7 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
         for owner_node in (
             owner,
             owner_functions[side_owner_name],
+            owner_functions[unary_reshape_owner_name],
             owner_functions["_run_indexed_instance_norm_prepost_tail"],
             owner_functions["_resolve_candidate"],
             owner_functions["_plan_constant_update"],

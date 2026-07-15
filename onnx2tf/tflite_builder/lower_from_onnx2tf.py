@@ -130,6 +130,7 @@ from onnx2tf.tflite_builder.passes.instance_normalization_layout import (
 from onnx2tf.tflite_builder.passes.instance_norm_prepost_layout import (
     _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains as _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains_pass,
     _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains as _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains_pass,
+    _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains as _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains_pass,
 )
 from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
     _optimize_transpose_pre_unary_mean_terminal_nhwc_chains as _optimize_transpose_pre_unary_mean_terminal_nhwc_chains_pass,
@@ -20198,6 +20199,22 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(
                 rewritten += 1
                 changed = True
                 break
+            unary_reshape_stats = (
+                _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains_pass(
+                    model_ir,
+                    graph_index=active_index,
+                    layout_state=layout_state,
+                    max_rewrites=1,
+                    candidate=pre_op,
+                )
+            )
+            if int(unary_reshape_stats.get(
+                "optimized_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains",
+                0,
+            )) > 0:
+                rewritten += 1
+                changed = True
+                break
             pre_in_name = str(pre_op.inputs[0])
             pre_out_name = str(pre_op.outputs[0])
             if pre_in_name in model_outputs or pre_out_name in model_outputs:
@@ -20469,6 +20486,12 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(
                                                     reshape2_op = candidate_reshape2_op
                                                     reshape2_out_name = str(candidate_reshape2_out_name)
                                                     post_idx = int(candidate_post_idx)
+
+            # This Squeeze/unary/Reshape tail is exclusively owned by the
+            # indexed pass. Unsafe candidates must not fall through to the
+            # legacy mutator.
+            if post_idx is not None and tail_mode == "squeeze_unary_reshape":
+                continue
 
             if post_idx is None:
                 # Variant:

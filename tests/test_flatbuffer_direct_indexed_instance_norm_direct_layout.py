@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.instance_norm_prepost_layout import (
     _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains,
     _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains,
+    _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains,
 )
 
 
@@ -25,6 +26,9 @@ _STATS = (
 _COMPAT_STATS = "optimized_transpose_instancenorm_prepost_nhwc_chains"
 _SIDE_STATS = (
     "optimized_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains"
+)
+_UNARY_RESHAPE_STATS = (
+    "optimized_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains"
 )
 
 
@@ -1035,15 +1039,9 @@ def test_compatibility_wrapper_does_not_fallback_for_unsafe_direct_tail(
     assert repr(model_ir) == before
 
 
-@pytest.mark.parametrize(
-    "mode",
-    ("squeeze_unary_reshape", "squeeze_add_reshape"),
-)
-def test_legacy_instance_norm_tail_modes_remain_numerically_equivalent(
-    mode: str,
-) -> None:
+def test_legacy_instance_norm_residual_tail_remains_numerically_equivalent() -> None:
     model_ir, names = _build_model()
-    _replace_tail(model_ir, names, mode)
+    _replace_tail(model_ir, names, "squeeze_add_reshape")
     rng = np.random.default_rng(61)
     feeds = {
         name: rng.normal(size=model_ir.tensors[name].shape).astype(np.float32)
@@ -1077,6 +1075,349 @@ def test_legacy_instance_norm_tail_modes_remain_numerically_equivalent(
     assert set(actual) == set(expected)
     for name in expected:
         np.testing.assert_allclose(actual[name], expected[name], rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("dtype", ("FLOAT16", "FLOAT32"))
+@pytest.mark.parametrize("produced_source", (False, True))
+@pytest.mark.parametrize("separate_axes", (False, True))
+def test_unary_reshape_instance_norm_tail_is_indexed_and_equivalent(
+    dtype: str,
+    produced_source: bool,
+    separate_axes: bool,
+) -> None:
+    model_ir, names = _build_model(
+        dtype=dtype,
+        produced_source=produced_source,
+        separate_axes=separate_axes,
+    )
+    _replace_tail(model_ir, names, "squeeze_unary_reshape")
+    feed_name = names["upstream"] if produced_source else names["source"]
+    np_dtype = np.float16 if dtype == "FLOAT16" else np.float32
+    feeds = {
+        feed_name: np.random.default_rng(71)
+        .normal(size=model_ir.tensors[feed_name].shape)
+        .astype(np_dtype)
+    }
+    expected = _evaluate(copy.deepcopy(model_ir), feeds)
+    before = repr(model_ir)
+
+    assert (
+        _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
+            model_ir
+        )
+        == {_STATS: 0}
+    )
+    assert (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            model_ir
+        )
+        == {_SIDE_STATS: 0}
+    )
+    assert repr(model_ir) == before
+    graph_index = ModelIRGraphIndex(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains(
+            model_ir,
+            graph_index=graph_index,
+            layout_state=layout_state,
+        )
+    )
+
+    assert stats == {_UNARY_RESHAPE_STATS: 1}
+    assert validate_model_ir_invariants(model_ir) == []
+    _assert_index_current(model_ir, graph_index)
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    actual = _evaluate(model_ir, feeds)
+    assert set(actual) == set(expected)
+    tolerance = 1e-2 if dtype == "FLOAT16" else 1e-6
+    for name in expected:
+        np.testing.assert_allclose(
+            actual[name],
+            expected[name],
+            rtol=tolerance,
+            atol=tolerance,
+        )
+    tail_reshape = _operator(model_ir, names["post_output"])
+    assert tail_reshape.op_type == "RESHAPE"
+    assert tail_reshape.options["newShape"] == [1, 2, 4, 3]
+    assert np.asarray(model_ir.tensors[tail_reshape.inputs[1]].data).tolist() == [
+        1,
+        2,
+        4,
+        3,
+    ]
+    assert model_ir.tensors[names["inst_output"]].shape == [1, 2, 4, 3]
+    assert model_ir.tensors["tail_squeezed"].shape == [2, 4, 3]
+    assert model_ir.tensors["tail_unary"].shape == [2, 4, 3]
+    assert names["post_output"] in model_ir.metadata[
+        "assume_channel_last_layout_tensor_names"
+    ]
+
+
+@pytest.mark.parametrize(
+    "unary_op",
+    (
+        "RELU",
+        "RELU6",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+        "CAST",
+        "FLOOR",
+        "CEIL",
+        "ROUND",
+    ),
+)
+def test_unary_reshape_instance_norm_preserves_supported_unary_family(
+    unary_op: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "squeeze_unary_reshape")
+    unary = _operator(model_ir, "tail_unary")
+    unary.op_type = unary_op
+    if unary_op == "CAST":
+        unary.options = {"to": "FLOAT16"}
+        for name in (
+            "tail_unary",
+            "tail_reshape",
+            names["post_output"],
+            names["output"],
+        ):
+            model_ir.tensors[name].dtype = "FLOAT16"
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_UNARY_RESHAPE_STATS: 1}
+    assert _operator(model_ir, "tail_unary").op_type == unary_op
+    assert _operator(model_ir, names["post_output"]).op_type == "RESHAPE"
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+@pytest.mark.parametrize("dynamic_axis", ("height", "width", "channel"))
+def test_unary_reshape_instance_norm_preserves_dynamic_signatures(
+    dynamic_axis: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "squeeze_unary_reshape")
+    source_axis = {"height": 1, "width": 2, "channel": 3}[dynamic_axis]
+    nchw_axis = {"height": 2, "width": 3, "channel": 1}[dynamic_axis]
+    chw_axis = {"height": 1, "width": 2, "channel": 0}[dynamic_axis]
+    hwc_axis = {"height": 0, "width": 1, "channel": 2}[dynamic_axis]
+    for name in (names["source"], names["post_output"], names["output"]):
+        model_ir.tensors[name].shape_signature[source_axis] = -1
+    model_ir.tensors[names["pre"]].shape_signature[nchw_axis] = -1
+    model_ir.tensors[names["squeezed"]].shape_signature[chw_axis] = -1
+    for name in (
+        names["x"],
+        names["centered"],
+        names["squared"],
+        names["normalized"],
+        names["scaled"],
+        names["inst_output"],
+        "tail_reshape",
+    ):
+        model_ir.tensors[name].shape_signature[nchw_axis] = -1
+    for name in ("tail_squeezed", "tail_unary"):
+        model_ir.tensors[name].shape_signature[chw_axis] = -1
+    if dynamic_axis == "channel":
+        for name in (
+            names["mean1"],
+            names["mean2"],
+            names["variance_epsilon"],
+            names["std"],
+            names["inverse_std"],
+        ):
+            model_ir.tensors[name].shape_signature[1] = -1
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_UNARY_RESHAPE_STATS: 1}
+    assert model_ir.tensors[names["inst_output"]].shape_signature[source_axis] == -1
+    assert model_ir.tensors["tail_squeezed"].shape_signature[hwc_axis] == -1
+    assert model_ir.tensors["tail_unary"].shape_signature[hwc_axis] == -1
+    assert model_ir.tensors[names["post_output"]].shape_signature[source_axis] == -1
+
+
+def test_unary_reshape_instance_norm_clones_shared_tail_shape() -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "squeeze_unary_reshape")
+    original = np.asarray(model_ir.tensors["tail_shape"].data).copy()
+    model_ir.tensors["preserved_tail_shape"] = _tensor(
+        "preserved_tail_shape",
+        [4],
+        dtype="INT64",
+    )
+    model_ir.operators.append(
+        OperatorIR("IDENTITY", ["tail_shape"], ["preserved_tail_shape"])
+    )
+    model_ir.outputs.append("preserved_tail_shape")
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_UNARY_RESHAPE_STATS: 1}
+    np.testing.assert_array_equal(model_ir.tensors["tail_shape"].data, original)
+    tail_reshape = _operator(model_ir, names["post_output"])
+    assert tail_reshape.inputs[1] != "tail_shape"
+    assert np.asarray(model_ir.tensors[tail_reshape.inputs[1]].data).tolist() == [
+        1,
+        2,
+        4,
+        3,
+    ]
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+def test_unary_reshape_instance_norm_rewrites_multiple_chains() -> None:
+    first, first_names = _build_model(prefix="a_")
+    _replace_tail(first, first_names, "squeeze_unary_reshape")
+    second, second_names = _build_model(prefix="b_")
+    _replace_tail(second, second_names, "squeeze_unary_reshape")
+    first.tensors.update(second.tensors)
+    first.operators.extend(second.operators)
+    first.inputs.extend(second.inputs)
+    first.outputs.extend(second.outputs)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains(
+            first
+        )
+    )
+
+    assert stats == {_UNARY_RESHAPE_STATS: 2}
+    assert _operator(first, first_names["post_output"]).op_type == "RESHAPE"
+    assert _operator(first, second_names["post_output"]).op_type == "RESHAPE"
+    assert validate_model_ir_invariants(first) == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "tail_axis",
+        "unsupported_unary",
+        "unary_fanout",
+        "tail_shape_value",
+        "tail_shape_floating",
+        "tail_shape_produced",
+        "tail_shape_public",
+        "tail_shape_quantized",
+        "tail_dtype",
+        "tail_quantized",
+        "tail_public",
+        "tail_duplicate_producer",
+        "tail_backward_consumer",
+    ),
+)
+def test_unary_reshape_rejects_unsafe_tail_contracts_transactionally(
+    case: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "squeeze_unary_reshape")
+    tail_squeeze = _operator(model_ir, "tail_squeezed")
+    tail_unary = _operator(model_ir, "tail_unary")
+    if case == "tail_axis":
+        tail_squeeze.options["squeezeDims"] = [1]
+    elif case == "unsupported_unary":
+        tail_unary.op_type = "SIN"
+    elif case == "unary_fanout":
+        model_ir.tensors["unary_side"] = _tensor("unary_side", [3, 2, 4])
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", ["tail_unary"], ["unary_side"])
+        )
+        model_ir.outputs.append("unary_side")
+    elif case == "tail_shape_value":
+        model_ir.tensors["tail_shape"].data[:] = [1, 3, 4, 2]
+    elif case == "tail_shape_floating":
+        model_ir.tensors["tail_shape"].dtype = "FLOAT32"
+        model_ir.tensors["tail_shape"].data = np.asarray(
+            [1, 3, 2, 4], dtype=np.float32
+        )
+    elif case == "tail_shape_produced":
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["post_perm"]], ["tail_shape"])
+        )
+    elif case == "tail_shape_public":
+        model_ir.outputs.append("tail_shape")
+    elif case == "tail_shape_quantized":
+        model_ir.tensors["tail_shape"].quantization = {
+            "scale": [1.0],
+            "zero_point": [0],
+        }
+    elif case == "tail_dtype":
+        model_ir.tensors["tail_unary"].dtype = "FLOAT16"
+        model_ir.tensors["tail_reshape"].dtype = "FLOAT16"
+        model_ir.tensors[names["post_output"]].dtype = "FLOAT16"
+    elif case == "tail_quantized":
+        model_ir.tensors["tail_unary"].quantization = {
+            "scale": [0.25],
+            "zero_point": [0],
+        }
+    elif case == "tail_public":
+        model_ir.outputs.append("tail_unary")
+    elif case == "tail_duplicate_producer":
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["source"]], ["tail_unary"])
+        )
+    elif case == "tail_backward_consumer":
+        model_ir.tensors["tail_side"] = _tensor("tail_side", [3, 2, 4])
+        model_ir.operators.insert(
+            model_ir.operators.index(tail_unary),
+            OperatorIR("IDENTITY", ["tail_unary"], ["tail_side"]),
+        )
+        model_ir.outputs.append("tail_side")
+    before = repr(model_ir)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_UNARY_RESHAPE_STATS: 0}
+    assert repr(model_ir) == before
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("tail_shape", "tail_quantization", "negative_epsilon"),
+)
+def test_compatibility_wrapper_does_not_fallback_for_unsafe_unary_reshape(
+    case: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "squeeze_unary_reshape")
+    if case == "tail_shape":
+        model_ir.tensors["tail_shape"].data[:] = [1, 3, 4, 2]
+    elif case == "tail_quantization":
+        model_ir.tensors["tail_unary"].quantization = {
+            "scale": [0.25],
+            "zero_point": [0],
+        }
+    elif case == "negative_epsilon":
+        model_ir.tensors[names["epsilon"]].data[0] = -0.01
+    before = repr(model_ir)
+
+    stats = _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
+
+    assert stats == {_COMPAT_STATS: 0}
+    assert repr(model_ir) == before
 
 
 @pytest.mark.parametrize("side_before_post", (False, True))
@@ -1445,9 +1786,16 @@ def test_compatibility_wrapper_does_not_fallback_for_unsafe_side_squeeze(
     assert repr(model_ir) == before
 
 
-def test_compatibility_wrapper_preserves_mixed_tail_order_and_total_limit() -> None:
+@pytest.mark.parametrize(
+    ("first_mode", "first_output_op"),
+    (("side_squeeze", "ADD"), ("squeeze_unary_reshape", "RESHAPE")),
+)
+def test_compatibility_wrapper_preserves_mixed_tail_order_and_total_limit(
+    first_mode: str,
+    first_output_op: str,
+) -> None:
     model_ir, first_names = _build_model(prefix="m00_")
-    _replace_tail(model_ir, first_names, "side_squeeze")
+    _replace_tail(model_ir, first_names, first_mode)
     names_by_serial = [first_names]
     for serial in range(1, 33):
         candidate, names = _build_model(prefix=f"m{serial:02d}_")
@@ -1460,7 +1808,7 @@ def test_compatibility_wrapper_preserves_mixed_tail_order_and_total_limit() -> N
     stats = _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
 
     assert stats == {_COMPAT_STATS: 32}
-    assert _operator(model_ir, first_names["post_output"]).op_type == "ADD"
+    assert _operator(model_ir, first_names["post_output"]).op_type == first_output_op
     for names in names_by_serial[1:32]:
         assert _operator(model_ir, names["post_output"]).op_type == "ADD"
     final_names = names_by_serial[32]
@@ -1469,8 +1817,28 @@ def test_compatibility_wrapper_preserves_mixed_tail_order_and_total_limit() -> N
     assert validate_model_ir_invariants(model_ir) == []
 
 
-def test_direct_instance_norm_preflight_does_not_allocate_index(
+@pytest.mark.parametrize(
+    ("owner", "stats_key"),
+    (
+        (
+            _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains,
+            _STATS,
+        ),
+        (
+            _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains,
+            _SIDE_STATS,
+        ),
+        (
+            _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains,
+            _UNARY_RESHAPE_STATS,
+        ),
+    ),
+    ids=("direct", "side_squeeze", "unary_reshape"),
+)
+def test_instance_norm_prepost_preflight_does_not_allocate_index(
     monkeypatch,
+    owner,
+    stats_key: str,
 ) -> None:
     model_ir = ModelIR("no_instance_norm_direct")
     model_ir.operators = [OperatorIR("IDENTITY", ["x"], ["y"])]
@@ -1480,9 +1848,4 @@ def test_direct_instance_norm_preflight_does_not_allocate_index(
 
     monkeypatch.setattr(direct_module, "ModelIRGraphIndex", unexpected_index)
 
-    assert (
-        _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
-            model_ir
-        )
-        == {_STATS: 0}
-    )
+    assert owner(model_ir) == {stats_key: 0}

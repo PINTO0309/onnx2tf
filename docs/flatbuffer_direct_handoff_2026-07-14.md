@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the dual-consumer post-Transpose plus
-side-Squeeze subset of the decomposed InstanceNormalization pre/post rewrite
-to `passes/instance_norm_prepost_layout.py`. It reuses the complete indexed
-normalization contract introduced for the direct tail, validates the side
-Squeeze contract in the same transaction, and preplans one local NHWC-to-NCHW
-adapter so the side branch keeps its original CHW semantics. The two remaining
-Squeeze/unary/Reshape and Squeeze/residual-ADD/Reshape modes remain
-behaviorally characterized in the ordered compatibility path.
+The latest implementation unit moves the
+Squeeze/unary/Reshape/post-Transpose subset of the decomposed
+InstanceNormalization pre/post rewrite to
+`passes/instance_norm_prepost_layout.py`. It reuses the complete indexed
+normalization contract, validates all thirteen retained unary operators, and
+preplans the second Reshape constant, metadata, and output-name transaction.
+Only the Squeeze/residual-ADD/Reshape mode remains in the ordered compatibility
+path.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains ninety-eight coherent continuations:
+The current `fb-refactor5` work contains ninety-nine coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -253,9 +253,11 @@ The current `fb-refactor5` work contains ninety-eight coherent continuations:
   indexed axis/layout/output transaction;
 - `fd3d1d32` moves the direct decomposed-InstanceNormalization pre/post adapter
   to a complete indexed topology/layout/constant transaction;
-- the current checkpoint moves its dual-consumer post-Transpose plus
-  side-Squeeze tail to the same indexed owner with a transactional local
-  compatibility adapter.
+- `c7496639` moves its dual-consumer post-Transpose plus side-Squeeze tail to
+  the same indexed owner with a transactional local compatibility adapter;
+- the current checkpoint moves the Squeeze/unary/Reshape tail to the same
+  indexed owner with a transactional second-Reshape constant and output-name
+  rewrite.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -2558,6 +2560,35 @@ sequential quantization/evaluation/coverage smoke passed with `3 passed in
 6.67s`. Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
 conversion was run.
 
+The indexed unary/Reshape InstanceNormalization checkpoint reuses the same
+core matcher for the exact `Squeeze -> unary -> Reshape -> post-Transpose`
+tail. The tail Squeeze and unary metadata move from CHW to HWC, the second
+Reshape moves from NCHW to NHWC, its typed shape constant and `newShape` are
+rewritten together, and that Reshape receives the former post-Transpose output
+name. Shared shape constants receive deterministic clones. All thirteen
+legacy unary operators remain accepted; CAST alone may change dtype, while
+every other unary retains the core FLOAT16/FLOAT32 dtype. Quantized or unsafe
+tail contracts are complete no-ops and cannot fall through to the legacy
+mutator. The residual-ADD/Reshape tail is unchanged and remains the sole
+legacy mode.
+
+Focused coverage includes eight exact NumPy equivalence variants across
+FLOAT16/FLOAT32, public/produced sources, and shared/separate Mean axes; all
+thirteen unary operators; dynamic height/width/channel signatures; shared
+tail-shape cloning; multi-chain execution; thirteen unsafe transactional
+no-ops; three compatibility-fallback blockers; mixed direct/side/unary graph
+order under the shared 32-rewrite ceiling; and preflight/no-index behavior
+with `175 passed in 0.73s`. Static, produced-source, FLOAT16, negative-axis,
+commuted-affine, and CAST variants were exactly ModelIR-identical to the
+committed legacy helper. Separate equivalent Mean axes are an intentional
+improvement over the legacy shared-axis restriction. The related
+InstanceNormalization, Pad, Mean, architecture, core, and pass-efficiency
+suites passed with `577 passed in 54.16s`; twelve selected direct-builder
+characterizations passed with `12 passed in 0.94s`. TensorFlow-import-blocked
+direct and `-cotof` plus the sequential quantization/evaluation/coverage smoke
+passed with `3 passed in 6.63s`. Ruff, syntax compilation, and `git diff
+--check` passed. No Tier corpus conversion was run.
+
 The focused indexed and architecture tests pass Ruff normally. The changed
 legacy characterization file passes with its pre-existing `F401` findings
 scoped out, and the lowerer passes with its pre-existing `F401` and `F841`
@@ -2609,11 +2640,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Extend `passes/instance_norm_prepost_layout.py` with the bounded
-   Squeeze/unary/Reshape mode next. Reuse the proven core decomposition
-   contract, preplan the second Reshape constant and output-name transaction,
-   and preserve any required local compatibility edge. Leave the residual-ADD
-   mode untouched until that unit is green.
+3. Extend `passes/instance_norm_prepost_layout.py` with the final bounded
+   Squeeze/residual-ADD/Reshape mode next. Reuse the proven core decomposition
+   contract, model the residual source normalization and legacy fan-out
+   adapter as one transaction, and then reduce the compatibility helper to a
+   graph-order/cap orchestrator.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

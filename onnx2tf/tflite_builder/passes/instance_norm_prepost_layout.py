@@ -35,6 +35,9 @@ _STATS_KEY = (
 _SIDE_STATS_KEY = (
     "optimized_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains"
 )
+_UNARY_RESHAPE_STATS_KEY = (
+    "optimized_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains"
+)
 _PERM_NHWC_TO_NCHW = (0, 3, 1, 2)
 _PERM_NCHW_TO_NHWC = (0, 2, 3, 1)
 _PERM_CHW_TO_HWC = (1, 2, 0)
@@ -43,6 +46,21 @@ _FLOAT_DTYPES = {
     "FLOAT32": np.dtype(np.float32),
 }
 _SIDE_ADAPTER_PERM_NAME = "__instancenorm_tail_nhwc_to_nchw_perm_rank4__"
+_TAIL_UNARY_OPS = {
+    "RELU",
+    "RELU6",
+    "LEAKY_RELU",
+    "LOGISTIC",
+    "TANH",
+    "ABS",
+    "NEG",
+    "SQRT",
+    "EXP",
+    "CAST",
+    "FLOOR",
+    "CEIL",
+    "ROUND",
+}
 
 
 @dataclass(frozen=True)
@@ -83,6 +101,10 @@ class _InstanceNormPrepostPlan:
     tail_mode: str
     side_squeeze: Optional[OperatorIR]
     side_adapter_permutation: Optional[TensorIR]
+    tail_squeeze: Optional[OperatorIR]
+    tail_unary: Optional[OperatorIR]
+    tail_reshape: Optional[OperatorIR]
+    tail_reshape_options: Optional[Dict[str, object]]
     constant_updates: Tuple[_ConstantUpdate, ...]
     metadata_updates: Tuple[_TensorMetadataUpdate, ...]
     channel_last_names: Tuple[str, ...]
@@ -719,104 +741,238 @@ def _resolve_candidate(
     if bias_name == scale_name:
         return None
 
-    if tail_mode not in {"direct", "side_squeeze"}:
+    if tail_mode not in {"direct", "side_squeeze", "unary_reshape"}:
         return None
-    inst_output_users = sorted(
-        set(graph_index.consumer_indices(inst_output_name))
-    )
-    post_matches = []
-    side_matches = []
-    for user_index in inst_output_users:
-        user = model_ir.operators[int(user_index)]
-        if (
-            str(user.op_type) == "TRANSPOSE"
-            and len(user.inputs) == 2
-            and len(user.outputs) == 1
-            and str(user.inputs[0]) == inst_output_name
-            and _constant_vector(
-                model_ir,
-                graph_index,
-                str(user.inputs[1]),
-                4,
-                public_inputs,
-            )
-            == _PERM_NCHW_TO_NHWC
-            and str(user.inputs[1]) not in public_outputs
-        ):
-            post_matches.append((int(user_index), user))
-        if (
-            str(user.op_type) == "SQUEEZE"
-            and len(user.inputs) == 1
-            and len(user.outputs) == 1
-            and str(user.inputs[0]) == inst_output_name
-        ):
-            side_matches.append((int(user_index), user))
-    if len(post_matches) != 1:
-        return None
-    post_index, post = post_matches[0]
+    inst_output_users = sorted(set(graph_index.consumer_indices(inst_output_name)))
     side_squeeze: Optional[OperatorIR] = None
     side_contract: Optional[_TensorContract] = None
     side_adapter_permutation: Optional[TensorIR] = None
-    if tail_mode == "direct":
-        if inst_output_users != [post_index]:
+    tail_squeeze: Optional[OperatorIR] = None
+    tail_squeeze_contract: Optional[_TensorContract] = None
+    tail_unary: Optional[OperatorIR] = None
+    tail_unary_contract: Optional[_TensorContract] = None
+    tail_reshape: Optional[OperatorIR] = None
+    tail_reshape_contract: Optional[_TensorContract] = None
+    tail_reshape_shape_name: Optional[str] = None
+    if tail_mode in {"direct", "side_squeeze"}:
+        post_matches = []
+        side_matches = []
+        for user_index in inst_output_users:
+            user = model_ir.operators[int(user_index)]
+            if (
+                str(user.op_type) == "TRANSPOSE"
+                and len(user.inputs) == 2
+                and len(user.outputs) == 1
+                and str(user.inputs[0]) == inst_output_name
+                and _constant_vector(
+                    model_ir,
+                    graph_index,
+                    str(user.inputs[1]),
+                    4,
+                    public_inputs,
+                )
+                == _PERM_NCHW_TO_NHWC
+                and str(user.inputs[1]) not in public_outputs
+            ):
+                post_matches.append((int(user_index), user))
+            if (
+                str(user.op_type) == "SQUEEZE"
+                and len(user.inputs) == 1
+                and len(user.outputs) == 1
+                and str(user.inputs[0]) == inst_output_name
+            ):
+                side_matches.append((int(user_index), user))
+        if len(post_matches) != 1:
             return None
+        post_index, post = post_matches[0]
+        if tail_mode == "direct":
+            if inst_output_users != [post_index]:
+                return None
+        else:
+            if len(side_matches) != 1:
+                return None
+            side_index, side_squeeze = side_matches[0]
+            if inst_output_users != sorted([post_index, side_index]):
+                return None
+            side_output_name = str(side_squeeze.outputs[0])
+            side_contract = _contract(
+                model_ir,
+                side_output_name,
+                3,
+                inst_output.shape[1:],
+                inst_output.signature[1:],
+            )
+            if (
+                side_contract is None
+                or side_output_name in public_inputs
+                or not _producer_is_valid(
+                    graph_index,
+                    side_output_name,
+                    side_index,
+                )
+                or not _squeeze_axis_zero(
+                    side_squeeze,
+                    inst_output,
+                    side_contract,
+                )
+                or any(
+                    int(consumer_index) <= side_index
+                    for consumer_index in graph_index.consumer_indices(
+                        side_output_name
+                    )
+                )
+            ):
+                return None
+            existing_adapter_perm = model_ir.tensors.get(_SIDE_ADAPTER_PERM_NAME)
+            if existing_adapter_perm is None:
+                side_adapter_permutation = TensorIR(
+                    name=_SIDE_ADAPTER_PERM_NAME,
+                    dtype="INT32",
+                    shape=[4],
+                    shape_signature=[4],
+                    data=np.asarray(_PERM_NHWC_TO_NCHW, dtype=np.int32),
+                    is_variable=False,
+                    quantization=None,
+                )
+            elif (
+                _constant_vector(
+                    model_ir,
+                    graph_index,
+                    _SIDE_ADAPTER_PERM_NAME,
+                    4,
+                    public_inputs,
+                )
+                != _PERM_NHWC_TO_NCHW
+                or _SIDE_ADAPTER_PERM_NAME in public_outputs
+                or existing_adapter_perm.quantization is not None
+            ):
+                return None
     else:
-        if len(side_matches) != 1:
+        tail_squeeze_match = _sole_consumer(graph_index, inst_output_name)
+        if tail_squeeze_match is None:
             return None
-        side_index, side_squeeze = side_matches[0]
-        if inst_output_users != sorted([post_index, side_index]):
-            return None
-        side_output_name = str(side_squeeze.outputs[0])
-        side_contract = _contract(
+        tail_squeeze_index, tail_squeeze = tail_squeeze_match
+        tail_squeeze_name = (
+            str(tail_squeeze.outputs[0])
+            if len(tail_squeeze.outputs) == 1
+            else ""
+        )
+        tail_squeeze_contract = _contract(
             model_ir,
-            side_output_name,
+            tail_squeeze_name,
             3,
             inst_output.shape[1:],
             inst_output.signature[1:],
         )
         if (
-            side_contract is None
-            or side_output_name in public_inputs
+            str(tail_squeeze.op_type) != "SQUEEZE"
+            or len(tail_squeeze.inputs) != 1
+            or len(tail_squeeze.outputs) != 1
+            or str(tail_squeeze.inputs[0]) != inst_output_name
+            or tail_squeeze_contract is None
+            or tail_squeeze_name in public_names
             or not _producer_is_valid(
                 graph_index,
-                side_output_name,
-                side_index,
+                tail_squeeze_name,
+                tail_squeeze_index,
             )
             or not _squeeze_axis_zero(
-                side_squeeze,
+                tail_squeeze,
                 inst_output,
-                side_contract,
-            )
-            or any(
-                int(consumer_index) <= side_index
-                for consumer_index in graph_index.consumer_indices(
-                    side_output_name
-                )
+                tail_squeeze_contract,
             )
         ):
             return None
-        existing_adapter_perm = model_ir.tensors.get(_SIDE_ADAPTER_PERM_NAME)
-        if existing_adapter_perm is None:
-            side_adapter_permutation = TensorIR(
-                name=_SIDE_ADAPTER_PERM_NAME,
-                dtype="INT32",
-                shape=[4],
-                shape_signature=[4],
-                data=np.asarray(_PERM_NHWC_TO_NCHW, dtype=np.int32),
-                is_variable=False,
-                quantization=None,
+        tail_unary_match = _sole_consumer(graph_index, tail_squeeze_name)
+        if tail_unary_match is None:
+            return None
+        tail_unary_index, tail_unary = tail_unary_match
+        tail_unary_name = (
+            str(tail_unary.outputs[0]) if len(tail_unary.outputs) == 1 else ""
+        )
+        tail_unary_contract = _contract(
+            model_ir,
+            tail_unary_name,
+            3,
+            inst_output.shape[1:],
+            inst_output.signature[1:],
+        )
+        if (
+            str(tail_unary.op_type) not in _TAIL_UNARY_OPS
+            or len(tail_unary.inputs) != 1
+            or len(tail_unary.outputs) != 1
+            or str(tail_unary.inputs[0]) != tail_squeeze_name
+            or tail_unary_contract is None
+            or tail_unary_name in public_names
+            or not _producer_is_valid(
+                graph_index,
+                tail_unary_name,
+                tail_unary_index,
             )
-        elif (
+        ):
+            return None
+        tail_reshape_match = _sole_consumer(graph_index, tail_unary_name)
+        if tail_reshape_match is None:
+            return None
+        tail_reshape_index, tail_reshape = tail_reshape_match
+        tail_reshape_name = (
+            str(tail_reshape.outputs[0])
+            if len(tail_reshape.outputs) == 1
+            else ""
+        )
+        tail_reshape_contract = _contract(
+            model_ir,
+            tail_reshape_name,
+            4,
+            inst_output.shape,
+            inst_output.signature,
+        )
+        if (
+            str(tail_reshape.op_type) != "RESHAPE"
+            or len(tail_reshape.inputs) != 2
+            or len(tail_reshape.outputs) != 1
+            or str(tail_reshape.inputs[0]) != tail_unary_name
+            or tail_reshape_contract is None
+            or tail_reshape_name in public_names
+            or not _producer_is_valid(
+                graph_index,
+                tail_reshape_name,
+                tail_reshape_index,
+            )
+        ):
+            return None
+        tail_reshape_shape_name = str(tail_reshape.inputs[1])
+        if (
             _constant_vector(
                 model_ir,
                 graph_index,
-                _SIDE_ADAPTER_PERM_NAME,
+                tail_reshape_shape_name,
                 4,
                 public_inputs,
             )
-            != _PERM_NHWC_TO_NCHW
-            or _SIDE_ADAPTER_PERM_NAME in public_outputs
-            or existing_adapter_perm.quantization is not None
+            != tail_reshape_contract.shape
+            or tail_reshape_shape_name in public_outputs
+            or model_ir.tensors[tail_reshape_shape_name].quantization is not None
+        ):
+            return None
+        post_match = _sole_consumer(graph_index, tail_reshape_name)
+        if post_match is None:
+            return None
+        post_index, post = post_match
+        if (
+            str(post.op_type) != "TRANSPOSE"
+            or len(post.inputs) != 2
+            or len(post.outputs) != 1
+            or str(post.inputs[0]) != tail_reshape_name
+            or _constant_vector(
+                model_ir,
+                graph_index,
+                str(post.inputs[1]),
+                4,
+                public_inputs,
+            )
+            != _PERM_NCHW_TO_NHWC
+            or str(post.inputs[1]) in public_outputs
         ):
             return None
     post_output_name = str(post.outputs[0]) if len(post.outputs) == 1 else ""
@@ -856,6 +1012,12 @@ def _resolve_candidate(
     tail_ops = [post]
     if side_squeeze is not None:
         tail_ops.append(side_squeeze)
+    if (
+        tail_squeeze is not None
+        and tail_unary is not None
+        and tail_reshape is not None
+    ):
+        tail_ops.extend((tail_squeeze, tail_unary, tail_reshape))
     ordered_ops = core_ops + tuple(
         sorted(
             tail_ops,
@@ -877,7 +1039,7 @@ def _resolve_candidate(
     ):
         return None
 
-    contracts = (
+    core_contracts = (
         source,
         pre_output,
         squeeze_output,
@@ -892,15 +1054,57 @@ def _resolve_candidate(
         normalized,
         scaled,
         inst_output,
-        post_output,
-    ) + ((side_contract,) if side_contract is not None else ())
+    )
+    if tail_mode == "direct":
+        core_contracts += (post_output,)
+    elif tail_mode == "side_squeeze":
+        assert side_contract is not None
+        core_contracts += (post_output, side_contract)
+    else:
+        assert tail_squeeze_contract is not None
+        core_contracts += (tail_squeeze_contract,)
     dtype = str(source.tensor.dtype)
     if (
         dtype not in _FLOAT_DTYPES
-        or any(str(contract.tensor.dtype) != dtype for contract in contracts)
-        or any(contract.tensor.quantization is not None for contract in contracts)
+        or any(
+            str(contract.tensor.dtype) != dtype
+            for contract in core_contracts
+        )
+        or any(
+            contract.tensor.quantization is not None
+            for contract in core_contracts
+        )
     ):
         return None
+    if tail_mode == "unary_reshape":
+        assert tail_unary is not None
+        assert tail_unary_contract is not None
+        assert tail_reshape_contract is not None
+        tail_dtype = str(tail_unary_contract.tensor.dtype)
+        if (
+            not tail_dtype
+            or (
+                str(tail_unary.op_type) != "CAST"
+                and tail_dtype != dtype
+            )
+            or any(
+                str(contract.tensor.dtype) != tail_dtype
+                for contract in (
+                    tail_unary_contract,
+                    tail_reshape_contract,
+                    post_output,
+                )
+            )
+            or any(
+                contract.tensor.quantization is not None
+                for contract in (
+                    tail_unary_contract,
+                    tail_reshape_contract,
+                    post_output,
+                )
+            )
+        ):
+            return None
     channel_count = int(pre_output.shape[1])
     old_coefficient_shape = (1, channel_count, 1, 1)
     scale_data = _float_constant(
@@ -1008,6 +1212,35 @@ def _resolve_candidate(
         if update is None:
             return None
         constant_updates.append(update)
+    tail_reshape_options: Optional[Dict[str, object]] = None
+    if tail_mode == "unary_reshape":
+        assert tail_reshape is not None
+        assert tail_reshape_shape_name is not None
+        update = _plan_constant_update(
+            model_ir,
+            graph_index,
+            tail_reshape_shape_name,
+            np.asarray(
+                source.shape,
+                dtype=np.asarray(
+                    model_ir.tensors[tail_reshape_shape_name].data
+                ).dtype,
+            ),
+            (_ConstantUse(tail_reshape, 1),),
+            "nhwc_tail_shape",
+            public_names,
+        )
+        if update is None:
+            return None
+        constant_updates.append(update)
+        tail_reshape_options = (
+            dict(tail_reshape.options)
+            if isinstance(tail_reshape.options, dict)
+            else {}
+        )
+        tail_reshape_options["newShape"] = [
+            int(value) for value in source.shape
+        ]
 
     full_contracts = (
         x,
@@ -1015,7 +1248,13 @@ def _resolve_candidate(
         squared,
         normalized,
         scaled,
-    ) + ((inst_output,) if tail_mode == "direct" else ())
+    ) + (
+        (inst_output,)
+        if tail_mode in {"direct", "unary_reshape"}
+        else ()
+    )
+    if tail_reshape_contract is not None:
+        full_contracts += (tail_reshape_contract,)
     reduced_contracts = (
         mean1_contract,
         mean2_contract,
@@ -1044,12 +1283,29 @@ def _resolve_candidate(
         )
         for contract in full_contracts + reduced_contracts
     )
+    tail_rank3_contracts = tuple(
+        contract
+        for contract in (tail_squeeze_contract, tail_unary_contract)
+        if contract is not None
+    )
+    metadata_updates.extend(
+        _TensorMetadataUpdate(
+            contract,
+            tuple(contract.shape[index] for index in _PERM_CHW_TO_HWC),
+            tuple(
+                contract.signature[index]
+                for index in _PERM_CHW_TO_HWC
+            ),
+        )
+        for contract in tail_rank3_contracts
+    )
     channel_last_names = tuple(
         dict.fromkeys(
             [
                 squeeze_output_name,
                 *(contract.tensor.name for contract in full_contracts),
                 *(contract.tensor.name for contract in reduced_contracts),
+                *(contract.tensor.name for contract in tail_rank3_contracts),
                 post_output_name,
             ]
         )
@@ -1073,6 +1329,10 @@ def _resolve_candidate(
         tail_mode=tail_mode,
         side_squeeze=side_squeeze,
         side_adapter_permutation=side_adapter_permutation,
+        tail_squeeze=tail_squeeze,
+        tail_unary=tail_unary,
+        tail_reshape=tail_reshape,
+        tail_reshape_options=tail_reshape_options,
         constant_updates=tuple(constant_updates),
         metadata_updates=tuple(metadata_updates),
         channel_last_names=channel_last_names,
@@ -1132,6 +1392,15 @@ def _apply_plan(
             and plan.side_squeeze is None
         )
         or (
+            plan.tail_mode == "unary_reshape"
+            and (
+                plan.tail_squeeze is None
+                or plan.tail_unary is None
+                or plan.tail_reshape is None
+                or plan.tail_reshape_options is None
+            )
+        )
+        or (
             plan.side_adapter_permutation is not None
             and _SIDE_ADAPTER_PERM_NAME in model_ir.tensors
         )
@@ -1155,6 +1424,10 @@ def _apply_plan(
         graph_index=graph_index,
     )
     plan.reshape.options = dict(plan.reshape_options)
+    if plan.tail_mode == "unary_reshape":
+        assert plan.tail_reshape is not None
+        assert plan.tail_reshape_options is not None
+        plan.tail_reshape.options = dict(plan.tail_reshape_options)
     _replace_operator_input_at(
         model_ir=model_ir,
         op=plan.sub,
@@ -1165,9 +1438,15 @@ def _apply_plan(
     for update in plan.metadata_updates:
         update.contract.tensor.shape = list(update.shape)
         update.contract.tensor.shape_signature = list(update.signature)
+    output_owner = (
+        plan.tail_reshape
+        if plan.tail_mode == "unary_reshape"
+        else plan.add_bias
+    )
+    assert output_owner is not None
     _set_operator_outputs(
         model_ir=model_ir,
-        op=plan.add_bias,
+        op=output_owner,
         new_outputs=[plan.post_output_name],
         graph_index=graph_index,
     )
@@ -1222,10 +1501,11 @@ def _run_indexed_instance_norm_prepost_tail(
 ) -> Dict[str, int]:
     if candidate is None:
         counts = Counter(str(operator.op_type) for operator in model_ir.operators)
+        has_extended_tail = tail_mode in {"side_squeeze", "unary_reshape"}
         required = {
             "TRANSPOSE": 2,
-            "SQUEEZE": 2 if tail_mode == "side_squeeze" else 1,
-            "RESHAPE": 1,
+            "SQUEEZE": 2 if has_extended_tail else 1,
+            "RESHAPE": 2 if tail_mode == "unary_reshape" else 1,
             "MEAN": 2,
             "SUB": 1,
             "MUL": 3,
@@ -1304,6 +1584,25 @@ def _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
         model_ir,
         tail_mode="side_squeeze",
         stats_key=_SIDE_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
+
+
+def _optimize_transpose_squeeze_reshape_instancenorm_unary_reshape_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _run_indexed_instance_norm_prepost_tail(
+        model_ir,
+        tail_mode="unary_reshape",
+        stats_key=_UNARY_RESHAPE_STATS_KEY,
         graph_index=graph_index,
         layout_state=layout_state,
         max_rewrites=max_rewrites,
