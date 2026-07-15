@@ -5949,6 +5949,60 @@ branch, shared axes and side consumers, candidate limits, idempotence, and
 eighteen unsafe transactional no-op cases. A sequential YuNet comparison
 against the preceding checkpoint emits five byte-identical artifacts.
 
+The exact RELU/Split all-output compatibility island is owned by
+`passes/split_all_outputs_layout.py`. It recognizes one private typed
+NHWC-to-NCHW Transpose, RELU, an equal channel Split, and exactly one typed
+inverse Transpose on every Split output. The former 182-line lowerer
+implementation is a thin compatibility dispatcher at both unchanged ordered
+positions, and both calls supply Session `LayoutState`.
+
+The Split axis must be a private or shared immutable INT32/INT64 scalar
+constant normalized to channel axis one. A declared `numSplits`, when present,
+must equal the output count. The static input channel must divide evenly and
+every Split output must have the exact equal NCHW shape; independently
+compatible dynamic signatures are converted to NHWC. This deliberately
+rejects the former synthetic fixture's invalid unequal 2/4 metadata for a
+six-channel two-way TFLite `SPLIT`; the corrected contract is 3/3.
+
+Both permutation buffers, source provenance, producer uniqueness, graph
+order, private intermediate boundaries, exact fan-out, dtype, per-tensor
+quantization, static/dynamic shape relations, and physical layout are resolved
+before a plan exists. The pre-Transpose output feeds only RELU, the RELU output
+feeds only Split, and each Split output feeds only its owned inverse adapter.
+Every consumer of an inverse-adapter result must occur later in graph order.
+Public intermediate, duplicate producer, missing tensor, variable/constant
+intermediate, per-axis quantization, contradictory layout, or stale order
+rejects the complete candidate without mutation.
+
+All downstream input replacements are grouped by operator and exact slot. A
+single Concat may therefore consume several former adapter outputs, and one
+former output may have several later consumers, without one rewrite replacing
+another. The existing Split tensor names survive and acquire NHWC metadata;
+the adapter-output aliases and removed pre-Transpose tensor are pruned only
+after success.
+
+An exclusive Split axis changes from one to three in place. A shared axis
+receives one deterministic clone with the same TensorIR/NumPy INT32 or INT64
+dtype, quantization, layout metadata, and provenance, while unrelated users
+retain the original value. The immutable plan captures tensor/operator
+contracts, every input slot, metadata, clone name, and removal. It is resolved
+again immediately before apply, then one differential `ModelIRGraphIndex`
+updates inputs and compacts every adapter removal. Graph-ordered candidates,
+an optional rewrite limit bounded by current candidate count, differential
+LayoutState updates, and success-only pruning replace the raw repeated map
+build and unbounded fixed-point loop.
+
+Pre-extraction audit covered this owner together with the adjacent exact
+Conv/Concat and direct Split/Conv/Concat bridge roots. All 41 sequential
+invocations on YuNet, FastestDet, HumanSeg, OSNet, and SiNet were zero-match;
+the all-output root accounted for 12 invocations. Thirty-two focused owner and
+active-fixture tests cover two/three branches, INT32/INT64 and negative axes,
+static/dynamic signatures, exact numerical equivalence, combined and multiple
+consumers, shared-axis cloning, candidate limits, idempotence, GraphIndex,
+LayoutState, and nineteen transactional rejection cases. The adjacent indexed
+owners and complete architecture suite pass together, and sequential YuNet
+conversion reproduces all five fixed artifact hashes.
+
 The adjacent singleton gate/Conv/Concat compatibility island is owned by
 `passes/singleton_gate_layout.py`. The former lowerer implementation mixed
 matching, metadata writes, consumer rewiring, and operator deletion in one

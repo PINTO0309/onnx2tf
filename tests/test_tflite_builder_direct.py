@@ -22822,38 +22822,38 @@ def test_flatbuffer_direct_transpose_relu_split_all_outputs_to_nhwc_chains_optim
     model_ir.tensors["split0_nchw"] = TensorIR(
         name="split0_nchw",
         dtype="FLOAT32",
-        shape=[1, 2, 5, 7],
-        shape_signature=[1, 2, 5, 7],
+        shape=[1, 3, 5, 7],
+        shape_signature=[1, 3, 5, 7],
     )
     model_ir.tensors["split1_nchw"] = TensorIR(
         name="split1_nchw",
         dtype="FLOAT32",
-        shape=[1, 4, 5, 7],
-        shape_signature=[1, 4, 5, 7],
+        shape=[1, 3, 5, 7],
+        shape_signature=[1, 3, 5, 7],
     )
     model_ir.tensors["split0_nhwc"] = TensorIR(
         name="split0_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 2],
-        shape_signature=[1, 5, 7, 2],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.tensors["split1_nhwc"] = TensorIR(
         name="split1_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 4],
-        shape_signature=[1, 5, 7, 4],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.tensors["out0"] = TensorIR(
         name="out0",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 2],
-        shape_signature=[1, 5, 7, 2],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.tensors["out1"] = TensorIR(
         name="out1",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 4],
-        shape_signature=[1, 5, 7, 4],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.operators = [
         OperatorIR(op_type="TRANSPOSE", inputs=["src_nhwc", "to_nchw_perm"], outputs=["src_nchw"]),
@@ -22887,8 +22887,8 @@ def test_flatbuffer_direct_transpose_relu_split_all_outputs_to_nhwc_chains_optim
     assert ["split0_nchw"] in consumer_inputs
     assert ["split1_nchw"] in consumer_inputs
     assert list(model_ir.tensors["relu_out"].shape) == [1, 5, 7, 6]
-    assert list(model_ir.tensors["split0_nchw"].shape) == [1, 5, 7, 2]
-    assert list(model_ir.tensors["split1_nchw"].shape) == [1, 5, 7, 4]
+    assert list(model_ir.tensors["split0_nchw"].shape) == [1, 5, 7, 3]
+    assert list(model_ir.tensors["split1_nchw"].shape) == [1, 5, 7, 3]
 
 
 def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_optimized() -> None:

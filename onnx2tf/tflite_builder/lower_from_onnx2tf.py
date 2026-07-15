@@ -157,6 +157,9 @@ from onnx2tf.tflite_builder.passes.split_channelwise_layout import (
     optimize_transpose_split_channelwise_tail_to_single_post_nchw as _optimize_transpose_split_channelwise_tail_to_single_post_nchw_pass,
     optimize_transpose_unary_split_concat_single_post_nchw as _optimize_transpose_unary_split_concat_single_post_nchw_pass,
 )
+from onnx2tf.tflite_builder.passes.split_all_outputs_layout import (
+    optimize_transpose_relu_split_all_outputs_to_nhwc_chains as _optimize_transpose_relu_split_all_outputs_to_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
@@ -20872,186 +20875,19 @@ def _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
 
 def _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
 ) -> Dict[str, int]:
-    """
-    Remove redundant NCHW adapters around RELU -> SPLIT branches that all
-    immediately return to NHWC.
-
-    Target motif:
-      src_nhwc --T(0,3,1,2)--> src_nchw --RELU--> relu_nchw
-      relu_nchw --SPLIT(axis=1)--> s*_nchw
-      each s*_nchw --T(0,2,3,1)--> s*_nhwc -> consumer
-
-    Rewrite:
-      src_nhwc --RELU--> relu_nhwc
-      relu_nhwc --SPLIT(axis=3)--> s*_nhwc -> consumer
-
-    This removes the pre-RELU transpose and the post-SPLIT branch transposes.
-    """
-    optimized = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    def _unique_tensor_name(base: str) -> str:
-        candidate = str(base)
-        suffix = 1
-        while candidate in model_ir.tensors:
-            candidate = f"{base}_{suffix}"
-            suffix += 1
-        return candidate
-
-    while True:
-        changed = False
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for split_idx, split_op in enumerate(model_ir.operators):
-            if str(split_op.op_type) != "SPLIT" or len(split_op.inputs) < 2 or len(split_op.outputs) < 2:
-                continue
-
-            split_axis_name = str(split_op.inputs[0])
-            split_axis_vals = _read_const_ints_from_tensor(model_ir.tensors.get(split_axis_name, None))
-            if split_axis_vals is None or len(split_axis_vals) != 1:
-                continue
-            split_axis = int(split_axis_vals[0])
-            if split_axis < 0:
-                split_axis += 4
-            if split_axis != 1:
-                continue
-
-            split_input_name = str(split_op.inputs[1])
-            if split_input_name in model_outputs:
-                continue
-            unary_idx = producers.get(split_input_name, None)
-            if unary_idx is None:
-                continue
-            unary_op = model_ir.operators[int(unary_idx)]
-            if (
-                str(unary_op.op_type) != "RELU"
-                or len(unary_op.inputs) != 1
-                or len(unary_op.outputs) != 1
-                or str(unary_op.outputs[0]) != split_input_name
-            ):
-                continue
-
-            unary_input_name = str(unary_op.inputs[0])
-            if unary_input_name in model_outputs:
-                continue
-            pre_t_idx = producers.get(unary_input_name, None)
-            if pre_t_idx is None:
-                continue
-            pre_t_op = model_ir.operators[int(pre_t_idx)]
-            if (
-                str(pre_t_op.op_type) != "TRANSPOSE"
-                or len(pre_t_op.inputs) < 2
-                or len(pre_t_op.outputs) != 1
-                or str(pre_t_op.outputs[0]) != unary_input_name
-                or _read_transpose_perm(model_ir, pre_t_op) != perm_nhwc_to_nchw
-            ):
-                continue
-
-            src_nhwc_name = str(pre_t_op.inputs[0])
-            if src_nhwc_name in model_outputs:
-                continue
-
-            remove_op_ids: set[int] = {int(id(pre_t_op))}
-            branch_rewires: List[Tuple[str, str]] = []
-            valid = True
-            for split_output_name in [str(v) for v in list(split_op.outputs)]:
-                if split_output_name in model_outputs:
-                    valid = False
-                    break
-                split_users = [int(v) for v in consumers.get(split_output_name, [])]
-                if len(split_users) != 1:
-                    valid = False
-                    break
-                post_t_idx = int(split_users[0])
-                post_t_op = model_ir.operators[int(post_t_idx)]
-                if (
-                    str(post_t_op.op_type) != "TRANSPOSE"
-                    or len(post_t_op.inputs) < 2
-                    or len(post_t_op.outputs) != 1
-                    or str(post_t_op.inputs[0]) != split_output_name
-                    or str(post_t_op.outputs[0]) in model_outputs
-                    or _read_transpose_perm(model_ir, post_t_op) != perm_nchw_to_nhwc
-                ):
-                    valid = False
-                    break
-                branch_rewires.append((str(post_t_op.outputs[0]), str(split_output_name)))
-                remove_op_ids.add(int(id(post_t_op)))
-
-            if not valid:
-                continue
-
-            split_axis_tensor = model_ir.tensors.get(split_axis_name, None)
-            if split_axis_tensor is None:
-                continue
-            split_axis_users = [int(v) for v in consumers.get(split_axis_name, [])]
-            if set(split_axis_users) == {int(split_idx)}:
-                _write_const_ints_to_tensor(split_axis_tensor, [3])
-            else:
-                axis_dtype = np.int32
-                try:
-                    if split_axis_tensor.data is not None:
-                        axis_dtype = np.asarray(split_axis_tensor.data).dtype
-                except Exception:
-                    axis_dtype = np.int32
-                split_axis_nhwc_name = _unique_tensor_name(f"{split_axis_name}_nhwc")
-                model_ir.tensors[split_axis_nhwc_name] = TensorIR(
-                    name=split_axis_nhwc_name,
-                    dtype=str(split_axis_tensor.dtype),
-                    shape=[1],
-                    shape_signature=[1],
-                    data=np.asarray([3], dtype=axis_dtype),
-                    is_variable=False,
-                    quantization=_clone_quantization(split_axis_tensor.quantization),
-                )
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=split_op,
-                    new_inputs=[split_axis_nhwc_name, split_input_name],
-                )
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=unary_op,
-                new_inputs=[src_nhwc_name],
-            )
-            _permute_tensor_metadata_if_rank_matches(
-                model_ir.tensors.get(split_input_name, None),
-                perm_nchw_to_nhwc,
-            )
-            for split_output_name in [str(v) for v in list(split_op.outputs)]:
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(split_output_name, None),
-                    perm_nchw_to_nhwc,
-                )
-
-            for post_output_name, replacement_name in list(branch_rewires):
-                _replace_tensor_inputs(model_ir, str(post_output_name), str(replacement_name))
-
-            remove_indices = sorted(
-                [
-                    int(op_idx)
-                    for op_idx, op in enumerate(model_ir.operators)
-                    if int(id(op)) in remove_op_ids
-                ],
-                reverse=True,
-            )
-            for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
-
-            optimized += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if optimized > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_relu_split_all_outputs_to_nhwc_chains": int(optimized)}
+    return _optimize_transpose_relu_split_all_outputs_to_nhwc_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
@@ -30828,7 +30664,10 @@ def lower_onnx_to_ir(
     _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
     _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
     _run_qkv_attention_layout_pass_cluster()
-    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(model_ir)
+    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
     _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
     _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
@@ -30936,7 +30775,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(model_ir)
+    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
     _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
     _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
