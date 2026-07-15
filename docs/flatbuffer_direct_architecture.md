@@ -5490,6 +5490,48 @@ fixed-point loop. The former 321-line lowerer helper is a 17-line compatibility
 dispatcher and its sole production call supplies LayoutState. Matching uses no
 model name or fixed spatial dimension.
 
+The mid-stage SiNet Concat/Resize affine island is owned by
+`passes/sinet_concat_resize_layout.py`. It proves three private
+NHWC-to-NCHW adapters: one merged residual input, one independent Concat
+branch, and one bilinear or nearest-neighbor Resize output followed by
+MUL/ADD. The two branch results feed a plain NCHW axis-1 Concat, then the
+merged residual ADD/MUL/ADD/PReLU tail and one or more NCHW-to-NHWC post
+adapters.
+
+The Resize output is the authoritative NHWC contract for its affine branch.
+The first graph-ordered post output is the authoritative merged NHWC contract.
+The independent branch and Resize branch must derive the original NCHW
+axis-1 Concat and target NHWC axis-3 Concat exactly; the residual source and
+all tail tensors must match the corresponding merged contracts. The rewrite
+removes all three input adapters and every equivalent post adapter, changes
+the Concat axis to 3, lifts the affine and residual tails to NHWC, and makes
+PReLU produce the canonical post tensor directly.
+
+Additional post aliases are merged into the canonical output while every
+downstream repeated input slot is preserved. If the former PReLU NCHW tensor
+has later consumers, one inverse adapter is inserted immediately before the
+first such consumer. This preserves the existing downstream residual branch
+without allowing a removed adapter or stale producer to survive.
+
+All activation tensors use one unquantized FLOAT16/FLOAT32/FLOAT64 contract.
+Typed permutations, exact Resize provenance, producer uniqueness, consumer
+multiplicity, dependency order, public boundaries, fused activation, Concat
+axis, rank-four concrete shape, dynamic signature, and logical/physical
+layout are validated before mutation. Two Resize-branch constants and three
+merged-tail constants must be finite same-dtype broadcasts before and after
+explicit channel-axis rotation. Identity-grouped roles are updated once and
+unrelated consumers receive deterministic clones.
+
+The complete plan is resolved again immediately before apply. Constant clone
+names, all mutation/removal indices, alias input slots, metadata targets, and
+legacy-adapter insertion are preflighted before the first write. One
+differential `ModelIRGraphIndex`, graph-order candidates, a configurable
+32-rewrite ceiling, success-only pruning, and Session `LayoutState`
+synchronization replace the former full-map fixed-point loop. The former
+487-line lowerer helper is a 17-line compatibility dispatcher, and both
+production calls supply LayoutState. Matching uses no model name or fixed
+spatial dimension.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

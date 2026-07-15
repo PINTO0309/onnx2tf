@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the shared-post SiNet affine/PReLU
-fan-out to `passes/sinet_shared_post_layout.py`. The former 321-line raw
+The latest implementation unit moves the mid-stage SiNet Concat/Resize affine
+island to `passes/sinet_concat_resize_layout.py`. The former 487-line raw
 mutator is now a 17-line compatibility dispatcher over one bounded indexed
-matcher and transaction owner. Two input adapters and the terminal output
-adapter are removed only after the complete Concat-backed input, affine tail,
-Conv/ADD fan-out, shape/layout, and grouped-constant contract is proven. The
-pre-existing and indexed implementations serialize byte-identical float32 and
-float16 SiNet artifacts.
+matcher and transaction owner. Three input adapters and all equivalent post
+adapters are removed only after the complete Resize/affine branch, Concat,
+residual tail, post aliases, legacy fan-out, shape/layout, and grouped-constant
+contract is proven. The pre-existing and indexed implementations serialize
+byte-identical float32 and float16 SiNet artifacts.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -38,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 113 coherent continuations:
+The current `fb-refactor5` work contains 114 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -280,6 +280,10 @@ The current `fb-refactor5` work contains 113 coherent continuations:
   dedicated indexed owner, validates exactly one channel-last Concat-backed
   input and the complete Conv/ADD consumer set, and removes three adapters as
   one preflighted transaction without a fixed spatial-size heuristic.
+- the current checkpoint moves the mid-stage Concat/Resize affine residual
+  island to a dedicated indexed owner, validates Resize provenance and both
+  original/target Concat contracts, and preserves post aliases plus the legacy
+  NCHW residual branch in one preflighted transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -298,8 +302,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/sinet_shared_post_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_sinet_shared_post_layout.py`;
+- `onnx2tf/tflite_builder/passes/sinet_concat_resize_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_sinet_concat_resize_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -3392,6 +3396,64 @@ TensorFlow-import-blocked direct, default, and `-cotof` conversion passed
 sequentially with `3 passed in 3.64s`. Scoped Ruff, syntax compilation, and
 `git diff --check` passed. No Tier corpus conversion was run.
 
+The indexed Concat/Resize affine checkpoint moves
+`_optimize_sinet_concat_resize_affine_transpose_chains` to
+`passes/sinet_concat_resize_layout.py`. Its three input adapters carry the
+merged residual source, an independent Concat branch, and a bilinear or
+nearest-neighbor Resize result into NCHW. The Resize branch has a private
+MUL/ADD affine tail. Both branch results feed a plain axis-1 Concat followed by
+the residual ADD/MUL/ADD/PReLU tail and one or more NCHW-to-NHWC post adapters.
+
+The Resize output is authoritative for the branch-local NHWC shape, dynamic
+signature, and layout. The first graph-ordered post output is authoritative
+for the merged NHWC contract. Independent and affine branch contracts derive
+both the original NCHW axis-1 Concat and target NHWC axis-3 Concat; the
+residual source and tail must match those merged contracts exactly. The
+rewrite removes the three input adapters and every equivalent post adapter,
+changes the Concat axis to 3, reconnects the two canonical branch sources,
+and makes PReLU produce the canonical post tensor directly.
+
+Additional post outputs are merged into the first canonical tensor while all
+repeated downstream slots remain intact. Later consumers of the former PReLU
+NCHW tensor receive one inverse adapter inserted before their first use.
+FLOAT16/FLOAT32/FLOAT64 activation tensors must be unquantized and share the
+same dtype. Typed permutations, Resize provenance, unique producers, exact
+fan-out, dependency order, public boundaries, fused activation, shape,
+signature, and layout are validated before mutation. Two branch constants and
+three merged-tail constants must broadcast in the original NCHW graph and
+after explicit NHWC rotation; unrelated consumers receive deterministic
+clones.
+
+The complete plan is resolved again immediately before apply, followed by
+clone-name, mutation/removal-index, alias-slot, metadata-target, and legacy-
+adapter preflight. One differential graph index, graph-ordered candidates, a
+32-rewrite ceiling, success-only pruning, and LayoutState synchronization
+replace the full-map fixed-point loop. Both existing production call sites
+retain their exact order and now supply Session LayoutState.
+
+Focused Concat/Resize coverage passed with `58 passed in 0.50s`; combined with
+the preceding indexed SiNet suites it passed with `514 passed in 1.30s`.
+Coverage includes twenty-four numerical-equivalence combinations across all
+three floating dtypes, scalar/raw constants, both operand and Concat orders,
+and both Resize families; non-40 spatial shapes and dynamic signatures;
+idempotence; post-alias merging; repeated alias and legacy slots; no-legacy
+operation; external constant cloning; candidate-only and capped execution;
+twenty-seven transactional unsafe contracts; stale-plan revalidation; clone
+collision; no-index preflight; differential-index validation; and LayoutState
+validation.
+
+The sequential real SiNet integration passed. The indexed result remains the
+same 449,824-byte float32 artifact with SHA-256
+`40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`
+and the same 253,452-byte float16 artifact with SHA-256
+`180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`.
+The byte identity preserves the recorded sequential `-cotof` evidence:
+`max_abs=2.57205e-09`, `rmse=9.15391e-11`, `cosine=1`, and `pass=True`.
+The full architecture suite passed with `188 passed in 48.25s`, and
+TensorFlow-import-blocked direct, default, and `-cotof` conversion passed
+sequentially with `3 passed in 3.68s`. Scoped Ruff, syntax compilation, and
+`git diff --check` passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3434,12 +3496,13 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 487-line
-   `_optimize_sinet_concat_resize_affine_transpose_chains` helper next.
-   Characterize its three input adapters, Resize/affine branch, Concat axis,
-   residual/affine/PReLU tail, constants, and output metadata before extracting
-   a bounded owner. Reuse grouped-constant and metadata helpers only where the
-   topology and output ownership contracts are identical.
+3. Audit the adjacent 654-line
+   `_optimize_sinet_concat_resize_affine_tail_concat_transpose_chains` helper
+   next. Characterize both Resize/affine branches, the shared residual tail,
+   terminal Concat/Transpose ownership, constants, aliases, and legacy
+   consumers before extracting a bounded owner. Reuse existing SiNet branch,
+   grouped-constant, and metadata helpers only where their contracts are
+   identical.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
