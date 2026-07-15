@@ -4752,6 +4752,49 @@ complete no-ops. One supplied or locally constructed `ModelIRGraphIndex` is
 maintained across all matches, and the sole production call supplies the
 Session LayoutState.
 
+Flattened InstanceNormalization Conv1D-shim canonicalization is isolated in
+`passes/conv1d_instance_norm_layout.py`; it is not added to the unary owner.
+The exact 17-operator path is NHWC-to-NCHW Transpose, axis-two Squeeze,
+Reshape to `[N,1,C*W]`, two axis-two kept-dimension means and the complete
+`SUB -> square -> variance+epsilon -> SQRT -> reciprocal -> normalize ->
+scale -> bias` decomposition, Reshape to `[N,C,W]`, a supported unary,
+axis-two ExpandDims, and NCHW-to-NHWC Transpose.
+
+The indexed owner validates every producer, consumer multiplicity, operator
+role and order, public boundary, concrete shape, dynamic signature, dtype,
+quantization state, and constant before mutation. Mean axes are exact typed
+producer-free `[2]` vectors. Epsilon, reciprocal numerator, scale, and bias
+are finite producer-free floating scalars; epsilon is nonnegative and the
+reciprocal numerator is exactly one. SUB and DIV retain their required input
+order, while the mathematically commutative MUL/ADD edges may use either input
+order. Extra fan-out from any layout-sensitive normalization intermediate is
+rejected.
+
+The rewrite removes only the two boundary Transposes. Squeeze consumes the
+original `[N,1,W,C]` source at axis one, its output and the second Reshape and
+unary outputs become `[N,W,C]`, the second Reshape target becomes `[N,W,C]`,
+and ExpandDims moves to axis one with `[N,1,W,C]` output metadata. Downstream
+consumers and graph outputs are redirected from the former post-Transpose name
+to the retained ExpandDims output. The InstanceNormalization interior remains
+unchanged because normalization across flattened `C*W` is permutation
+equivariant.
+
+Changed Reshape and ExpandDims constants are fully planned before graph
+mutation. Private constants update in place; shared constants are cloned with
+deterministic `*_nhwc_shape` and `*_nhwc_axis` names, preserving unrelated
+consumers. Clone failure is a complete no-op. One consistent dynamic batch,
+width, or channel dimension is preserved in signatures and the Reshape target;
+targets requiring two inferred dimensions are rejected. CAST retains its
+output dtype transition, while the floating normalization path requires one
+unquantized FLOAT16 or FLOAT32 contract.
+
+Static public-input, produced-input, CAST, and alternate-unary fixtures retain
+exact legacy ModelIR and statistics. Floating or produced constants, negative
+epsilon, reversed reciprocal DIV, mixed data dtypes, duplicate producers, and
+inconsistent metadata formerly matched but are now complete no-ops. One
+supplied or locally constructed `ModelIRGraphIndex` is maintained across all
+matches, and the sole production call supplies the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

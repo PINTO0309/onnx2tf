@@ -8,16 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the Conv1D-shim unary fan-out bypass to
-`passes/conv1d_unary_layout.py`. One `ModelIRGraphIndex` validates and rewrites
-all exact branches without rebuilding consumer maps. The retained NCHW side
-branch keeps its names and values, while the selected ExpandDims/Transpose
-wrapper branch is bypassed. The unary is moved before the retained Transpose,
-so the result is topological rather than retaining the legacy backward
-producer edge. CAST now repairs the retained Transpose output dtype and
-quantization, and all quantization clones are prepared before mutation. The
-full-chain and fan-out families now share one prefix resolver instead of
-duplicating their Transpose/Squeeze/Unary validation.
+The latest implementation unit moves the flattened InstanceNormalization
+Conv1D-shim wrapper to the dedicated
+`passes/conv1d_instance_norm_layout.py` owner. One `ModelIRGraphIndex`
+validates the complete 17-operator decomposition without rebuilding consumer
+maps. The two boundary Transposes are removed only after every topology,
+shape/signature, dtype, scalar, axis, and public-boundary contract passes.
+Shared Reshape and ExpandDims constants are cloned transactionally, and one
+dynamic batch, width, or channel dimension is preserved explicitly.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains ninety-one coherent continuations:
+The current `fb-refactor5` work contains ninety-two coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -237,10 +235,13 @@ The current `fb-refactor5` work contains ninety-one coherent continuations:
   Unary/Reshape/ExpandDims variant to that indexed owner, makes shared
   constant changes transactional, and keeps fan-out compatibility bridges
   topological;
-- the current checkpoint moves the unary fan-out bypass to the same indexed
+- `0837ee1b` moves the unary fan-out bypass to the same indexed
   owner, shares the common Transpose/Squeeze/Unary prefix contract, preserves
   only genuine NCHW side branches, fixes operator ordering, and repairs CAST
-  metadata.
+  metadata;
+- the current checkpoint moves flattened InstanceNormalization Conv1D layout
+  canonicalization to a dedicated indexed owner with complete decomposition
+  and shared-constant transactions.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -259,10 +260,9 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/conv1d_unary_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_conv1d_unary_layout.py`;
+- `onnx2tf/tflite_builder/passes/conv1d_instance_norm_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_conv1d_instance_norm_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
-- `tests/test_tflite_builder_direct.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
 
@@ -2331,6 +2331,26 @@ quantization/evaluation/coverage smoke passed with `3 passed`. Ruff with only
 the documented legacy unused-import exclusions, syntax compilation, and `git
 diff --check` passed. No Tier corpus conversion was run.
 
+The indexed flattened InstanceNormalization checkpoint compiles the complete
+prior committed 491-line helper. Four static public-input, produced-input,
+CAST, and alternate-unary branches retain exact operators, tensors, inputs,
+outputs, metadata, and statistics. Differential checks prove that a floating
+permutation, produced second-Reshape shape, negative epsilon, reversed
+reciprocal DIV, mixed intermediate dtype, and duplicate final producer
+formerly rewrote graph state; all six are now complete no-ops.
+
+Focused coverage verifies one-index five-chain execution, supplied-index and
+LayoutState equivalence, deterministic shared Reshape/axis cloning, all
+sixteen unary types, one dynamic batch/width/channel dimension, 37 unsafe
+contracts, clone-failure transaction, historical prune/no-index behavior, and
+the established direct-builder characterization with `61 passed`. All four
+indexed Conv1D suites, architecture, core, pass-efficiency, three established
+Transpose-Unary suites, and five adjacent direct-builder characterizations
+passed together with `498 passed`. TensorFlow-import-blocked direct and
+`-cotof` plus the sequential quantization/evaluation/coverage smoke passed
+with `3 passed`. Ruff, syntax compilation, and `git diff --check` passed. No
+Tier corpus conversion was run.
+
 The focused indexed and architecture tests pass Ruff normally. The changed
 legacy characterization file passes with its pre-existing `F401` findings
 scoped out, and the lowerer passes with its pre-existing `F401` and `F841`
@@ -2383,11 +2403,10 @@ verification gates.
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
 3. Audit
-   `_optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains`
-   as the next adjacent bounded Conv1D-shim variant. Preserve the flattened
-   InstanceNormalization equations, both Reshape boundaries, constant axes,
-   unary identity, and output metadata before extending the shared indexed
-   owner.
+   `_optimize_tencoder_add_expand_transpose_conv_nhwc_chains` as the next
+   adjacent Conv1D-shim family. Split its dual-branch residual and
+   multi-consumer bridge decisions into bounded plans before moving its raw
+   graph mutations to an indexed owner.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
