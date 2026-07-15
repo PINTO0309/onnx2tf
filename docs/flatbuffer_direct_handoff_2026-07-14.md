@@ -8,15 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the distinct dual-statistics
-normalization and optional residual rewrite to
-`passes/instance_norm_dual_stats_layout.py` and reduces its former 712-line raw
-mutator to a 19-line compatibility dispatcher. Its two statistical paths are
-kept separate from the standard decomposed-InstanceNormalization matcher
-because they use variance factors and direct centered/std DIV. Typed
-coefficient transactions are shared through
-`passes/decomposed_instance_norm.py`. All eight InstanceNorm-related layout
-paths now use indexed, side-effect-free matching before mutation.
+The latest implementation unit moves the strict
+`MUL(c1) -> ADD(c2) -> MUL(c3)` affine fold to
+`passes/affine_chain_fold.py` and reduces its former 219-line raw mutator to a
+17-line compatibility dispatcher. It validates the original and folded
+broadcast/signature contracts, plans shared constants as one transaction,
+preserves the final output tensor metadata, and uses one bounded differential
+ModelIR index. All three production calls now synchronize the Session
+LayoutState.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 103 coherent continuations:
+The current `fb-refactor5` work contains 104 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -2813,8 +2812,8 @@ Focused coverage includes forty-eight FLOAT16/FLOAT32 numerical-equivalence
 variants across direct, residual-input, and produced-residual tails; direct and
 produced main sources; shared/separate positive, negative, and arbitrarily
 permuted axes; commuted operands; scalar/NCHW scales; direct and vector-Reshape
-gamma/beta;
-six dynamic-signature modes; downstream fan-out and repeated slots without
+gamma/beta; six dynamic-signature modes; downstream fan-out and repeated slots
+without
 Resize; already-NHWC coefficients; shared-axis cloning; one coefficient shared
 by all four affine sites; capped multi-chain execution; 143 transactional
 unsafe contracts; clone collision; and preflight/no-index behavior. The new
@@ -2825,6 +2824,55 @@ passed with `13 passed, 742 deselected in 1.51s`; TensorFlow-import-blocked
 import, direct conversion, and `-cotof` passed sequentially with
 `3 passed in 4.45s`. Scoped Ruff, syntax compilation, and `git diff --check`
 passed. No Tier corpus conversion was run.
+
+The indexed affine-chain checkpoint moves
+`_optimize_fold_mul_add_mul_affine_chains` to
+`passes/affine_chain_fold.py`. The legacy helper distinguished constants only
+by the presence of tensor data, rebuilt full producer/consumer maps inside an
+unbounded loop, compared intermediate users as sets, mutated shared constants
+before all checks were known, and copied the removed intermediate ADD tensor's
+metadata onto the preserved final output. It did not validate dtype,
+quantization, fused activation, public boundaries, producer order, constant
+provenance, or the original and folded broadcast contracts.
+
+The new owner accepts finite, non-variable FLOAT16, FLOAT32, and FLOAT64
+constants with matching array dtype and exact static tensor metadata. All data
+and output tensors must share that dtype and be unquantized, and all three
+binary operators must have `NONE` fused activation. Original static broadcast
+shapes and dynamic signatures are checked across all three operators; the two
+folded broadcasts must independently reproduce the final output contract.
+When the removed final MUL introduced a broadcast expansion, the surviving
+first-MUL intermediate receives the correctly expanded shape and signature.
+The final output tensor itself remains untouched, retaining its dtype,
+quantization, shape, signature, layouts, and ONNX provenance.
+
+The first-MUL and ADD constant roles are grouped before apply. Constants shared
+inside those roles are updated once; sharing with the removed final MUL is an
+allowed internal use. Any unrelated consumer receives one deterministic
+`_folded` clone while the original constant is preserved. Produced, public,
+variable, quantized, non-finite, mismatched, colliding, or incompatible
+constants reject the complete plan. Exact producer uniqueness, consumer
+multiplicity, graph order, intermediate privacy, source resolution, downstream
+fan-out, repeated final-output slots, and output rename are proven with one
+`ModelIRGraphIndex`. The plan is resolved again immediately before apply, the
+candidate scan is graph ordered and capped at 32 rewrites, pruning is
+success-only, and LayoutState is synchronized. The former 219-line lowerer
+helper is now a 17-line dispatcher; all three production calls pass
+LayoutState.
+
+Focused coverage contains forty-eight FLOAT16/FLOAT32/FLOAT64 numerical
+equivalence combinations across all operand orders and scalar/channelwise
+broadcasts; dynamic signatures; final broadcast expansion; constants shared
+within the chain or with unrelated consumers; downstream fan-out and repeated
+slots; candidate-only and capped execution; thirty-three transactional unsafe
+contracts; clone collision; and no-index preflight. The focused owner plus the
+pre-existing direct-builder characterization passed with `91 passed in 0.57s`.
+The full architecture suite passed with `180 passed in 54.55s`; eighteen
+selected affine direct-builder tests passed with
+`18 passed, 737 deselected in 1.45s`; TensorFlow-import-blocked import, direct
+conversion, and `-cotof` passed sequentially with `3 passed in 4.24s`. Scoped
+Ruff, syntax compilation, and `git diff --check` passed. No Tier corpus
+conversion was run.
 
 ## Failing tests and known issues
 
@@ -2868,10 +2916,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 219-line `_optimize_fold_mul_add_mul_affine_chains`
-   helper next. Characterize its constant ownership, dtype/quantization,
-   broadcast, producer/consumer, and graph-order requirements before replacing
-   its raw fold with a bounded transactional owner.
+3. Audit the adjacent 409-line
+   `_optimize_transpose_mul_add_const_prepost_nhwc_chains` helper next.
+   Characterize its transpose ownership, rank-four constant rotation,
+   broadcast/signature, shared-constant clone, output rename, and graph-order
+   contracts before replacing its raw loop with a bounded transactional owner.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

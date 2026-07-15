@@ -5122,6 +5122,38 @@ success, and synchronizes Session `LayoutState`. The former 712-line lowerer
 mutator is a 19-line dispatcher. All four production calls supply LayoutState,
 and the repeated normalization loop reuses the live `residual_graph_index`.
 
+The strict `MUL(c1) -> ADD(c2) -> MUL(c3)` affine fold is owned by
+`passes/affine_chain_fold.py`. It replaces the three operators with
+`MUL(c1*c3) -> ADD(c2*c3)` only for finite, non-variable FLOAT16, FLOAT32, or
+FLOAT64 constants and unquantized tensors of the same dtype. All three binary
+operators must have no fused activation. Static broadcast shapes and dynamic
+shape signatures are validated for the original three operations and the
+folded two-operation form before any constant or graph mutation.
+
+Constant roles are planned together. A constant shared by the first MUL and
+ADD is updated once, and sharing with the removed final MUL is treated as an
+internal chain use. Any unrelated consumer receives a deterministic folded
+clone while the original value remains unchanged. Produced, public, variable,
+quantized, non-finite, incorrectly typed or shaped constants reject the whole
+candidate. Clone names are reserved for the complete plan before mutation.
+
+The two intermediate tensors must have exact single-consumer multiplicity,
+unique producers, valid dependency order, and no public boundary role. The
+source must resolve to a prior producer or public input; downstream fan-out and
+repeated slots on the preserved final output remain untouched. The final
+output tensor and its dtype, quantization, shape, signature, layout, and ONNX
+provenance remain authoritative. This corrects the legacy behavior that copied
+the removed intermediate ADD tensor's metadata onto the final output tensor.
+Only the surviving first-MUL intermediate metadata is changed when folding a
+final broadcast expansion into it.
+
+Every candidate is resolved side-effect-free and resolved again immediately
+before apply. The owner uses one differential `ModelIRGraphIndex`, a bounded
+graph-order candidate snapshot, a configurable 32-rewrite ceiling,
+success-only pruning, and Session `LayoutState` synchronization. The former
+219-line raw lowerer loop is a 17-line compatibility dispatcher, and all three
+production calls provide the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

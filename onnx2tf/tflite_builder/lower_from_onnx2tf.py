@@ -145,6 +145,9 @@ from onnx2tf.tflite_builder.passes.instance_norm_residual_mul_concat_layout impo
 from onnx2tf.tflite_builder.passes.instance_norm_dual_stats_layout import (
     optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains as _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.affine_chain_fold import (
+    optimize_fold_mul_add_mul_affine_chains as _optimize_fold_mul_add_mul_affine_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
     _optimize_transpose_pre_unary_mean_terminal_nhwc_chains as _optimize_transpose_pre_unary_mean_terminal_nhwc_chains_pass,
     run_terminal_mean_layout_cleanup,
@@ -20153,225 +20156,23 @@ def _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
     )
 
 
-def _optimize_fold_mul_add_mul_affine_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold strict affine tails:
-      x -> MUL(c1) -> ADD(c2) -> MUL(c3)
-    into:
-      x -> MUL(c1*c3) -> ADD(c2*c3)
+def _optimize_fold_mul_add_mul_affine_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Dispatch the indexed floating-point affine-chain fold owner."""
 
-    This pass is intentionally conservative:
-    - all side inputs must be constants,
-    - intermediate tensors must be single-use along the chain.
-    """
-    optimized = 0
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    def _extract_data_const(
-        *,
-        op: OperatorIR,
-        data_producer_type: Optional[str],
-        producers: Dict[str, int],
-    ) -> Optional[Tuple[int, str, int, str]]:
-        if len(op.inputs) != 2:
-            return None
-        in0 = str(op.inputs[0])
-        in1 = str(op.inputs[1])
-        t0 = model_ir.tensors.get(in0, None)
-        t1 = model_ir.tensors.get(in1, None)
-        c0 = t0 is not None and t0.data is not None
-        c1 = t1 is not None and t1.data is not None
-        if c0 == c1:
-            return None
-        if c0:
-            const_idx, const_name = 0, in0
-            data_idx, data_name = 1, in1
-        else:
-            const_idx, const_name = 1, in1
-            data_idx, data_name = 0, in0
-        if data_producer_type is not None:
-            pidx = producers.get(str(data_name), None)
-            if pidx is None:
-                return None
-            pop = model_ir.operators[int(pidx)]
-            if str(pop.op_type) != str(data_producer_type):
-                return None
-            if len(pop.outputs) != 1 or str(pop.outputs[0]) != str(data_name):
-                return None
-        return int(data_idx), str(data_name), int(const_idx), str(const_name)
-
-    def _assign_const_array(
-        *,
-        target_name: str,
-        new_array: np.ndarray,
-        chain_indices: set[int],
-        consumers: Dict[str, List[int]],
-    ) -> str:
-        tensor = model_ir.tensors[str(target_name)]
-        users = [int(v) for v in consumers.get(str(target_name), [])]
-        shared_outside = any(int(v) not in chain_indices for v in users)
-        if not shared_outside:
-            tensor.data = np.asarray(new_array)
-            tensor.shape = [int(v) for v in list(new_array.shape)]
-            tensor.shape_signature = [int(v) for v in list(new_array.shape)]
-            return str(target_name)
-
-        cloned_name = _unique_tensor_name(f"{target_name}_folded")
-        model_ir.tensors[cloned_name] = TensorIR(
-            name=cloned_name,
-            dtype=str(tensor.dtype),
-            shape=[int(v) for v in list(new_array.shape)],
-            shape_signature=[int(v) for v in list(new_array.shape)],
-            data=np.asarray(new_array),
-            is_variable=False,
-            quantization=_clone_quantization(tensor.quantization),
-        )
-        return str(cloned_name)
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for mul2_idx, mul2_op in enumerate(model_ir.operators):
-            if str(mul2_op.op_type) != "MUL" or len(mul2_op.inputs) != 2 or len(mul2_op.outputs) != 1:
-                continue
-            mul2_out_name = str(mul2_op.outputs[0])
-
-            parsed_mul2 = _extract_data_const(
-                op=mul2_op,
-                data_producer_type="ADD",
-                producers=producers,
-            )
-            if parsed_mul2 is None:
-                continue
-            _, add_out_name, mul2_const_idx, mul2_const_name = parsed_mul2
-            add_idx = producers.get(str(add_out_name), None)
-            if add_idx is None:
-                continue
-            add_op = model_ir.operators[int(add_idx)]
-            if str(add_op.op_type) != "ADD" or len(add_op.inputs) != 2 or len(add_op.outputs) != 1:
-                continue
-            if set(int(v) for v in consumers.get(str(add_out_name), [])) != {int(mul2_idx)}:
-                continue
-
-            parsed_add = _extract_data_const(
-                op=add_op,
-                data_producer_type="MUL",
-                producers=producers,
-            )
-            if parsed_add is None:
-                continue
-            _, mul1_out_name, add_const_idx, add_const_name = parsed_add
-            mul1_idx = producers.get(str(mul1_out_name), None)
-            if mul1_idx is None:
-                continue
-            mul1_op = model_ir.operators[int(mul1_idx)]
-            if str(mul1_op.op_type) != "MUL" or len(mul1_op.inputs) != 2 or len(mul1_op.outputs) != 1:
-                continue
-            if set(int(v) for v in consumers.get(str(mul1_out_name), [])) != {int(add_idx)}:
-                continue
-
-            mul1_inputs = [str(v) for v in list(mul1_op.inputs)]
-            t0 = model_ir.tensors.get(str(mul1_inputs[0]), None)
-            t1 = model_ir.tensors.get(str(mul1_inputs[1]), None)
-            c0 = t0 is not None and t0.data is not None
-            c1 = t1 is not None and t1.data is not None
-            if c0 == c1:
-                continue
-            mul1_const_idx = 0 if c0 else 1
-            mul1_const_name = str(mul1_inputs[int(mul1_const_idx)])
-
-            mul1_const_tensor = model_ir.tensors.get(str(mul1_const_name), None)
-            add_const_tensor = model_ir.tensors.get(str(add_const_name), None)
-            mul2_const_tensor = model_ir.tensors.get(str(mul2_const_name), None)
-            if (
-                mul1_const_tensor is None
-                or add_const_tensor is None
-                or mul2_const_tensor is None
-                or mul1_const_tensor.data is None
-                or add_const_tensor.data is None
-                or mul2_const_tensor.data is None
-            ):
-                continue
-
-            try:
-                c1_arr = np.asarray(mul1_const_tensor.data)
-                c2_arr = np.asarray(add_const_tensor.data)
-                c3_arr = np.asarray(mul2_const_tensor.data)
-                c1_new = np.asarray(c1_arr * c3_arr, dtype=c1_arr.dtype)
-                c2_new = np.asarray(c2_arr * c3_arr, dtype=c2_arr.dtype)
-            except Exception:
-                continue
-
-            chain_indices = {int(mul1_idx), int(add_idx), int(mul2_idx)}
-
-            c1_target_name = _assign_const_array(
-                target_name=str(mul1_const_name),
-                new_array=np.asarray(c1_new),
-                chain_indices=chain_indices,
-                consumers=consumers,
-            )
-            c2_target_name = _assign_const_array(
-                target_name=str(add_const_name),
-                new_array=np.asarray(c2_new),
-                chain_indices=chain_indices,
-                consumers=consumers,
-            )
-
-            if c1_target_name != str(mul1_const_name):
-                mul1_new_inputs = [str(v) for v in list(mul1_op.inputs)]
-                mul1_new_inputs[int(mul1_const_idx)] = str(c1_target_name)
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=mul1_op,
-                    new_inputs=mul1_new_inputs,
-                )
-            if c2_target_name != str(add_const_name):
-                add_new_inputs = [str(v) for v in list(add_op.inputs)]
-                add_new_inputs[int(add_const_idx)] = str(c2_target_name)
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=add_op,
-                    new_inputs=add_new_inputs,
-                )
-
-            add_out_tensor = model_ir.tensors.get(str(add_out_name), None)
-            mul2_out_tensor = model_ir.tensors.get(str(mul2_out_name), None)
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=add_op,
-                new_outputs=[str(mul2_out_name)],
-            )
-            if add_out_tensor is not None and mul2_out_tensor is not None:
-                mul2_out_tensor.dtype = str(add_out_tensor.dtype)
-                mul2_out_tensor.quantization = _clone_quantization(add_out_tensor.quantization)
-                mul2_out_tensor.shape = [int(v) for v in list(add_out_tensor.shape)]
-                mul2_out_tensor.shape_signature = (
-                    [int(v) for v in list(add_out_tensor.shape_signature)]
-                    if add_out_tensor.shape_signature is not None
-                    else [int(v) for v in list(add_out_tensor.shape)]
-                )
-
-            del model_ir.operators[int(mul2_idx)]
-            optimized += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if optimized > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_fold_mul_add_mul_affine_chains": int(optimized)}
+    return _optimize_fold_mul_add_mul_affine_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -40633,7 +40434,10 @@ def lower_onnx_to_ir(
         )
 
     def _run_terminal_affine_concat_split_recovery_sequence() -> None:
-        _optimize_fold_mul_add_mul_affine_chains(model_ir)
+        _optimize_fold_mul_add_mul_affine_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
         _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
@@ -40737,7 +40541,10 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _run_layout_reshape_attention_recovery_prefix()
-        _optimize_fold_mul_add_mul_affine_chains(model_ir)
+        _optimize_fold_mul_add_mul_affine_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
@@ -40768,7 +40575,10 @@ def lower_onnx_to_ir(
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _run_layout_reshape_attention_recovery_prefix()
-        _optimize_fold_mul_add_mul_affine_chains(model_ir)
+        _optimize_fold_mul_add_mul_affine_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _run_layout_attention_quantized_recovery_suffix(
             include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
         )
