@@ -6003,6 +6003,53 @@ LayoutState, and nineteen transactional rejection cases. The adjacent indexed
 owners and complete architecture suite pass together, and sequential YuNet
 conversion reproduces all five fixed artifact hashes.
 
+The exact two-branch RELU/Split/Conv/Concat compatibility island is a separate
+immutable plan in the same `passes/split_all_outputs_layout.py` owner. It
+recognizes a private NHWC-to-NCHW Transpose and RELU, an equal two-way channel
+Split, one branch returning to NHWC for Conv2D, that Conv output returning to
+NCHW for RELU, the untouched Split branch joining through channel Concat, and
+one final inverse Transpose. The former 340-line raw helper is a thin
+dispatcher at both unchanged sequence positions, immediately after the
+all-output plan, and both calls supply Session `LayoutState`.
+
+The Conv branch may be either Split output and may occupy either Concat input
+slot. Neither Split-output order nor Concat order is changed. The Split input
+channel must divide exactly in half, both output shapes and signatures must
+match that equal result, and `numSplits`, when present, must be two. The
+historical synthetic fixture's invalid six-channel 2/4 split is therefore
+corrected to an eight-channel 4/4 contract. Conv may change the branch channel
+count; the old NCHW Concat and new NHWC Concat shapes are independently
+derived from the Conv result and retained branch, then required to agree
+through the final inverse adapter.
+
+Every permutation, producer, consumer, input slot, runtime tensor, Conv side
+input provenance, graph-order edge, public boundary, static/dynamic shape,
+dtype, per-tensor activation quantization, and physical layout is proven before
+planning. Adapter endpoints must have equal dtype and quantization parameters.
+The owned pre-Transpose, Conv-input adapter, Conv-output adapter, and final
+Concat adapter are removed only together. Fan-out from any owned NCHW
+intermediate, an additional Split output, unequal Split metadata, unresolved
+filter/bias, stale order, duplicate producer, or contradictory layout rejects
+the whole candidate without mutation.
+
+The plan rewires pre-RELU, Conv, post-Conv RELU, and every consumer of the final
+adapter by exact input slot. Split-axis copy-on-write reuses the all-output
+contract. RELU/Split/Concat tensor metadata and Session LayoutState change to
+NHWC only after a second complete resolution; Concat axis changes from one or
+negative-three to three at the same point. One differential graph index
+performs every input update and one four-operator compaction. Graph-ordered
+Concat candidates, an optional candidate-count rewrite limit, and success-only
+pruning replace the raw repeated full-map fixed point.
+
+Forty-nine dedicated tests cover both Split branch positions, both Concat
+orders, INT32/INT64 and negative axes, static/dynamic signatures, Conv channel
+changes, exact numerical equivalence, multiple final consumers, shared-axis
+cloning, candidate limits, idempotence, GraphIndex, LayoutState, and twenty-nine
+transactional rejection cases. With the active compatibility fixture, adjacent
+indexed owners, and full architecture suite, `525` tests pass. TensorFlow-
+blocked direct/default/`-cotof` checks pass sequentially, and YuNet reproduces
+the five fixed artifact hashes.
+
 The adjacent singleton gate/Conv/Concat compatibility island is owned by
 `passes/singleton_gate_layout.py`. The former lowerer implementation mixed
 matching, metadata writes, consumer rewiring, and operator deletion in one

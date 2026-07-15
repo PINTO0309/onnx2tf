@@ -8,13 +8,14 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves the exact
-Transpose/RELU/Split/all-inverse-Transpose island into the TensorFlow-free
-indexed `passes/split_all_outputs_layout.py` owner. Its former 182-line
-full-map fixed-point helper is now a thin dispatcher at both unchanged
-production positions, and both calls receive Session LayoutState. An immutable
-plan proves the complete equal channel Split, every branch adapter, all
-downstream rewires, and copy-on-write axis update before mutation.
+The latest implementation unit moves the adjacent exact two-branch
+Transpose/RELU/Split/Conv/RELU/Concat island into a second immutable plan in
+the TensorFlow-free indexed `passes/split_all_outputs_layout.py` owner. Its
+former 340-line full-map fixed-point helper is now a thin dispatcher at both
+unchanged production positions immediately after the all-output plan. Both
+calls receive Session LayoutState. The plan proves the equal Split, either
+branch/Concat order, Conv-side provenance, four owned adapters, and all
+downstream rewires before mutation.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -201,6 +202,54 @@ and `schema_generated.py` remains
 `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
 No Tier corpus run was performed.
 
+### RELU/Split/Conv/Concat continuation
+
+The exact two-branch helper is now the second plan in the related Split-layout
+owner. It requires a private NHWC-to-NCHW Transpose and RELU, a two-way equal
+channel Split, one Split branch returning to NHWC for Conv2D, that result
+returning to NCHW for RELU, the untouched branch joining it through channel
+Concat, and one final inverse Transpose. Its two production positions and
+order immediately after the all-output helper are unchanged.
+
+The Conv branch may be either Split output and may appear in either Concat
+slot. Neither order is normalized or commuted. Split input channels must divide
+exactly by two; both output shapes/signatures and optional `numSplits` must
+describe the equal result. The old synthetic fixture's invalid six-channel
+2/4 split is corrected to a valid eight-channel 4/4 split. Conv output channels
+may differ from the branch width, so old NCHW and new NHWC Concat results are
+derived independently and required to agree through the final adapter.
+
+Every typed permutation, source and Conv-side input provenance, unique
+producer, exact consumer, graph-order edge, public boundary, tensor presence,
+static/dynamic shape, dtype, per-tensor activation quantization, and physical
+layout is resolved before a plan exists. Adapter endpoints must have identical
+dtype and quantization. Fan-out from an owned intermediate, an additional or
+unequal Split output, stale order, missing filter/bias, duplicate producer,
+public intermediate, or contradictory layout rejects the candidate without
+mutation.
+
+The immutable plan records the pre-RELU, Split-axis, Conv, post-Conv RELU, and
+all final-consumer input changes; five NHWC metadata updates; the Concat-axis
+update; the four adapter removals; and every tensor/operator contract. Shared
+Split axes use deterministic INT32/INT64 copy-on-write. A complete second
+resolution and preflight precede all writes, after which one differential
+graph index performs the input changes and one four-operator compaction.
+Candidate count bounds execution, and pruning occurs only after success.
+
+Forty-nine dedicated tests cover both Split branch positions, both Concat
+orders, static and dynamic signatures, INT32/INT64 and negative axes, Conv
+channel changes, exact numerical equivalence, multiple final consumers,
+shared-axis cloning, candidate limits, idempotence, GraphIndex, LayoutState,
+and twenty-nine transactional unsafe no-op cases. With the active fixture,
+adjacent indexed owners, and complete architecture suite, `525 passed in
+47.51s`. TensorFlow-import-blocked explicit direct, default direct, and
+`-cotof` conversion pass sequentially with `3 passed in 4.33s`.
+
+One sequential YuNet conversion reproduces the same five artifacts and hashes
+recorded above: 236,564-byte float32, 131,120-byte float16, 105,578-byte
+correspondence report, `schema.fbs`, and `schema_generated.py`. No Tier corpus
+run was performed.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -218,7 +267,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 127 coherent implementation
+The current `fb-refactor5` work contains 128 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -524,6 +573,10 @@ continuations:
   dedicated indexed owner, proves every inverse-adapter branch and downstream
   input slot, and applies equal-Split metadata plus copy-on-write axis changes
   only after complete revalidation.
+- the current checkpoint moves the adjacent exact two-branch
+  Split/Conv/RELU/Concat island into a second plan in that owner, preserves
+  both Split and Concat orders plus Conv channel changes, and removes four
+  adapters only after complete contract revalidation.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -543,7 +596,7 @@ The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/split_all_outputs_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_split_all_outputs_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_split_conv_concat_layout.py`;
 - `tests/test_tflite_builder_direct.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -639,6 +692,20 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 - Axis constants use copy-on-write based on exact consumer slots. Private
   INT32/INT64 buffers change from axis 1 to 3 in place; shared buffers retain
   their original value while the Split receives a deterministic typed clone.
+- The exact Conv/Concat root is independent from the all-output root even
+  though both share one op-family owner. It owns exactly four adapters and one
+  Conv branch; the still-raw direct Split/Conv/Concat bridge retains a local
+  legacy adapter and remains a later independent checkpoint.
+- Split-output position and Concat-input position are semantic order. The plan
+  evaluates both positions but never reorders them. Conv may change channel
+  width, and both original NCHW and target NHWC Concat shapes must prove the
+  same final adapter contract.
+- Changing the Conv and post-RELU inputs is safe only when the removed adapter
+  endpoints have equal dtype and quantization. Conv filter/bias inputs are not
+  rewritten, but each must have resolved provenance before the Conv.
+- The pre-Transpose, branch-to-Conv adapter, Conv-to-RELU adapter, and final
+  Concat adapter are an all-or-nothing removal group. Any fan-out or public
+  boundary inside that group rejects the plan transactionally.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -4453,6 +4520,27 @@ fixture passed Ruff with only their documented inherited F841/F401 categories
 ignored. `git diff --check` passed. One sequential YuNet conversion reproduced
 the five hashes recorded in the continuation snapshot. No Tier corpus was run.
 
+The exact Split/Conv/Concat checkpoint passed its 49 dedicated cases and the
+corrected active compatibility fixture with `50 passed in 0.61s`. The new
+plan, all-output plan, adjacent binary/Split, direct Split,
+unary/Split/Concat, singleton-gate, Conv-output, terminal TransposeConv, and
+binary-bridge owners, both active fixtures, and the complete architecture
+suite then passed together:
+
+```text
+525 passed in 47.51s
+```
+
+TensorFlow import blocking was again exercised sequentially for explicit
+direct, default direct, and direct `-cotof` conversion:
+
+```text
+3 passed in 4.33s
+```
+
+One sequential YuNet conversion reproduced all five fixed hashes. Scoped Ruff,
+`py_compile`, and `git diff --check` passed. No Tier corpus was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -4490,15 +4578,14 @@ The full Goal is not complete. The fast-precanonicalize orchestrator still has
 orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
-The adjacent Split/Conv/Concat trio has now been characterized together, and
-the smallest all-output root has been extracted. Two raw helpers remain:
-`_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains`
-(about 340 lines) and
+The adjacent Split/Conv/Concat trio has now been characterized together. The
+all-output and exact two-branch Conv/Concat roots are indexed. One raw helper
+remains:
 `_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw` (about 287
-lines). Both had zero production matches in the five short representatives.
-Their phase order and semantic exclusivity are recorded, but their Conv layout,
-axis/Concat updates, branch closure, and public/local adapter ownership still
-need separate immutable-plan implementations.
+lines). It had zero production matches in the five short representatives. Its
+phase order and semantic exclusivity are recorded, but its direct Split input,
+Conv subgraph closure, pre/post Concat adapters, and retained local NCHW
+boundary still need an independent immutable-plan implementation.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -4509,16 +4596,16 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Implement the already-audited exact two-branch
-   `_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains`
-   root as the next independent immutable indexed plan. Preserve its two
-   production positions and order relative to the all-output and bridge roots.
-3. Before mutation, prove its Split/Concat axes, one Conv branch and one direct
-   branch, Conv input/output layout, constants, complete branch closure,
-   public boundaries, graph order, and terminal inverse adapter. Use focused
-   synthetic checks and one short sequential production comparison; do not run
-   a Tier corpus unless explicitly requested. Leave the direct bridge root for
-   the following independent checkpoint.
+2. Implement the already-audited
+   `_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw` root as
+   the next independent immutable indexed plan. Preserve all three production
+   positions and its order relative to the two completed Split-layout plans.
+3. Before mutation, prove its direct Transpose-produced Split input, selected
+   Conv branch, pre/post adapter ownership, Concat inputs and axis, joined
+   direct Split output, source/side provenance, graph order, and the single
+   retained local NCHW boundary. Use focused synthetic checks and one short
+   sequential production comparison; do not run a Tier corpus unless
+   explicitly requested.
 4. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

@@ -12310,7 +12310,7 @@ def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
             assert layout_keyword.value.attr == "layout_state"
 
 
-def test_indexed_split_all_outputs_owner_is_bounded_and_transactional() -> None:
+def test_indexed_split_adapter_owners_are_bounded_and_transactional() -> None:
     owner_path = (
         REPO_ROOT
         / "onnx2tf"
@@ -12327,6 +12327,9 @@ def test_indexed_split_all_outputs_owner_is_bounded_and_transactional() -> None:
     assert "def _resolve_candidate(" in owner_source
     assert "def _apply_plan(" in owner_source
     assert "def _plan_signature(" in owner_source
+    assert "def _resolve_conv_concat_candidate(" in owner_source
+    assert "def _apply_conv_concat_plan(" in owner_source
+    assert "def _conv_concat_plan_signature(" in owner_source
     assert "graph_index.remove_operators(" in owner_source
     assert "max_rewrites" in owner_source
     assert "_build_tensor_consumer_map" not in owner_source
@@ -12335,53 +12338,56 @@ def test_indexed_split_all_outputs_owner_is_bounded_and_transactional() -> None:
     for model_name in ("yunet", "fastestdet", "humanseg", "osnet", "sinet"):
         assert model_name not in owner_source.lower()
 
-    wrapper_name = (
-        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
-    )
-    dispatch_name = (
-        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains_pass"
-    )
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
-    )
-    assert len(wrapper.body) == 1
-    dispatch = wrapper.body[0]
-    assert isinstance(dispatch, ast.Return)
-    call = next(node for node in ast.walk(dispatch) if isinstance(node, ast.Call))
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == dispatch_name
-    assert {keyword.arg for keyword in call.keywords} == {
-        "graph_index",
-        "layout_state",
-        "max_rewrites",
-        "candidate",
+    wrappers = {
+        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains": (
+            "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains_pass"
+        ),
+        "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains": (
+            "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_pass"
+        ),
     }
-
     lowerer = next(
         node
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    production_calls = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == wrapper_name
-    ]
-    assert len(production_calls) == 2
-    for production_call in production_calls:
-        layout_keyword = next(
-            keyword
-            for keyword in production_call.keywords
-            if keyword.arg == "layout_state"
+    for wrapper_name, dispatch_name in wrappers.items():
+        wrapper = next(
+            node
+            for node in lowerer_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
         )
-        assert isinstance(layout_keyword.value, ast.Attribute)
-        assert isinstance(layout_keyword.value.value, ast.Name)
-        assert layout_keyword.value.value.id == "session"
-        assert layout_keyword.value.attr == "layout_state"
+        assert len(wrapper.body) == 1
+        dispatch = wrapper.body[0]
+        assert isinstance(dispatch, ast.Return)
+        call = next(node for node in ast.walk(dispatch) if isinstance(node, ast.Call))
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == dispatch_name
+        assert {keyword.arg for keyword in call.keywords} == {
+            "graph_index",
+            "layout_state",
+            "max_rewrites",
+            "candidate",
+        }
+
+        production_calls = [
+            node
+            for node in ast.walk(lowerer)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == wrapper_name
+        ]
+        assert len(production_calls) == 2
+        for production_call in production_calls:
+            layout_keyword = next(
+                keyword
+                for keyword in production_call.keywords
+                if keyword.arg == "layout_state"
+            )
+            assert isinstance(layout_keyword.value, ast.Attribute)
+            assert isinstance(layout_keyword.value.value, ast.Name)
+            assert layout_keyword.value.value.id == "session"
+            assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_singleton_gate_layout_owner_is_bounded_and_transactional() -> None:

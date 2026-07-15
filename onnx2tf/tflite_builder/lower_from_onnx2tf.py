@@ -158,6 +158,7 @@ from onnx2tf.tflite_builder.passes.split_channelwise_layout import (
     optimize_transpose_unary_split_concat_single_post_nchw as _optimize_transpose_unary_split_concat_single_post_nchw_pass,
 )
 from onnx2tf.tflite_builder.passes.split_all_outputs_layout import (
+    optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains as _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_pass,
     optimize_transpose_relu_split_all_outputs_to_nhwc_chains as _optimize_transpose_relu_split_all_outputs_to_nhwc_chains_pass,
 )
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
@@ -20892,344 +20893,21 @@ def _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
 
 def _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
 ) -> Dict[str, int]:
-    """
-    Remove NCHW bridge transposes around:
-
-      NHWC -> T -> RELU -> SPLIT(axis=1)
-      branch -> T -> CONV -> T -> RELU
-      CONCAT(axis=1, [branch, keep]) -> T -> NHWC consumer
-
-    Rewrite the entire fragment to NHWC and switch split/concat channel axes to 3.
-    """
-    optimized = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    def _unique_tensor_name(base: str) -> str:
-        candidate = str(base)
-        suffix = 1
-        while candidate in model_ir.tensors:
-            candidate = f"{base}_{suffix}"
-            suffix += 1
-        return candidate
-
-    while True:
-        changed = False
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for concat_idx, concat_op in enumerate(model_ir.operators):
-            if str(concat_op.op_type) != "CONCATENATION" or len(concat_op.inputs) != 2 or len(concat_op.outputs) != 1:
-                continue
-            concat_axis = int(concat_op.options.get("axis", 0))
-            if concat_axis < 0:
-                concat_axis += 4
-            if concat_axis != 1:
-                continue
-
-            concat_output_name = str(concat_op.outputs[0])
-            if concat_output_name in model_outputs:
-                continue
-            concat_output_users = [int(v) for v in consumers.get(concat_output_name, [])]
-            if len(concat_output_users) != 1:
-                continue
-            post_concat_t_idx = int(concat_output_users[0])
-            post_concat_t = model_ir.operators[int(post_concat_t_idx)]
-            if (
-                str(post_concat_t.op_type) != "TRANSPOSE"
-                or len(post_concat_t.inputs) < 2
-                or len(post_concat_t.outputs) != 1
-                or str(post_concat_t.inputs[0]) != concat_output_name
-                or str(post_concat_t.outputs[0]) in model_outputs
-                or _read_transpose_perm(model_ir, post_concat_t) != perm_nchw_to_nhwc
-            ):
-                continue
-
-            branch_input_name = ""
-            keep_input_name = ""
-            split_op: Optional[OperatorIR] = None
-            split_idx: Optional[int] = None
-            pre_relu_op: Optional[OperatorIR] = None
-            pre_relu_idx: Optional[int] = None
-            pre_t_op: Optional[OperatorIR] = None
-            pre_t_idx: Optional[int] = None
-            pre_branch_t_op: Optional[OperatorIR] = None
-            pre_branch_t_idx: Optional[int] = None
-            conv_op: Optional[OperatorIR] = None
-            post_branch_t_op: Optional[OperatorIR] = None
-            post_branch_t_idx: Optional[int] = None
-            post_relu_op: Optional[OperatorIR] = None
-
-            for candidate_branch_input in [str(v) for v in list(concat_op.inputs)]:
-                candidate_keep_input = next(
-                    (str(v) for v in list(concat_op.inputs) if str(v) != str(candidate_branch_input)),
-                    "",
-                )
-                if candidate_keep_input == "":
-                    continue
-
-                post_relu_candidate_idx = producers.get(str(candidate_branch_input), None)
-                if post_relu_candidate_idx is None:
-                    continue
-                post_relu_candidate = model_ir.operators[int(post_relu_candidate_idx)]
-                if (
-                    str(post_relu_candidate.op_type) != "RELU"
-                    or len(post_relu_candidate.inputs) != 1
-                    or len(post_relu_candidate.outputs) != 1
-                    or str(post_relu_candidate.outputs[0]) != str(candidate_branch_input)
-                ):
-                    continue
-
-                post_branch_t_output_name = str(post_relu_candidate.inputs[0])
-                post_branch_t_candidate_idx = producers.get(post_branch_t_output_name, None)
-                if post_branch_t_candidate_idx is None:
-                    continue
-                post_branch_t_candidate = model_ir.operators[int(post_branch_t_candidate_idx)]
-                if (
-                    str(post_branch_t_candidate.op_type) != "TRANSPOSE"
-                    or len(post_branch_t_candidate.inputs) < 2
-                    or len(post_branch_t_candidate.outputs) != 1
-                    or str(post_branch_t_candidate.outputs[0]) != post_branch_t_output_name
-                    or _read_transpose_perm(model_ir, post_branch_t_candidate) != perm_nhwc_to_nchw
-                    or set(int(v) for v in consumers.get(post_branch_t_output_name, [])) != {int(post_relu_candidate_idx)}
-                ):
-                    continue
-
-                conv_output_name = str(post_branch_t_candidate.inputs[0])
-                conv_candidate_idx = producers.get(conv_output_name, None)
-                if conv_candidate_idx is None:
-                    continue
-                conv_candidate = model_ir.operators[int(conv_candidate_idx)]
-                if (
-                    str(conv_candidate.op_type) != "CONV_2D"
-                    or len(conv_candidate.inputs) < 1
-                    or len(conv_candidate.outputs) != 1
-                    or str(conv_candidate.outputs[0]) != conv_output_name
-                ):
-                    continue
-
-                conv_input_name = str(conv_candidate.inputs[0])
-                pre_branch_t_candidate_idx = producers.get(conv_input_name, None)
-                if pre_branch_t_candidate_idx is None:
-                    continue
-                pre_branch_t_candidate = model_ir.operators[int(pre_branch_t_candidate_idx)]
-                if (
-                    str(pre_branch_t_candidate.op_type) != "TRANSPOSE"
-                    or len(pre_branch_t_candidate.inputs) < 2
-                    or len(pre_branch_t_candidate.outputs) != 1
-                    or str(pre_branch_t_candidate.outputs[0]) != conv_input_name
-                    or _read_transpose_perm(model_ir, pre_branch_t_candidate) != perm_nchw_to_nhwc
-                    or set(int(v) for v in consumers.get(conv_input_name, [])) != {int(conv_candidate_idx)}
-                ):
-                    continue
-
-                branch_split_output_name = str(pre_branch_t_candidate.inputs[0])
-                split_candidate_idx = producers.get(branch_split_output_name, None)
-                if split_candidate_idx is None:
-                    continue
-                split_candidate = model_ir.operators[int(split_candidate_idx)]
-                if (
-                    str(split_candidate.op_type) != "SPLIT"
-                    or len(split_candidate.inputs) < 2
-                    or branch_split_output_name not in [str(v) for v in list(split_candidate.outputs)]
-                    or str(candidate_keep_input) not in [str(v) for v in list(split_candidate.outputs)]
-                ):
-                    continue
-
-                split_axis_name = str(split_candidate.inputs[0])
-                split_axis_vals = _read_const_ints_from_tensor(model_ir.tensors.get(split_axis_name, None))
-                if split_axis_vals is None or len(split_axis_vals) != 1:
-                    continue
-                split_axis = int(split_axis_vals[0])
-                if split_axis < 0:
-                    split_axis += 4
-                if split_axis != 1:
-                    continue
-
-                if set(int(v) for v in consumers.get(str(candidate_keep_input), [])) != {int(concat_idx)}:
-                    continue
-                if set(int(v) for v in consumers.get(branch_split_output_name, [])) != {int(pre_branch_t_candidate_idx)}:
-                    continue
-
-                split_input_name = str(split_candidate.inputs[1])
-                pre_relu_candidate_idx = producers.get(split_input_name, None)
-                if pre_relu_candidate_idx is None:
-                    continue
-                pre_relu_candidate = model_ir.operators[int(pre_relu_candidate_idx)]
-                if (
-                    str(pre_relu_candidate.op_type) != "RELU"
-                    or len(pre_relu_candidate.inputs) != 1
-                    or len(pre_relu_candidate.outputs) != 1
-                    or str(pre_relu_candidate.outputs[0]) != split_input_name
-                ):
-                    continue
-
-                pre_t_output_name = str(pre_relu_candidate.inputs[0])
-                pre_t_candidate_idx = producers.get(pre_t_output_name, None)
-                if pre_t_candidate_idx is None:
-                    continue
-                pre_t_candidate = model_ir.operators[int(pre_t_candidate_idx)]
-                if (
-                    str(pre_t_candidate.op_type) != "TRANSPOSE"
-                    or len(pre_t_candidate.inputs) < 2
-                    or len(pre_t_candidate.outputs) != 1
-                    or str(pre_t_candidate.outputs[0]) != pre_t_output_name
-                    or _read_transpose_perm(model_ir, pre_t_candidate) != perm_nhwc_to_nchw
-                    or set(int(v) for v in consumers.get(pre_t_output_name, [])) != {int(pre_relu_candidate_idx)}
-                ):
-                    continue
-
-                if str(pre_t_candidate.inputs[0]) in model_outputs:
-                    continue
-
-                branch_input_name = str(candidate_branch_input)
-                keep_input_name = str(candidate_keep_input)
-                split_op = split_candidate
-                split_idx = int(split_candidate_idx)
-                pre_relu_op = pre_relu_candidate
-                pre_relu_idx = int(pre_relu_candidate_idx)
-                pre_t_op = pre_t_candidate
-                pre_t_idx = int(pre_t_candidate_idx)
-                pre_branch_t_op = pre_branch_t_candidate
-                pre_branch_t_idx = int(pre_branch_t_candidate_idx)
-                conv_op = conv_candidate
-                post_branch_t_op = post_branch_t_candidate
-                post_branch_t_idx = int(post_branch_t_candidate_idx)
-                post_relu_op = post_relu_candidate
-                break
-
-            if (
-                split_op is None
-                or split_idx is None
-                or pre_relu_op is None
-                or pre_relu_idx is None
-                or pre_t_op is None
-                or pre_t_idx is None
-                or pre_branch_t_op is None
-                or pre_branch_t_idx is None
-                or conv_op is None
-                or post_branch_t_op is None
-                or post_branch_t_idx is None
-                or post_relu_op is None
-                or branch_input_name == ""
-                or keep_input_name == ""
-            ):
-                continue
-
-            split_axis_name = str(split_op.inputs[0])
-            split_axis_tensor = model_ir.tensors.get(split_axis_name, None)
-            if split_axis_tensor is None:
-                continue
-            split_axis_users = [int(v) for v in consumers.get(split_axis_name, [])]
-            if set(split_axis_users) == {int(split_idx)}:
-                _write_const_ints_to_tensor(split_axis_tensor, [3])
-            else:
-                axis_dtype = np.int32
-                try:
-                    if split_axis_tensor.data is not None:
-                        axis_dtype = np.asarray(split_axis_tensor.data).dtype
-                except Exception:
-                    axis_dtype = np.int32
-                split_axis_nhwc_name = _unique_tensor_name(f"{split_axis_name}_nhwc")
-                model_ir.tensors[split_axis_nhwc_name] = TensorIR(
-                    name=split_axis_nhwc_name,
-                    dtype=str(split_axis_tensor.dtype),
-                    shape=[1],
-                    shape_signature=[1],
-                    data=np.asarray([3], dtype=axis_dtype),
-                    is_variable=False,
-                    quantization=_clone_quantization(split_axis_tensor.quantization),
-                )
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=split_op,
-                    new_inputs=[split_axis_nhwc_name, str(split_op.inputs[1])],
-                )
-
-            src_nhwc_name = str(pre_t_op.inputs[0])
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=pre_relu_op,
-                new_inputs=[src_nhwc_name],
-            )
-            _permute_tensor_metadata_if_rank_matches(
-                model_ir.tensors.get(str(pre_relu_op.outputs[0]), None),
-                perm_nchw_to_nhwc,
-            )
-            for split_output_name in [str(v) for v in list(split_op.outputs)]:
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(split_output_name, None),
-                    perm_nchw_to_nhwc,
-                )
-
-            branch_split_output_name = str(pre_branch_t_op.inputs[0])
-            conv_inputs = [str(v) for v in list(conv_op.inputs)]
-            conv_inputs[0] = branch_split_output_name
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=conv_op,
-                new_inputs=conv_inputs,
-            )
-
-            conv_output_name = str(conv_op.outputs[0])
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=post_relu_op,
-                new_inputs=[conv_output_name],
-            )
-            _permute_tensor_metadata_if_rank_matches(
-                model_ir.tensors.get(str(post_relu_op.outputs[0]), None),
-                perm_nchw_to_nhwc,
-            )
-
-            concat_inputs = [str(v) for v in list(concat_op.inputs)]
-            replaced_concat_inputs = [
-                str(branch_input_name) if str(v) == str(branch_input_name) else str(keep_input_name)
-                for v in list(concat_inputs)
-            ]
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=concat_op,
-                new_inputs=replaced_concat_inputs,
-            )
-            concat_op.options["axis"] = 3
-            _permute_tensor_metadata_if_rank_matches(
-                model_ir.tensors.get(concat_output_name, None),
-                perm_nchw_to_nhwc,
-            )
-
-            post_concat_output_name = str(post_concat_t.outputs[0])
-            _replace_tensor_inputs(model_ir, post_concat_output_name, concat_output_name)
-
-            remove_ids = {
-                int(id(pre_t_op)),
-                int(id(pre_branch_t_op)),
-                int(id(post_branch_t_op)),
-                int(id(post_concat_t)),
-            }
-            remove_indices = sorted(
-                [
-                    int(op_idx)
-                    for op_idx, op in enumerate(model_ir.operators)
-                    if int(id(op)) in remove_ids
-                ],
-                reverse=True,
-            )
-            for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
-
-            optimized += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if optimized > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains": int(optimized)}
+    return (
+        _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_pass(
+            model_ir,
+            graph_index=graph_index,
+            layout_state=layout_state,
+            max_rewrites=max_rewrites,
+            candidate=candidate,
+        )
+    )
 
 
 def _optimize_transpose_csp_attention_nhwc_chains(
@@ -30668,7 +30346,10 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
+    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
     _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
         model_ir,
@@ -30779,7 +30460,10 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
+    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
     _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
     run_concat_unary_conv_layout_cleanup(

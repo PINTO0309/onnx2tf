@@ -22922,26 +22922,26 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
     model_ir.tensors["src_nhwc"] = TensorIR(
         name="src_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 6],
-        shape_signature=[1, 5, 7, 6],
+        shape=[1, 5, 7, 8],
+        shape_signature=[1, 5, 7, 8],
     )
     model_ir.tensors["src_nchw"] = TensorIR(
         name="src_nchw",
         dtype="FLOAT32",
-        shape=[1, 6, 5, 7],
-        shape_signature=[1, 6, 5, 7],
+        shape=[1, 8, 5, 7],
+        shape_signature=[1, 8, 5, 7],
     )
     model_ir.tensors["relu0_nchw"] = TensorIR(
         name="relu0_nchw",
         dtype="FLOAT32",
-        shape=[1, 6, 5, 7],
-        shape_signature=[1, 6, 5, 7],
+        shape=[1, 8, 5, 7],
+        shape_signature=[1, 8, 5, 7],
     )
     model_ir.tensors["keep_nchw"] = TensorIR(
         name="keep_nchw",
         dtype="FLOAT32",
-        shape=[1, 2, 5, 7],
-        shape_signature=[1, 2, 5, 7],
+        shape=[1, 4, 5, 7],
+        shape_signature=[1, 4, 5, 7],
     )
     model_ir.tensors["branch_nchw"] = TensorIR(
         name="branch_nchw",
@@ -22976,20 +22976,20 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
     model_ir.tensors["cat_nchw"] = TensorIR(
         name="cat_nchw",
         dtype="FLOAT32",
-        shape=[1, 6, 5, 7],
-        shape_signature=[1, 6, 5, 7],
+        shape=[1, 8, 5, 7],
+        shape_signature=[1, 8, 5, 7],
     )
     model_ir.tensors["out_nhwc"] = TensorIR(
         name="out_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 6],
-        shape_signature=[1, 5, 7, 6],
+        shape=[1, 5, 7, 8],
+        shape_signature=[1, 5, 7, 8],
     )
     model_ir.tensors["sink"] = TensorIR(
         name="sink",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 6],
-        shape_signature=[1, 5, 7, 6],
+        shape=[1, 5, 7, 8],
+        shape_signature=[1, 5, 7, 8],
     )
     model_ir.tensors["conv_filter"] = TensorIR(
         name="conv_filter",
@@ -23046,11 +23046,11 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
     assert int(concat_op.options.get("axis", -1)) == 3
     assert concat_op.inputs == ["relu1_nchw", "keep_nchw"]
 
-    assert list(model_ir.tensors["relu0_nchw"].shape) == [1, 5, 7, 6]
+    assert list(model_ir.tensors["relu0_nchw"].shape) == [1, 5, 7, 8]
     assert list(model_ir.tensors["branch_nchw"].shape) == [1, 5, 7, 4]
-    assert list(model_ir.tensors["keep_nchw"].shape) == [1, 5, 7, 2]
+    assert list(model_ir.tensors["keep_nchw"].shape) == [1, 5, 7, 4]
     assert list(model_ir.tensors["relu1_nchw"].shape) == [1, 5, 7, 4]
-    assert list(model_ir.tensors["cat_nchw"].shape) == [1, 5, 7, 6]
+    assert list(model_ir.tensors["cat_nchw"].shape) == [1, 5, 7, 8]
 
 
 def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized(
