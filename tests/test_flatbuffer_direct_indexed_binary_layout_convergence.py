@@ -253,16 +253,7 @@ def test_indexed_stale_binary_transpose_repair_preserves_fanout_adapter() -> Non
 
 @pytest.mark.parametrize(
     "invalid_metadata",
-    [
-        "short_shape",
-        pytest.param(
-            "short_signature",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="source signature validation follows the first rewrite",
-            ),
-        ),
-    ],
+    ["short_shape", "short_signature"],
 )
 def test_stale_binary_transpose_repair_rejects_invalid_metadata_atomically(
     invalid_metadata: str,

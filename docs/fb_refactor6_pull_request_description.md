@@ -807,6 +807,8 @@ Latest checkpoint results:
   `5 passed, 1 xfailed`;
 - changed-file focused branch regression including that characterization:
   `614 passed, 1 xfailed`;
+- focused stale binary source-signature atomicity correction: `6 passed`;
+- changed-file focused branch regression after the correction: `615 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1336,6 +1338,8 @@ stale channelwise-binary Transpose repair already has indexed positive,
 multiple-match, fan-out, and convergence-runner coverage. A new malformed
 source-signature characterization is a strict xfail because the repair rewires
 the binary input before assigning a rank-two signature to a rank-four output.
-Prevalidate the signature before mutation, then extract only the repair owner;
-leave the three-round convergence runner in the lowerer. No broad conversion
-sweep is implied by this checkpoint.
+The source signature is now materialized and rank-validated before the indexed
+setter, so the former strict xfail is green with a zero statistic and complete
+ModelIR no-op. Extract only the corrected repair owner; leave the three-round
+convergence runner in the lowerer. No broad conversion sweep is implied by this
+checkpoint.

@@ -10617,3 +10617,41 @@ behavior, and direct production calls. Extract the repair owner only after the
 correction checkpoint; keep the convergence runner central because it also
 coordinates broadcast repair and shape reconciliation. Do not create a pull
 request.
+
+## Stale binary source-signature atomicity: completed state
+
+The stale channelwise-binary Transpose repair now materializes the source
+signature after all existing tensor, shape, permutation, locality, and peer-
+evidence guards but before `_set_operator_inputs`. A present signature whose
+rank is not four rejects the candidate before graph, index, output metadata, or
+topology mutation. A valid signature is the same value formerly computed after
+the edge rewrite. Both short-shape and short-signature cases are ordinary
+complete no-ops; no strict xfail remains.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `6 passed, 257 deselected in 2.07s`;
+- changed-file focused branch regression: `615 passed in 23.40s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.44s`;
+- targeted Ruff and Python compilation: passed.
+
+No additional real-model conversion was run. The correction only moves valid
+signature materialization before the former first mutation, and the immediately
+preceding sequential `sgscsh.onnx` controls already proved exact pass metrics,
+zero SWAP, and byte-identical major artifacts across both semantic correction
+and ownership checkpoints. This follows the requested minimal-conversion
+policy.
+
+Changed files are the raw repair, focused invalid-metadata fixture,
+architecture source-order guard, and three branch documents. Public API, CLI,
+valid behavior/statistics, TensorFlow boundary, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, mechanically extract only the corrected 129-line repair owner into
+a focused pass-family module. Keep its lowerer private wrapper, the two
+standalone calls, and the three-round convergence runner call. Leave the runner
+in the lowerer because it coordinates separate broadcast and shape owners.
+Prove exact old/new AST and direct owner/wrapper fingerprint equality. Do not
+create a pull request.

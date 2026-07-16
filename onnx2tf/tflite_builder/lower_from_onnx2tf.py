@@ -4266,6 +4266,14 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                 ):
                     continue
 
+                source_signature = (
+                    [int(v) for v in list(source_tensor.shape_signature)]
+                    if source_tensor.shape_signature is not None
+                    else list(source_shape)
+                )
+                if len(source_signature) != 4:
+                    continue
+
                 updated_inputs = [str(v) for v in list(binary_op.inputs)]
                 updated_inputs[data_input_idx] = source_name
                 _set_operator_inputs(
@@ -4273,11 +4281,6 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                     op=binary_op,
                     new_inputs=updated_inputs,
                     graph_index=graph_index,
-                )
-                source_signature = (
-                    [int(v) for v in list(source_tensor.shape_signature)]
-                    if source_tensor.shape_signature is not None
-                    else list(source_shape)
                 )
                 output_tensor.shape = list(source_shape)
                 output_tensor.shape_signature = list(source_signature)
