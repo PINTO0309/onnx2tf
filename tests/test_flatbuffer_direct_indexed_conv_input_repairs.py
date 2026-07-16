@@ -262,16 +262,14 @@ def test_indexed_conv_transpose_repair_preserves_protected_adapter(
     ],
     ids=["singleton_reshape", "stale_transpose"],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason="source shape_signature is read after the first Conv input mutation",
-)
 def test_conv_input_adapter_repair_rejects_invalid_source_signature_atomically(
     repair,
     source_name: str,
     expected_stats: dict[str, int],
 ) -> None:
     model_ir = _make_conv_input_adapter_model_ir()
+    if source_name == "transpose_source0":
+        model_ir.outputs.append("transpose_adapter1")
     model_ir.tensors[source_name].shape_signature = [1, 1]
     before = _normalize(copy.deepcopy(model_ir))
 

@@ -2644,6 +2644,17 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == "_set_operator_inputs"
         )
+        source_signature_assignment = next(
+            node
+            for node in ast.walk(repair)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "source_signature"
+                for target in node.targets
+            )
+        )
+        assert source_signature_assignment.lineno < setter_call.lineno
         setter_index_keyword = next(
             keyword
             for keyword in setter_call.keywords

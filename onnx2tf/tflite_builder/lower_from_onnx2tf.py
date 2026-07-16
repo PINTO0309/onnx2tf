@@ -4195,6 +4195,14 @@ def _repair_singleton_nhwc_conv_input_reshapes(
             ):
                 continue
 
+            source_signature = (
+                [int(v) for v in list(source_tensor.shape_signature)]
+                if source_tensor.shape_signature is not None
+                else list(source_shape)
+            )
+            if len(source_signature) != 4:
+                continue
+
             updated_inputs = [str(v) for v in list(conv_op.inputs)]
             updated_inputs[0] = source_name
             _set_operator_inputs(
@@ -4204,11 +4212,6 @@ def _repair_singleton_nhwc_conv_input_reshapes(
                 graph_index=graph_index,
             )
 
-            source_signature = (
-                [int(v) for v in list(source_tensor.shape_signature)]
-                if source_tensor.shape_signature is not None
-                else list(source_shape)
-            )
             output_tensor.shape = [
                 int(source_shape[0]),
                 int(source_shape[1]),
@@ -4314,6 +4317,14 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
             ):
                 continue
 
+            source_signature = (
+                [int(v) for v in list(source_tensor.shape_signature)]
+                if source_tensor.shape_signature is not None
+                else list(source_shape)
+            )
+            if len(source_signature) != 4:
+                continue
+
             updated_inputs = [str(v) for v in list(conv_op.inputs)]
             updated_inputs[0] = source_name
             _set_operator_inputs(
@@ -4323,11 +4334,6 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
                 graph_index=graph_index,
             )
 
-            source_signature = (
-                [int(v) for v in list(source_tensor.shape_signature)]
-                if source_tensor.shape_signature is not None
-                else list(source_shape)
-            )
             output_tensor.shape = [
                 int(source_shape[0]),
                 int(source_shape[1]),

@@ -789,6 +789,8 @@ Latest checkpoint results:
   `3 passed, 2 xfailed`;
 - changed-file focused branch regression including that characterization:
   `594 passed, 2 xfailed`;
+- focused Conv-input source-signature atomicity correction: `5 passed`;
+- changed-file focused branch regression after the correction: `596 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1254,6 +1256,9 @@ source-order owner before changing it. That boundary is the existing indexed
 Conv-input adapter repair pair and its shared-index runner. Characterization
 found that both repair functions read a malformed source `shape_signature`
 after rewriting the Conv input; the resulting `IndexError` leaves a partial
-mutation. Two strict xfails freeze those paths. Prevalidate the signature before
-the first mutation, turn both xfails green, and only then perform any mechanical
-ownership move. No broad conversion sweep is implied by this checkpoint.
+mutation. Both repairs now materialize and rank-validate that signature before
+the first indexed edge mutation, so both former strict xfails are green with a
+zero statistic and complete ModelIR no-op. A mechanical ownership move may now
+proceed only with exact function bodies, wrappers, sequence, shared-index
+behavior, statistics, and production boundaries preserved. No broad conversion
+sweep is implied by this checkpoint.

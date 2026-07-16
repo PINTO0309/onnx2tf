@@ -10356,3 +10356,43 @@ green while preserving every successful fingerprint, statistic, shared-index
 behavior, and production call boundary. Do not extract the group until that
 atomicity correction is separately committed and verified. Do not create a
 pull request.
+
+## Conv-input adapter source-signature atomicity: completed state
+
+The shared Conv-input repair defect is fixed without changing successful
+rewrite behavior. Both raw repairs now materialize the source shape signature
+after all existing tensor, rank, permutation, locality, filter-channel, and
+element-count guards but before `_set_operator_inputs`. A signature that is
+present with a rank other than four rejects that candidate before any graph,
+index, tensor metadata, or topology mutation. A valid signature is the same
+value formerly computed after the edge rewrite.
+
+The stale-Transpose atomicity fixture protects its independent second valid
+adapter as a declared output, isolating the malformed first candidate while
+preserving the function's expected continue-to-later-candidates behavior. Both
+former strict xfails now return zero statistics and retain complete ModelIR
+fingerprints. The existing successful multi-rewrite comparison still matches
+the explicit repair pair exactly and retains one shared index build.
+
+Validation completed as follows:
+
+- focused Conv-input adapter and architecture selector:
+  `5 passed, 257 deselected in 0.64s`;
+- changed-file focused branch regression: `596 passed in 23.51s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.34s`;
+- targeted Ruff and Python compilation: passed.
+
+Changed files are the two raw repairs, the focused atomicity fixture, the
+architecture source-order guard, and three branch documents. Public API, CLI,
+valid-candidate behavior/statistics, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. No real-model
+conversion was added because this correction only rejects malformed metadata
+before the former first mutation and the requested validation policy favors
+minimal conversions. PR #952 remains closed; work is commit/push only.
+
+At restart, mechanically extract the two corrected repair owners and their
+shared-index runner into a focused pass-family module. Keep lowerer private
+compatibility wrappers for all three names, preserve the primary and fallback
+runner calls plus the later standalone stale-Transpose call, prove normalized
+old/new body identity, and compare direct owners with wrappers on complete
+ModelIR fingerprints and statistics. Do not create a pull request.
