@@ -8503,6 +8503,47 @@ normalized ModelIR state are identical in every case. The mechanical move does
 not alter public APIs, artifacts, dependencies, corpus policy, ordered runtime
 behavior, or TensorFlow isolation.
 
+## Raw Reshape/Transpose collapse characterization
+
+The next substantive raw source-order owner is the 218-line
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`.
+Production code and both historical calls remain unchanged. It previously had
+only ordered architecture references; the focused
+`test_flatbuffer_direct_reshape_transpose_collapse_layout.py` now owns its
+synthetic ModelIR contract.
+
+Fourteen green cases freeze the static rank-three to NHWC reshape collapse,
+two independent matches and fixed point, collision-safe shared shape cloning,
+ten existing permutation/public-boundary/fan-out/shape rejection guards,
+statistics, the raw owner's current two-loop structure, and both production
+calls.
+
+Nineteen concrete safety gaps are strict xfails:
+
+- dynamic batch signatures are collapsed into a concrete batch-one shape
+  constant and options;
+- a zero-match invocation still prunes unrelated tensors;
+- public-input, variable, wrong-TensorIR-dtype, wrong-buffer-dtype, quantized,
+  or data-less reshape-shape tensors are treated as mutable constants;
+- a changed public shape output mutates rather than receiving a private clone;
+- short input/intermediate/output signatures are ignored;
+- duplicate output or source producers, reverse Transpose/Reshape order, a
+  public internal input alias, and a reverse source producer are accepted.
+
+Correction must use one `ModelIRGraphIndex` to prove unique producers, strict
+Reshape/Transpose/Reshape/Transpose order, exact private internal consumers,
+and complete rank-three/rank-four shape and signature metadata before mutation.
+The target shape constant and `newShape`/`onnxRawNewShape` options must preserve
+a compatible dynamic batch as `-1`. The shape tensor needs an explicit
+unquantized INT32 ownership/type contract: public inputs, variables, missing
+data, runtime producers, and invalid metadata reject; unrelated users and
+changed public outputs clone through deterministic reserved-name allocation.
+The output setter, option values, shape action, removals, and pruning decision
+must all be known before commit. A no-match call must be a complete no-op.
+Valid static behavior, statistics, fixed point, provenance/options, and both
+production calls must remain unchanged. The 218-line count is descriptive
+only; 2,000 remains the ONNX operation-count tier threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

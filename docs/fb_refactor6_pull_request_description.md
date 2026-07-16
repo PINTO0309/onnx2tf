@@ -1727,3 +1727,11 @@ ModelIR state. Resume by inventorying and characterizing the next substantive
 raw source-order owner,
 `_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains` (218
 lines), before semantic or ownership changes. Do not create a pull request.
+That characterization is now complete without production changes. Fourteen
+positive/rejection/call-boundary cases pass, while 19 strict xfails isolate
+dynamic-batch concretization, zero-match pruning, unsafe reshape-shape
+ownership/type handling, ignored signatures, and duplicate/reverse/public
+topology. Resume by building one indexed topology/metadata/dynamic-shape/
+constant-ownership/output/removal plan before mutation and turning all 19
+xfails green without changing valid static behavior or either production call.
+Do not create a pull request.

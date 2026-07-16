@@ -12114,3 +12114,56 @@ public boundaries, pruning, fixed point, statistics, and every production-call
 boundary. Record unsafe behavior as strict xfails before correction. Keep
 validation minimal and strictly sequential, commit and push coherent
 checkpoints, and do not create a pull request.
+
+## Reshape/Transpose collapse characterization: completed state
+
+The 218-line raw
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains` owner and
+both production calls are unchanged. It had no focused public fixture; the new
+`test_flatbuffer_direct_reshape_transpose_collapse_layout.py` now owns its
+synthetic ModelIR contract.
+
+The fourteen green cases freeze ordinary static collapse, two independent
+graph-order matches and fixed point, collision-safe shared shape cloning, ten
+existing wrong-permutation/public-intermediate/fan-out/incompatible-shape/
+missing-output rejection guards, statistics, the current 218-line/two-While
+owner shape, and both production calls.
+
+Nineteen reproduced safety problems are strict xfails:
+
+- one dynamic-batch signature case that writes concrete batch one;
+- one zero-match case that prunes an unrelated tensor;
+- six unsafe public-input, variable, TensorIR/buffer dtype, quantized, or
+  data-less shape-constant cases;
+- one changed public shape output that mutates instead of cloning;
+- five short input/intermediate/output signature cases;
+- five duplicate-producer, reverse-order, or public-alias cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `14 passed, 19 xfailed in 0.67s`;
+- focused characterization plus ordered architecture suite:
+  `262 passed, 19 xfailed in 18.17s`;
+- focused characterization, the five adjacent extracted bridge contracts, and
+  ordered architecture suite: `614 passed, 19 xfailed in 18.63s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.23s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. The 218-line
+count is descriptive only; 2,000 remains the ONNX operation-count tier
+threshold. PR #952 remains closed; no pull request was created, reopened, or
+updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use one
+`ModelIRGraphIndex` to prove unique producers, strict Reshape/Transpose/
+Reshape/Transpose order, exact private internal consumers, complete rank-three/
+rank-four shapes and signatures, and a valid output boundary. Derive the target
+shape/options from compatible output signatures so a dynamic batch remains
+`-1`. Precompute an ownership/type-safe unquantized INT32 shape update-or-clone,
+collision-safe name, indexed output setter, option changes, removals, and prune
+decision before mutation. Turn all 19 strict xfails green while preserving the
+fourteen existing cases, statistics, fixed point, provenance/options, and both
+production calls. Validate sequentially, commit and push, and do not create a
+pull request.
