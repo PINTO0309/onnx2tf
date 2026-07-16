@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving twenty-three
+This branch continues the staged `flatbuffer_direct` refactor by moving twenty-four
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -28,7 +28,8 @@ lowerer and into focused pass modules:
 - indexed-first pre-Add/Mul/Reshape-suffix compatibility recovery;
 - indexed-first Swish/plain-unary Reshape-suffix compatibility recovery;
 - indexed-first Swish/plain-unary Squeeze-suffix compatibility recovery;
-- indexed-first factorized/singleton ExpandDims compatibility recovery.
+- indexed-first factorized/singleton ExpandDims compatibility recovery;
+- indexed-first static/dynamic flatten-HW compatibility recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -379,6 +380,20 @@ identical after function-name normalization; the indexed owner is unchanged.
 Whole-graph fallback scans and relaxed in-place constant updates remain a
 separate immutable-indexed migration task.
 
+### Indexed-first static/dynamic flatten-HW compatibility recovery
+
+`passes/flatten_hw_reshape_compat_layout.py` owns the former 175-line
+composite. It preserves the strict indexed static flatten-HW owner as the first
+dispatch, one per-call `ModelIRGraphIndex`, caller `LayoutState`, dynamic-
+signature and relaxed raw fallback behavior, Reshape constant and option
+updates, combined statistic, fixed-point restart, one prune/report boundary,
+and LayoutState cleanup. The lowerer retains one private wrapper at both
+unchanged production call positions. The complete old/new composite ASTs are
+identical after function-name normalization; the indexed owner is unchanged.
+
+Whole-graph fallback scans and relaxed in-place constant updates remain a
+separate immutable-indexed migration task.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -510,6 +525,9 @@ Latest checkpoint results:
 - focused indexed/compatibility ExpandDims gate: `10 passed`;
 - changed-file branch regression gate including both historical Case A direct
   fixtures after ExpandDims compatibility extraction: `494 passed`;
+- focused indexed/compatibility flatten-HW gate: `9 passed`;
+- changed-file branch regression gate after flatten-HW compatibility
+  extraction: `500 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -707,6 +725,16 @@ generated-schema outputs. The preceding sequential accuracy checkpoint remains
 `max_abs=2.4437904357910156e-06`; no duplicate inference was run because the
 executed TFLite is unchanged.
 
+The static/dynamic flatten-HW composite extraction used `LINEA.onnx` as its
+positive fixed artifact control. Its established indexed invocation counts
+remain `2,0,0,0`, with no residual raw-fallback rewrites for those accepted
+candidates. The pre/post conversion-only runs completed in 7.758 and 7.975
+seconds, recorded process-tree SWAP zero, and produced byte-identical float32,
+float16, tensor-correspondence, schema, and generated-schema outputs. The
+preceding sequential accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was run because the
+executed TFLite is unchanged.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -715,10 +743,10 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 175-line indexed-first compatibility
-composite `_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains`.
-Its indexed static flatten-HW owner, dynamic and relaxed raw fallback,
-GraphIndex and LayoutState handoff, reshape constant ownership, single
-prune/report boundary, production positions, positive LINEA ownership, and
-fallback fixtures must be inventoried before choosing the next ownership
-boundary; no broad conversion sweep is implied by this mechanical checkpoint.
+The next raw source-order boundary is the 218-line compatibility rewrite
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`. Its two
+rank-adapter families, graph-boundary and fan-out guards, shape/permutation
+constant behavior, fixed-point and prune/report boundaries, both production
+positions, real-model ownership, and existing fixtures must be inventoried
+before choosing the next ownership boundary; no broad conversion sweep is
+implied by this mechanical checkpoint.

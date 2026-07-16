@@ -7309,6 +7309,25 @@ all invocations. LINEA's float32, float16, and correspondence artifacts remain
 byte-identical, and its sequential `-cotof` gate passes at maximum absolute
 error `0.002297189086675644` with zero process-tree SWAP.
 
+The indexed-first static/dynamic flatten-HW compatibility composite is now
+isolated in `flatten_hw_reshape_compat_layout.py`. The former 175-line lowerer
+implementation moved with a function-name-normalized AST identical to the
+module owner. It still creates one `ModelIRGraphIndex` per invocation,
+dispatches the strict static owner first, forwards caller `LayoutState`, then
+runs the unchanged dynamic-signature and relaxed fallback to fixed point.
+Reshape constant/option updates, the combined statistic, the sole prune/report
+boundary, and removal of pruned tensor names from LayoutState remain in the
+compatibility owner. The lowerer retains one private adapter at both unchanged
+production call positions.
+
+The focused corpus compares compatibility-owner and lowerer-adapter results for
+the indexed static path, dynamic-signature fallback, shared/boundary/produced/
+variable shape-constant rejection, and LayoutState cleanup. A strictly
+sequential pre/post LINEA conversion records zero process-tree SWAP and
+reproduces all five core artifacts byte for byte. The indexed immutable plan is
+unchanged. Whole-graph fallback scans and relaxed in-place constant mutation
+remain explicit future semantic work.
+
 The static QKV rank adapter now has a bounded indexed owner in
 `attention_qkv_reshape_layout.py`. It accepts only the production-proven
 `[A,1,C] -> [A,H,D] -> [H,A,D] -> [1,H,A,D]` family with rank-three
