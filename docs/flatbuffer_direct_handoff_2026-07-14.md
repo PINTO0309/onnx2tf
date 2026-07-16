@@ -9379,3 +9379,57 @@ constant copy-on-write, both production positions, and the smallest sequential
 zero-SWAP real-model owner before changing source. Do not extract an
 insufficiently characterized positive owner merely to advance source order;
 commit and push only a coherent verified unit and do not create a pull request.
+
+## Probable-NHWC axis sanitizer characterization: completed state
+
+The 245-line `_sanitize_probable_nhwc_axis_sensitive_ops` implementation
+remains in `lower_from_onnx2tf.py`; this checkpoint deliberately does not move
+or change production code. Its former sole direct fixture, the explicit-NCHW
+Concat no-op, is removed from the giant direct-builder test module and placed
+in `test_flatbuffer_direct_probable_nhwc_sanitizer.py` with three new positive
+characterization cases.
+
+The four-case focused contract now fixes:
+
+- SPLIT axis 1 to axis 3 repair on a probable-NHWC input, shared-axis copy-on-
+  write, output metadata repair, unary propagation, and terminal NHWC-to-NCHW
+  graph-output adapter insertion;
+- CONCATENATION axis 1 to axis 3 repair and SLICE begin/size rotation with
+  exact output shapes;
+- metadata-only unary and binary broadcast propagation, including its zero
+  rewrite statistic;
+- preservation of an explicit NCHW Concat axis and public NCHW output.
+
+The focused suite passes `4 passed in 0.48s`. The changed-file branch
+regression collection passes `522 passed in 26.91s`; Ruff checks pass. No
+optional TensorFlow rerun is needed for this test-only checkpoint because no
+runtime or import boundary changed.
+
+Four strictly sequential real-model traces establish current production
+ownership evidence without a broad sweep. FastestDet has four zero results in
+0.795 seconds, SiNet has eight zero results in 1.121 seconds,
+inference_ops15 has four zero results in 0.785 seconds, and LINEA has four zero
+results in 5.650 seconds. Every conversion succeeded and every process-tree
+monitor recorded SWAP zero. Positive production ownership is therefore not
+claimed; the positive semantic branches are fixed by the dedicated synthetic
+contract.
+
+The previous restart note incorrectly named PACK/UNPACK branches. The actual
+owner handles SPLIT, CONCATENATION, SLICE, unary metadata, binary broadcast
+metadata, and conditional terminal output adapters; this checkpoint corrects
+the record.
+
+Changed files are the new focused sanitizer characterization module, removal
+of its relocated import/test from the giant direct-builder test, and two branch
+documents. No production source, public API, CLI, artifact, TensorFlow
+boundary, dependency, corpus profile, exclusion policy, or ONNX operation-tier
+policy changed. Temporary trace and conversion outputs are removed before
+commit. PR #952 remains closed; work is commit/push only and no pull request is
+created.
+
+At restart, compare the complete old helper AST with a proposed pass owner,
+preserve both ordered production positions, and extend the four cases to run
+the owner and compatibility wrapper on deep copies. Use one of the fixed short
+zero-owner models for sequential pre/post byte-equivalence and SWAP control.
+Do not claim positive production ownership, and do not mix a semantic or
+indexed rewrite into the exact mechanical ownership move.

@@ -619,6 +619,9 @@ Latest checkpoint results:
 - focused BatchMatMul adjoint owner and production-boundary gate: `2 passed`;
 - changed-file branch regression gate after BatchMatMul adjoint extraction:
   `518 passed`;
+- focused probable-NHWC axis sanitizer characterization: `4 passed`;
+- changed-file branch regression gate after sanitizer characterization:
+  `522 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -925,10 +928,13 @@ The adjacent 218-line rank-3-to-NHWC reshape helper, 293-line attention
 Gather/Transpose/Reshape cleanup, and 190-line attention pre-projection rank-
 lift remain intentionally unchanged under their recorded no-owner decisions.
 The next raw source-order implementation is the 245-line
-`_sanitize_probable_nhwc_axis_sensitive_ops` helper. Its only direct fixture
-currently fixes an explicit-NCHW no-op. Resume by inventorying every positive
-SPLIT/CONCATENATION/PACK/UNPACK axis repair, terminal output-adapter branch,
-constant copy-on-write case, both production positions, and the smallest
-sequential zero-SWAP real-model owner before deciding whether it has enough
-evidence for mechanical extraction; no broad conversion sweep is implied by
-this checkpoint.
+`_sanitize_probable_nhwc_axis_sensitive_ops` helper. Its dedicated four-case
+characterization now fixes positive SPLIT/CONCATENATION/SLICE repair, shared-
+axis copy-on-write, unary/binary metadata propagation, terminal output-adapter
+insertion, and the explicit-NCHW no-op. FastestDet, SiNet, inference_ops15, and
+LINEA provide sequential zero-owner controls with process-tree SWAP zero, but
+positive production ownership has not been observed. Resume by checking the
+complete old/new AST, both production positions, the four-case owner/wrapper
+equivalence contract, and one of these fixed zero-owner artifacts before a
+mechanical extraction; no broad conversion sweep is implied by this
+checkpoint.
