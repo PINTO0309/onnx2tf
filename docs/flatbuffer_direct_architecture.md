@@ -6792,6 +6792,35 @@ their exact recorded maximum errors. All float32 and float16 TFLite files are
 byte-identical to the prior checkpoint; final conversion-only checks also
 restore the fixed correspondence-report hashes.
 
+The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
+semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
+the historical position inside `_run_layout_reshape_attention_recovery_prefix`
+and deliberately covers both direct/direct and direct/Mul-constant branches:
+the compatibility helper historically claims both families despite its
+Mul-const name. It dispatches only indexed Add operators and reuses one
+`ModelIRGraphIndex` for each prefix invocation. Candidate resolution validates
+typed `[0,3,1,2]` and `[0,2,1]` permutations, positive rank-four source and Add
+views, exact `[N,C,H*W]` and `[N,H*W,C]` suffix views, shape/dtype/layout and
+per-tensor quantization compatibility, graph boundaries, producer ordering,
+exclusive mutable edges, and typed reshape constants before mutation.
+
+Each accepted candidate becomes an immutable plan containing operator and
+tensor contracts. Apply resolves the candidate again and rejects a stale plan
+atomically. Channelwise Mul constants and shared reshape-shape constants use
+copy-on-write; exclusive constants are updated in place to preserve existing
+artifact names. Legacy NCHW consumers receive one dedicated indexed adapter,
+while closed suffixes remove all redundant Transposes. `LayoutState` is updated
+alongside tensor metadata. The indexed owner does not prune, so the existing
+compatibility wrapper remains the sole cleanup and tensor-lineage report
+boundary. Strict rejections continue through the original raw fallback.
+
+The production characterization model is Tier 2
+`iat_llie_180x320.onnx`: its three ordered invocations index 5, 4, and 4
+rewrites, including seven direct/direct and six direct/Mul-constant chains.
+Its float32, float16, and correspondence artifacts remain byte-identical to
+the pre-extraction baseline, and the sequential accuracy gate passes with
+maximum absolute error `4.470348358154297e-07` and zero process SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

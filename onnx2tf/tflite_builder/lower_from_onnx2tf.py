@@ -192,6 +192,9 @@ from onnx2tf.tflite_builder.passes.concat_input_adapter_layout import (
 from onnx2tf.tflite_builder.passes.pre_add_direct_unary_layout import (
     optimize_transpose_pre_add_direct_unary_nhwc_chains as _optimize_transpose_pre_add_direct_unary_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.pre_add_mulconst_reshape_suffix_layout import (
+    optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains as _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.slice_logistic_concat_reshape_tail_layout import (
     optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains as _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains_pass,
 )
@@ -12951,7 +12954,11 @@ def _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir: M
     return {"optimized_transpose_pre_add_reshape_transpose_suffix_nhwc_chains": int(rewritten)}
 
 
-def _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW add bridges with mul-const inputs that feed [N,C,HW] reshape + [0,2,1] transpose.
 
@@ -12967,7 +12974,17 @@ def _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(mo
       y_nhwc --RESHAPE([N,HW,C])--> z
       (if legacy users exist, keep one adapter TRANSPOSE(0,3,1,2): y_nhwc -> y_nchw)
     """
-    rewritten = 0
+    indexed_stats = (
+        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_pass(
+            model_ir,
+            graph_index=ModelIRGraphIndex(model_ir),
+            layout_state=layout_state,
+        )
+    )
+    rewritten = int(indexed_stats.get(
+        "optimized_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains",
+        0,
+    ))
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     perm_3d_nchw_to_nhwc = [0, 2, 1]
@@ -26303,7 +26320,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)

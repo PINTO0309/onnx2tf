@@ -5714,3 +5714,138 @@ The checkpoint changes these tracked files:
 No ONNX corpus model, generated TFLite artifact, dependency file, managed
 quick profile, exclusion policy, or public API is changed. No broad Tier run
 was performed for this bounded checkpoint.
+
+## Pre-Add Mul-const reshape suffix extraction: pre-fix observation
+
+The next raw helper was characterized at its unchanged ordered production
+boundary before source modification. Five short, zero-SWAP representatives
+(`face_detection_yunet_2023mar_int8.onnx`, `FastestDet.onnx`,
+`human_segmentation_pphumanseg_2021oct_org.onnx`,
+`osnet025_Nx3x256x128.onnx`, and `sinet_320_op.onnx`) recorded zero rewrites
+at all three invocations. A static corpus query then identified the bounded
+Add/Reshape/Transpose topology in `iat_llie_180x320.onnx`, a Tier 2 model that
+previously passed in 17.339 seconds with zero model-process SWAP.
+
+Sequential conversion-only characterization of IAT-LLIE found 5, 4, and 4
+rewrites at the three prefix invocations. The 13 rewrites comprise seven
+direct/direct pre-Add branches and six direct/Mul-constant branches. Some
+branches become eligible only after the preceding phase has rewritten their
+input layout, so all three production positions are semantically relevant.
+The complete temporary trace fixed every changed Add, Mul, and Reshape input
+and output plus every removed Transpose before implementation work began.
+
+The pre-fix artifacts are fixed as follows:
+
+- float32 TFLite:
+  `75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881`;
+- float16 TFLite:
+  `4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43`;
+- tensor correspondence report:
+  `a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`.
+
+The characterization also exposes an existing ownership mismatch rather than
+a new regression: despite its Mul-const name, the raw helper claims valid
+direct/direct chains before the adjacent general direct helper can see them.
+The extraction must preserve this ordering and artifact behavior. It must use
+one graph index per invocation, immutable plans with stale-contract rejection,
+copy-on-write constants, explicit layout updates, bounded dispatch, and the
+existing compatibility wrapper's final prune/report boundary. No production
+fix has been applied at this point.
+
+## Pre-Add Mul-const reshape suffix extraction: final checkpoint
+
+The bounded owner is now implemented and connected before the unchanged raw
+compatibility fallback. It indexes only Add candidates, shares one
+`ModelIRGraphIndex` for the complete invocation, resolves immutable plans, and
+revalidates every operator/tensor contract before apply. Typed permutations,
+rank-four and rank-three views, reshape semantics, layout, dtype,
+quantization, graph boundaries, producer order, and constant ownership are
+validated before mutation. Shared channel constants and reshape-shape
+constants use copy-on-write; exclusive constants retain their historical names
+and update in place. Legacy NCHW consumers retain one dedicated adapter.
+`LayoutState` is updated with every physical layout change, while pruning and
+lineage-report grouping remain at the historical wrapper exit.
+
+IAT-LLIE now records all 13 production rewrites in the indexed owner itself:
+5, 4, and 4 across the three ordered prefix invocations. The fallback adds no
+rewrite for those accepted candidates. Conversion-only output retains the
+exact pre-fix hashes:
+
+- float32 TFLite:
+  `75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881`;
+- float16 TFLite:
+  `4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43`;
+- tensor correspondence report:
+  `a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`.
+
+The single sequential managed `-cotof` gate completed in 18.084 seconds with
+`classification=pass`, maximum absolute error
+`4.470348358154297e-07`, and `peak_swap_kib=0`. No timeout, converter failure,
+accuracy regression, artifact difference, or SWAP exclusion was found.
+
+### Changed files and design decisions
+
+- `onnx2tf/tflite_builder/passes/pre_add_mulconst_reshape_suffix_layout.py`
+  owns indexed candidate resolution, immutable transactional plans,
+  differential graph updates, constant copy-on-write, layout reconciliation,
+  bounded dispatch, and retained legacy adapters.
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py` invokes that owner first in
+  the existing compatibility helper and supplies the Session `LayoutState` at
+  the unchanged ordered prefix boundary.
+- `tests/test_flatbuffer_direct_indexed_pre_add_mulconst_reshape_suffix_layout.py`
+  covers direct/direct and direct/Mul-constant capability, closed and legacy
+  graphs, shared constants, rejection atomicity, stale plans, bounded
+  candidate dispatch, idempotence, index/layout consistency, and cleanup
+  ownership.
+- `tests/test_flatbuffer_direct_architecture.py` fixes the indexed-first
+  ownership, differential-index policy, no-early-prune contract, and Session
+  layout boundary.
+- `docs/flatbuffer_direct_architecture.md` and this handoff record the
+  semantic contract, pre-fix observation, evidence, and restart instructions.
+
+The main compatibility decision is intentional: the new owner accepts
+direct/direct as well as direct/Mul-constant inputs because the historical
+helper already claims both families before the adjacent general direct helper.
+Changing that ownership would alter pass timing and could alter artifacts.
+Strict cases outside the new contract still use the raw fallback. No public
+API, CLI default, artifact name, dependency, ONNX corpus model, managed
+profile, exclusion rule, or optional TensorFlow boundary changed.
+
+### Verification completed
+
+- focused indexed owners, QLinear interactions, active suffix fixtures, and
+  complete architecture suite: `257 passed in 44.99s`;
+- TensorFlow import-blocked explicit direct, default direct, and direct
+  `-cotof`: `3 passed in 4.53s`;
+- dedicated owner during its focused run: `12 passed in 0.50s`;
+- ordered owner/fixture integration during its focused run:
+  `17 passed in 2.33s`;
+- sequential IAT-LLIE managed `-cotof`: one pass, zero failure, zero SWAP;
+- scoped Ruff, Python syntax compilation, and `git diff --check`: pass.
+
+### Known issues and unfinished work
+
+No new failing test or model regression is known at this checkpoint. The
+whole-file inherited Ruff findings and optional exporter limitations recorded
+earlier in this handoff remain unchanged. The optional TensorFlow suite was
+not synchronized or executed; only its import-blocked direct boundary was
+tested. No broad Tier run was performed because this checkpoint deliberately
+used the only short real model with non-zero owner coverage.
+
+The original Goal remains incomplete: the fixed pipeline contract, remaining
+raw layout/reshape helpers, op-family lowering consolidation, quantization and
+split/crop refresh, requested-artifact matrix, optional TensorFlow exporters,
+shared PyTorch/TorchScript/Dynamo/ExportedProgram package, and final Tier
+0-through-5 performance/regression gates still require later checkpoints.
+
+### Restart instruction
+
+Confirm `fb-refactor5` is clean and synchronized with `origin/fb-refactor5`.
+Then characterize the adjacent raw
+`_optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains` helper at
+its unchanged production boundary. First establish its non-zero real-model
+families and overlap with the newly indexed direct/direct owner; record any
+problem before changing source. Extract only a bounded family with real
+coverage, retain strict rejects on the compatibility path, and validate with
+focused fixtures plus the smallest sequential zero-SWAP model set. Continue
+to commit and push coherent units only; do not create a pull request.
