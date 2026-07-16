@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving twenty-nine
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -26,6 +26,7 @@ lowerer and into focused pass modules:
 - Transpose/Mean/Mul/Add compatibility recovery;
 - dual affine-input BatchMatMul compatibility recovery;
 - BatchMatMul-to-SE layout compatibility recovery;
+- rank-three BatchMatMul input-adapter to adjoint-flag recovery;
 - residual Add/Mul/Add/PReLU compatibility recovery;
 - residual Add/Mul/Add/post-Transpose fan-out compatibility recovery;
 - pre-unary Mul/Add/post-Transpose fan-out compatibility recovery;
@@ -335,6 +336,24 @@ The raw owner still performs its long mutation sequence without an immutable
 all-or-nothing plan. Transactional hardening is kept separate from this exact
 ownership move.
 
+### Rank-three BatchMatMul input-adapter recovery
+
+`passes/batchmatmul_adjoint_layout.py` owns the former 145-line helper. It
+preserves exclusive Transpose-output ownership, graph-output and fully-known-
+shape guards, exact rank-three permutation validation, direct `[0,2,1]`
+Transpose removal, singleton-preserving Transpose-to-Reshape conversion, new
+INT32 shape-tensor creation, the corresponding `adjX` or `adjY` toggle, fixed-
+point restart, conditional pruning, statistics, and both ordered production
+positions. The lowerer retains a one-call private wrapper, and the complete
+old/new owner ASTs are identical after function-name normalization.
+
+The focused fixture covers both input positions and both rewrite forms, runs
+the module owner and compatibility wrapper on deep copies, compares the full
+ModelIR, and fixes idempotence. The mechanical owner still rebuilds complete
+producer/consumer maps after every accepted adapter and directly mutates or
+deletes operators without an invariant transaction. Indexed transactional
+migration is kept separate from this exact ownership move.
+
 ### Residual Add/Mul/Add/PReLU compatibility recovery
 
 `passes/residual_affine_prelu_layout.py` owns the former 415-line compatibility
@@ -597,6 +616,9 @@ Latest checkpoint results:
 - focused BatchMatMul SE owner and production-boundary gate: `2 passed`;
 - changed-file branch regression gate after BatchMatMul SE extraction:
   `516 passed`;
+- focused BatchMatMul adjoint owner and production-boundary gate: `2 passed`;
+- changed-file branch regression gate after BatchMatMul adjoint extraction:
+  `518 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -794,6 +816,17 @@ immediately preceding LINEA accuracy baseline remains
 executed TFLite is unchanged. The positive SE contract is fixed by the
 relocated direct fixture.
 
+The BatchMatMul adjoint-input extraction used Tier 0
+`speech_command_classifier_trained.onnx` as a positive artifact control. Its
+two runtime results remain `1,0` before and after extraction. The pre/post
+conversion-only runs completed in 0.240 and 0.239 seconds, recorded process-
+tree SWAP zero, and produced byte-identical float32, float16, tensor-
+correspondence, schema, and generated-schema outputs. A single sequential
+pre-move accuracy evaluation passed with
+`max_abs=2.86102294921875e-06`, `evaluation_pass=true`, and no skipped output;
+no duplicate post-move inference was run because the executed TFLite artifact
+is byte-identical.
+
 The residual affine/PReLU extraction used `sinet_320_op.onnx` as its positive
 artifact control. Its fourteen runtime results remain
 `0,0,0,1,1,0,0,0,0,0,0,0,0,0` across extraction. The pre/post conversion-only
@@ -891,9 +924,11 @@ and non-zero ownership before replacing the current insertion logic.
 The adjacent 218-line rank-3-to-NHWC reshape helper, 293-line attention
 Gather/Transpose/Reshape cleanup, and 190-line attention pre-projection rank-
 lift remain intentionally unchanged under their recorded no-owner decisions.
-The adjacent 145-line
-`_optimize_batchmatmul_transpose_input_to_adj_flags` helper currently has no
-dedicated public fixture. Resume by inventorying its real-model ownership and
-existing indirect coverage before deciding whether it has enough evidence for
-mechanical extraction; no broad conversion sweep is implied by this
-checkpoint.
+The next raw source-order implementation is the 245-line
+`_sanitize_probable_nhwc_axis_sensitive_ops` helper. Its only direct fixture
+currently fixes an explicit-NCHW no-op. Resume by inventorying every positive
+SPLIT/CONCATENATION/PACK/UNPACK axis repair, terminal output-adapter branch,
+constant copy-on-write case, both production positions, and the smallest
+sequential zero-SWAP real-model owner before deciding whether it has enough
+evidence for mechanical extraction; no broad conversion sweep is implied by
+this checkpoint.

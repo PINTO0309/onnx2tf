@@ -9305,3 +9305,77 @@ model ownership before deciding whether evidence is sufficient for a mechanical
 move. Do not introduce a synthetic-only replacement merely to advance source
 order; commit and push only a coherent verified unit and do not create a pull
 request.
+
+## Rank-three BatchMatMul adjoint-input extraction: completed state
+
+The complete 145-line `_optimize_batchmatmul_transpose_input_to_adj_flags`
+helper is now owned by `passes/batchmatmul_adjoint_layout.py`. The lowerer
+retains one private one-call wrapper at both unchanged ordered production
+positions. After normalizing only the function name, the prior lowerer owner
+and new pass owner ASTs are identical; the sole Ruff suppression is a comment
+on the historical unused `removed_transpose` assignment and does not alter the
+AST.
+
+The owner preserves exclusive Transpose-output ownership, graph-output
+protection, fully known positive shape checks, exact permutation/shape
+validation, direct `[0,2,1]` Transpose removal, singleton-preserving
+Transpose-to-Reshape conversion, deterministic INT32 shape-tensor creation,
+the corresponding `adjX` or `adjY` toggle, exact mutation/removal order, fixed-
+point restart, conditional pruning, and the historical statistic.
+
+The new focused fixture runs the module owner and lowerer wrapper on deep
+copies and compares the complete ModelIR. It covers both BatchMatMul input
+positions, direct Transpose removal, singleton-preserving Reshape conversion,
+shape-tensor payload, both adjoint toggles, pruning, and idempotence. Together
+with the architecture owner/production selector it passes `2 passed in 1.88s`.
+The changed-file branch regression collection passes `518 passed in 27.32s`;
+the optional-TensorFlow import-blocked suite passes `11 passed in 9.24s`.
+Ruff, Python compilation, AST equivalence, and whitespace checks pass.
+
+Tier 0 `speech_command_classifier_trained.onnx` is the strictly sequential
+positive artifact control. Its two runtime counts remain `1,0` before and
+after extraction. The conversion-only pre run completed in 0.240 seconds and
+the post run in 0.239 seconds; both recorded process-tree SWAP zero. The core
+artifacts are byte-identical:
+
+- float32 TFLite:
+  `2cb2ff30c92901f802c32c483ae201ef45b1ea35520fb958cdbedc35e7b11cbf`;
+- float16 TFLite:
+  `eb11dd7d3120e06da1227d7f7f7c66482b5c0c56a4d5edf3ea18064f85778f44`;
+- tensor correspondence:
+  `b7abdafa2cd2f8bec4bc3e060c9006913f924eafb7ccc2f0eca9f4304c8a86da`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The single sequential pre-move accuracy checkpoint passed with
+`evaluation_pass=true`, no skipped output, and
+`max_abs=2.86102294921875e-06`. No duplicate post-move inference was added
+because the executed float32 TFLite artifact is identical. Existing isolated
+accuracy workers ran one at a time; all model conversions remained strictly
+sequential.
+
+The raw owner's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps after each accepted adapter and directly deletes or
+mutates an operator without a transaction or shared GraphIndex/LayoutState.
+The accepted candidate has no late rejection after mutation begins, but an
+indexed transactional migration must separately prove candidate order,
+fixed-point restart, pruning, and exact artifact equivalence and is not mixed
+into this mechanical move.
+
+Changed files are the new BatchMatMul adjoint-input pass, lowerer import and
+wrapper, new focused fixture, updated architecture ownership test, and three
+branch documents. No public API, CLI, artifact name, TensorFlow boundary,
+dependency, corpus profile, exclusion policy, or ONNX operation-tier policy
+changed. Temporary tracing and conversion outputs are removed before commit.
+PR #952 remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 245-line
+`_sanitize_probable_nhwc_axis_sensitive_ops`. Its only direct fixture currently
+fixes the explicit-NCHW no-op. At restart, inventory its positive
+SPLIT/CONCATENATION/PACK/UNPACK axis repairs, terminal output-adapter branch,
+constant copy-on-write, both production positions, and the smallest sequential
+zero-SWAP real-model owner before changing source. Do not extract an
+insufficiently characterized positive owner merely to advance source order;
+commit and push only a coherent verified unit and do not create a pull request.

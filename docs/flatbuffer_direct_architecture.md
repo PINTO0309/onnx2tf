@@ -7149,6 +7149,28 @@ still performs a long sequence of constant, option, edge, metadata, and alias
 mutations without an immutable all-or-nothing plan; transactional hardening
 remains separate from this exact ownership checkpoint.
 
+The rank-three BatchMatMul input-adapter compatibility rule is now isolated in
+`passes/batchmatmul_adjoint_layout.py`. Its complete 145-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves exclusive Transpose-output ownership, graph-output protection,
+fully known positive shape checks, exact permutation/shape validation,
+`[0,2,1]` Transpose removal with `adjX`/`adjY` toggling, singleton-preserving
+Transpose-to-Reshape conversion with a new INT32 shape tensor, fixed-point
+restart, conditional pruning, statistics, and both ordered production
+positions. The lowerer retains a one-call private wrapper.
+
+The focused owner fixture runs the module owner and private wrapper on deep
+copies, compares the complete ModelIR, covers both input positions and both
+rewrite forms, and fixes idempotence. Tier 0
+`speech_command_classifier_trained.onnx` establishes positive production
+ownership with runtime counts `1,0`; its sequential pre/post conversion-only
+runs record zero process-tree SWAP and reproduce all five core artifacts byte
+for byte. The one-sample pre-move accuracy checkpoint passes with
+`max_abs=2.86102294921875e-06`. The mechanical owner still rebuilds complete
+producer/consumer maps after every accepted adapter and directly mutates or
+deletes operators without a transaction; indexed transactional migration
+remains separate from this exact ownership checkpoint.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.

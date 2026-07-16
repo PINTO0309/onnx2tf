@@ -1708,6 +1708,68 @@ def test_batchmatmul_se_owner_has_one_lowerer_adapter() -> None:
     assert len(production_calls) == 2
 
 
+def test_batchmatmul_adjoint_owner_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "batchmatmul_adjoint_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "optimize_batchmatmul_transpose_input_to_adj_flags"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_read_transpose_perm" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert len(
+        [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_prune_unused_tensors"
+        ]
+    ) == 1
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 2
+
+
 def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
