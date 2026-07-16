@@ -6972,3 +6972,109 @@ artifact, lineage, layout, and accuracy contract before extracting a bounded
 semantic owner. Continue strictly sequential validation, exclude any model
 whose converter process tree generates SWAP, commit and push coherent units,
 and do not create a pull request.
+
+## Activation fusion extraction: pre-change record
+
+The next unmodularized production helper is
+`_optimize_fuse_conv_activation_chains`. Its matching already uses
+`ModelIRGraphIndex`, so the next safe step is a mechanical owner extraction
+rather than another semantic narrowing. Before changing source, four short
+real owners were converted strictly sequentially with the helper instrumented
+at all three production invocations. All exited 0 in 2.126-2.876 seconds and
+all process-tree monitors recorded SWAP zero.
+
+The ordered type-specific counts were:
+
+- FastestDet: `35, 0, 0` total, with 34 Conv and 1 Add fusion at the first
+  invocation;
+- HumanSeg: `60, 0, 0` total, with 32 Conv and 28 Add fusion at the first
+  invocation;
+- OSNet: `77, 0, 24` total, with 70 Conv and 7 Add fusion first, then 24 Conv
+  fusions at the terminal convergence boundary;
+- IAT-LLIE: `1, 0, 0`, consisting of one Conv fusion.
+
+The fixed pre-extraction float32, float16, and correspondence hashes are:
+
+```text
+FastestDet: 3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b
+            a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617
+            2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074
+HumanSeg:   b69eb57a7628668d73fbf4e06ffa23403d02ebab33b5661f0c60a81395610bb9
+            e79c4081989b5a69b65dc220b6e24ad0cff5633363698feebc23b59efe1139df
+            87fd06dbd120aac7f0229b02484f7929d6e752c60c19555d6795221cb0a21e46
+OSNet:      ed63ef56007979e0f13d1e8e63cbfb590e58af1adee1d214595d03e57412c282
+            f22a25ab094217ea1ebc0844da8752c6b95b38b3d98be6cb58314b39e2029a7d
+            35a42832e43b2076b00399ba7b22a1ff5aff83795cd333474d6bf61bf7221677
+IAT-LLIE:   75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881
+            4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43
+            a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322
+```
+
+No conversion problem prompted this extraction. The implementation is still
+a large op-family rule embedded in the central lowerer, however, and therefore
+expands the context needed to maintain unrelated lowering. It restarts its
+indexed producer scan after every accepted fusion, owns its prune internally,
+does not accept the Session `LayoutState` when deleting now-unused tensors,
+and has no dedicated module/API boundary on which focused ownership and wiring
+tests can depend. These are the recorded problems before source work. Preserve
+the exact producer/activation eligibility, boundary guards, lineage event
+order, counters, cleanup timing, public wrapper, and artifacts while moving
+the implementation into a small pass module; strict semantic changes are out
+of scope for this mechanical checkpoint.
+
+## Activation fusion extraction: completed state
+
+The implementation now lives in `passes/activation_fusion.py`; the historical
+`_optimize_fuse_conv_activation_chains` name remains a thin lowerer wrapper.
+The extraction preserves the original indexed scan/restart algorithm,
+supported producer/activation table, option mutation, protected boundaries,
+graph-output bridge guard, dtype guard, output lineage order, type-specific
+counters, and cleanup timing. The two direct production calls and the shared
+final convergence now forward `session.layout_state`; the final convergence
+continues to share its existing `ModelIRGraphIndex`. Pruning therefore removes
+stale layout entries without adding an extra cleanup or report event.
+
+Focused tests cover all six producer families, all supported ReLU variants,
+per-family counters, Conv/Add/binary lineage types, marker cleanup, supplied
+and foreign graph indexes, Session layout reconciliation, idempotence,
+determinism, compatibility-wrapper equivalence, fan-out, existing fusion,
+dtype mismatch, both protected boundaries, public-output/internal-bridge
+ownership, and unsupported activations. The existing lowering fixtures retain
+their Add, Conv, depthwise Conv, binary fusion, negative, and final convergence
+coverage.
+
+The same four real owners were then converted once after extraction in the
+same fixed order. All exited 0 in 2.079-2.726 seconds, all process-tree monitors
+recorded SWAP zero, and the exact pre-change type-specific counts were
+reproduced. All twelve float32, float16, and correspondence artifacts are
+byte-identical to the hashes in the pre-change section. Because the executable
+TFLite artifacts themselves are identical, no redundant real-model inference
+run was added; the direct `-cotof` TensorFlow-blocker fixture still exercised
+the accuracy path.
+
+Verification for this checkpoint is:
+
+- focused new owner, existing activation fixtures, final convergence, and
+  architecture selection: `37 passed, 950 deselected in 2.56s`;
+- complete flatbuffer-direct architecture contract:
+  `215 passed in 42.34s`;
+- TensorFlow-import-blocked explicit direct, default direct, and direct
+  `-cotof`: `3 passed in 4.34s`;
+- scoped Ruff, syntax compilation, and `git diff --check`: pass after final
+  documentation synchronization. Whole-file lowerer Ruff retains the same ten
+  inherited F841 findings as the parent and introduces no new finding.
+
+This checkpoint changes `passes/activation_fusion.py`, its focused test,
+`lower_from_onnx2tf.py`, the architecture test, the architecture document,
+and this handoff. It introduces no public API, CLI, artifact, dependency,
+profile, exclusion, optional TensorFlow, or ONNX corpus change. No failure or
+regression is known. The indexed scan/restart loop remains intentionally
+unchanged and is a future performance candidate only after its ordering and
+lineage contract can be preserved independently; it is no longer central
+lowerer context.
+
+After this checkpoint is synchronized, inspect the next unmodularized helper
+at the actual production boundary. Continue to freeze real ownership and exact
+artifacts before source changes, use only short sequential zero-SWAP models,
+record any problem before correction, commit and push coherent units, and do
+not create a pull request.

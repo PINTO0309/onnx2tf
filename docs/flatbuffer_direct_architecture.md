@@ -6979,6 +6979,33 @@ byte-identical to the pre-extraction baseline. The sequential `-cotof` gate
 passes with maximum absolute error `4.470348358154297e-07` and zero
 process-tree SWAP.
 
+Producer/activation fusion is isolated in `activation_fusion.py`. The public
+compatibility surface remains the private lowerer wrapper
+`_optimize_fuse_conv_activation_chains`, while the implementation module owns
+indexed matching for Conv2D, depthwise Conv2D, Add, Sub, Mul, and Div followed
+by their supported ReLU family. It preserves the historical single-consumer,
+dtype, protected-boundary, graph-output bridge, existing fused-activation, and
+operator-arity guards. Output replacement and activation removal update one
+`ModelIRGraphIndex` differentially, and the exact Conv/Add/binary lineage event
+types and per-family counters remain unchanged.
+
+Cleanup remains at the same pass exit and now receives the Session
+`LayoutState`, so removal of unused pre-fusion tensor names cannot leave stale
+layout entries. All direct production calls and the shared final convergence
+forward the same Session state; the final convergence also continues to reuse
+its single graph index. The compatibility scan/restart loop is intentionally
+unchanged in this mechanical checkpoint. Moving it out of the central lowerer
+reduces unrelated lowering context without altering semantic ownership or
+artifact order.
+
+FastestDet, HumanSeg, OSNet, and IAT-LLIE establish real production ownership.
+Their three invocation totals are respectively `35,0,0`, `60,0,0`,
+`77,0,24`, and `1,0,0`. The families jointly cover Conv and Add fusion; the
+focused synthetic contract additionally fixes depthwise Conv, Sub, Mul, and
+Div behavior. Every float32, float16, and correspondence artifact for all four
+models is byte-identical across extraction, and every monitored conversion
+records zero process-tree SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

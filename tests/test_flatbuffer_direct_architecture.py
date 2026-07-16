@@ -1498,6 +1498,19 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         )
         assert isinstance(graph_index_keyword.value, ast.Name)
         assert graph_index_keyword.value.id == "graph_index"
+    fusion_call = next(
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "_optimize_fuse_conv_activation_chains"
+    )
+    fusion_layout_keyword = next(
+        keyword
+        for keyword in fusion_call.keywords
+        if keyword.arg == "layout_state"
+    )
+    assert isinstance(fusion_layout_keyword.value, ast.Name)
+    assert fusion_layout_keyword.value.id == "layout_state"
 
     lowerer = next(
         node
@@ -1523,11 +1536,38 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         "run_boundary_input_normalization_cleanup"
     )
 
-    fusion = next(
+    fusion_wrapper = next(
         node
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_optimize_fuse_conv_activation_chains"
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(fusion_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_fuse_activation_chains_pass"
+    ]
+    assert len(wrapper_calls) == 1
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "graph_index",
+        "layout_state",
+    }
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "activation_fusion.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    fusion = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "optimize_fuse_activation_chains"
     )
     fusion_call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
@@ -1539,6 +1579,25 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert "operator_indices_for_normalized_types" in fusion_call_names
     assert "consumer_indices" in fusion_call_names
     assert "remove_operator" in fusion_call_names
+    assert "_prune_unused_tensors" in fusion_call_names
+
+    direct_production_calls = [
+        statement.value
+        for statement in lowerer.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "_optimize_fuse_conv_activation_chains"
+    ]
+    assert len(direct_production_calls) == 2
+    for call in direct_production_calls:
+        layout_keyword = next(
+            keyword for keyword in call.keywords if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_rank4_broadcast_constant_repair_uses_one_graph_index() -> None:

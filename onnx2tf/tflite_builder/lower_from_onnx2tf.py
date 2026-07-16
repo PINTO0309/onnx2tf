@@ -136,6 +136,9 @@ from onnx2tf.tflite_builder.passes.affine_chain_fold import (
 from onnx2tf.tflite_builder.passes.conv_mul_affine_fold import (
     optimize_conv_mul_affine_mul_only_chains as _optimize_conv_mul_affine_mul_only_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.activation_fusion import (
+    optimize_fuse_activation_chains as _optimize_fuse_activation_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.affine_prepost_layout import (
     optimize_transpose_mul_add_const_prepost_nhwc_chains as _optimize_transpose_mul_add_const_prepost_nhwc_chains_pass,
 )
@@ -4048,6 +4051,7 @@ def _run_indexed_final_shape_activation_convergence(
     fusion_stats = _optimize_fuse_conv_activation_chains(
         model_ir,
         graph_index=graph_index,
+        layout_state=layout_state,
     )
     final_reconcile_stats = _reconcile_static_tensor_shapes(
         model_ir,
@@ -19517,190 +19521,13 @@ def _optimize_fuse_conv_activation_chains(
     model_ir: ModelIR,
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Fuse producer -> Activation chains into producer fusedActivationFunction in flatbuffer_direct IR.
-
-    Target:
-      (CONV_2D|DEPTHWISE_CONV_2D, fusedActivationFunction=NONE) -> (RELU|RELU6)
-      (ADD|SUB|MUL|DIV, fusedActivationFunction=NONE) -> (RELU|RELU6)
-
-    Rewrite:
-      (producer, fusedActivationFunction=<activation>)
-
-    Safety:
-    - Producer output must have exactly one consumer.
-    - Activation must be a unary op with one input and one output.
-    - Producer output tensor and activation output tensor must have matching dtype when both exist.
-    """
-    fused = 0
-    fused_conv = 0
-    fused_add = 0
-    fused_sub = 0
-    fused_mul = 0
-    fused_div = 0
-    skip_add_activation_fuse_marker = "__skip_add_activation_fuse__"
-    binary_activation_map = {
-        "RELU": "RELU",
-        "RELU6": "RELU6",
-    }
-    activation_map_by_producer = {
-        "CONV_2D": {
-            "RELU": "RELU",
-            "RELU6": "RELU6",
-            "RELU_N1_TO_1": "RELU_N1_TO_1",
-        },
-        "DEPTHWISE_CONV_2D": {
-            "RELU": "RELU",
-            "RELU6": "RELU6",
-            "RELU_N1_TO_1": "RELU_N1_TO_1",
-        },
-        "ADD": dict(binary_activation_map),
-        "SUB": dict(binary_activation_map),
-        "MUL": dict(binary_activation_map),
-        "DIV": dict(binary_activation_map),
-    }
-    protected_boundary_tensor_names = _get_protected_boundary_tensor_names(model_ir)
-    graph_index = (
-        graph_index
-        if graph_index is not None and graph_index.model_ir is model_ir
-        else ModelIRGraphIndex(model_ir)
+    return _optimize_fuse_activation_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
     )
-
-    while True:
-        changed = False
-
-        for producer_idx in graph_index.operator_indices_for_normalized_types(
-            activation_map_by_producer
-        ):
-            producer_op = model_ir.operators[int(producer_idx)]
-            producer_type = str(producer_op.op_type).upper()
-            activation_map = activation_map_by_producer.get(producer_type, None)
-            if activation_map is None:
-                continue
-            if len(producer_op.outputs) != 1:
-                continue
-
-            producer_opts = dict(producer_op.options) if isinstance(producer_op.options, dict) else {}
-            fused_act = str(producer_opts.get("fusedActivationFunction", "NONE")).upper()
-            if fused_act != "NONE":
-                continue
-            producer_out_name = str(producer_op.outputs[0])
-            producer_users = graph_index.consumer_indices(producer_out_name)
-            if len(producer_users) != 1:
-                continue
-
-            act_idx = int(producer_users[0])
-            if act_idx < 0 or act_idx >= len(model_ir.operators):
-                continue
-            if act_idx == int(producer_idx):
-                continue
-            act_op = model_ir.operators[act_idx]
-            act_type = str(act_op.op_type).upper()
-            fused_target = activation_map.get(act_type, None)
-            if fused_target is None:
-                continue
-            if len(act_op.inputs) != 1 or len(act_op.outputs) != 1:
-                continue
-            if str(act_op.inputs[0]) != producer_out_name:
-                continue
-
-            act_out_name = str(act_op.outputs[0])
-            producer_out_tensor = model_ir.tensors.get(producer_out_name, None)
-            act_out_tensor = model_ir.tensors.get(act_out_name, None)
-            if producer_out_tensor is not None and act_out_tensor is not None:
-                if str(producer_out_tensor.dtype).upper() != str(act_out_tensor.dtype).upper():
-                    continue
-            if producer_out_name in protected_boundary_tensor_names:
-                continue
-            if act_out_name in protected_boundary_tensor_names:
-                continue
-            # Keep explicit activation node when its output is both a graph output and
-            # an internal bridge tensor. Fusing in this case can relabel NHWC bridge
-            # tensors to ONNX/NCHW names and later trigger wrong layout adapters.
-            if (
-                act_out_name in model_ir.outputs
-                and len(graph_index.consumer_indices(act_out_name)) > 0
-            ):
-                continue
-
-            if producer_type == "ADD":
-                # Transpose bridge rewrites may leave this marker behind. For strict
-                # single-consumer Add->Activation chains, fusing is still safe.
-                producer_opts.pop(skip_add_activation_fuse_marker, None)
-            producer_opts["fusedActivationFunction"] = str(fused_target)
-            producer_op.options = producer_opts
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=producer_op,
-                new_outputs=[act_out_name],
-                graph_index=graph_index,
-            )
-            if producer_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
-                _append_tensor_lineage_event(
-                    model_ir=model_ir,
-                    event={
-                        "kind": "fuse_conv_activation",
-                        "conv_op_type": str(producer_op.op_type),
-                        "activation_op_type": str(act_op.op_type),
-                        "fused_activation": str(fused_target),
-                        "conv_output": str(producer_out_name),
-                        "fused_output": str(act_out_name),
-                    },
-                )
-            elif producer_type == "ADD":
-                _append_tensor_lineage_event(
-                    model_ir=model_ir,
-                    event={
-                        "kind": "fuse_add_activation",
-                        "add_op_type": str(producer_op.op_type),
-                        "activation_op_type": str(act_op.op_type),
-                        "fused_activation": str(fused_target),
-                        "add_output": str(producer_out_name),
-                        "fused_output": str(act_out_name),
-                    },
-                )
-            elif producer_type in {"SUB", "MUL", "DIV"}:
-                _append_tensor_lineage_event(
-                    model_ir=model_ir,
-                    event={
-                        "kind": "fuse_binary_activation",
-                        "binary_op_type": str(producer_op.op_type),
-                        "activation_op_type": str(act_op.op_type),
-                        "fused_activation": str(fused_target),
-                        "binary_output": str(producer_out_name),
-                        "fused_output": str(act_out_name),
-                    },
-                )
-
-            graph_index.remove_operator(int(act_idx))
-            fused += 1
-            if producer_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
-                fused_conv += 1
-            elif producer_type == "ADD":
-                fused_add += 1
-            elif producer_type == "SUB":
-                fused_sub += 1
-            elif producer_type == "MUL":
-                fused_mul += 1
-            elif producer_type == "DIV":
-                fused_div += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {
-        "fused_conv_activation_chains": int(fused_conv),
-        "fused_add_activation_chains": int(fused_add),
-        "fused_sub_activation_chains": int(fused_sub),
-        "fused_mul_activation_chains": int(fused_mul),
-        "fused_div_activation_chains": int(fused_div),
-        "fused_binary_activation_chains": int(fused_add + fused_sub + fused_mul + fused_div),
-        "fused_activation_chains_total": int(fused),
-    }
 
 
 def _optimize_fold_conv_mul_add_affine_chains(
@@ -26666,7 +26493,10 @@ def lower_onnx_to_ir(
         enable_conv_add_only_fold=True,
         layout_state=session.layout_state,
     )
-    _optimize_fuse_conv_activation_chains(model_ir)
+    _optimize_fuse_conv_activation_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _resolve_dynamic_reshape_shapes(model_ir)
     run_squeeze_reshape_identity_cleanup(
         model_ir,
@@ -26833,7 +26663,10 @@ def lower_onnx_to_ir(
         enable_conv_add_only_fold=True,
         layout_state=session.layout_state,
     )
-    _optimize_fuse_conv_activation_chains(model_ir)
+    _optimize_fuse_conv_activation_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_pre_argmax_nhwc_terminal_chains(
         model_ir,
         layout_state=session.layout_state,
