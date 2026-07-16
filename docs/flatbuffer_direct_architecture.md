@@ -6902,6 +6902,29 @@ all invocations. LINEA's float32, float16, and correspondence artifacts remain
 byte-identical, and its sequential `-cotof` gate passes at maximum absolute
 error `0.002297189086675644` with zero process-tree SWAP.
 
+The static QKV rank adapter now has a bounded indexed owner in
+`attention_qkv_reshape_layout.py`. It accepts only the production-proven
+`[A,1,C] -> [A,H,D] -> [H,A,D] -> [1,H,A,D]` family with rank-three
+permutation `[1,0,2]`, where `C=H*D`. Candidate resolution requires exact
+positive shapes and signatures, matching dtype and per-tensor quantization,
+typed and exclusively owned mutable shape/permutation constants, a typed tail
+shape constant, resolved sources, exclusive data edges, graph order and
+boundaries, and UNKNOWN Session layout throughout the semantic view chain.
+Each candidate is captured in an immutable operator/tensor contract and fully
+resolved immediately before apply. Mutation updates the shared graph index
+differentially, records the historical output-lineage event, removes only the
+tail Reshape, reconciles `LayoutState`, and obeys a deterministic rewrite
+bound without internal pruning or repeated graph-wide map construction.
+
+The wrapper retains one compatibility fallback and one historical prune.
+Unproven permutation `[1,2,0]`, shared-constant copy-on-write, dynamic
+signatures, and all other relaxed contracts therefore preserve their previous
+behavior. Tier 3 `rf-detr-nano.onnx` establishes the real owner with indexed
+invocation counts `5, 0, 0, 0`; the raw fallback has zero residual rewrites.
+Its float32, float16, and correspondence outputs remain byte-identical to the
+pre-extraction baseline. The sequential `-cotof` gate passes with maximum
+absolute error `0.000102996826171875` and zero process-tree SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

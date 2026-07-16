@@ -204,6 +204,9 @@ from onnx2tf.tflite_builder.passes.expanddims_reshape_layout import (
 from onnx2tf.tflite_builder.passes.flatten_hw_reshape_layout import (
     optimize_transpose_flatten_hw_reshape_nhwc_chains as _optimize_transpose_flatten_hw_reshape_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.attention_qkv_reshape_layout import (
+    optimize_attention_qkv_had_reshape_transpose_chains as _optimize_attention_qkv_had_reshape_transpose_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.slice_logistic_concat_reshape_tail_layout import (
     optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains as _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains_pass,
 )
@@ -14433,6 +14436,8 @@ def _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(
 
 def _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
     model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Reduce QKV-style `RESHAPE -> TRANSPOSE -> RESHAPE` rank adapters.
@@ -14450,7 +14455,22 @@ def _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chain
       x[A,1,C] --RESHAPE([1,A,H,D])--> r'
                --TRANSPOSE([0,2,1,3] or [0,2,3,1])--> y
     """
-    rewritten = 0
+    indexed_stats = _optimize_attention_qkv_had_reshape_transpose_chains_pass(
+        model_ir,
+        graph_index=ModelIRGraphIndex(model_ir),
+        layout_state=layout_state,
+    )
+    rewritten = int(
+        indexed_stats.get(
+            "optimized_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains",
+            0,
+        )
+    )
+    tensors_before_fallback_prune = (
+        set(str(name) for name in model_ir.tensors)
+        if layout_state is not None
+        else set()
+    )
     rank3_perm_had = [1, 0, 2]
     rank3_perm_hda = [1, 2, 0]
 
@@ -14654,6 +14674,10 @@ def _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chain
             break
 
     _prune_unused_tensors(model_ir)
+    if layout_state is not None:
+        layout_state.remove(
+            tensors_before_fallback_prune - set(str(name) for name in model_ir.tensors)
+        )
     return {"optimized_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains": int(rewritten)}
 
 
@@ -26175,7 +26199,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
         _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
         _optimize_gather_axis0_singleton_to_reshape_input_chains(
             model_ir,
@@ -26955,7 +26982,10 @@ def lower_onnx_to_ir(
         include_two_way_shuffle=False,
         include_nhwc_shuffle=False,
     )
-    _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
+    _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
     _optimize_gather_axis0_singleton_to_reshape_input_chains(
         model_ir,

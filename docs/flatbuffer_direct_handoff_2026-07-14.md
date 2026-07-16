@@ -6349,3 +6349,143 @@ helper at each unchanged production boundary. Record any non-zero model and
 problem before source work, retain relaxed cases on fallback, and use only the
 smallest sequential zero-SWAP accuracy gate. Continue with coherent
 commit/push units only; do not create a pull request.
+
+## Rank-3 to NHWC reshape shim: measured no-change decision
+
+The raw
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains` helper
+was instrumented at all four unchanged production invocations before any
+source change. The same fourteen short Tier 0-4 representatives used for the
+preceding checkpoint all converted successfully and sequentially in
+1.788-8.917 seconds, with no timeout and `peak_swap_kib=0`. Every invocation
+count was zero. A read-only ONNX topology scan then found zero exact
+`Reshape -> Transpose[0,3,2,1] -> Reshape -> Transpose[0,2,3,1]` candidates in
+both the fixed 49-model measured-quick set and all 420 active Tier 0-4 models.
+
+The helper still contains an unbounded rewrite loop, repeated full consumer
+map construction, raw constant copy-on-write, and no graph-index or Session
+layout-state contract. These are architectural liabilities, but there is no
+real current-corpus ownership evidence from which to freeze artifact and
+accuracy behavior. Removing it would also discard an existing feature.
+Accordingly, no source or test behavior was changed and no synthetic-only
+replacement was introduced. Revisit this helper only when a real non-zero
+model or a public compatibility fixture is available. The next evidence-first
+candidate is
+`_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains`.
+
+## QKV reshape/transpose recovery checkpoint: pre-change record
+
+Before changing source, the raw
+`_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains`
+helper was instrumented at all four production invocations. The fourteen short
+zero-SWAP representatives and four additional Tier 0/2 static-topology
+candidates all converted sequentially, exited 0, and recorded zero rewrites.
+The additional candidates were ViT-B/16 partial, both CRNN English recognition
+models, and monodepth; their conversions took 2.118-3.681 seconds with SWAP 0.
+
+A shape-aware read-only scan of all 420 active Tier 0-4 ONNX graphs narrowed
+the exact fully static family to htdemucs and three RF-DETR variants. htdemucs
+was not converted because it is an explicit managed exclusion. The smallest
+active RF-DETR representative, Tier 3 `rf-detr-nano.onnx` (770 ONNX nodes),
+then converted in 10.890 seconds with exit code 0 and `peak_swap_kib=0`. Its
+four raw invocation counts are `5, 0, 0, 0`; all five accepted chains use
+`[300,1,256] -> [300,8,32] -> [8,300,32] -> [1,8,300,32]` with permutation
+`[1,0,2]`. No `[1,2,0]` production owner has been established. The fixed
+pre-extraction artifacts are:
+
+- float32: `fda7d97eaad2b19ee2ac31411099067e78b747515952b7c65ba52a0f1454f1fb`;
+- float16: `a80051b2d6bb871ee871f0d1528e1ea7c8d4e7f6ecbfc16daec4fa78d696fd1f`;
+- correspondence: `262235cec5a8df73ff2afd7f1eb28678cc7312f4a19dd09d278fd8db77cbdec4`.
+
+No observed regression prompted the change. The proven raw owner nevertheless
+has a correctness hazard that is recorded before implementation: it updates
+or clones the first Reshape shape constant before attempting the Transpose
+permutation constant. If the second operation fails, the first mutation and
+possibly its lineage event remain, so the rewrite is not transactional. The
+helper also repeats a full consumer-map build after every rewrite, uses an
+unbounded whole-RESHAPE scan, accepts untyped/produced/variable/boundary
+constants, and does not update the shared graph index or Session
+`LayoutState`. The safe implementation scope is the exact RF-DETR `[1,0,2]`
+family with fully typed, exclusively mutable constants and immutable
+revalidation. The unproven `[1,2,0]`, shared-constant copy-on-write, dynamic,
+and otherwise relaxed cases must retain compatibility fallback behavior.
+
+## QKV reshape/transpose recovery checkpoint: completed
+
+The strict production-proven family is now owned by
+`onnx2tf/tflite_builder/passes/attention_qkv_reshape_layout.py`. It dispatches
+only indexed Reshape candidates, validates the exact positive static
+`[A,1,C] -> [A,H,D] -> [H,A,D] -> [1,H,A,D]` contract with `C=H*D` and
+permutation `[1,0,2]`, and requires typed exclusive mutable constants, matching
+dtype/per-tensor quantization, resolved sources, exclusive edges, operator
+order, graph boundaries, and UNKNOWN Session layout. Its immutable plan
+captures tensor and operator contracts and is re-resolved before any mutation.
+Apply changes the shared graph index differentially, preserves the historical
+output lineage event, removes only the tail Reshape, and explicitly reconciles
+`LayoutState`. Candidate and rewrite bounds are deterministic; the owner has
+no internal prune, repeated producer/consumer-map construction, or unbounded
+loop.
+
+The lowerer wrapper invokes this indexed owner first and retains the unchanged
+raw implementation for `[1,2,0]`, shared-constant copy-on-write, dynamic, and
+otherwise relaxed compatibility cases. It remains the only prune boundary and
+removes the corresponding stale layout entries. Both production boundaries
+now supply the Session `LayoutState`. Focused fixtures prove indexed
+differential mutation and lineage, wrapper cleanup, strict candidate/bound
+handling, stale-plan atomic rejection, determinism, and the three named raw
+fallback classes.
+
+Post-change `rf-detr-nano.onnx` instrumentation records indexed invocation
+counts `5, 0, 0, 0` and identical wrapper totals, so the raw residual is zero.
+The conversion exited 0 in 12.121 seconds with `peak_swap_kib=0`. All three
+outputs are byte-identical to the fixed pre-change baseline:
+
+- float32: `fda7d97eaad2b19ee2ac31411099067e78b747515952b7c65ba52a0f1454f1fb`;
+- float16: `a80051b2d6bb871ee871f0d1528e1ea7c8d4e7f6ecbfc16daec4fa78d696fd1f`;
+- correspondence: `262235cec5a8df73ff2afd7f1eb28678cc7312f4a19dd09d278fd8db77cbdec4`.
+
+Its sequential managed `-cotof` run exited 0 in 41.259 seconds, used no SWAP,
+and passed all output checks with maximum absolute error
+`0.000102996826171875`, RMSE approximately `1.01567e-05`, and cosine
+similarity 1. The unchanged artifacts produced during that accuracy run have
+the same three hashes.
+
+Validation completed for this checkpoint:
+
+- the three default/direct/`-cotof` TensorFlow import-blocker tests: `3 passed`;
+- the selected adjacent indexed-owner, direct-builder, optional-TensorFlow,
+  and architecture suite: `247 passed, 773 deselected`;
+- focused QKV/architecture validation before the combined gate:
+  `11 passed, 210 deselected`;
+- scoped Ruff for the new owner and its tests: clean;
+- `py_compile` for the new owner, lowerer, and related tests: clean;
+- `git diff --check`: clean.
+
+Whole-file Ruff for the legacy lowerer still reports the same ten inherited
+`F841` unused-local findings at lines outside this change. No new finding was
+introduced. No conversion failure, timeout, SWAP event, artifact drift,
+TensorFlow import, or accuracy regression is known for this checkpoint.
+
+Changed files in this checkpoint are:
+
+- `onnx2tf/tflite_builder/passes/attention_qkv_reshape_layout.py` (new strict
+  indexed owner);
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py` (owner dispatch, Session
+  layout propagation, and compatibility/prune boundary);
+- `tests/test_flatbuffer_direct_indexed_attention_qkv_reshape_layout.py` (new
+  unit and compatibility tests);
+- `tests/test_flatbuffer_direct_architecture.py` (bounded owner/wiring
+  constraints);
+- `docs/flatbuffer_direct_architecture.md` and this handoff (design and measured
+  evidence).
+
+The preceding rank-3-to-NHWC reshape helper intentionally remains unchanged
+because neither the 49-model measured-quick set nor all 420 active Tier 0-4
+graphs established a real owner. The broader Goal also remains incomplete;
+quantization/split/exporter extraction and the remaining raw layout helpers
+have not been completed. At resume, first inspect the next adjacent raw helper,
+`_optimize_attention_gather_transpose_reshape_cleanup_chains`, characterize
+all unchanged production invocations with short zero-SWAP models, and record
+any non-zero owner or problem before source changes. Continue with sequential
+inference only, minimal conversion gates, coherent commit/push units, and no
+pull request.
