@@ -8670,3 +8670,73 @@ ownership, combined statistic, single prune/report boundary, production
 position, existing positive LINEA ownership, and fallback fixtures before
 changing source. Keep inference strictly sequential and minimal, then commit
 and push one coherent unit without creating a pull request.
+
+## Pre-unary/Reshape-suffix compatibility composite extraction: completed state
+
+The complete 302-line indexed-first
+`_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains` composite
+is now owned by `passes/pre_unary_reshape_suffix_compat_layout.py`. The lowerer
+retains one private compatibility wrapper at the unchanged production position
+and forwards Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the existing indexed Swish semantic owner,
+one per-call `ModelIRGraphIndex`, caller LayoutState, combined statistic,
+thirteen-operation plain-unary and relaxed Swish raw fallback, reshape constant
+and option updates, tensor metadata propagation, fixed-point restart, exact
+mutation/removal order, sole prune/report boundary, and removal of pruned names
+from LayoutState. The indexed immutable plan and module are unchanged.
+
+The indexed family plus the existing direct fixture now cover indexed Swish,
+shared-shape atomic rejection, bounded dispatch, stale-plan rejection,
+determinism, complete compatibility-owner/lowerer-wrapper equality, LayoutState
+cleanup, and a plain LEAKY_RELU raw fallback. The focused owner/fallback/
+architecture selection passes `9 passed, 233 deselected in 2.19s`; the
+branch-wide selection passes `748 passed in 29.98s`; and the optional-
+TensorFlow import-blocked suite passes `11 passed in 9.25s`.
+
+Tier 2 LINEA is the strictly sequential positive artifact control. Its three
+combined and indexed results remain `1,0,0`, while raw fallback results remain
+`0,0,0`, before and after extraction. The pre conversion completed in 7.958
+seconds and the post conversion in 7.751 seconds; both recorded process-tree
+SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding LINEA sequential accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps in a fixed-point loop, mutates relaxed reshape
+constants/options in place, and does not use the indexed owner's immutable
+differential transaction. Hardening requires separate semantic fixtures and is
+not mixed into this exact mechanical move.
+
+Changed files are the new pre-unary/Reshape-suffix compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary tracing and conversion
+outputs are removed before commit. PR #952 remains closed; work is commit/push
+only and no pull request is created.
+
+The next raw source-order implementation is the 297-line indexed-first
+compatibility composite
+`_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains`. At
+restart, inventory its indexed static Swish owner, plain-unary/dynamic/relaxed
+raw fallback, GraphIndex construction and LayoutState forwarding, Squeeze axes
+constants/options, combined statistic, single prune/report boundary, production
+position, existing positive `inference_ops15` ownership, and fallback fixtures
+before changing source. Keep inference strictly sequential and minimal, then
+commit and push one coherent unit without creating a pull request.

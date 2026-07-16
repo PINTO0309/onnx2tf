@@ -10,6 +10,9 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes.pre_unary_reshape_suffix_compat_layout import (
+    optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains_compat,
+)
 from onnx2tf.tflite_builder.passes.pre_unary_reshape_suffix_layout import (
     _apply_plan,
     _plan_signature,
@@ -114,6 +117,23 @@ def _make_swish_suffix_ir(*, shared_shape: bool = False) -> ModelIR:
                 outputs=["shape_alias"],
             )
         )
+    return model_ir
+
+
+def _make_plain_unary_suffix_ir() -> ModelIR:
+    model_ir = _make_swish_suffix_ir()
+    del model_ir.tensors["sigmoid"]
+    model_ir.operators = [
+        model_ir.operators[0],
+        OperatorIR(
+            op_type="LEAKY_RELU",
+            inputs=["x_nchw"],
+            outputs=["swish"],
+            options={"alpha": 0.1},
+        ),
+        model_ir.operators[3],
+        model_ir.operators[4],
+    ]
     return model_ir
 
 
@@ -284,11 +304,48 @@ def test_indexed_swish_suffix_is_deterministic() -> None:
 
 def test_indexed_swish_wrapper_retains_one_cleanup_and_layout_boundary() -> None:
     model_ir = _make_swish_suffix_ir()
+    wrapped_model_ir = deepcopy(model_ir)
     layout_state = LayoutState.from_model_ir(model_ir)
+    wrapped_layout_state = LayoutState.from_model_ir(wrapped_model_ir)
 
-    assert _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(
+    stats = optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains_compat(
         model_ir,
         layout_state=layout_state,
-    ) == {_STATS_KEY: 1}
+    )
+    wrapped_stats = _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(
+        wrapped_model_ir,
+        layout_state=wrapped_layout_state,
+    )
+
+    assert stats == {_STATS_KEY: 1}
+    assert wrapped_stats == stats
+    assert _fingerprint(wrapped_model_ir) == _fingerprint(model_ir)
     assert set(model_ir.tensors) == {"x", "sigmoid", "swish", "shape", "z"}
     assert layout_state.validate_against_model_ir(model_ir) == []
+    assert wrapped_layout_state.validate_against_model_ir(wrapped_model_ir) == []
+
+
+def test_plain_unary_fallback_matches_compatibility_wrapper() -> None:
+    model_ir = _make_plain_unary_suffix_ir()
+    wrapped_model_ir = deepcopy(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    wrapped_layout_state = LayoutState.from_model_ir(wrapped_model_ir)
+
+    stats = optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains_compat(
+        model_ir,
+        layout_state=layout_state,
+    )
+    wrapped_stats = _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(
+        wrapped_model_ir,
+        layout_state=wrapped_layout_state,
+    )
+
+    assert stats == {_STATS_KEY: 1}
+    assert wrapped_stats == stats
+    assert _fingerprint(wrapped_model_ir) == _fingerprint(model_ir)
+    assert [operator.op_type for operator in model_ir.operators] == [
+        "LEAKY_RELU",
+        "RESHAPE",
+    ]
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert wrapped_layout_state.validate_against_model_ir(wrapped_model_ir) == []

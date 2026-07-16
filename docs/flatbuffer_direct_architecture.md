@@ -7227,6 +7227,25 @@ source label restored all artifacts byte-for-byte. The sequential accuracy
 gate passes with maximum absolute error `0.002297189086675644` and zero
 process-tree SWAP.
 
+The indexed-first Swish/plain-unary composite and its raw fallback are now
+isolated in `pre_unary_reshape_suffix_compat_layout.py`. The former 302-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. It still builds one `ModelIRGraphIndex` for the indexed Swish
+dispatch, forwards caller `LayoutState`, accumulates the combined statistic,
+then runs the unchanged thirteen-operation unary and relaxed Swish fallback to
+fixed point. The sole prune/report boundary and LayoutState removal of pruned
+tensor names remain in the compatibility owner. The lowerer retains one private
+wrapper at the unchanged production position.
+
+The focused family now includes complete compatibility-owner/lowerer-wrapper
+equality for both the indexed Swish path and a plain LEAKY_RELU fallback, while
+the existing direct fixture retains the raw unary graph contract. LINEA keeps
+combined and indexed counts `1,0,0` with fallback counts `0,0,0`; its two
+strictly sequential conversions report zero process-tree SWAP and reproduce all
+five core artifacts byte for byte. The indexed immutable plan is unchanged.
+Raw fallback whole-graph scans, relaxed constant mutation, and lack of a shared
+differential index remain explicit future semantic work.
+
 The factorized rank-four to rank-five detection-head reshape now has a strict
 indexed Case B owner in `expanddims_reshape_layout.py`. The owner dispatches
 each indexed Transpose candidate once and accepts only

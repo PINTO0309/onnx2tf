@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving twenty
+This branch continues the staged `flatbuffer_direct` refactor by moving twenty-one
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -25,7 +25,8 @@ lowerer and into focused pass modules:
 - residual Add/Mul/Add/PReLU compatibility recovery;
 - residual Add/Mul/Add/post-Transpose fan-out compatibility recovery;
 - pre-unary Mul/Add/post-Transpose fan-out compatibility recovery;
-- indexed-first pre-Add/Mul/Reshape-suffix compatibility recovery.
+- indexed-first pre-Add/Mul/Reshape-suffix compatibility recovery;
+- indexed-first Swish/plain-unary Reshape-suffix compatibility recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -333,6 +334,21 @@ The raw fallback still rebuilds whole-graph maps and has looser constant
 producer, variable-state, and graph-visibility contracts than the indexed
 plan. Converting it to an immutable transaction is a separate semantic task.
 
+### Indexed-first Swish/plain-unary Reshape-suffix compatibility recovery
+
+`passes/pre_unary_reshape_suffix_compat_layout.py` owns the former 302-line
+composite. It preserves the existing indexed Swish owner as the first dispatch,
+one per-call `ModelIRGraphIndex`, caller `LayoutState`, the thirteen-operation
+plain-unary and relaxed Swish fallback, reshape constant/option mutation,
+combined statistic, fixed-point restart, one prune/report boundary, and removal
+of pruned names from LayoutState. The lowerer retains one private wrapper at its
+unchanged production position. The complete old/new composite ASTs are
+identical after function-name normalization; the indexed owner is unchanged.
+
+The raw fallback still performs whole-graph scans and in-place relaxed constant
+updates without an immutable differential-index transaction. That semantic
+hardening remains separate from this ownership checkpoint.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -402,6 +418,9 @@ The new focused tests cover:
 - indexed-first pre-Add/Mul/Reshape-suffix dispatch, direct and Mul-constant
   indexed families, forced raw fallback, single-prune behavior, LayoutState,
   GraphIndex, and complete compatibility-owner/wrapper equality;
+- indexed-first Swish/plain-unary Reshape-suffix dispatch, indexed immutable
+  guards, plain LEAKY_RELU fallback, single-prune/LayoutState cleanup, direct
+  legacy fixture, and compatibility-owner/wrapper equality;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -451,6 +470,8 @@ Latest checkpoint results:
 - complete indexed/compatibility pre-Add/Mul/Reshape-suffix suite:
   `13 passed`;
 - final branch gate after pre-Add/Mul/Reshape-suffix extraction: `740 passed`;
+- focused indexed/compatibility pre-unary Reshape-suffix gate: `9 passed`;
+- final branch gate after pre-unary Reshape-suffix extraction: `748 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -620,6 +641,15 @@ generated-schema outputs. The preceding sequential accuracy checkpoint remains
 `max_abs=4.470348358154297e-07`; no duplicate inference was run because the
 executed TFLite is unchanged.
 
+The pre-unary Reshape-suffix composite extraction used `LINEA.onnx` as its
+positive fixed artifact control. Its combined and indexed counts remain
+`1,0,0`, while raw fallback counts remain `0,0,0`, before and after extraction.
+The pre/post conversion-only runs completed in 7.958 and 7.751 seconds,
+recorded process-tree SWAP zero, and produced byte-identical float32, float16,
+tensor-correspondence, schema, and generated-schema outputs. The preceding
+sequential accuracy checkpoint remains `max_abs=0.002297189086675644`; no
+duplicate inference was run because the executed TFLite is unchanged.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -628,11 +658,11 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 302-line indexed-first compatibility
+The next raw source-order boundary is the 297-line indexed-first compatibility
 composite
-`_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains`. Its
-indexed Swish owner, plain-unary and relaxed raw fallback, GraphIndex and
-LayoutState handoff, reshape constants, single prune/report boundary, production
-position, positive LINEA ownership, and fallback fixtures must be inventoried
-before choosing the next ownership boundary; no broad conversion sweep is
-implied by this mechanical checkpoint.
+`_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains`. Its
+indexed static Swish owner, plain-unary/dynamic/relaxed raw fallback, GraphIndex
+and LayoutState handoff, Squeeze axes constants/options, single prune/report
+boundary, production position, positive `inference_ops15` ownership, and
+fallback fixtures must be inventoried before choosing the next ownership
+boundary; no broad conversion sweep is implied by this mechanical checkpoint.
