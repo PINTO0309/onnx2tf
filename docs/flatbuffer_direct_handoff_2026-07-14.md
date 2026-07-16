@@ -11791,3 +11791,57 @@ statistics, and ordered-boundary behavior, and record unsafe behavior as
 strict xfails before correction. Keep validation minimal and strictly
 sequential, commit and push coherent checkpoints, and do not create a pull
 request.
+
+## Nested-Concat/Mul/Transpose characterization: completed state
+
+The 356-line raw
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains` owner and its
+historical position in both terminal Concat recovery sequences are unchanged.
+The existing mixed-axis fixture moved from `test_tflite_builder_direct.py` into
+the focused `test_flatbuffer_direct_concat_tree_mul_add_bridge_layout.py`, and
+the giant direct test no longer imports this private owner.
+
+The twenty green focused cases freeze static and dynamic-batch mixed-axis
+Concat trees, two independent graph-order matches, fixed point, scalar
+constants, collision-safe shared constant cloning, negative-axis
+normalization, zero-match no-prune behavior, twelve existing rejection guards,
+statistics, the current 356-line/three-While owner shape, and both ordered
+production boundaries.
+
+Nineteen reproduced safety problems are strict xfails:
+
+- eight incomplete source/inner-Concat/root-Concat/Mul metadata cases;
+- three unsafe public-input, variable, or public-output Mul-constant ownership
+  paths;
+- one complete per-axis QDIM case;
+- two malformed inner/root Concat-axis cases;
+- one late metadata case that leaves a rotated constant behind;
+- four duplicate-producer, reverse-order, or public-alias cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `20 passed, 19 xfailed in 0.90s`;
+- focused characterization plus ordered architecture suite:
+  `268 passed, 19 xfailed in 19.22s`;
+- focused characterization, the three adjacent Concat bridge contracts, and
+  ordered architecture suite: `471 passed, 19 xfailed in 20.10s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.66s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion changed or ran. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+ordered runtime behavior, and TensorFlow isolation are unchanged. The 356-line
+count is descriptive only; 2,000 remains the ONNX operation-count threshold
+for tiering. PR #952 remains closed; no pull request was created, reopened, or
+updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use
+one `ModelIRGraphIndex` to enumerate the recursive Concat tree in deterministic
+graph order and prove unique producers, strict pre-Transpose/Concat/Mul/post-
+Transpose/Add order, private intermediates, exact consumers, and complete
+rank-four effective metadata. Precompute an ownership-aware Mul-constant
+update-or-clone plan, QDIM remaps, validated normalized axes, all indexed
+setters, metadata writes, rewires, and removals before the first mutation.
+Turn all 19 strict xfails green while preserving the twenty existing cases,
+statistics, fixed point, pruning behavior, and both production boundaries.
+Validate sequentially, commit and push, and do not create a pull request.

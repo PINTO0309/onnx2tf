@@ -8323,6 +8323,46 @@ identical in every case. The move adds no semantic change and does not alter
 public APIs, artifacts, dependencies, corpus policy, ordered behavior, or
 TensorFlow isolation.
 
+## Raw nested-Concat/Mul/Transpose characterization
+
+The next raw source-order owner is the 356-line
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains`. Production code
+remains unchanged at its historical position immediately after the extracted
+Concat/Mul/Add/Add/Mean/Reshape recovery and before singleton-gate recovery in
+both terminal Concat sequences. The original public mixed-axis fixture moved
+from the giant direct test into
+`test_flatbuffer_direct_concat_tree_mul_add_bridge_layout.py`; the move removes
+the associated private lowerer import from the giant test without changing
+runtime behavior.
+
+Twenty green characterization cases freeze static and dynamic-batch mixed-axis
+Concat trees, graph-order multiple matches, fixed point, scalar and shared Mul
+constants, normalized negative axes, zero-match no-prune behavior, twelve
+existing rejection guards, the raw owner's current three-loop structure, and
+both ordered production boundaries.
+
+Nineteen concrete safety gaps are strict xfails:
+
+- eight missing, rank-three, or short-signature source/Concat/Mul metadata
+  cases are not rejected through a complete rank-four preflight;
+- public-input and variable Mul constants rotate in place, and a public Mul
+  constant output is changed rather than receiving a private clone;
+- per-axis QDIM does not follow the NCHW-to-NHWC permutation;
+- malformed inner or root Concat axes raise instead of producing an atomic
+  no-op;
+- late inner metadata failure occurs after the Mul constant has changed;
+- duplicate post-Transpose producers, reverse post-Transpose/Add order,
+  reverse inner/root Concat order, and a public pre-Transpose alias are
+  accepted.
+
+Correction must use one `ModelIRGraphIndex` to build the complete recursive
+tree, topology, metadata, constant-ownership, quantization, setter, and removal
+plan before the first mutation. Candidate enumeration and recursive tree order,
+valid statistics, scalar/shared handling, fixed point, pruning behavior, and
+both production boundaries must remain unchanged. The 356-line count records
+the current owner size only; the 2,000 threshold in this project applies to
+ONNX operation-count tiers, not source-file or function length.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

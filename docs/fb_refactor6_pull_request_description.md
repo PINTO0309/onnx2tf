@@ -1675,4 +1675,12 @@ and both ordered positions are unchanged. Twenty-three direct owner/wrapper
 families produce identical statistics and complete normalized ModelIR state.
 Resume by inventorying and characterizing the next raw source-order owner,
 `_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains` (356 lines),
-before any semantic or ownership change.
+before any semantic or ownership change. That characterization is now complete
+without production changes. Its mixed-axis public fixture moved out of the
+giant direct test, 20 positive/rejection/boundary cases pass, and 19 strict
+xfails isolate incomplete rank-four metadata, unsafe Mul-constant ownership,
+missing per-axis QDIM remapping, malformed Concat axes, late partial mutation,
+duplicate producers, reverse topology, and a public internal alias. Resume by
+building one indexed recursive-tree/topology/metadata/constant/quantization/
+removal plan before mutation, then turn all 19 xfails green without changing
+valid behavior, statistics, pruning, or the two ordered recovery boundaries.
