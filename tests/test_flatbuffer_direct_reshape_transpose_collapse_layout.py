@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains,
 )
+from onnx2tf.tflite_builder.passes.reshape_transpose_collapse_layout import (
+    _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains as _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains_owner,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +169,126 @@ def _model(
             dynamic_batch=dynamic_batch,
         )
     return model_ir
+
+
+def _owner_wrapper_case(case: str) -> ModelIR:
+    if case == "dynamic":
+        return _model(dynamic_batch=True)
+    if case == "multiple":
+        return _model(branches=2)
+    model_ir = _model()
+
+    if case == "shared-shape":
+        _tensor(model_ir, "shape_copy", [4], dtype="INT32")
+        model_ir.outputs.append("shape_copy")
+        model_ir.operators.append(
+            OperatorIR(
+                "IDENTITY",
+                ["branch0_shape1"],
+                ["shape_copy"],
+            )
+        )
+        _tensor(
+            model_ir,
+            "branch0_shape1_nhwc",
+            [1],
+            dtype="INT32",
+            data=np.asarray([99], dtype=np.int32),
+        )
+        model_ir.outputs.append("branch0_shape1_nhwc")
+    elif case == "public-shape":
+        model_ir.outputs.append("branch0_shape1")
+    elif case == "public-input-shape":
+        model_ir.inputs.append("branch0_shape1")
+    elif case == "variable-shape":
+        model_ir.tensors["branch0_shape1"].is_variable = True
+    elif case == "wrong-shape-dtype":
+        tensor = model_ir.tensors["branch0_shape1"]
+        tensor.dtype = "FLOAT32"
+        tensor.data = np.asarray(tensor.data, dtype=np.float32)
+    elif case == "quantized-shape":
+        model_ir.tensors["branch0_shape1"].quantization = QuantParamIR(
+            scale=[0.1],
+            zero_point=[0],
+            quantized_dimension=0,
+        )
+    elif case == "missing-shape-data":
+        model_ir.tensors["branch0_shape1"].data = None
+    elif case == "unmatched":
+        _tensor(model_ir, "unused", [1])
+        model_ir.tensors["branch0_perm2"].data = np.asarray(
+            [0, 3, 1, 2],
+            dtype=np.int32,
+        )
+    elif case == "short-signature":
+        model_ir.tensors["branch0_t1"].shape_signature = [1, 2]
+    elif case == "reverse-topology":
+        model_ir.operators[1], model_ir.operators[2] = (
+            model_ir.operators[2],
+            model_ir.operators[1],
+        )
+    elif case == "public-internal":
+        model_ir.inputs.append("branch0_r1")
+    elif case == "duplicate-source":
+        model_ir.operators.extend(
+            [
+                OperatorIR(
+                    "IDENTITY",
+                    ["branch0_y"],
+                    ["branch0_x"],
+                ),
+                OperatorIR(
+                    "IDENTITY",
+                    ["branch0_y"],
+                    ["branch0_x"],
+                ),
+            ]
+        )
+    elif case == "missing-output":
+        del model_ir.tensors["branch0_y"]
+    return model_ir
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary",
+        "dynamic",
+        "multiple",
+        "shared-shape",
+        "public-shape",
+        "public-input-shape",
+        "variable-shape",
+        "wrong-shape-dtype",
+        "quantized-shape",
+        "missing-shape-data",
+        "unmatched",
+        "short-signature",
+        "reverse-topology",
+        "public-internal",
+        "duplicate-source",
+        "missing-output",
+    ],
+)
+def test_reshape_transpose_collapse_owner_and_wrapper_are_identical(
+    case: str,
+) -> None:
+    owner_model = _owner_wrapper_case(case)
+    wrapper_model = copy.deepcopy(owner_model)
+
+    owner_stats = (
+        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains_owner(
+            owner_model
+        )
+    )
+    wrapper_stats = (
+        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(
+            wrapper_model
+        )
+    )
+
+    assert wrapper_stats == owner_stats
+    assert _normalize(wrapper_model) == _normalize(owner_model)
 
 
 def _assert_transactional_rejection(model_ir: ModelIR) -> None:
@@ -556,20 +679,61 @@ def test_reshape_transpose_collapse_rejects_invalid_topology(
     _assert_transactional_rejection(model_ir)
 
 
-def test_reshape_transpose_collapse_keeps_raw_owner_and_calls() -> None:
-    lowering_path = (
-        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+def test_reshape_transpose_collapse_keeps_owner_wrapper_and_calls() -> None:
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "reshape_transpose_collapse_layout.py"
     )
-    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
     owner = next(
         node
-        for node in lowering_tree.body
+        for node in pass_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name
         == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
     )
     assert owner.end_lineno - owner.lineno + 1 == 399
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and (
+            any(
+                alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+                for alias in node.names
+            )
+            if isinstance(node, ast.Import)
+            else node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        )
+        for node in pass_tree.body
+    )
+
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    wrapper_call = wrapper.body[0].value
+    assert isinstance(wrapper_call, ast.Call)
+    assert isinstance(wrapper_call.func, ast.Name)
+    assert (
+        wrapper_call.func.id
+        == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains_pass"
+    )
+    assert len(wrapper_call.args) == 1
+    assert isinstance(wrapper_call.args[0], ast.Name)
+    assert wrapper_call.args[0].id == "model_ir"
+    assert wrapper_call.keywords == []
 
     lowerer = next(
         node

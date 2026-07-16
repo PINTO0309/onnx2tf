@@ -8570,6 +8570,23 @@ and the explicit one-index contract brings the focused suite to thirty-four
 cases without changing valid static behavior, statistics, fixed point, or both
 production calls.
 
+Ownership now resides in
+`passes/reshape_transpose_collapse_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `48aae4b0` are each 399 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias,
+retains the historical private name as a one-return compatibility wrapper, and
+keeps both production calls unchanged. The focused module does not import the
+lowerer.
+
+Sixteen direct owner/wrapper comparisons cover static and dynamic metadata,
+multiple matches, shared and public shape outputs, public-input, variable,
+wrong-dtype, quantized, and missing-data shape rejection, zero-match no-prune,
+short signatures, reverse topology, a public internal alias, duplicate source
+producers, and missing output metadata. Statistics and complete normalized
+ModelIR state are identical in every case. The mechanical move does not alter
+public APIs, artifacts, dependencies, corpus policy, ordered runtime behavior,
+or TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

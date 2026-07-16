@@ -12222,3 +12222,50 @@ module AST identity and direct owner/wrapper equality for static/dynamic,
 multiple, shared/public/invalid shape constants, no-prune, signatures,
 topology, and atomicity cases. Validate sequentially, commit and push, and do
 not create a pull request.
+
+## Reshape/Transpose collapse ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/reshape_transpose_collapse_layout.py`. Its
+function and the corrected raw owner at checkpoint `48aae4b0` are each 399
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains_pass`
+alias and keeps the historical private name as a one-return wrapper. Both
+production calls remain unchanged. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two matches, shared collision-safe and public-output shape clones,
+public-input, variable, wrong-dtype, quantized, and missing-data rejection,
+zero-match no-prune, short signatures, reverse topology, a public internal
+alias, duplicate source producers, and missing output metadata. Deep-copied
+executions produce identical statistics and complete normalized ModelIR state,
+including buffers, quantization, options, provenance, topology, metadata,
+lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 399 lines each;
+- focused safety plus owner/wrapper contract: `50 passed in 0.55s`;
+- focused contract, the five adjacent extracted bridge contracts, and ordered
+  architecture suite: `650 passed in 18.26s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.59s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. PR #952 remains
+closed; no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next substantive raw source-order
+owner before editing it: the 293-line
+`_optimize_attention_gather_transpose_reshape_cleanup_chains`. It currently has
+only architecture references and no focused public fixture. Build focused
+synthetic ModelIR cases for positive and multiple matches, Gather/Transpose/
+Reshape shape and axis constants, metadata, quantization, topology, public
+boundaries, pruning, fixed point, statistics, and every production-call
+boundary. Record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.

@@ -1742,4 +1742,11 @@ setters, and batched removal turn all 19 former xfails green. Focused coverage
 now has 34 green cases, including zero-match and one-index contracts, while both
 production calls remain unchanged. Resume by mechanically extracting the
 corrected owner with exact AST and owner/wrapper equality; do not create a pull
-request.
+request. That extraction is now complete in
+`passes/reshape_transpose_collapse_layout.py`. Its 399-line function AST is
+exact to checkpoint `48aae4b0`, the lowerer retains a one-return wrapper, and
+both production calls are unchanged. Sixteen direct owner/wrapper families
+produce identical statistics and complete normalized ModelIR state. Resume by
+inventorying and characterizing the next substantive raw source-order owner,
+`_optimize_attention_gather_transpose_reshape_cleanup_chains` (293 lines),
+before semantic or ownership changes. Do not create a pull request.
