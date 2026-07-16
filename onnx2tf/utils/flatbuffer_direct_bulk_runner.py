@@ -157,6 +157,130 @@ def _read_process_name(pid: int) -> str:
         return "unknown"
 
 
+def _process_group_has_live_members(process_group_id: int) -> bool:
+    """Return whether a Linux process group still contains a non-zombie member."""
+
+    expected_process_group_id = int(process_group_id)
+    try:
+        proc_entries = os.scandir("/proc")
+    except (FileNotFoundError, PermissionError):
+        return False
+    with proc_entries:
+        for proc_entry in proc_entries:
+            if not proc_entry.name.isdigit():
+                continue
+            try:
+                with open(
+                    os.path.join(proc_entry.path, "stat"),
+                    "r",
+                    encoding="utf-8",
+                ) as f:
+                    stat_text = f.read()
+                command_end = stat_text.rfind(")")
+                if command_end < 0:
+                    continue
+                stat_fields = stat_text[command_end + 2 :].split()
+                process_state = str(stat_fields[0])
+                process_group_id_value = int(stat_fields[2])
+            except (
+                FileNotFoundError,
+                PermissionError,
+                ProcessLookupError,
+                ValueError,
+                IndexError,
+            ):
+                continue
+            if (
+                process_group_id_value == expected_process_group_id
+                and process_state != "Z"
+            ):
+                return True
+    return False
+
+
+def _terminate_process_group(
+    process_group_id: int,
+    *,
+    grace_period_sec: float = 1.0,
+) -> None:
+    """Terminate all live members of an isolated converter process group."""
+
+    process_group_id = int(process_group_id)
+    if process_group_id <= 0 or not _process_group_has_live_members(process_group_id):
+        return
+    try:
+        os.killpg(process_group_id, signal.SIGTERM)
+    except (PermissionError, ProcessLookupError):
+        return
+    deadline = time.monotonic() + max(0.0, float(grace_period_sec))
+    while time.monotonic() < deadline:
+        if not _process_group_has_live_members(process_group_id):
+            return
+        time.sleep(0.05)
+    if not _process_group_has_live_members(process_group_id):
+        return
+    try:
+        os.killpg(process_group_id, signal.SIGKILL)
+    except (PermissionError, ProcessLookupError):
+        pass
+
+
+def _run_subprocess(
+    cmd: List[str],
+    *,
+    cwd: str,
+    stdout: Any,
+    stderr: Any,
+    text: bool,
+    timeout: int,
+    swap_monitor: Optional[Any] = None,
+) -> subprocess.CompletedProcess:
+    """Run one converter in an isolated group and leave no live descendants."""
+
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=stdout,
+        stderr=stderr,
+        text=text,
+        start_new_session=True,
+    )
+    process_group_id = int(process.pid)
+    set_process_group_id = getattr(
+        swap_monitor,
+        "set_process_group_id",
+        None,
+    )
+    if callable(set_process_group_id):
+        set_process_group_id(process_group_id)
+    try:
+        stdout_text, stderr_text = process.communicate(timeout=int(timeout))
+    except subprocess.TimeoutExpired:
+        _terminate_process_group(process_group_id)
+        try:
+            stdout_text, stderr_text = process.communicate(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process_group_id, signal.SIGKILL)
+            except (PermissionError, ProcessLookupError):
+                pass
+            stdout_text, stderr_text = process.communicate()
+        raise subprocess.TimeoutExpired(
+            cmd=cmd,
+            timeout=int(timeout),
+            output=stdout_text,
+            stderr=stderr_text,
+        )
+    finally:
+        _terminate_process_group(process_group_id)
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=int(process.returncode),
+        stdout=stdout_text,
+        stderr=stderr_text,
+    )
+
+
 class _ProcessTreeSwapMonitor:
     """Detect and stop a sequential model subprocess once it starts swapping."""
 
@@ -170,6 +294,7 @@ class _ProcessTreeSwapMonitor:
         self._poll_interval_sec = float(poll_interval_sec)
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._process_group_id: Optional[int] = None
         self._termination_started_at: Optional[float] = None
         self._peak_total_swap_kib = 0
         self._peak_swap_by_pid: Dict[int, Dict[str, Any]] = {}
@@ -183,6 +308,9 @@ class _ProcessTreeSwapMonitor:
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    def set_process_group_id(self, process_group_id: int) -> None:
+        self._process_group_id = int(process_group_id)
 
     def stop(self) -> None:
         thread = self._thread
@@ -241,6 +369,12 @@ class _ProcessTreeSwapMonitor:
             if time.monotonic() - self._termination_started_at >= 1.0
             else signal.SIGTERM
         )
+        if self._process_group_id is not None:
+            try:
+                os.killpg(int(self._process_group_id), terminate_signal)
+                return
+            except (PermissionError, ProcessLookupError):
+                pass
         for descendant_pid in reversed(descendant_pids):
             try:
                 os.kill(descendant_pid, terminate_signal)
@@ -298,9 +432,7 @@ def _normalized_error_signature(
         diagnostic = lines[-1]
     diagnostic = diagnostic[:500]
     signature = " | ".join(
-        part
-        for part in [str(classification), str(reason), diagnostic]
-        if part
+        part for part in [str(classification), str(reason), diagnostic] if part
     )
     return {
         "error_signature": signature,
@@ -310,8 +442,14 @@ def _normalized_error_signature(
 
 def _discover_onnx_models(root_dir: str, *, recursive: bool = True) -> List[str]:
     root_dir_abs = os.path.abspath(root_dir)
-    pattern = os.path.join(root_dir_abs, "**", "*.onnx") if recursive else os.path.join(root_dir_abs, "*.onnx")
-    return sorted(os.path.abspath(path) for path in glob.glob(pattern, recursive=recursive))
+    pattern = (
+        os.path.join(root_dir_abs, "**", "*.onnx")
+        if recursive
+        else os.path.join(root_dir_abs, "*.onnx")
+    )
+    return sorted(
+        os.path.abspath(path) for path in glob.glob(pattern, recursive=recursive)
+    )
 
 
 def _filter_models_by_node_count(
@@ -390,9 +528,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
                     f"option={option_name}"
                 )
             if raw_values:
-                normalized_options[option_name] = [
-                    str(value) for value in raw_values
-                ]
+                normalized_options[option_name] = [str(value) for value in raw_values]
         raw_eval_num_samples = entry.get("eval_num_samples", None)
         if raw_eval_num_samples is not None:
             if (
@@ -429,20 +565,25 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         baseline_classification = str(
             entry.get("baseline_classification", "unspecified")
         )
-        baseline_classification_counts[baseline_classification] = int(
-            baseline_classification_counts.get(baseline_classification, 0)
-        ) + 1
+        baseline_classification_counts[baseline_classification] = (
+            int(baseline_classification_counts.get(baseline_classification, 0)) + 1
+        )
         if baseline_classification in {"timeout", "excluded"}:
-            excluded_baseline_classification_counts[baseline_classification] = int(
-                excluded_baseline_classification_counts.get(
-                    baseline_classification,
-                    0,
+            excluded_baseline_classification_counts[baseline_classification] = (
+                int(
+                    excluded_baseline_classification_counts.get(
+                        baseline_classification,
+                        0,
+                    )
                 )
-            ) + 1
+                + 1
+            )
         else:
             active_model_names.append(model_name)
     if len(model_names) != len(set(model_names)):
-        raise ValueError(f"Regression profile contains duplicate model names. path={path}")
+        raise ValueError(
+            f"Regression profile contains duplicate model names. path={path}"
+        )
     if tiers != sorted(tiers):
         raise ValueError(
             "Regression profile models must be ordered by non-decreasing tier. "
@@ -527,7 +668,9 @@ def _stage_model_for_run(*, model_path: str, run_dir: str) -> str:
             if os.path.commonpath([source_dir, source_data]) != source_dir:
                 raise ValueError(f"External data escapes model directory: {location}")
             destination_data = os.path.abspath(os.path.join(run_dir, location))
-            if os.path.commonpath([os.path.abspath(run_dir), destination_data]) != os.path.abspath(run_dir):
+            if os.path.commonpath(
+                [os.path.abspath(run_dir), destination_data]
+            ) != os.path.abspath(run_dir):
                 raise ValueError(f"External data escapes run directory: {location}")
             os.makedirs(os.path.dirname(destination_data), exist_ok=True)
             shutil.copy2(source_data, destination_data)
@@ -707,12 +850,8 @@ def _apply_profile_acceptance(
             "reason": f"profile_acceptance:{reason}",
             "accepted_by_profile": True,
             "profile_acceptance_reason": reason,
-            "unaccepted_classification": str(
-                classification.get("classification", "")
-            ),
-            "unaccepted_strict_pass": bool(
-                classification.get("strict_pass", False)
-            ),
+            "unaccepted_classification": str(classification.get("classification", "")),
+            "unaccepted_strict_pass": bool(classification.get("strict_pass", False)),
             "unaccepted_reason": str(classification.get("reason", "")),
         }
     )
@@ -738,24 +877,18 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
         classification = str(entry.get("classification", "conversion_error"))
         counts[classification if classification in counts else "conversion_error"] += 1
     failed_entries = [
-        entry
-        for entry in entries
-        if not bool(entry.get("strict_pass", False))
+        entry for entry in entries if not bool(entry.get("strict_pass", False))
     ]
     durations = [float(entry.get("duration_sec", 0.0)) for entry in entries]
     filters: Dict[str, Any] = {
         "min_nodes": state.get("min_nodes"),
         "max_nodes": state.get("max_nodes"),
         "recursive": bool(state.get("recursive", True)),
-        "include_pytorch_artifacts": bool(
-            state.get("include_pytorch_artifacts", True)
-        ),
+        "include_pytorch_artifacts": bool(state.get("include_pytorch_artifacts", True)),
     }
     if bool(state.get("include_pytorch_artifacts", True)):
         filters["pytorch_artifact_mode"] = (
-            "native"
-            if bool(state.get("native_pytorch_only", False))
-            else "all"
+            "native" if bool(state.get("native_pytorch_only", False)) else "all"
         )
     if state.get("regression_profile") is not None:
         filters["regression_profile"] = dict(state["regression_profile"])
@@ -781,9 +914,7 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
                 "classification": str(entry.get("classification", "")),
                 "reason": str(entry.get("reason", "")),
                 "error_signature": str(entry.get("error_signature", "")),
-                "error_signature_sha256": str(
-                    entry.get("error_signature_sha256", "")
-                ),
+                "error_signature_sha256": str(entry.get("error_signature_sha256", "")),
             }
             for entry in failed_entries
         ],
@@ -817,7 +948,9 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
     return summary
 
 
-def _write_markdown_summary(path: str, *, state: Dict[str, Any], summary: Dict[str, Any]) -> None:
+def _write_markdown_summary(
+    path: str, *, state: Dict[str, Any], summary: Dict[str, Any]
+) -> None:
     lines: List[str] = []
     lines.append("# Flatbuffer Direct Bulk Summary")
     lines.append("")
@@ -841,7 +974,9 @@ def _write_markdown_summary(path: str, *, state: Dict[str, Any], summary: Dict[s
         lines.append("| Model | Classification | Reason |")
         lines.append("| --- | --- | --- |")
         for failed in summary["failed_models"]:
-            reason = str(failed.get("reason", "")).replace("\n", " ").replace("|", "\\|")
+            reason = (
+                str(failed.get("reason", "")).replace("\n", " ").replace("|", "\\|")
+            )
             lines.append(
                 f"| `{failed.get('model_path', '')}` | "
                 f"`{failed.get('classification', '')}` | {reason} |"
@@ -911,12 +1046,14 @@ def run_flatbuffer_direct_bulk_verification(
         raise ValueError("min_nodes must be >= 0")
     if max_nodes is not None and int(max_nodes) < 0:
         raise ValueError("max_nodes must be >= 0")
-    if min_nodes is not None and max_nodes is not None and int(min_nodes) > int(max_nodes):
+    if (
+        min_nodes is not None
+        and max_nodes is not None
+        and int(min_nodes) > int(max_nodes)
+    ):
         raise ValueError("min_nodes must be <= max_nodes")
     if bool(native_pytorch_only) and not bool(include_pytorch_artifacts):
-        raise ValueError(
-            "native_pytorch_only requires include_pytorch_artifacts=True."
-        )
+        raise ValueError("native_pytorch_only requires include_pytorch_artifacts=True.")
     discovered_source = (
         _discover_onnx_models(root_dir_abs)
         if recursive
@@ -988,7 +1125,9 @@ def run_flatbuffer_direct_bulk_verification(
                 f"state_skip_model_names={state.get('skip_model_names', [])} "
                 f"current_skip_model_names={normalized_skip_model_names}"
             )
-        if int(state.get("native_pytorch_generation_timeout_sec", 0)) != int(native_pytorch_generation_timeout_sec):
+        if int(state.get("native_pytorch_generation_timeout_sec", 0)) != int(
+            native_pytorch_generation_timeout_sec
+        ):
             raise RuntimeError(
                 "Resume state does not match the current native_pytorch_generation_timeout_sec. "
                 f"state_timeout={state.get('native_pytorch_generation_timeout_sec', 0)} "
@@ -1000,7 +1139,9 @@ def run_flatbuffer_direct_bulk_verification(
                 f"state=({state.get('min_nodes')},{state.get('max_nodes')}) "
                 f"current=({min_nodes},{max_nodes})"
             )
-        if bool(state.get("include_pytorch_artifacts", True)) != bool(include_pytorch_artifacts):
+        if bool(state.get("include_pytorch_artifacts", True)) != bool(
+            include_pytorch_artifacts
+        ):
             raise RuntimeError(
                 "Resume state does not match include_pytorch_artifacts. "
                 f"state={state.get('include_pytorch_artifacts')} "
@@ -1026,7 +1167,9 @@ def run_flatbuffer_direct_bulk_verification(
             "root_dir": root_dir_abs,
             "models_sha256": models_sha256,
             "skip_model_names": normalized_skip_model_names,
-            "native_pytorch_generation_timeout_sec": int(native_pytorch_generation_timeout_sec),
+            "native_pytorch_generation_timeout_sec": int(
+                native_pytorch_generation_timeout_sec
+            ),
             "min_nodes": min_nodes,
             "max_nodes": max_nodes,
             "include_pytorch_artifacts": bool(include_pytorch_artifacts),
@@ -1046,7 +1189,9 @@ def run_flatbuffer_direct_bulk_verification(
     )
     spinner = _ProgressSpinner(progress_bar)
     try:
-        for offset, model_path in enumerate(models[start_index:], start=start_index + 1):
+        for offset, model_path in enumerate(
+            models[start_index:], start=start_index + 1
+        ):
             model_name = os.path.basename(model_path)
             run_dir = os.path.join(
                 runs_dir,
@@ -1205,13 +1350,14 @@ def run_flatbuffer_direct_bulk_verification(
             swap_monitor = _ProcessTreeSwapMonitor()
             swap_monitor.start()
             try:
-                completed = subprocess.run(
+                completed = _run_subprocess(
                     cmd,
                     cwd=run_dir,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     timeout=int(timeout_sec),
+                    swap_monitor=swap_monitor,
                 )
                 stdout_text = completed.stdout if completed.stdout is not None else ""
                 stderr_text = completed.stderr if completed.stderr is not None else ""
@@ -1223,9 +1369,7 @@ def run_flatbuffer_direct_bulk_verification(
                 stdout_text = ex.stdout if isinstance(ex.stdout, str) else ""
                 stderr_text = ex.stderr if isinstance(ex.stderr, str) else ""
                 entry["classification"] = (
-                    "swap_detected"
-                    if bool(entry["swap_detected"])
-                    else "timeout"
+                    "swap_detected" if bool(entry["swap_detected"]) else "timeout"
                 )
                 entry["strict_pass"] = False
                 entry["reason"] = (
@@ -1260,9 +1404,7 @@ def run_flatbuffer_direct_bulk_verification(
                 if previous_metrics_path is None:
                     os.environ.pop(_INTERNAL_PASS_METRICS_PATH_ENV, None)
                 else:
-                    os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = (
-                        previous_metrics_path
-                    )
+                    os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = previous_metrics_path
                 swap_monitor.stop()
                 spinner.stop()
 
@@ -1396,7 +1538,9 @@ def main() -> None:
         )
     )
     parser.add_argument("--root_dir", type=str, required=True)
-    parser.add_argument("-o", "--output_dir", type=str, default="flatbuffer_direct_bulk_report")
+    parser.add_argument(
+        "-o", "--output_dir", type=str, default="flatbuffer_direct_bulk_report"
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--onnx2tf_command", type=str, default="")
     parser.add_argument("--timeout_sec", type=int, default=600)
@@ -1448,7 +1592,9 @@ def main() -> None:
         resume=bool(args.resume),
         onnx2tf_command=str(args.onnx2tf_command),
         timeout_sec=int(args.timeout_sec),
-        native_pytorch_generation_timeout_sec=int(args.native_pytorch_generation_timeout_sec),
+        native_pytorch_generation_timeout_sec=int(
+            args.native_pytorch_generation_timeout_sec
+        ),
         skip_model_names=list(args.skip_model_name),
         min_nodes=args.min_nodes,
         max_nodes=args.max_nodes,

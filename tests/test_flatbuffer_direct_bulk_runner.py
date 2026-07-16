@@ -1,5 +1,7 @@
 import json
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -45,7 +47,15 @@ def test_flatbuffer_direct_bulk_runner_preserves_sorted_discovery_order(
 
     calls: List[str] = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         model_path = str(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(model_path).stem
@@ -60,7 +70,7 @@ def test_flatbuffer_direct_bulk_runner_preserves_sorted_discovery_order(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -81,7 +91,15 @@ def test_flatbuffer_direct_bulk_runner_collects_internal_pass_metrics(
     metrics_env = "ONNX2TF_INTERNAL_PASS_METRICS_PATH"
     monkeypatch.delenv(metrics_env, raising=False)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -112,7 +130,7 @@ def test_flatbuffer_direct_bulk_runner_collects_internal_pass_metrics(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
 
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
@@ -148,7 +166,15 @@ def test_flatbuffer_direct_bulk_runner_skips_missing_models_cleanly(
 
     calls: List[str] = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         model_path = str(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(model_path).stem
@@ -163,12 +189,15 @@ def test_flatbuffer_direct_bulk_runner_skips_missing_models_cleanly(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
     )
-    assert [entry["classification"] for entry in state["entries"]] == ["pass", "missing_model"]
+    assert [entry["classification"] for entry in state["entries"]] == [
+        "pass",
+        "missing_model",
+    ]
     assert state["entries"][1]["strict_pass"] is False
     assert [Path(path).name for path in calls] == ["a.onnx"]
     assert Path(calls[0]).parent.parent.name == "runs"
@@ -186,7 +215,15 @@ def test_flatbuffer_direct_bulk_runner_resume_skips_completed_entries(
 
     first_calls: List[str] = []
 
-    def _fake_run_first(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run_first(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         model_path = str(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(model_path).stem
@@ -201,7 +238,7 @@ def test_flatbuffer_direct_bulk_runner_resume_skips_completed_entries(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run_first)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run_first)
     first_state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(output_dir),
@@ -211,11 +248,19 @@ def test_flatbuffer_direct_bulk_runner_resume_skips_completed_entries(
 
     second_calls: List[str] = []
 
-    def _fake_run_second(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run_second(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         second_calls.append("called")
         return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run_second)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run_second)
     second_state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(output_dir),
@@ -232,7 +277,15 @@ def test_flatbuffer_direct_bulk_runner_marks_pass_only_when_both_reports_pass(
     model = tmp_path / "ok.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -245,7 +298,7 @@ def test_flatbuffer_direct_bulk_runner_marks_pass_only_when_both_reports_pass(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -262,7 +315,15 @@ def test_flatbuffer_direct_bulk_runner_records_stable_failure_signature_and_timi
     model = tmp_path / "broken.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         return type(
             "CP",
             (),
@@ -273,7 +334,7 @@ def test_flatbuffer_direct_bulk_runner_records_stable_failure_signature_and_timi
             },
         )()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -295,9 +356,10 @@ def test_flatbuffer_direct_bulk_runner_records_stable_failure_signature_and_timi
         "include_pytorch_artifacts": False,
     }
     assert summary["timing"]["total_duration_sec"] >= 0.0
-    assert summary["failed_models"][0]["error_signature_sha256"] == entry[
-        "error_signature_sha256"
-    ]
+    assert (
+        summary["failed_models"][0]["error_signature_sha256"]
+        == entry["error_signature_sha256"]
+    )
 
 
 def test_flatbuffer_direct_bulk_runner_filters_node_count_tier(
@@ -321,7 +383,15 @@ def test_flatbuffer_direct_bulk_runner_filters_node_count_tier(
     _model(tmp_path / "medium.onnx", 55)
     calls = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         calls.append(cmd)
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
@@ -335,7 +405,7 @@ def test_flatbuffer_direct_bulk_runner_filters_node_count_tier(
         )
         return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -353,19 +423,32 @@ def test_flatbuffer_direct_bulk_runner_enforces_max_abs_one_tenth(
     model = tmp_path / "accuracy.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
-        for suffix, max_abs in [("accuracy_report", 0.10001), ("pytorch_accuracy_report", 0.01)]:
+        for suffix, max_abs in [
+            ("accuracy_report", 0.10001),
+            ("pytorch_accuracy_report", 0.01),
+        ]:
             path = artifact_dir / f"{stem}_{suffix}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
-                json.dumps({"evaluation_pass": True, "overall_metrics": {"max_abs": max_abs}}),
+                json.dumps(
+                    {"evaluation_pass": True, "overall_metrics": {"max_abs": max_abs}}
+                ),
                 encoding="utf-8",
             )
         return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -383,7 +466,15 @@ def test_flatbuffer_direct_bulk_runner_tflite_only_does_not_require_pytorch(
     _write_dummy(model)
     commands = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         commands.append(cmd)
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
@@ -393,7 +484,7 @@ def test_flatbuffer_direct_bulk_runner_tflite_only_does_not_require_pytorch(
         )
         return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -411,7 +502,15 @@ def test_flatbuffer_direct_bulk_runner_stages_model_before_conversion(
     original = b"original corpus bytes"
     model.write_bytes(original)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         staged = Path(cmd[cmd.index("-i") + 1])
         assert staged != model
         assert staged.parent == Path(cwd)
@@ -423,7 +522,7 @@ def test_flatbuffer_direct_bulk_runner_stages_model_before_conversion(
         )
         return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -442,7 +541,15 @@ def test_flatbuffer_direct_bulk_runner_root_only_excludes_nested_models(
     _write_dummy(root_model)
     _write_dummy(nested_model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         _write_accuracy_report(
             path=artifact_dir / "root_accuracy_report.json",
@@ -450,7 +557,7 @@ def test_flatbuffer_direct_bulk_runner_root_only_excludes_nested_models(
         )
         return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -467,7 +574,15 @@ def test_flatbuffer_direct_bulk_runner_marks_tflite_failure(
     model = tmp_path / "tflite_fail.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -480,7 +595,7 @@ def test_flatbuffer_direct_bulk_runner_marks_tflite_failure(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -497,7 +612,15 @@ def test_flatbuffer_direct_bulk_runner_marks_pytorch_failure(
     model = tmp_path / "pytorch_fail.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -510,7 +633,7 @@ def test_flatbuffer_direct_bulk_runner_marks_pytorch_failure(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -527,7 +650,15 @@ def test_flatbuffer_direct_bulk_runner_marks_both_failures(
     model = tmp_path / "both_fail.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -540,7 +671,7 @@ def test_flatbuffer_direct_bulk_runner_marks_both_failures(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -557,7 +688,15 @@ def test_flatbuffer_direct_bulk_runner_marks_missing_single_report(
     model = tmp_path / "missing_report.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -566,7 +705,7 @@ def test_flatbuffer_direct_bulk_runner_marks_missing_single_report(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -583,10 +722,18 @@ def test_flatbuffer_direct_bulk_runner_marks_timeout(
     model = tmp_path / "slow.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -595,6 +742,37 @@ def test_flatbuffer_direct_bulk_runner_marks_timeout(
     entry = state["entries"][0]
     assert entry["classification"] == "timeout"
     assert entry["strict_pass"] is False
+
+
+def test_run_subprocess_timeout_terminates_live_process_group_descendants(
+    tmp_path,
+) -> None:
+    process_ids_path = tmp_path / "process_ids.txt"
+    child_script = (
+        "import os, subprocess, sys, time; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "open(sys.argv[1], 'w', encoding='utf-8').write(f'{os.getpid()} {child.pid}'); "
+        "time.sleep(60)"
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        bulk_runner._run_subprocess(
+            [sys.executable, "-c", child_script, str(process_ids_path)],
+            cwd=str(tmp_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=1,
+        )
+
+    deadline = time.monotonic() + 2.0
+    while not process_ids_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert process_ids_path.exists()
+    process_group_id, _child_pid = [
+        int(value) for value in process_ids_path.read_text().split()
+    ]
+    assert not bulk_runner._process_group_has_live_members(process_group_id)
 
 
 def test_process_tree_swap_monitor_records_and_terminates_swapping_descendants(
@@ -648,6 +826,43 @@ def test_process_tree_swap_monitor_records_and_terminates_swapping_descendants(
     ]
 
 
+def test_process_tree_swap_monitor_terminates_bound_process_group(
+    monkeypatch,
+) -> None:
+    process_group_signals = []
+    monkeypatch.setattr(
+        bulk_runner,
+        "_collect_descendant_pids",
+        lambda _root_pid: [101],
+    )
+    monkeypatch.setattr(
+        bulk_runner,
+        "_read_process_swap_kib",
+        lambda _pid: 32,
+    )
+    monkeypatch.setattr(
+        bulk_runner,
+        "_read_process_name",
+        lambda _pid: "delegate",
+    )
+    monkeypatch.setattr(
+        bulk_runner.os,
+        "killpg",
+        lambda process_group_id, process_signal: process_group_signals.append(
+            (process_group_id, process_signal)
+        ),
+    )
+
+    monitor = bulk_runner._ProcessTreeSwapMonitor(root_pid=100)
+    monitor.set_process_group_id(777)
+    monitor._sample_once()
+
+    assert process_group_signals == [(777, bulk_runner.signal.SIGTERM)]
+    monitor._termination_started_at -= 2.0
+    monitor._sample_once()
+    assert process_group_signals[-1] == (777, bulk_runner.signal.SIGKILL)
+
+
 def test_flatbuffer_direct_bulk_runner_classifies_detected_swap(
     tmp_path,
     monkeypatch,
@@ -671,7 +886,15 @@ def test_flatbuffer_direct_bulk_runner_classifies_detected_swap(
                 ],
             }
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         return type(
             "CP",
             (),
@@ -679,7 +902,7 @@ def test_flatbuffer_direct_bulk_runner_classifies_detected_swap(
         )()
 
     monkeypatch.setattr(bulk_runner, "_ProcessTreeSwapMonitor", _FakeSwapMonitor)
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -703,10 +926,18 @@ def test_flatbuffer_direct_bulk_runner_marks_conversion_error(
     model = tmp_path / "error.onnx"
     _write_dummy(model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         return type("CP", (), {"returncode": 1, "stdout": "", "stderr": "failed"})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -724,7 +955,15 @@ def test_flatbuffer_direct_bulk_runner_passes_native_pytorch_generation_timeout(
     _write_dummy(model)
     seen_cmds: List[List[str]] = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         seen_cmds.append(list(cmd))
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
@@ -738,7 +977,7 @@ def test_flatbuffer_direct_bulk_runner_passes_native_pytorch_generation_timeout(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -758,7 +997,15 @@ def test_flatbuffer_direct_bulk_runner_can_limit_pytorch_to_native_package(
     _write_dummy(model)
     seen_cmds: List[List[str]] = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         seen_cmds.append(list(cmd))
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
@@ -772,7 +1019,7 @@ def test_flatbuffer_direct_bulk_runner_can_limit_pytorch_to_native_package(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -822,7 +1069,15 @@ def test_flatbuffer_direct_bulk_runner_updates_tqdm_progress(
         created_progress_bars.append(bar)
         return bar
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -839,7 +1094,7 @@ def test_flatbuffer_direct_bulk_runner_updates_tqdm_progress(
         "onnx2tf.utils.flatbuffer_direct_bulk_runner._create_progress_bar",
         _fake_create_progress_bar,
     )
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -876,7 +1131,15 @@ def test_flatbuffer_direct_bulk_runner_starts_spinner_while_running(
         def stop(self) -> None:
             self.stops += 1
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         stem = Path(cmd[cmd.index("-i") + 1]).stem
         _write_accuracy_report(
@@ -890,7 +1153,7 @@ def test_flatbuffer_direct_bulk_runner_starts_spinner_while_running(
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
     monkeypatch.setattr(bulk_runner, "_ProgressSpinner", _FakeSpinner)
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -911,7 +1174,15 @@ def test_flatbuffer_direct_bulk_runner_summary_lists_failed_models_only(
     _write_dummy(ok_model)
     _write_dummy(fail_model)
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         model_path = Path(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         if model_path.stem == "ok":
@@ -934,7 +1205,7 @@ def test_flatbuffer_direct_bulk_runner_summary_lists_failed_models_only(
             )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -990,7 +1261,15 @@ def test_regression_profile_runs_recorded_tier_zero_to_three_successes_and_failu
     )
     calls: List[str] = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         model_path = Path(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         calls.append(model_path.name)
@@ -1000,7 +1279,7 @@ def test_regression_profile_runs_recorded_tier_zero_to_three_successes_and_failu
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -1076,7 +1355,15 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
     calls: List[str] = []
     commands: List[List[str]] = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         model_path = Path(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         calls.append(model_path.name)
@@ -1087,7 +1374,7 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -1145,7 +1432,15 @@ def test_regression_profile_accepts_recorded_tflite_numeric_exception(
         encoding="utf-8",
     )
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         _write_accuracy_report(
             path=artifact_dir / "accepted_accuracy_report.json",
@@ -1153,7 +1448,7 @@ def test_regression_profile_accepts_recorded_tflite_numeric_exception(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -1213,7 +1508,15 @@ def test_regression_profile_runs_models_in_declared_tier_order(
     )
     calls: List[str] = []
 
-    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+    def _fake_run(
+        cmd,
+        cwd=None,
+        stdout=None,
+        stderr=None,
+        text=None,
+        timeout=None,
+        swap_monitor=None,
+    ):
         model_path = Path(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         calls.append(model_path.name)
@@ -1223,7 +1526,7 @@ def test_regression_profile_runs_models_in_declared_tier_order(
         )
         return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(bulk_runner, "_run_subprocess", _fake_run)
     state = run_flatbuffer_direct_bulk_verification(
         root_dir=str(tmp_path),
         output_dir=str(tmp_path / "out"),
@@ -1341,20 +1644,20 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
-    assert profile["active_model_count"] == 381
-    assert profile["excluded_model_count"] == 39
+    assert profile["active_model_count"] == 379
+    assert profile["excluded_model_count"] == 41
     assert profile["excluded_baseline_classification_counts"] == {
         "excluded": 12,
-        "timeout": 27,
+        "timeout": 29,
     }
     assert profile["tiers"] == [0, 1, 2, 3, 4]
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 355,
+        "pass": 353,
         "tflite_fail": 20,
-        "timeout": 27,
+        "timeout": 29,
         "excluded": 12,
     }
     assert profile["acceptance_reasons"] == {
@@ -1367,9 +1670,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     }
     profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
     encoder_entry = next(
-        entry
-        for entry in profile_payload["models"]
-        if entry["model"] == "encoder.onnx"
+        entry for entry in profile_payload["models"] if entry["model"] == "encoder.onnx"
     )
     assert encoder_entry == {
         "tier": 3,
@@ -1390,9 +1691,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "model_paint_v2_test.onnx",
     ):
         paint_entry = next(
-            entry
-            for entry in profile_payload["models"]
-            if entry["model"] == model_name
+            entry for entry in profile_payload["models"] if entry["model"] == model_name
         )
         assert paint_entry == {
             "tier": 1,
@@ -1405,9 +1704,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "onnx_dense_optimized_org.onnx",
     ):
         inverse_entry = next(
-            entry
-            for entry in profile_payload["models"]
-            if entry["model"] == model_name
+            entry for entry in profile_payload["models"] if entry["model"] == model_name
         )
         assert inverse_entry == {
             "tier": 1,
@@ -1427,9 +1724,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "tflite_max_abs": 2.3931264877319336e-05,
     }
     linea_entry = next(
-        entry
-        for entry in profile_payload["models"]
-        if entry["model"] == "LINEA.onnx"
+        entry for entry in profile_payload["models"] if entry["model"] == "LINEA.onnx"
     )
     assert linea_entry == {
         "tier": 3,
@@ -1448,9 +1743,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         ),
     ):
         best_entry = next(
-            entry
-            for entry in profile_payload["models"]
-            if entry["model"] == model_name
+            entry for entry in profile_payload["models"] if entry["model"] == model_name
         )
         assert best_entry["baseline_classification"] == "tflite_fail"
         assert best_entry["baseline_reason"] == (
@@ -1469,9 +1762,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         ),
     ):
         deim_entry = next(
-            entry
-            for entry in profile_payload["models"]
-            if entry["model"] == model_name
+            entry for entry in profile_payload["models"] if entry["model"] == model_name
         )
         assert deim_entry == {
             "tier": 3,
@@ -1495,9 +1786,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         ),
     ):
         grid_sample_entry = next(
-            entry
-            for entry in profile_payload["models"]
-            if entry["model"] == model_name
+            entry for entry in profile_payload["models"] if entry["model"] == model_name
         )
         assert grid_sample_entry["baseline_classification"] == "tflite_fail"
         assert grid_sample_entry["baseline_reason"] == (
@@ -1547,9 +1836,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "htdemucs_ft_onnx_1sec.onnx",
     ):
         excluded_entry = next(
-            entry
-            for entry in profile_payload["models"]
-            if entry["model"] == model_name
+            entry for entry in profile_payload["models"] if entry["model"] == model_name
         )
         assert excluded_entry == {
             "tier": 3,
@@ -1568,9 +1855,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         ("spkrec-resnet-voxceleb.onnx", 2),
     ):
         excluded_entry = next(
-            entry
-            for entry in profile_payload["models"]
-            if entry["model"] == model_name
+            entry for entry in profile_payload["models"] if entry["model"] == model_name
         )
         assert excluded_entry == {
             "tier": tier,
@@ -1620,17 +1905,32 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert vit_b_encoder_entry == {
         "tier": 3,
         "model": "vit_b_encoder.onnx",
-        "baseline_classification": "pass",
-        "tflite_max_abs": 2.6226043701171875e-06,
+        "baseline_classification": "timeout",
+        "baseline_reason": "timeout_after_600s",
+        "error_signature_sha256": (
+            "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
+        ),
+    }
+    superpoint_lightglue_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "superpoint_lightglue_end2end_fused_cpu.onnx"
+    )
+    assert superpoint_lightglue_entry == {
+        "tier": 4,
+        "model": "superpoint_lightglue_end2end_fused_cpu.onnx",
+        "baseline_classification": "timeout",
+        "baseline_reason": "timeout_after_600s",
+        "error_signature_sha256": (
+            "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
+        ),
     }
     ssd_mobilenet_entry = next(
         entry
         for entry in profile_payload["models"]
         if entry["model"] == "ssd_mobilenet_v1_12-int8.onnx"
     )
-    assert ssd_mobilenet_entry["baseline_classification"] == (
-        "missing_tflite_report"
-    )
+    assert ssd_mobilenet_entry["baseline_classification"] == ("missing_tflite_report")
     assert ssd_mobilenet_entry["baseline_reason"] == (
         "invalid_onnx_missing_loop_captures_186"
     )
@@ -1688,9 +1988,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         for entry in profile_payload["models"]
         if entry["model"] == "dynamics_rife_sim.onnx"
     )
-    assert dynamics_rife_entry["baseline_classification"] == (
-        "missing_tflite_report"
-    )
+    assert dynamics_rife_entry["baseline_classification"] == ("missing_tflite_report")
     assert dynamics_rife_entry["baseline_reason"] == (
         "invalid_onnx_concat_spatial_mismatch_64_128"
     )
@@ -1703,9 +2001,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         if entry["model"] == "yolov3-12-int8.onnx"
     )
     assert yolov3_entry["baseline_classification"] == "tflite_fail"
-    assert yolov3_entry["baseline_reason"] == (
-        "u8s8_detector_strict_metric_mismatch"
-    )
+    assert yolov3_entry["baseline_reason"] == ("u8s8_detector_strict_metric_mismatch")
     assert yolov3_entry["error_signature_sha256"] == (
         "042bc0ec6020004d0f33640af6ad3197daf7d2e012c2306e64ef42a999b29de9"
     )
@@ -1753,14 +2049,10 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert ppocrv3_entry["overwrite_input_shape"] == ["x:1,3,480,640"]
     assert ppocrv3_entry["tflite_max_abs"] == 0.7411765307188034
     yolov5s_entry = next(
-        entry
-        for entry in profile_payload["models"]
-        if entry["model"] == "yolov5s.onnx"
+        entry for entry in profile_payload["models"] if entry["model"] == "yolov5s.onnx"
     )
     assert yolov5s_entry["baseline_classification"] == "tflite_fail"
-    assert yolov5s_entry["baseline_reason"] == (
-        "float16_decode_rounding_boundary"
-    )
+    assert yolov5s_entry["baseline_reason"] == ("float16_decode_rounding_boundary")
     assert yolov5s_entry["error_signature_sha256"] == (
         "3d19e30742aaefcf03909adb23b0cfcbe24641b67bd5183d4c50f5998d8cb8ed"
     )
@@ -1783,9 +2075,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         for entry in profile_payload["models"]
         if entry["model"] == "conv_tasnet.onnx"
     )
-    assert conv_tasnet_entry["baseline_classification"] == (
-        "missing_tflite_report"
-    )
+    assert conv_tasnet_entry["baseline_classification"] == ("missing_tflite_report")
     assert conv_tasnet_entry["baseline_reason"] == (
         "invalid_onnx_scatterelements_rank_mismatch_4_6"
     )
@@ -1970,9 +2260,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         if entry["model"] == "alike_l_opset11_192x320_post.onnx"
     )
     assert alike_entry["baseline_classification"] == "tflite_fail"
-    assert alike_entry["baseline_reason"] == (
-        "topk_index_instability_from_float_ties"
-    )
+    assert alike_entry["baseline_reason"] == ("topk_index_instability_from_float_ties")
     assert alike_entry["error_signature_sha256"] == (
         "9a77ab8f63d543c221797af2d444b22c59a1cbb4a483e4c4caed79f45fcc8c9b"
     )
@@ -2100,6 +2388,4 @@ def test_measured_quick_profile_excludes_repeated_timeout_model() -> None:
         if entry["model"] == "hybridnets_384x640_sim.onnx"
     )
     assert hybridnets_entry["baseline_classification"] == "excluded"
-    assert hybridnets_entry["baseline_reason"] == (
-        "repeated_quick_ceiling_timeout"
-    )
+    assert hybridnets_entry["baseline_reason"] == ("repeated_quick_ceiling_timeout")

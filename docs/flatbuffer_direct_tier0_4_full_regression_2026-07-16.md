@@ -281,3 +281,119 @@ then proving the fix on all four plus unaffected passing sentinels.
 All representative detached-main comparisons used zero SWAP. The temporary
 main worktree is pinned to `a8640153` and is not a source of repository
 changes.
+
+## Corrections applied after causal attribution
+
+The four confirmed TFLite regressions were corrected only after the evidence
+above was committed. Each correction restores a generic historical contract;
+none keys on a model name or weakens accuracy acceptance.
+
+- RTMPose L and M first failed at `558973fd` (`Index NCHW concat global-pool
+  repair`). The indexed matcher rejected a valid concat fan-out because the
+  concat fed both the expected global-pool path and a self-gating `MUL`. The
+  matcher now accepts that extra consumer only when the `MUL` directly uses
+  the concat and its other operand provably depends on the matched global-pool
+  convolution output. Arbitrary fan-out remains rejected transactionally.
+- Nighttime dehaze first failed at `6f17253b` (`Index InstanceNorm residual
+  concat layout`). Its valid epsilon and one constants have declared TensorIR
+  shape `[1]` but a scalar NumPy backing array. The indexed constant reader now
+  accepts only this exact scalar-backed, one-element declaration and
+  normalizes it to the declared shape. Other data/shape mismatches remain
+  rejected.
+- The GridSample model first failed at `b80150a3` (`Index safe binary bridge
+  recovery`). The old single-post bridge pass intentionally repaired an
+  intermediate non-topological order by moving the inverse post-transpose
+  output producer to the earlier binary operator. The indexed guard instead
+  rejected every consumer that preceded the old post-transpose. It now
+  requires those consumers to follow the binary, which is the producer after
+  rewrite, while retaining the stricter order guard for consumers of the
+  retained adapter. This prevents the later incorrect legacy-only rewrite
+  that produced `Input tensor 1048 lacks data`.
+
+Final sequential real-model validation used the same sanitized uv environment,
+`-tb flatbuffer_direct -cotof -fdopt`, a 600-second process-group ceiling, and
+the process-tree SWAP monitor. All four models passed with SWAP zero:
+
+| Model | Final maximum absolute error |
+| --- | ---: |
+| `nighttime_dehaze_realnight_1x3x180x320.onnx` | `0.000294536` |
+| `rtmpose_wholebody_l_1x3x256x192.onnx` | `4.67896e-06` |
+| `rtmpose_wholebody_m_1x3x256x192.onnx` | `2.72691e-06` |
+| `model_70_2023_0303_32_2_1_grid_sample_bilinear_no_pad_10_squeeze.onnx` | `0.00802997` |
+
+The focused indexed-pass suites complete with `154 passed`; Ruff and
+`git diff --check` also pass.
+
+## Timeout isolation correction and managed-profile update
+
+The bulk runner now starts every converter in a new POSIX session, binds the
+SWAP monitor to that process group, and terminates then reaps the entire group
+on timeout, SWAP detection, or normal parent exit with surviving descendants.
+An integration test starts a converter-shaped parent and grandchild, forces a
+timeout, and proves that the process group has no live members before control
+returns. A separate test proves SWAP termination uses the same process-group
+boundary. All 40 bulk-runner tests and Ruff pass.
+
+The managed profile now records both observed 600-second models as `timeout`
+with normalized `timeout_after_600s` signatures:
+
+- `vit_b_encoder.onnx` (600.644 seconds, SWAP zero);
+- `superpoint_lightglue_end2end_fused_cpu.onnx` (600.219 seconds, SWAP zero).
+
+The post-run profile therefore remains complete at 420 Tier 0-4 records but
+contains 379 active and 41 excluded records: 353 `pass`, 20 `tflite_fail`, 6
+`missing_tflite_report`, 29 `timeout`, and 12 explicit `excluded`. Active tier
+counts are 119/84/105/49/22 for Tier 0 through Tier 4. Future runs will not
+repeat either over-ceiling model.
+
+## Native PyTorch regression assessment
+
+The authoritative run generated and evaluated the native package for every
+one of its 381 active entries. It observed 136 combined passes, 183 missing
+PyTorch reports, 32 PyTorch accuracy failures, and additional PyTorch
+non-passes paired with TFLite/conversion failures. These are not automatically
+branch regressions because no managed pre-`fb-refactor5` PyTorch corpus
+baseline exists.
+
+The PyTorch exporter changes between detached `main` `a8640153` and this
+branch are six mechanical extractions from the large exporter into
+`pytorch_fast_precanonicalize_policy.py`: downstream binary evidence, Resize/
+BatchNorm evidence, aligned BatchNorm constants, local-response-normalization
+layout propagation, rewritten static-shape recording, and NHWC bridge state.
+The extraction-focused policy and emitter suites complete with `59 passed`.
+
+Eight short, high-signal native failures were then compared sequentially with
+detached `main` using the same model, sanitized uv environment, `-tb
+flatbuffer_direct -cotof -fdopt`, and process-group SWAP monitor. Every result
+was identical on current and `main`:
+
+| Model/family | Result on both implementations |
+| --- | --- |
+| `GridSample_16.onnx` | no PyTorch report; invalid reshape to `[1,3,51076]` |
+| `mspfn_320x480.onnx_cut3.onnx` | no PyTorch report; scalar passed to `torch.minimum` |
+| `hair_segmenter.onnx` | no PyTorch report; dimension 32 versus 128 |
+| `arcfaceresnet100-8.onnx` | accuracy fail, maximum absolute error about `0.72712` |
+| `nighttime_dehaze_realnight_1x3x180x320.onnx` | no PyTorch report; convolution receives 320 instead of 64 channels |
+| `rtmpose_wholebody_l_1x3x256x192.onnx` | no PyTorch report; dimension 60 versus 48 |
+| `rtmpose_wholebody_m_1x3x256x192.onnx` | no PyTorch report; convolution receives 1 instead of 192 channels |
+| GridSample Tier 3 regression representative | no PyTorch report; batch-matmul expects `[2,64]`, receives `[2,1]` |
+
+The first four cover the largest repeated missing-report signatures plus an
+accuracy-failure family. The latter four prove that the TFLite repairs above
+did not introduce new native-PyTorch behavior; their repaired current output
+and detached-main output match exactly. All comparisons used SWAP zero.
+
+For additional characterization, the monolithic legacy
+`tests/test_pytorch_exporter.py` run reached 89% before a single exported-
+program archive test spent several minutes recompiling an FX graph and the
+run was intentionally interrupted. At that point it had reported 942 passes
+and 81 failures in 776.98 seconds. This is not an acceptance result. Three
+representative fast failures were rerun individually on detached `main` and
+failed with the same assertions, showing that the prominent legacy-suite
+failures predate this branch. The long monolithic suite should not replace the
+focused extraction suites or the managed sequential corpus evidence.
+
+No `fb-refactor5`-specific native PyTorch regression is confirmed by these
+comparisons. The existing native runtime/accuracy limitations remain recorded
+as pre-existing work; they were not broadened into this TFLite regression
+correction checkpoint.
