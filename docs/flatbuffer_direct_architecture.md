@@ -8544,6 +8544,32 @@ Valid static behavior, statistics, fixed point, provenance/options, and both
 production calls must remain unchanged. The 218-line count is descriptive
 only; 2,000 remains the ONNX operation-count tier threshold.
 
+That correction is now implemented in the 399-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated consumer scan and stays current
+through the indexed Reshape input/output setters and one batched removal. Two
+independent matches construct and refresh it exactly once.
+
+Each candidate proves unique source, intermediate, and final producers; strict
+Reshape/Transpose/Reshape/Transpose graph order; exact private internal
+consumers; complete positive physical shapes; and compatible rank-three/rank-
+four signatures. Non-batch signature dimensions must agree with the proven
+physical shape. Compatible concrete/dynamic batch signatures produce one
+target batch value, using `-1` whenever any boundary remains dynamic, and the
+same planned value updates the shape buffer and both list-valued Reshape
+options.
+
+The shape input is now an explicit immutable unquantized INT32 contract with
+exact TensorIR, buffer, shape, signature, ownership, and original-value checks.
+Public inputs, variables, runtime producers, missing data, invalid dtypes, and
+quantized values reject. A changed private shape updates once; an unrelated
+consumer or public output receives a deterministic collision-safe clone that
+preserves layout and ONNX provenance. Shape action, options, indexed output
+rename, removal set, and prune decision are complete before mutation. All
+nineteen former strict xfails are green, zero-match execution no longer prunes,
+and the explicit one-index contract brings the focused suite to thirty-four
+cases without changing valid static behavior, statistics, fixed point, or both
+production calls.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

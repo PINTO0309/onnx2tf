@@ -1734,4 +1734,12 @@ ownership/type handling, ignored signatures, and duplicate/reverse/public
 topology. Resume by building one indexed topology/metadata/dynamic-shape/
 constant-ownership/output/removal plan before mutation and turning all 19
 xfails green without changing valid static behavior or either production call.
-Do not create a pull request.
+Do not create a pull request. That transactional correction is now complete in
+the 399-line raw owner. One differential `ModelIRGraphIndex`, strict ordered
+topology, complete shape/signature validation, dynamic-batch-preserving target
+planning, an ownership/type-safe INT32 shape action, indexed input/output
+setters, and batched removal turn all 19 former xfails green. Focused coverage
+now has 34 green cases, including zero-match and one-index contracts, while both
+production calls remain unchanged. Resume by mechanically extracting the
+corrected owner with exact AST and owner/wrapper equality; do not create a pull
+request.

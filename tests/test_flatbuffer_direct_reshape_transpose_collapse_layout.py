@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -239,6 +240,32 @@ def test_reshape_transpose_collapse_rewrites_multiple_and_fixed_point() -> None:
     assert _normalize(model_ir) == after_first
 
 
+def test_reshape_transpose_collapse_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(branches=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = (
+        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {
+        "optimized_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains": 2,
+    }
+    assert refresh_count == 1
+
+
 def test_reshape_transpose_collapse_clones_shared_shape_collision_safely() -> None:
     model_ir = _model()
     shape_name = "branch0_shape1"
@@ -366,10 +393,6 @@ def _append_identity_consumer(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="dynamic batch signatures are collapsed to a concrete shape",
-)
 def test_reshape_transpose_collapse_preserves_dynamic_batch() -> None:
     model_ir = _model(dynamic_batch=True)
 
@@ -391,10 +414,6 @@ def test_reshape_transpose_collapse_preserves_dynamic_batch() -> None:
     assert reshape.options["onnxRawNewShape"] == [-1, 2, 3, 4]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="no-match execution prunes tensors instead of remaining a no-op",
-)
 def test_reshape_transpose_collapse_does_not_prune_unmatched_graph() -> None:
     model_ir = _model()
     _tensor(model_ir, "unused", [1])
@@ -406,10 +425,6 @@ def test_reshape_transpose_collapse_does_not_prune_unmatched_graph() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="reshape shape constants lack an immutable ownership/type plan",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -447,10 +462,6 @@ def test_reshape_transpose_collapse_rejects_unsafe_shape_constant(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a changed public shape output is mutated instead of cloned",
-)
 def test_reshape_transpose_collapse_clones_public_shape_output() -> None:
     model_ir = _model()
     shape_name = "branch0_shape1"
@@ -469,10 +480,6 @@ def test_reshape_transpose_collapse_clones_public_shape_output() -> None:
     assert np.array_equal(model_ir.tensors[shape_name].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="complete shape signatures are not prevalidated",
-)
 @pytest.mark.parametrize(
     "name",
     [
@@ -492,10 +499,6 @@ def test_reshape_transpose_collapse_rejects_short_signature(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="duplicate producers, reverse order, and public aliases are accepted",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -565,7 +568,7 @@ def test_reshape_transpose_collapse_keeps_raw_owner_and_calls() -> None:
         and node.name
         == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 218
+    assert owner.end_lineno - owner.lineno + 1 == 399
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
 
     lowerer = next(

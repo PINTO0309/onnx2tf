@@ -12167,3 +12167,58 @@ decision before mutation. Turn all 19 strict xfails green while preserving the
 fourteen existing cases, statistics, fixed point, provenance/options, and both
 production calls. Validate sequentially, commit and push, and do not create a
 pull request.
+
+## Reshape/Transpose collapse transactional correction: completed state
+
+All nineteen former strict xfails are green. The corrected raw owner is 399
+lines and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite
+refreshes it exactly once. Indexed input/output setters and one batched removal
+replace the repeated consumer scan and direct operator deletion.
+
+Before mutation, each candidate proves unique source/intermediate/output
+producers, strict Reshape/Transpose/Reshape/Transpose graph order, exact private
+internal consumers, complete rank-three/rank-four positive physical shapes,
+and compatible full-length signatures. The proven physical N/S/C/H/W
+relationship remains unchanged. Every non-batch signature dimension must equal
+its physical dimension, while each batch signature may be the physical batch
+or `-1`; any dynamic boundary makes the planned target batch `-1`. Shape-buffer,
+`newShape`, and `onnxRawNewShape` targets therefore remain consistent.
+
+The first Reshape shape input has an immutable unquantized INT32 contract:
+TensorIR and NumPy buffer dtype, `[4]` shape/signature, data presence, ownership,
+runtime-producer absence, and equality with the proven first Reshape shape are
+validated. Public inputs, variables, wrong dtypes, quantization, missing data,
+and produced constants reject. Private values update once; public outputs and
+values with unrelated consumer edges receive one deterministic collision-safe
+clone preserving layout and ONNX provenance.
+
+Shape action, clone name, dynamic options, indexed output rename, removals, and
+pruning are complete before commit. Missing/short metadata, duplicate or
+reverse topology, and public aliases leave the complete ModelIR unchanged. A
+zero-match invocation no longer prunes unrelated tensors.
+
+Validation completed sequentially as follows:
+
+- corrected focused dynamic, no-prune, ownership, topology, and one-index
+  contract: `34 passed in 0.54s`;
+- corrected focused contract, the five adjacent extracted bridge contracts,
+  and ordered architecture suite: `634 passed in 19.12s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.77s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to fully proven candidates. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. The 399-line count is
+descriptive only; 2,000 remains the ONNX operation-count tier threshold. PR
+#952 remains closed; no pull request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 399-line
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains` owner
+into a focused pass module. Keep the historical lowerer private name as a one-
+return wrapper and preserve both production calls. Prove corrected checkpoint/
+module AST identity and direct owner/wrapper equality for static/dynamic,
+multiple, shared/public/invalid shape constants, no-prune, signatures,
+topology, and atomicity cases. Validate sequentially, commit and push, and do
+not create a pull request.
