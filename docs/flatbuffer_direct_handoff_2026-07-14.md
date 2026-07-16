@@ -8525,3 +8525,76 @@ boundaries, all three production positions, statistic, existing fixtures, and
 short zero-SWAP ownership before changing source. Keep inference strictly
 sequential and minimal, then commit and push one coherent unit without creating
 a pull request.
+
+## Pre-unary affine/post-Transpose fan-out ownership extraction: completed state
+
+The complete 401-line
+`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`
+implementation is now owned by `passes/pre_unary_affine_fanout_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at all three unchanged
+source positions. After normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The owner preserves the exclusive NHWC-to-NCHW pre-Transpose, the exact
+RELU/RELU6/LOGISTIC/TANH/HARD_SWISH/LEAKY_RELU/GELU allowlist, every
+Mul-constant→Add-constant→post-Transpose branch, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, tensor metadata and
+quantization propagation, exact mutation/removal order, fixed-point restart,
+pruning, and statistic. No dependency, graph-index path, layout-state behavior,
+guard, or semantic policy was introduced.
+
+Ten focused cases fix all seven accepted unary forms, a two-branch positive
+graph, an externally shared Mul constant, module-owner/private-wrapper full
+ModelIR equality, idempotence, unsupported unary rejection, and a public
+post-output no-op boundary. The adjacent focused architecture selector passes
+`12 passed, 232 deselected in 2.06s`; the complete indexed SiNet residual suite
+passes `207 passed in 0.79s`; the branch-wide selection passes
+`727 passed in 33.48s`; and the optional-TensorFlow import-blocked suite passes
+`11 passed in 9.65s`.
+
+SiNet is the minimal strictly sequential artifact control. Its five runtime
+helper results are all zero before and after extraction. The pre conversion
+completed in 2.430 seconds and the post conversion in 2.503 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding SiNet accuracy checkpoint remains
+`max_abs=2.572051016613841e-09`; no duplicate inference was added because the
+executed TFLite artifact is identical. This zero-owner result agrees with the
+earlier fourteen-model, five-boundary conversion characterization and the
+read-only 381-model active Tier 0-4 ONNX topology scan. No non-zero production
+owner is claimed; positive behavior is fixed synthetically.
+
+The recorded compatibility risk is unchanged. The helper rebuilds whole-graph
+producer/consumer maps in an unbounded loop, does not share GraphIndex or
+LayoutState, and does not completely validate constant producer ownership,
+variable state, or graph visibility. Replacing it with an immutable indexed
+plan requires independent semantic fixtures and is not mixed into this exact
+mechanical ownership move.
+
+Changed files are the new pre-unary affine fan-out pass module, lowerer import
+and wrapper, focused corpus, architecture ownership test, and three branch
+documents. No public API, CLI, artifact name, TensorFlow boundary, dependency,
+corpus profile, exclusion policy, or ONNX operation-tier policy changed.
+Temporary tracing and conversion outputs are removed before commit. PR #952
+remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 509-line indexed-first
+compatibility composite
+`_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains`.
+At restart, inventory its indexed owner and raw fallback boundary, per-call
+GraphIndex construction and LayoutState forwarding, Mul and reshape constants,
+legacy consumers, combined statistic, production positions, existing positive
+IAT-LLIE ownership, and fallback fixtures before changing source. Keep
+inference strictly sequential and minimal, then commit and push one coherent
+unit without creating a pull request.

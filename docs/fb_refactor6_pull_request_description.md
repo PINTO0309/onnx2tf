@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving eighteen
+This branch continues the staged `flatbuffer_direct` refactor by moving nineteen
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -23,7 +23,8 @@ lowerer and into focused pass modules:
 - terminal affine/Reshape/FullyConnected layout recovery;
 - terminal PReLU/Reshape/BatchMatMul layout recovery;
 - residual Add/Mul/Add/PReLU compatibility recovery;
-- residual Add/Mul/Add/post-Transpose fan-out compatibility recovery.
+- residual Add/Mul/Add/post-Transpose fan-out compatibility recovery;
+- pre-unary Mul/Add/post-Transpose fan-out compatibility recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -298,6 +299,23 @@ variable state, or graph visibility. Those ownership guards remain a separate
 semantic-hardening checkpoint so this mechanical move cannot change artifact
 behavior.
 
+### Pre-unary Mul/Add/post-Transpose fan-out recovery
+
+`passes/pre_unary_affine_fanout_layout.py` owns the former 401-line
+compatibility helper. It preserves the strict private NHWC-to-NCHW Transpose,
+the complete seven-operation unary allowlist, all
+Mul-constant→Add-constant→post-Transpose branches, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, tensor metadata and
+quantization, mutation/removal order, fixed-point restart, pruning, statistic,
+and all three source call positions. The lowerer retains a one-call private
+wrapper. The complete old/new owner ASTs are identical after function-name
+normalization.
+
+The raw compatibility contract still does not share the Session GraphIndex or
+LayoutState and does not fully validate constant producers, variable state, or
+graph visibility. Those improvements require an indexed immutable plan and an
+independent semantic checkpoint.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -361,6 +379,9 @@ The new focused tests cover:
   equality plus the complete indexed SiNet residual contract suite;
 - residual affine fan-out multi-branch, legacy-adapter, shared-constant
   copy-on-write, idempotence, public-output no-op, and owner/wrapper equality;
+- pre-unary affine fan-out coverage for all seven unary types, two branches,
+  shared-constant copy-on-write, idempotence, unsupported/public-boundary
+  rejection, and owner/wrapper equality;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -403,6 +424,10 @@ Latest checkpoint results:
 - residual affine fan-out direct owner plus architecture suite: `235 passed`;
 - complete indexed SiNet residual suite after fan-out extraction: `207 passed`;
 - final branch gate after residual affine fan-out extraction: `716 passed`;
+- focused pre-unary affine fan-out and adjacent ownership selector: `12 passed`;
+- complete indexed SiNet residual suite after pre-unary extraction:
+  `207 passed`;
+- final branch gate after pre-unary affine fan-out extraction: `727 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -552,6 +577,16 @@ The immediately preceding SiNet accuracy baseline remains
 `max_abs=2.572051016613841e-09`; no duplicate inference was run because the
 executed TFLite is unchanged. The positive owner contract is synthetic.
 
+The pre-unary affine fan-out extraction again used `sinet_320_op.onnx` as the
+minimal fixed artifact control. Its five runtime results are all zero before
+and after extraction. The pre/post conversion-only runs completed in 2.430 and
+2.503 seconds, recorded process-tree SWAP zero, and produced byte-identical
+float32, float16, tensor-correspondence, schema, and generated-schema outputs.
+The immediately preceding SiNet accuracy baseline remains
+`max_abs=2.572051016613841e-09`; no duplicate inference was run because the
+executed TFLite is unchanged. The positive owner contract is synthetic and the
+earlier broader zero-owner characterization remains authoritative.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -560,10 +595,11 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 401-line
-`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains` helper.
-Its NHWC-to-NCHW pre-Transpose, accepted unary family, multiple
-Mul/Add/post-Transpose branches, constant copy-on-write, statistic, three
-production positions, existing fixtures, and short-model ownership must be
-characterized before extraction; no broad conversion sweep is implied by this
-mechanical checkpoint.
+The next raw source-order boundary is the 509-line indexed-first compatibility
+composite
+`_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains`.
+Its existing indexed owner, raw fallback, GraphIndex construction, LayoutState
+forwarding, Mul/reshape constant copy-on-write, legacy consumers, combined
+statistic, production positions, positive IAT-LLIE ownership, and fallback
+fixtures must be inventoried before choosing the next ownership boundary; no
+broad conversion sweep is implied by this mechanical checkpoint.

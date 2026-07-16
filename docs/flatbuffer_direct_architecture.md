@@ -7116,6 +7116,30 @@ claimed. Constant producer, variable-state, and graph-visibility validation
 remain looser than newer immutable indexed contracts and require a separate
 semantic-hardening checkpoint.
 
+The following pre-unary Mul/Add/post-Transpose fan-out compatibility rule is
+isolated in `passes/pre_unary_affine_fanout_layout.py`. Its former 401-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. It preserves the strict private NHWC-to-NCHW Transpose,
+single RELU/RELU6/LOGISTIC/TANH/HARD_SWISH/LEAKY_RELU/GELU producer, complete
+Mul-constant→Add-constant→NCHW-to-NHWC fan-out, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, tensor metadata and
+quantization propagation, exact removal order, fixed-point restart, pruning,
+statistic, and all three production positions. The lowerer retains a one-call
+private wrapper.
+
+Ten focused cases cover every accepted unary, a two-branch graph, an externally
+shared constant, full module-owner/private-wrapper ModelIR equality,
+idempotence, unsupported unary rejection, and a public post-output boundary.
+SiNet reaches the compatibility owner five times with zero rewrites before and
+after extraction; its strictly sequential conversions report zero process-tree
+SWAP and reproduce all five core artifacts byte for byte. This agrees with the
+earlier fourteen-model, five-boundary characterization and 381-model active
+Tier 0-4 ONNX topology scan, which also found no real owner. Positive production
+ownership is not claimed. The raw compatibility contract still lacks a shared
+GraphIndex/LayoutState transaction and complete producer, variable-state, and
+graph-visibility validation for constants; hardening remains separate from the
+mechanical ownership checkpoint.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`
