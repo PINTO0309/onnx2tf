@@ -6512,3 +6512,13 @@ semantic regression but is no longer reliably short. The next action is a
 profile-only exclusion with `repeated_quick_ceiling_timeout`, as required by
 the user timeout-exclusion policy. Do not modify converter source or rerun the
 model before applying that policy update.
+
+The pre-change evidence above was committed and pushed as `c3cab627`. Only
+after that checkpoint, HybridNets was changed to `excluded` with reason
+`repeated_quick_ceiling_timeout` in both the measured-quick and managed Tier
+0-4 profiles. Active counts are now 48/49 and 381/420 respectively. Exact
+profile contract tests cover the entry and aggregate counts. No converter
+source, timeout, artifact, or accuracy policy changed, and no additional model
+conversion was run. The fixed active quick set therefore has zero newly
+confirmed semantic regressions: 42 passes and six preserved known non-passes,
+all with zero SWAP.

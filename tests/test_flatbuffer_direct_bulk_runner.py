@@ -1303,10 +1303,10 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
-    assert profile["active_model_count"] == 382
-    assert profile["excluded_model_count"] == 38
+    assert profile["active_model_count"] == 381
+    assert profile["excluded_model_count"] == 39
     assert profile["excluded_baseline_classification_counts"] == {
-        "excluded": 11,
+        "excluded": 12,
         "timeout": 27,
     }
     assert profile["tiers"] == [0, 1, 2, 3, 4]
@@ -1314,10 +1314,10 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 356,
+        "pass": 355,
         "tflite_fail": 20,
         "timeout": 27,
-        "excluded": 11,
+        "excluded": 12,
     }
     assert profile["acceptance_reasons"] == {
         "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx": (
@@ -1540,6 +1540,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "baseline_classification": "excluded",
             "baseline_reason": "user_excluded_from_future_validation",
         }
+    hybridnets_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "hybridnets_384x640_sim.onnx"
+    )
+    assert hybridnets_entry == {
+        "tier": 4,
+        "model": "hybridnets_384x640_sim.onnx",
+        "baseline_classification": "excluded",
+        "baseline_reason": "repeated_quick_ceiling_timeout",
+    }
     tiny_decoder_entry = next(
         entry
         for entry in profile_payload["models"]
@@ -2021,3 +2032,36 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         assert profile["model_options"][model_name] == {
             "overwrite_input_shape": ["images:1,3,512,640"],
         }
+
+
+def test_measured_quick_profile_excludes_repeated_timeout_model() -> None:
+    profile_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "baselines"
+        / "flatbuffer_direct_quick_tier0_4_2026-07-16.json"
+    )
+    profile = bulk_runner._load_regression_profile(str(profile_path))
+
+    assert profile["model_count"] == 49
+    assert profile["active_model_count"] == 48
+    assert profile["excluded_model_count"] == 1
+    assert profile["excluded_baseline_classification_counts"] == {
+        "excluded": 1,
+    }
+    assert profile["baseline_classification_counts"] == {
+        "missing_tflite_report": 1,
+        "pass": 43,
+        "tflite_fail": 4,
+        "excluded": 1,
+    }
+    profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
+    hybridnets_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "hybridnets_384x640_sim.onnx"
+    )
+    assert hybridnets_entry["baseline_classification"] == "excluded"
+    assert hybridnets_entry["baseline_reason"] == (
+        "repeated_quick_ceiling_timeout"
+    )

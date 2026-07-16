@@ -6944,6 +6944,14 @@ exclusion contract tests must be updated in the same checkpoint. Because that
 changes profile identity, the next authoritative run starts with a clean
 output directory rather than resuming results produced by the older profile.
 
+Expected or repeated quick-ceiling timeouts follow the same evidence-first
+policy. Preserve the complete timed-out run before changing a profile; compare
+completed artifacts and prior successful accuracy evidence to distinguish
+runtime variance from a semantic regression. A model that is no longer
+reliably short is retained as excluded history with a normalized reason such
+as `repeated_quick_ceiling_timeout`. Do not increase the quick ceiling or
+change converter source merely to keep that model in the short-runtime set.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

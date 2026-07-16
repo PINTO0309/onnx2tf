@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "flatbuffer_direct_quick_tier0_4_2026_07_16",
-  "description": "Sequential measured-short-runtime regression selection for fb-refactor5. Problems are recorded in retained evidence before any source fix.",
+  "description": "Sequential measured-short-runtime regression selection for fb-refactor5. Problems are recorded in retained evidence before any source or profile fix; repeated quick-ceiling timeouts remain as excluded history.",
   "min_nodes": 1,
   "max_nodes": 1999,
   "root_only": true,
@@ -39,6 +39,7 @@
       "managed user exclusions",
       "models measured at 30 seconds or longer in the 2026-07-14 sequential quick run",
       "any model with recorded model-process SWAP",
+      "models with repeated 45-second quick-ceiling timeouts",
       "Tier 5"
     ],
     "execution": "uv, fixed profile order, one converter subprocess at a time, TFLite-only, 45-second per-model safety ceiling"
@@ -1229,7 +1230,8 @@
     {
       "tier": 4,
       "model": "hybridnets_384x640_sim.onnx",
-      "baseline_classification": "pass",
+      "baseline_classification": "excluded",
+      "baseline_reason": "repeated_quick_ceiling_timeout",
       "node_count": 1118,
       "file_size_bytes": 54688127,
       "op_types": [

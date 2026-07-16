@@ -41,6 +41,14 @@ the safe follow-up is a profile-only exclusion with reason
 conversion is warranted. The immutable pre-change evidence is
 [`docs/baselines/flatbuffer_direct_quick_tier0_4_0e666234_result.json`](baselines/flatbuffer_direct_quick_tier0_4_0e666234_result.json).
 
+That evidence was committed and pushed independently as `c3cab627` before the
+profile change. HybridNets is now retained as excluded history in both the
+49-entry measured-quick profile and the 420-entry managed Tier 0-4 profile,
+with normalized reason `repeated_quick_ceiling_timeout`. Their active counts
+are respectively 48 and 381. Profile contract tests assert both the counts and
+the exact exclusion. No converter source, timeout value, model artifact, or
+accuracy acceptance was changed, and the model was not rerun.
+
 ## Pre-fix outcome
 
 This document freezes the regression evidence **before any source fix**. The

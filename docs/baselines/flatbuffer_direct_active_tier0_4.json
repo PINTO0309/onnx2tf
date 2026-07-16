@@ -2622,7 +2622,8 @@
     {
       "tier": 4,
       "model": "hybridnets_384x640_sim.onnx",
-      "baseline_classification": "pass"
+      "baseline_classification": "excluded",
+      "baseline_reason": "repeated_quick_ceiling_timeout"
     },
     {
       "tier": 4,
