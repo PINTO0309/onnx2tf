@@ -6821,6 +6821,19 @@ Its float32, float16, and correspondence artifacts remain byte-identical to
 the pre-extraction baseline, and the sequential accuracy gate passes with
 maximum absolute error `4.470348358154297e-07` and zero process SWAP.
 
+The formerly adjacent raw direct/direct-only helper has been removed. It was
+not a second semantic owner: the compatibility helper above has always
+accepted the same direct/direct producer and suffix contracts before it, in
+addition to its Mul-constant family. Production-boundary instrumentation
+confirmed zero residual rewrites in all three ordered invocations for
+IAT-LLIE, five short zero-SWAP representatives, and LINEA. A topology scan of
+the fixed 49-model Tier 0-4 measured-quick set found no other candidate model.
+Removing the unreachable helper deletes 290 lines and avoids three repeated
+producer/consumer-map builds plus full Add scans per conversion. Architecture
+tests now forbid reintroducing either its private definition or call while the
+single ordered indexed/compatibility owner retains all fixtures and artifact
+behavior.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

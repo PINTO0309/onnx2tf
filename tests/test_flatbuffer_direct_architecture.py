@@ -310,7 +310,6 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         "_run_layout_recovery_prefix_pass_sequence",
         "_optimize_transpose_pre_add_nhwc_chains",
         "_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains",
-        "_optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains",
         "_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains",
         "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains",
         "_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains",
@@ -13245,6 +13244,25 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
     lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    removed_redundant_owner = (
+        "_optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains"
+    )
+    assert all(
+        not (
+            isinstance(node, ast.FunctionDef)
+            and node.name == removed_redundant_owner
+        )
+        for node in ast.walk(lowerer_tree)
+    )
+    assert all(
+        not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == removed_redundant_owner
+        )
+        for node in ast.walk(lowerer_tree)
+    )
 
     assert "def _resolve_candidate(" in owner_source
     assert "def _resolve_branch(" in owner_source

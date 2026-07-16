@@ -5881,3 +5881,88 @@ is stored in:
 - `docs/flatbuffer_direct_quick_regression_2026-07-16.md`;
 - `docs/baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_result.json`;
 - `docs/baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_linea_followup.json`.
+
+## Adjacent direct/direct reshape suffix helper: pre-change observation
+
+The adjacent raw
+`_optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains` helper was
+characterized at its unchanged production boundary before any source change.
+The instrumentation counted both that helper and its immediately preceding
+Mul-const compatibility owner at each of the three ordered prefix
+invocations. All conversions used `uv`, ran sequentially, and generated only
+the requested direct TFLite artifacts.
+
+IAT-LLIE recorded 5, 4, and 4 rewrites in the preceding indexed/compatibility
+owner, but 0, 0, and 0 in the adjacent direct/direct helper. Five additional
+short zero-SWAP representatives
+(`face_detection_yunet_2023mar_int8.onnx`, `FastestDet.onnx`,
+`human_segmentation_pphumanseg_2021oct_org.onnx`,
+`osnet025_Nx3x256x128.onnx`, and `sinet_320_op.onnx`) recorded zero rewrites in
+both helpers at all invocations. A static topology query over the fixed
+49-model Tier 0-4 measured-quick profile found only IAT-LLIE and LINEA with an
+ONNX Add -> Reshape -> Transpose `[0,2,1]` suffix. LINEA then also recorded
+0, 0, and 0 in the adjacent helper during an isolated successful conversion.
+
+The observed issue is redundant work, not an accuracy regression. The
+preceding compatibility helper deliberately accepts direct/direct as well as
+direct/Mul-constant inputs. For a direct input its producer, permutation,
+graph-output, and consumer guards are the same as the adjacent helper's
+guards. Its suffix selection, legacy-user handling, shape-constant
+copy-on-write, metadata permutation, adapter insertion, operator removal, and
+final prune are also identical for that family. Because it runs first at the
+same three boundaries, every candidate the adjacent helper could accept has
+already been accepted and removed. The adjacent helper therefore performs
+three repeated full producer/consumer-map builds and Add scans without owning
+a reachable semantic family.
+
+The safe change to evaluate is removal of only the unreachable private helper
+and its three production invocations. The preceding indexed owner plus its raw
+compatibility fallback must remain unchanged. The active direct/direct legacy
+fixture, indexed owner tests, deterministic artifact hashes, TensorFlow import
+blocker, and smallest real-model inference gate must pass before the removal
+can be retained. No production fix has been applied at this point.
+
+## Adjacent direct/direct reshape suffix helper: final checkpoint
+
+The pre-change finding was confirmed and the unreachable private helper plus
+its sole production call site were removed. This deletes 290 raw lowerer lines
+and prevents the recovery prefix, which executes three times, from rebuilding
+producer/consumer maps and scanning every Add for an already-owned family.
+The preceding indexed owner and its compatibility fallback are unchanged, so
+strict indexed rejects and all direct/direct or direct/Mul-constant behavior
+remain at the historical ordered boundary. An architecture assertion now
+prevents either the redundant definition or a call to it from returning.
+
+The direct/direct legacy fixture and Mul-constant legacy fixture pass through
+the remaining owner. The complete indexed owner plus architecture gate passes
+223 tests in 45.73 seconds. TensorFlow-import-blocked explicit direct, default
+direct, and direct `-cotof` pass 3 tests in 4.71 seconds. IAT-LLIE conversion
+retains the exact fixed artifacts:
+
+- float32 TFLite:
+  `75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881`;
+- float16 TFLite:
+  `4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43`;
+- tensor correspondence report:
+  `a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`.
+
+The single sequential managed IAT-LLIE accuracy gate passes in 20.335 seconds
+with maximum absolute error `4.470348358154297e-07`, converter exit code 0,
+and `peak_swap_kib=0`. No model exclusion, timeout-policy change, dependency,
+public API, CLI behavior, generated corpus artifact, optional TensorFlow
+boundary, or managed profile changed. No failure was found and therefore no
+additional corrective source change was required. Scoped architecture Ruff,
+Python syntax compilation, and `git diff --check` pass. Whole-file Ruff on the
+lowerer continues to report the same ten inherited F841 findings as the parent
+commit; this deletion introduces no new lint finding.
+
+### Restart instruction after this checkpoint
+
+After confirming the branch is clean and synchronized, characterize the next
+raw `_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains`
+helper at its unchanged three production boundaries. Use the fixed short,
+zero-SWAP corpus first and locate a real non-zero family before extracting
+anything. Record any ownership conflict, artifact change, accuracy failure, or
+SWAP before changing source. Keep conversion checks minimal, inference
+strictly sequential, and continue with coherent commit/push units only; do not
+create a pull request.
