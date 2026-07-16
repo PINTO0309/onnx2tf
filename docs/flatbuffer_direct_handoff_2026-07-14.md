@@ -11188,7 +11188,7 @@ create a pull request.
 
 ## Softmax/Transpose transactional correction: completed state
 
-All 24 strict xfails are green. The corrected raw owner is 340 lines and builds
+All 24 strict xfails are green. The corrected raw owner is 343 lines and builds
 one `ModelIRGraphIndex` instead of rebuilding complete producer and consumer
 maps during each fixed-point round. It requires unique producers and strict
 `pre-previous < pre < Softmax < post` order, rejects produced tensors also
@@ -11230,7 +11230,7 @@ Public API, CLI, artifacts, dependencies, corpus profiles, exclusions,
 operation tiers, and TensorFlow boundaries are unchanged. PR #952 remains
 closed; no pull request was created or reopened.
 
-At restart, mechanically extract the corrected 340-line
+At restart, mechanically extract the corrected 343-line
 `_canonicalize_softmax_transpose_chains` owner to a focused pass module. Retain
 the historical lowerer private name as a one-return wrapper, import the shared
 terminal marker from its existing owner, and preserve both nested recovery-
@@ -11239,3 +11239,52 @@ wrapper equality for static/dynamic metadata, multiple branches, shared and
 public-output clones, `axis=-1`, terminal output, pruning, rejection, and
 atomicity cases. Validate sequentially, commit and push, and do not create a
 pull request.
+
+## Softmax/Transpose ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/softmax_transpose_canonicalization.py`. Its
+function and the corrected raw owner at checkpoint `9a9898e3` are each 343
+lines and have identical ASTs. The central lowerer imports it under the private
+`_canonicalize_softmax_transpose_chains_pass` alias and retains the historical
+private name as a one-return wrapper. The two positions inside
+`_run_quantized_activation_binary_bridge_recovery_sequence` and
+`_run_layout_attention_quantized_recovery_suffix` are unchanged. The module
+imports the shared NHWC-propagation marker from `terminal_softmax_layout`
+without importing the lowerer.
+
+Ten direct owner/wrapper comparisons cover static shapes with dynamic batch
+signatures, two independent branches, shared permutation clones, a public-
+output clone, normalized axis `-1`, a terminal output, historical zero-match
+pruning, unsafe axis rejection, incomplete metadata rejection, and post-plan
+atomic rejection. Deep-copied executions produce identical statistics and
+complete normalized ModelIR state, including tensor buffers, topology,
+options, metadata, provenance, quantization, and lineage diagnostics.
+
+Validation completed as follows:
+
+- corrected checkpoint/module AST comparison: exact, 343 lines each;
+- focused owner/wrapper and architecture selector: `300 passed in 20.88s`;
+- all focused Softmax/layout plus architecture suites:
+  `453 passed in 21.13s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.42s`;
+- targeted Ruff for the new module and tests, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly seven pre-existing Ruff findings.
+
+No real-model conversion was repeated. The move is mechanically identical to
+the corrected checkpoint, and direct equality covers every synthetic non-zero
+family plus the critical rejection boundaries. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, ordered runtime
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed; no
+pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: the 394-line
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains`. Reuse its two existing
+public fixtures (ordinary and legacy-consumer variants), then freeze multiple-
+match, constant ownership/rotation, adapter naming, rank/signature,
+quantization, public-boundary, pruning, fixed-point, statistics, and ordered-
+production-boundary behavior. Record unsafe behavior as strict xfails before
+correction. Keep conversion validation minimal and strictly sequential,
+commit and push coherent checkpoints, and do not create a pull request.

@@ -1593,4 +1593,12 @@ Transpose metadata, and marker options are planned before commit. All 24
 former strict xfails are green, including public-output cloning and post-plan
 atomicity, while normalized axis `-1`, valid statistics, pruning, fixed-point
 behavior, and both ordered boundaries remain intact. Resume by mechanically
-extracting the corrected 340-line owner into a focused pass module.
+extracting the corrected 343-line owner into a focused pass module. That move
+is now complete with an AST-identical module owner, a one-return private
+lowerer wrapper, direct owner/wrapper equality across ten positive and
+rejection families, the shared marker import, and both ordered production
+positions preserved. Seven pre-existing lowerer Ruff findings remain.
+The next raw source-order owner is the 394-line
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains`, which already has
+ordinary and legacy-consumer public fixtures and must be characterized before
+editing.

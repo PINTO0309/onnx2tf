@@ -19,6 +19,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _canonicalize_softmax_transpose_chains,
 )
+from onnx2tf.tflite_builder.passes.softmax_transpose_canonicalization import (
+    _canonicalize_softmax_transpose_chains as _canonicalize_softmax_transpose_chains_owner,
+)
 from onnx2tf.tflite_builder.passes.terminal_softmax_layout import (
     _SOFTMAX_NHWC_PROPAGATED_MARKER,
 )
@@ -213,6 +216,64 @@ def _assert_transactional_rejection(model_ir: ModelIR) -> None:
 
     assert stats == {"canonicalized_softmax_transpose_chains": 0}
     assert _normalize(model_ir) == before
+
+
+def _owner_wrapper_case(case: str) -> ModelIR:
+    if case == "multiple":
+        return _model(branches=2)
+    if case == "shared-permutation":
+        return _model(shared_inner_permutation=True)
+    if case == "terminal":
+        return _model(terminal=True)
+
+    model_ir = _model()
+    if case == "public-permutation-output":
+        model_ir.outputs.append("branch0_perm_nchw_to_nwhc")
+    elif case == "negative-last-axis":
+        model_ir.operators[2].options["axis"] = -1
+    elif case == "pruning":
+        _tensor(model_ir, "unused", [1])
+        model_ir.tensors["branch0_perm_nchw_to_nwhc"].data = np.asarray(
+            [0, 2, 3, 1],
+            dtype=np.int32,
+        )
+    elif case == "unsafe-axis":
+        model_ir.operators[2].options["axis"] = 1
+    elif case == "incomplete-metadata":
+        model_ir.tensors["branch0_softmax_output"].shape_signature = [1, 3, 2]
+    elif case == "post-plan-rejection":
+        model_ir.tensors[
+            "branch0_post_perm_nchw_to_nwhc"
+        ].is_variable = True
+    elif case != "static-dynamic-signature":
+        raise ValueError(f"unsupported owner/wrapper case: {case}")
+    return model_ir
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "static-dynamic-signature",
+        "multiple",
+        "shared-permutation",
+        "public-permutation-output",
+        "negative-last-axis",
+        "terminal",
+        "pruning",
+        "unsafe-axis",
+        "incomplete-metadata",
+        "post-plan-rejection",
+    ],
+)
+def test_softmax_transpose_owner_matches_lowerer_wrapper(case: str) -> None:
+    owner_model_ir = _owner_wrapper_case(case)
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = _canonicalize_softmax_transpose_chains_owner(owner_model_ir)
+    wrapper_stats = _canonicalize_softmax_transpose_chains(wrapper_model_ir)
+
+    assert owner_stats == wrapper_stats
+    assert _normalize(owner_model_ir) == _normalize(wrapper_model_ir)
 
 
 def test_softmax_transpose_canonicalization_preserves_operator_contract() -> None:
@@ -607,17 +668,43 @@ def test_softmax_transpose_canonicalization_keeps_ordered_boundaries() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "softmax_transpose_canonicalization.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    assert "lower_from_onnx2tf" not in owner_source
+    owner_tree = ast.parse(owner_source)
     owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_canonicalize_softmax_transpose_chains"
+    )
+    assert any(isinstance(node, ast.While) for node in ast.walk(owner))
+
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    wrapper = next(
         node
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_canonicalize_softmax_transpose_chains"
     )
-    assert any(
-        isinstance(node, ast.While)
-        for node in ast.walk(owner)
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    assert isinstance(wrapper.body[0].value, ast.Call)
+    assert isinstance(wrapper.body[0].value.func, ast.Name)
+    assert (
+        wrapper.body[0].value.func.id
+        == "_canonicalize_softmax_transpose_chains_pass"
     )
+    assert len(wrapper.body[0].value.args) == 1
+    assert isinstance(wrapper.body[0].value.args[0], ast.Name)
+    assert wrapper.body[0].value.args[0].id == "model_ir"
+    assert wrapper.body[0].value.keywords == []
 
     lowerer = next(
         node

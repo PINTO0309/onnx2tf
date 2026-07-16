@@ -8032,6 +8032,19 @@ buffer cloning, public-output cloning, graph-order statistics, fixed-point
 behavior, terminal outputs, pruning, and both production boundaries remain
 covered.
 
+Ownership now resides in
+`passes/softmax_transpose_canonicalization.py`. The extracted function and the
+corrected raw owner at checkpoint `9a9898e3` are each 343 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical function name as a one-return compatibility
+wrapper. Both nested recovery-sequence positions remain unchanged, and the
+module imports the shared terminal marker from its existing owner without a
+lowerer import cycle. Direct owner/wrapper comparison covers static shapes with
+dynamic signatures, multiple branches, shared and public-output permutation
+clones, negative last axis, terminal output, pruning, incomplete metadata,
+unsafe axis, and a post-plan atomic rejection. Statistics and complete
+normalized ModelIR state are identical in every case.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
