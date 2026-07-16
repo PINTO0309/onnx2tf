@@ -8383,3 +8383,71 @@ adapters and legacy consumers, production positions, statistic, fixtures, and
 short zero-SWAP ownership before changing source. Keep inference strictly
 sequential and minimal, then commit and push one coherent unit without creating
 a pull request.
+
+## Residual Add/Mul/Add/PReLU ownership extraction: completed state
+
+The complete 415-line `_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains`
+implementation is now owned by `passes/residual_affine_prelu_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at all three unchanged
+source positions. After normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The owner preserves the dual NHWC-to-NCHW pre-Add planning, shared pre-adapter
+handling, Mul/Add/PReLU constant prevalidation, scalar and rank-four broadcast
+forms, rotation and copy-on-write, PReLU post aliases, legacy NCHW consumer
+adapter retention, tensor metadata and quantization propagation, exact mutation
+and removal order, fixed-point restart, pruning, and statistic. The separate
+indexed SiNet late-residual owner remains unchanged and in its existing phase
+order.
+
+The existing positive fixture now creates deep-copy models, invokes the module
+owner and lowerer private wrapper independently, and compares statistics,
+every operator, tensor names, dtype, shape/signature, and NumPy payload. It
+passes with the new architecture selector as `2 passed, 231 deselected in
+2.05s`. The complete indexed SiNet shuffle/residual suite passes `207 passed in
+0.83s`. Direct owner plus complete architecture passes `233 passed in 32.61s`;
+the branch-wide selection passes `713 passed in 33.97s`; and the optional-
+TensorFlow import-blocked suite passes `11 passed in 9.44s`.
+
+SiNet establishes positive real ownership. Its fourteen runtime invocation
+counts are `0,0,0,1,1,0,0,0,0,0,0,0,0,0` before and after extraction. The
+pre conversion completed in 2.048 seconds and post conversion in 1.959 seconds;
+both recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding SiNet sequential accuracy baseline remains
+`max_abs=2.572051016613841e-09`. No duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained
+sequential.
+
+The compatibility owner still validates constant data and consumers less
+strictly than newer indexed owners: producer, variable-state, and graph-
+visibility ownership is not a complete immutable contract. Hardening requires
+independent negative fixtures, full prevalidation, and atomic revalidation; it
+is not mixed into this exact ownership move.
+
+Changed files are the new residual affine/PReLU pass module, lowerer import and
+wrapper, direct owner/wrapper equality coverage in the existing fixture,
+architecture ownership test, and three branch documents. No dependency, public
+API, CLI, artifact name, TensorFlow boundary, corpus profile, exclusion policy,
+or ONNX tier policy changes. Temporary tracing and conversion outputs are
+removed before commit. PR #952 remains closed; work is commit/push only and no
+pull request is created.
+
+The next raw source-order implementation is the 477-line
+`_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains`. At restart,
+inventory its shared residual Add prefix, each Mul/Add/post-Transpose branch,
+legacy NCHW consumers, constant copy-on-write, production positions, statistic,
+fixtures, and short zero-SWAP ownership before changing source. Keep inference
+strictly sequential and minimal, then commit and push one coherent unit without
+creating a pull request.

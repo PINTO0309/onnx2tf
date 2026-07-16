@@ -14477,6 +14477,61 @@ def test_terminal_prelu_bmm_optimizer_has_one_module_owner() -> None:
     assert len(production_calls) == 1
 
 
+def test_residual_affine_prelu_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "residual_affine_prelu_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    owner_name = "optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
+    wrapper_name = f"_{owner_name}"
+    dispatch_name = f"{wrapper_name}_pass"
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert sum(
+        isinstance(node, ast.FunctionDef) and node.name == owner_name
+        for node in owner_tree.body
+    ) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node for node in ast.walk(wrapper) if isinstance(node, ast.Call)
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == dispatch_name
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 3
+
+
 def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> None:
     owner_path = (
         REPO_ROOT

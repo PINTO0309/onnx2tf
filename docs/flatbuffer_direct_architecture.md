@@ -7072,6 +7072,25 @@ production ownership is not claimed. Alpha and RHS tensors still lack complete
 producer, variable-state, and graph-visibility ownership validation; that
 semantic hardening remains separate from the exact ownership move.
 
+The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
+`passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves dual pre-Add input planning, affine and alpha constant
+prevalidation and copy-on-write, broadcast-aware rotations, PReLU post aliases,
+legacy NCHW consumer adapter retention, metadata and quantization propagation,
+operator removal order, fixed-point restart, pruning, statistic, and all three
+source call positions. The lowerer retains a one-call private wrapper; the
+separate indexed SiNet late-residual owner and its ordering are unchanged.
+
+The existing direct fixture now runs the module owner and private wrapper on
+deep copies and compares every operator and tensor payload. The full indexed
+SiNet residual suite remains green. SiNet establishes real production
+ownership across fourteen runtime invocations with counts
+`0,0,0,1,1,0,0,0,0,0,0,0,0,0`; its zero process-tree SWAP and five core
+artifacts are unchanged across extraction. Constant producers, variable state,
+and graph visibility remain less strict than the newer indexed planning
+contracts and are recorded as future semantic-hardening boundaries.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`

@@ -1,3 +1,4 @@
+import copy
 import glob
 import json
 import math
@@ -192,6 +193,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     run_two_way_channel_shuffle_cleanup,
+)
+from onnx2tf.tflite_builder.passes.residual_affine_prelu_layout import (
+    optimize_transpose_pre_add_mul_add_prelu_nhwc_chains,
 )
 from onnx2tf.utils.onnx_litert_runtime import check_model_has_external_data
 from onnx2tf.tflite_builder.model_writer import serialize_model
@@ -18102,8 +18106,30 @@ def test_flatbuffer_direct_transpose_pre_add_mul_add_prelu_nhwc_chain_optimized(
         ),
     ]
 
-    stats = _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+    wrapped_model_ir = copy.deepcopy(model_ir)
+    stats = optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+    wrapped_stats = _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(
+        wrapped_model_ir
+    )
     assert stats["optimized_transpose_pre_add_mul_add_prelu_nhwc_chains"] == 1
+    assert wrapped_stats == stats
+    assert [
+        (operator.op_type, operator.inputs, operator.outputs, operator.options)
+        for operator in wrapped_model_ir.operators
+    ] == [
+        (operator.op_type, operator.inputs, operator.outputs, operator.options)
+        for operator in model_ir.operators
+    ]
+    assert set(wrapped_model_ir.tensors) == set(model_ir.tensors)
+    for tensor_name, tensor in model_ir.tensors.items():
+        wrapped_tensor = wrapped_model_ir.tensors[tensor_name]
+        assert wrapped_tensor.dtype == tensor.dtype
+        assert wrapped_tensor.shape == tensor.shape
+        assert wrapped_tensor.shape_signature == tensor.shape_signature
+        if tensor.data is None:
+            assert wrapped_tensor.data is None
+        else:
+            np.testing.assert_array_equal(wrapped_tensor.data, tensor.data)
 
     add_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD" and list(op.outputs) == ["add_out"])
     assert list(add_op.inputs) == ["a_nhwc", "b_nhwc"]
