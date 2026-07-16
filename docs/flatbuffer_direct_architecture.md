@@ -6676,6 +6676,62 @@ passes 561 tests. Identical conversion-only invocations against checkpoint
 `f5505052` reproduce all ten fixed artifacts across `yolov9` and `sgscsh`;
 separate sequential `-cotof` checks remain below `1e-1`.
 
+Slice/optional-Logistic/Concat/Reshape detection-tail recovery is owned by
+`passes/slice_logistic_concat_reshape_tail_layout.py`. The former lowerer
+helper rebuilt complete producer and consumer maps inside an unbounded
+fixed-point loop and began changing Slice constants and metadata before the
+complete multi-branch tail was known to be valid. Both ordered production
+positions now call one thin dispatcher with Session `LayoutState`.
+
+The indexed root is a rank-three spatial-axis Concat with at least two unique
+inputs. Each input must be one private rank-three Reshape fed by one private
+two-input rank-four channel-axis Concat. Both Concat inputs trace through an
+optional Logistic to distinct private Slice operators. The two Slices must be
+the exact fan-out of one typed NHWC-to-NCHW Transpose. Different branches own
+different adapters and internal operators, although their already-NHWC source
+tensor may be shared safely.
+
+The resolver proves rank-three and rank-four static/dynamic views, dtype,
+per-tensor quantization, explicit or unknown layout, unique producers, strict
+graph order, exact consumer slots, typed INT32/INT64 permutation and Slice
+constants, Slice bounds and derived results, branch and tail Concat results,
+Reshape element counts, and every public or downstream boundary. Both
+`newShape` and `onnxRawNewShape` are validated against the original and target
+views before their channel/spatial dimensions are exchanged.
+
+Slice begin and size constants must be immutable, non-public, non-variable,
+non-produced, and exclusive to their exact operator slots. This makes their
+axis remap safe and rejects the conflicting shared-role cases that the raw
+helper could mutate twice. An exclusive Reshape shape changes in place. A
+shape shared with an unrelated Reshape receives one deterministic clone that
+retains TensorIR dtype, NumPy dtype, quantization, and original consumers.
+Malformed values, zero dimensions, per-axis quantization, duplicate producers,
+repeated branch inputs, unsafe fan-out, and backward consumers reject the
+whole transaction.
+
+The immutable plan contains all Slice rewrites/constants, optional Logistic
+metadata, branch Concat axes and metadata, Reshape constant/input/options and
+metadata, tail Concat axis/output, typed 3D post-permutation selection or
+creation, terminal compatibility adapter, removals, tensor/operator contracts,
+and graph boundaries. The same tail candidate is fully resolved immediately
+before apply. A graph-ordered candidate list, candidate-only operation, and an
+explicit rewrite limit replace the raw scans and loop. One differential
+`ModelIRGraphIndex` maintains rewritten slots, insertion, and removal;
+TensorIR and Session `LayoutState` are updated together. Exit pruning preserves
+the legacy zero-match side effect.
+
+Production characterization found one four-branch first-call match in
+`nanodet-plus-m_416` followed by four zero-match calls. Each branch splits 37
+channels into Logistic-wrapped 5-channel and direct 32-channel paths across
+52x52, 26x26, 13x13, and 7x7 feature maps. The preceding general input owner
+rewrites seven disjoint groups without consuming this owner’s tail. Yolov9
+retains five zero-match calls. Forty dedicated cases and the existing active
+fixture cover numerical equivalence, all optional-Logistic forms, dynamic
+signatures, typed constants, copy-on-write, bounded dispatch, graph/layout
+state, stale plans, and twenty-four transactional rejections. The related gate
+passes 603 tests, all five nanodet conversion artifacts remain byte-identical
+to checkpoint `762dcdef`, and sequential `-cotof` remains below `1e-1`.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

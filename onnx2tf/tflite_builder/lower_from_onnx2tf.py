@@ -189,6 +189,9 @@ from onnx2tf.tflite_builder.passes.split_mixed_concat_layout import (
 from onnx2tf.tflite_builder.passes.concat_input_adapter_layout import (
     optimize_transpose_input_chains_pre_concat_to_single_post_adapter as _optimize_transpose_input_chains_pre_concat_to_single_post_adapter_pass,
 )
+from onnx2tf.tflite_builder.passes.slice_logistic_concat_reshape_tail_layout import (
+    optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains as _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
@@ -8969,480 +8972,21 @@ def _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chain
     )
 
 
-def _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Collapse repeated NCHW adapters in detection heads into a single 3D post-CONCAT transpose.
-
-    Target (per branch):
-      x_nhwc --TRANSPOSE(0,3,1,2)--> x_nchw
-      x_nchw --SLICE--> a_nchw --(optional LOGISTIC)--> a'_nchw
-      x_nchw --SLICE--> b_nchw
-      CONCAT(axis=1, [a'_nchw, b_nchw]) -> c_nchw
-      RESHAPE([N,C,S]) -> r_nchw
-
-    Tail:
-      CONCAT(axis=2, [r0_nchw, r1_nchw, ...]) -> y_nchw
-
-    Rewrite:
-      - Per branch: keep everything in NHWC
-          x_nhwc --SLICE--> a_nhwc --(optional LOGISTIC)--> a'_nhwc
-          x_nhwc --SLICE--> b_nhwc
-          CONCAT(axis=3) -> c_nhwc
-          RESHAPE([N,S,C]) -> r_nhwc
-      - Tail:
-          CONCAT(axis=1, [r0_nhwc, r1_nhwc, ...]) -> y_nhwc
-          y_nhwc --TRANSPOSE(0,2,1)--> y_nchw
-    """
-    optimized = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    perm_3d_nchw_to_nhwc = [0, 2, 1]
-    unary_ops = {"LOGISTIC"}
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    def _op_index(op_ref: OperatorIR) -> Optional[int]:
-        for idx, op in enumerate(model_ir.operators):
-            if int(id(op)) == int(id(op_ref)):
-                return int(idx)
-        return None
-
-    def _find_or_create_perm_3d_nhwc_to_nchw() -> str:
-        target = np.asarray(perm_3d_nchw_to_nhwc, dtype=np.int32)
-        for tensor_name, tensor in model_ir.tensors.items():
-            if tensor is None or tensor.data is None:
-                continue
-            data = np.asarray(tensor.data)
-            if data.dtype != np.int32 or int(data.size) != 3:
-                continue
-            if np.array_equal(data.reshape(-1), target):
-                return str(tensor_name)
-        perm_name = _unique_tensor_name("transpose_tail_3d_nhwc_to_nchw_perm")
-        model_ir.tensors[perm_name] = TensorIR(
-            name=perm_name,
-            dtype="INT32",
-            shape=[3],
-            shape_signature=[3],
-            data=np.asarray(target, dtype=np.int32),
-            is_variable=False,
-        )
-        return perm_name
-
-    def _swap_reshape_shape_tensor(
-        *,
-        reshape_op: OperatorIR,
-        reshape_idx: int,
-        consumers: Dict[str, List[int]],
-    ) -> bool:
-        if len(reshape_op.inputs) < 2:
-            return False
-        shape_name = str(reshape_op.inputs[1])
-        shape_tensor = model_ir.tensors.get(shape_name, None)
-        shape_vals = _read_const_ints_from_tensor(shape_tensor)
-        if shape_vals is None or len(shape_vals) != 3:
-            return False
-        swapped = [int(shape_vals[0]), int(shape_vals[2]), int(shape_vals[1])]
-        shape_consumers = [int(v) for v in consumers.get(shape_name, [])]
-        if any(int(v) != int(reshape_idx) for v in shape_consumers):
-            if shape_tensor is None:
-                return False
-            cloned_name = _unique_tensor_name(f"{shape_name}_nhwc")
-            data_dtype = np.int32
-            if shape_tensor.data is not None:
-                try:
-                    data_dtype = np.asarray(shape_tensor.data).dtype
-                except Exception:
-                    data_dtype = np.int32
-            swapped_arr = np.asarray(swapped, dtype=data_dtype)
-            model_ir.tensors[cloned_name] = TensorIR(
-                name=cloned_name,
-                dtype=str(shape_tensor.dtype),
-                shape=[int(v) for v in list(swapped_arr.shape)],
-                shape_signature=[int(v) for v in list(swapped_arr.shape)],
-                data=np.asarray(swapped_arr),
-                is_variable=False,
-                quantization=_clone_quantization(shape_tensor.quantization),
-            )
-            reshape_inputs = [str(v) for v in list(reshape_op.inputs)]
-            reshape_inputs[1] = str(cloned_name)
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=reshape_op,
-                new_inputs=reshape_inputs,
-            )
-            return True
-        _write_const_ints_to_tensor(shape_tensor, swapped)
-        return True
-
-    def _swap_reshape_option_shape(reshape_op: OperatorIR) -> None:
-        if not isinstance(reshape_op.options, dict):
-            return
-        opts = dict(reshape_op.options)
-        changed = False
-        for key in ["newShape", "onnxRawNewShape"]:
-            value = opts.get(key, None)
-            if not isinstance(value, list) or len(value) != 3:
-                continue
-            swapped = [int(value[0]), int(value[2]), int(value[1])]
-            if swapped != [int(v) for v in value]:
-                opts[key] = swapped
-                changed = True
-        if changed:
-            reshape_op.options = opts
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for tail_concat_idx, tail_concat_op in enumerate(model_ir.operators):
-            if str(tail_concat_op.op_type) != "CONCATENATION" or len(tail_concat_op.outputs) != 1:
-                continue
-            tail_axis = int(tail_concat_op.options.get("axis", 2))
-            if tail_axis < 0:
-                tail_axis += 3
-            if tail_axis != 2:
-                continue
-
-            tail_out_name = str(tail_concat_op.outputs[0])
-            tail_out_tensor = model_ir.tensors.get(tail_out_name, None)
-            if tail_out_tensor is None or len(list(tail_out_tensor.shape)) != 3:
-                continue
-
-            tail_inputs = [str(v) for v in list(tail_concat_op.inputs)]
-            if len(tail_inputs) < 2:
-                continue
-
-            branch_plans: List[Dict[str, Any]] = []
-            removable_pre_transpose_ids: set[int] = set()
-            rewritable = True
-
-            for reshape_out_name in tail_inputs:
-                reshape_idx = producers.get(str(reshape_out_name), None)
-                if reshape_idx is None:
-                    rewritable = False
-                    break
-                reshape_op = model_ir.operators[int(reshape_idx)]
-                if (
-                    str(reshape_op.op_type) != "RESHAPE"
-                    or len(reshape_op.inputs) < 2
-                    or len(reshape_op.outputs) != 1
-                    or str(reshape_op.outputs[0]) != str(reshape_out_name)
-                ):
-                    rewritable = False
-                    break
-                if set(int(v) for v in consumers.get(str(reshape_out_name), [])) != {int(tail_concat_idx)}:
-                    rewritable = False
-                    break
-
-                branch_concat_out_name = str(reshape_op.inputs[0])
-                branch_concat_idx = producers.get(branch_concat_out_name, None)
-                if branch_concat_idx is None:
-                    rewritable = False
-                    break
-                branch_concat_op = model_ir.operators[int(branch_concat_idx)]
-                if str(branch_concat_op.op_type) != "CONCATENATION" or len(branch_concat_op.outputs) != 1:
-                    rewritable = False
-                    break
-                branch_axis = int(branch_concat_op.options.get("axis", 1))
-                if branch_axis < 0:
-                    branch_axis += 4
-                if branch_axis != 1:
-                    rewritable = False
-                    break
-                if set(int(v) for v in consumers.get(branch_concat_out_name, [])) != {int(reshape_idx)}:
-                    rewritable = False
-                    break
-
-                branch_concat_inputs = [str(v) for v in list(branch_concat_op.inputs)]
-                if len(branch_concat_inputs) != 2:
-                    rewritable = False
-                    break
-
-                pre_transpose_idx: Optional[int] = None
-                unary_indices: List[int] = []
-                slice_plans: List[Dict[str, Any]] = []
-                expected_pre_users: set[int] = set()
-
-                for branch_input_name in branch_concat_inputs:
-                    slice_out_name = str(branch_input_name)
-                    unary_idx: Optional[int] = None
-
-                    maybe_unary_idx = producers.get(slice_out_name, None)
-                    if maybe_unary_idx is not None:
-                        maybe_unary_op = model_ir.operators[int(maybe_unary_idx)]
-                        if (
-                            str(maybe_unary_op.op_type) in unary_ops
-                            and len(maybe_unary_op.inputs) == 1
-                            and len(maybe_unary_op.outputs) == 1
-                            and str(maybe_unary_op.outputs[0]) == slice_out_name
-                            and set(int(v) for v in consumers.get(slice_out_name, [])) == {int(branch_concat_idx)}
-                            and slice_out_name not in model_outputs
-                        ):
-                            unary_idx = int(maybe_unary_idx)
-                            unary_indices.append(int(maybe_unary_idx))
-                            slice_out_name = str(maybe_unary_op.inputs[0])
-
-                    slice_idx = producers.get(slice_out_name, None)
-                    if slice_idx is None:
-                        rewritable = False
-                        break
-                    slice_op = model_ir.operators[int(slice_idx)]
-                    if (
-                        str(slice_op.op_type) != "SLICE"
-                        or len(slice_op.inputs) < 3
-                        or len(slice_op.outputs) != 1
-                        or str(slice_op.outputs[0]) != slice_out_name
-                    ):
-                        rewritable = False
-                        break
-                    expected_slice_users = {int(unary_idx)} if unary_idx is not None else {int(branch_concat_idx)}
-                    if set(int(v) for v in consumers.get(slice_out_name, [])) != expected_slice_users:
-                        rewritable = False
-                        break
-
-                    begin_name = str(slice_op.inputs[1])
-                    size_name = str(slice_op.inputs[2])
-                    begin_vals = _read_const_ints_from_tensor(model_ir.tensors.get(begin_name, None))
-                    size_vals = _read_const_ints_from_tensor(model_ir.tensors.get(size_name, None))
-                    if begin_vals is None or size_vals is None or len(begin_vals) != 4 or len(size_vals) != 4:
-                        rewritable = False
-                        break
-                    if int(begin_vals[0]) != 0 or int(begin_vals[2]) != 0 or int(begin_vals[3]) != 0:
-                        rewritable = False
-                        break
-                    if int(begin_vals[1]) < 0 or int(size_vals[1]) <= 0:
-                        rewritable = False
-                        break
-
-                    pre_idx = producers.get(str(slice_op.inputs[0]), None)
-                    if pre_idx is None:
-                        rewritable = False
-                        break
-                    pre_op = model_ir.operators[int(pre_idx)]
-                    if (
-                        str(pre_op.op_type) != "TRANSPOSE"
-                        or len(pre_op.inputs) < 2
-                        or len(pre_op.outputs) != 1
-                        or str(pre_op.outputs[0]) != str(slice_op.inputs[0])
-                        or _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw
-                        or str(pre_op.outputs[0]) in model_outputs
-                    ):
-                        rewritable = False
-                        break
-                    if pre_transpose_idx is None:
-                        pre_transpose_idx = int(pre_idx)
-                    elif int(pre_transpose_idx) != int(pre_idx):
-                        rewritable = False
-                        break
-
-                    expected_pre_users.add(int(slice_idx))
-                    slice_plans.append(
-                        {
-                            "slice_idx": int(slice_idx),
-                            "slice_out_name": str(slice_out_name),
-                            "begin_name": str(begin_name),
-                            "size_name": str(size_name),
-                        }
-                    )
-
-                if not rewritable or pre_transpose_idx is None:
-                    rewritable = False
-                    break
-
-                pre_op = model_ir.operators[int(pre_transpose_idx)]
-                pre_out_name = str(pre_op.outputs[0])
-                if set(int(v) for v in consumers.get(pre_out_name, [])) != set(expected_pre_users):
-                    rewritable = False
-                    break
-
-                pre_input_name = str(pre_op.inputs[0])
-                pre_input_tensor = model_ir.tensors.get(pre_input_name, None)
-                pre_out_tensor = model_ir.tensors.get(pre_out_name, None)
-                if (
-                    pre_input_tensor is None
-                    or pre_out_tensor is None
-                    or len(list(pre_input_tensor.shape)) != 4
-                    or len(list(pre_out_tensor.shape)) != 4
-                ):
-                    rewritable = False
-                    break
-
-                branch_plans.append(
-                    {
-                        "reshape_idx": int(reshape_idx),
-                        "reshape_out_name": str(reshape_out_name),
-                        "branch_concat_idx": int(branch_concat_idx),
-                        "branch_concat_out_name": str(branch_concat_out_name),
-                        "pre_transpose_idx": int(pre_transpose_idx),
-                        "pre_input_name": str(pre_input_name),
-                        "unary_indices": [int(v) for v in unary_indices],
-                        "slice_plans": list(slice_plans),
-                    }
-                )
-                removable_pre_transpose_ids.add(int(id(pre_op)))
-
-            if not rewritable or len(branch_plans) < 2:
-                continue
-
-            # Keep this rewrite strict: all branch reshapes must share the same channel dimension.
-            channel_dim: Optional[int] = None
-            for plan in branch_plans:
-                reshape_tensor = model_ir.tensors.get(str(plan["reshape_out_name"]), None)
-                if reshape_tensor is None or len(list(reshape_tensor.shape)) != 3:
-                    rewritable = False
-                    break
-                cdim = int(reshape_tensor.shape[1]) if len(list(reshape_tensor.shape)) > 1 else -1
-                if cdim <= 0:
-                    rewritable = False
-                    break
-                if channel_dim is None:
-                    channel_dim = int(cdim)
-                elif int(channel_dim) != int(cdim):
-                    rewritable = False
-                    break
-            if not rewritable:
-                continue
-
-            apply_ok = True
-            for plan in branch_plans:
-                pre_input_name = str(plan["pre_input_name"])
-
-                for slice_plan in list(plan["slice_plans"]):
-                    slice_idx = int(slice_plan["slice_idx"])
-                    begin_name = str(slice_plan["begin_name"])
-                    size_name = str(slice_plan["size_name"])
-                    if set(int(v) for v in consumers.get(begin_name, [])) != {int(slice_idx)}:
-                        apply_ok = False
-                        break
-                    if set(int(v) for v in consumers.get(size_name, [])) != {int(slice_idx)}:
-                        apply_ok = False
-                        break
-
-                    slice_op = model_ir.operators[int(slice_idx)]
-                    begin_tensor = model_ir.tensors.get(begin_name, None)
-                    size_tensor = model_ir.tensors.get(size_name, None)
-                    begin_vals = _read_const_ints_from_tensor(begin_tensor)
-                    size_vals = _read_const_ints_from_tensor(size_tensor)
-                    if begin_vals is None or size_vals is None or len(begin_vals) != 4 or len(size_vals) != 4:
-                        apply_ok = False
-                        break
-
-                    new_begin = [int(begin_vals[0]), int(begin_vals[2]), int(begin_vals[3]), int(begin_vals[1])]
-                    new_size = [int(size_vals[0]), int(size_vals[2]), int(size_vals[3]), int(size_vals[1])]
-                    _write_const_ints_to_tensor(begin_tensor, new_begin)
-                    _write_const_ints_to_tensor(size_tensor, new_size)
-                    _replace_operator_input_at(
-                        model_ir=model_ir,
-                        op=slice_op,
-                        input_index=0,
-                        new_input_name=pre_input_name,
-                    )
-                    _permute_tensor_metadata_if_rank_matches(
-                        model_ir.tensors.get(str(slice_plan["slice_out_name"]), None),
-                        perm_nchw_to_nhwc,
-                    )
-
-                if not apply_ok:
-                    break
-
-                for unary_idx in list(plan["unary_indices"]):
-                    unary_out_name = str(model_ir.operators[int(unary_idx)].outputs[0])
-                    _permute_tensor_metadata_if_rank_matches(
-                        model_ir.tensors.get(unary_out_name, None),
-                        perm_nchw_to_nhwc,
-                    )
-
-                branch_concat_op = model_ir.operators[int(plan["branch_concat_idx"])]
-                branch_concat_op.options["axis"] = 3
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(str(plan["branch_concat_out_name"]), None),
-                    perm_nchw_to_nhwc,
-                )
-
-                reshape_op = model_ir.operators[int(plan["reshape_idx"])]
-                if not _swap_reshape_shape_tensor(
-                    reshape_op=reshape_op,
-                    reshape_idx=int(plan["reshape_idx"]),
-                    consumers=consumers,
-                ):
-                    apply_ok = False
-                    break
-                _swap_reshape_option_shape(reshape_op)
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(str(plan["reshape_out_name"]), None),
-                    perm_3d_nchw_to_nhwc,
-                )
-
-            if not apply_ok:
-                continue
-
-            tail_shape = [int(v) for v in list(tail_out_tensor.shape)]
-            tail_signature = (
-                [int(v) for v in list(tail_out_tensor.shape_signature)]
-                if tail_out_tensor.shape_signature is not None
-                else [int(v) for v in list(tail_out_tensor.shape)]
-            )
-            tail_nhwc_shape = _permute_shape(tail_shape, perm_3d_nchw_to_nhwc)
-            tail_nhwc_signature = _permute_shape(tail_signature, perm_3d_nchw_to_nhwc)
-            if tail_nhwc_shape is None or tail_nhwc_signature is None:
-                continue
-
-            tail_concat_nhwc_name = _unique_tensor_name(f"{tail_out_name}_nhwc")
-            model_ir.tensors[tail_concat_nhwc_name] = TensorIR(
-                name=tail_concat_nhwc_name,
-                dtype=str(tail_out_tensor.dtype),
-                shape=[int(v) for v in list(tail_nhwc_shape)],
-                shape_signature=[int(v) for v in list(tail_nhwc_signature)],
-                data=None,
-                is_variable=False,
-                quantization=_clone_quantization(tail_out_tensor.quantization),
-            )
-            tail_concat_op.options["axis"] = 1
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=tail_concat_op,
-                new_outputs=[tail_concat_nhwc_name],
-            )
-
-            perm_3d_name = _find_or_create_perm_3d_nhwc_to_nchw()
-            tail_concat_current_idx = _op_index(tail_concat_op)
-            if tail_concat_current_idx is None:
-                continue
-            model_ir.operators.insert(
-                int(tail_concat_current_idx) + 1,
-                OperatorIR(
-                    op_type="TRANSPOSE",
-                    inputs=[tail_concat_nhwc_name, perm_3d_name],
-                    outputs=[tail_out_name],
-                    options={},
-                ),
-            )
-
-            remove_indices = [
-                int(op_idx)
-                for op_idx, op in enumerate(model_ir.operators)
-                if int(id(op)) in removable_pre_transpose_ids
-            ]
-            for remove_idx in sorted(list(set(remove_indices)), reverse=True):
-                del model_ir.operators[int(remove_idx)]
-
-            optimized += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_slice_logistic_concat_reshape_tail_nhwc_chains": int(optimized)}
+def _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_shufflenet_transpose_shuffle_chains(
@@ -26731,7 +26275,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
+        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _run_channel_shuffle_gather_layout_pass_cluster()
 
     def _run_layout_reshape_attention_recovery_prefix() -> None:
@@ -27199,7 +26746,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
+        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _run_channel_shuffle_gather_layout_pass_cluster(
             include_post_gather_cleanup=True,
         )

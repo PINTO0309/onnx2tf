@@ -8,15 +8,14 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves the general Concat input-adapter recovery
-into the TensorFlow-free indexed
-`passes/concat_input_adapter_layout.py` owner. Its former 302-line full-map,
-unbounded fixed-point helper is now a thin compatibility dispatcher at all
-three unchanged direct source positions and at the unchanged conservative
-safe-transpose fallback position. The owner resolves an immutable whole-group
-plan, re-resolves the complete contract before apply, and maintains one
-differential `ModelIRGraphIndex` plus the Session `LayoutState` through every
-rewrite.
+The latest implementation unit moves Slice/optional-Logistic/Concat/Reshape
+detection-tail recovery into the TensorFlow-free indexed
+`passes/slice_logistic_concat_reshape_tail_layout.py` owner. Its former
+480-line full-map, unbounded fixed-point helper is now a thin compatibility
+dispatcher at both unchanged source positions. The owner resolves an immutable
+whole-group plan, re-resolves the complete contract before apply, and maintains
+one differential `ModelIRGraphIndex` plus the Session `LayoutState` through
+every rewrite.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -136,6 +135,69 @@ difference was traced before any source change to unlike invocation modes:
 the `-cotof` CLI path normalizes leading `/` names to `wa/`, whereas the
 conversion-only Python comparison did not. Matching invocation modes removed
 the difference. No implementation fix was necessary.
+
+### Slice/Logistic/Concat/Reshape tail continuation — 2026-07-16
+
+The extracted owner starts from graph-ordered rank-three channel/spatial tail
+Concat candidates instead of rebuilding complete producer and consumer maps.
+Every unique tail input must be a private rank-three Reshape fed by a private
+two-input channel-axis Concat. Each branch input must be a private rank-four
+Slice, optionally followed by Logistic, and both Slices must be the complete
+fan-out of one typed NHWC-to-NCHW Transpose. Multiple branches may share the
+same NHWC source, but every removable adapter and every downstream branch is
+owned independently.
+
+The resolver proves static and dynamic rank-three/rank-four views, dtype,
+per-tensor quantization, explicit or unknown layout, unique producers, strict
+graph order, exact consumer slots, typed INT32/INT64 permutation, Slice begin,
+Slice size, and Reshape-shape constants, exact Slice bounds, both Concat
+results, Reshape element counts, and the retained terminal NCHW boundary.
+`newShape` and `onnxRawNewShape` options are validated and remapped together.
+Exclusive constants change in place; a safe shared Reshape shape receives one
+deterministic dtype-preserving clone. Slice parameters must remain exclusive,
+so unrelated use rejects the complete group.
+
+The immutable plan owns all Slice input rewrites and constants, optional
+Logistic metadata, branch Concat axes, Reshape constants/options/metadata, tail
+Concat axis/output, optional typed 3D permutation creation, the terminal
+compatibility Transpose, adapter removals, complete tensor/operator contracts,
+and graph boundaries. The same tail Concat is fully resolved again immediately
+before apply. Candidate-only operation and an explicit rewrite limit use the
+production entry point; inserted and removed operators update one differential
+graph index. TensorIR and Session `LayoutState` are updated together. Pruning
+runs once at owner exit, including zero-match calls.
+
+Characterization selected the 4.5 MiB Tier-2
+`nanodet-plus-m_416.onnx` without broad conversion. The helper is invoked five
+times: the first call retains one four-branch group and the remaining four are
+zero-match. Branch spatial sizes are 52x52, 26x26, 13x13, and 7x7; each splits
+37 channels into a Logistic-wrapped 5-channel path and a direct 32-channel
+path before Reshape. The preceding Split/mixed owner remains zero-match. The
+general input-adapter owner rewrites seven separate groups on its first call
+but deliberately leaves this tail group for its ordered owner. Five yolov9
+calls remain zero-match because its superficially similar rank-three tail is
+fed by Transposes rather than the required Slice/Concat branches.
+
+Forty dedicated tests plus the existing active fixture cover all four optional
+Logistic forms, numerical equivalence, dynamic full-extent Slice signatures,
+INT32/INT64 constants, shared-shape copy-on-write, existing/new 3D
+permutations, shared NHWC sources, compatibility dispatch, candidate limits,
+stale-plan rejection, zero-match pruning, determinism, GraphIndex/LayoutState
+integrity, and twenty-four unsafe transactional no-op cases. The new and
+adjacent indexed owners, boundary-input checks, TensorFlow import blocker, and
+complete architecture suite pass together with `603 passed in 49.68s`.
+Scoped Ruff, format verification, syntax compilation, and `git diff --check`
+pass.
+
+Baseline/current conversion-only comparisons use the same Python API and raw
+source checkpoint `762dcdef`. Nanodet float32 TFLite, float16 TFLite, tensor
+correspondence report, `schema.fbs`, and `schema_generated.py` are all
+byte-identical. The indexed helper retains the exact production sequence of
+one rewrite followed by four zero-match calls. A separate sequential `-cotof`
+check passes with maximum absolute error `6.19888e-06`, below both the managed
+profile value `0.03541278839111328` and the required `1e-1` ceiling. The
+conversion process reported `VmSwap: 0 kB`; no timeout or parallel inference
+was introduced.
 
 ## Continuation snapshot — 2026-07-16
 
@@ -5421,17 +5483,18 @@ removed. No Tier corpus was run.
 
 ## Latest checkpoint file set
 
-The general Concat input-adapter checkpoint changes only the following tracked
-source, test, and documentation files relative to `f5505052`:
+The Slice/Logistic/Concat/Reshape tail checkpoint changes only the following
+tracked source, test, and documentation files relative to `762dcdef`:
 
-- `onnx2tf/tflite_builder/passes/concat_input_adapter_layout.py`: new indexed
-  semantic owner and immutable transaction plan.
+- `onnx2tf/tflite_builder/passes/slice_logistic_concat_reshape_tail_layout.py`:
+  new indexed semantic owner and immutable whole-tail transaction plan.
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`: thin compatibility wrapper,
-  owner import, and Session `LayoutState` at the three direct call sites.
-- `tests/test_flatbuffer_direct_indexed_concat_input_adapter_layout.py`: new
-  focused capability, rejection, bounded-dispatch, and determinism coverage.
-- `tests/test_flatbuffer_direct_architecture.py`: ownership and unchanged
-  direct/safe-bundle call-boundary contract.
+  owner import, and Session `LayoutState` at both direct call sites.
+- `tests/test_flatbuffer_direct_indexed_slice_logistic_concat_reshape_tail_layout.py`:
+  new focused capability, numerical, rejection, bounded-dispatch, and
+  determinism coverage.
+- `tests/test_flatbuffer_direct_architecture.py`: ownership, transaction, and
+  unchanged direct call-boundary contract.
 - `docs/flatbuffer_direct_architecture.md`: indexed owner responsibilities and
   validation boundary.
 - `docs/flatbuffer_direct_handoff_2026-07-14.md`: checkpoint evidence,
@@ -5485,12 +5548,14 @@ the bridge, and YuNet retains byte-identical artifacts.
 
 The unquantized pseudo-Swish, tanh-GELU, center/size/offset, pseudo-LeakyReLU,
 PReLU, connected elementwise/Concat, StridedSlice/Concat, Split/mixed-Concat,
-and general Concat input-adapter recovery helpers are now indexed at their
-unchanged production positions. The next standalone raw recovery helper in
-this ordered prefix is
-`_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains`; it has
-two direct production positions and has not yet been characterized or changed.
-The composite pre-Concat dispatcher still retains its previously documented
+general Concat input-adapter, and Slice/Logistic/Concat/Reshape tail recovery
+helpers are now indexed at their unchanged production positions. The channel-
+shuffle/gather cluster immediately following the extracted tail is already a
+small orchestrator over semantic owners. The next standalone raw recovery
+helper in this ordered prefix is `_optimize_transpose_pre_add_nhwc_chains`; it
+has four direct production positions and one reference in the conservative
+safe-transpose bundle. It has not yet been characterized or changed. The
+composite pre-Concat dispatcher still retains its previously documented
 legacy-family fallback after the indexed families.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
@@ -5502,13 +5567,13 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Characterize
-   `_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains` at both
-   direct production positions. Fix its runtime match set, per-branch
-   Transpose/Slice/optional-Logistic/Concat/Reshape ownership, terminal Concat
-   boundary, constant ownership, and interaction with the preceding indexed
-   general input-adapter owner before selecting a bounded semantic owner. Do
-   not modify it during characterization.
+2. Characterize `_optimize_transpose_pre_add_nhwc_chains` at all four direct
+   production positions and through the conservative safe-transpose bundle.
+   Fix its runtime match set, direct and Swish-wrapped operands, optional unary
+   suffix, binary operand order, shared constant ownership, retained NCHW
+   consumers, and interaction with the preceding indexed tail and channel-
+   shuffle owners before selecting a bounded semantic owner. Do not modify it
+   during characterization.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
