@@ -879,6 +879,26 @@ legacy rewrite is claimed. FastestDet is the artifact control and retains its
 accuracy, zero process-tree SWAP, and byte-identical float32, float16,
 correspondence, schema, and generated-schema outputs across the move.
 
+The adjacent strict rank-four Transpose→Slice→inverse-Transpose compatibility
+rule is isolated in `passes/slice_prepost_layout.py`. Its complete matcher moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+still requires constant exclusive begin/size tensors, exclusive pre/Slice
+links, non-public intermediates, exact inverse permutations, and rank-four
+input/output metadata. The existing static-shape owner supplies both as-is and
+NCHW→NHWC-remapped parameter validation; only the parameter set reproducing the
+known public output shape is committed. Input/output rewrites, two-Transpose
+removal, conditional pruning, fixed-point restart, and the historical statistic
+are unchanged. The lowerer retains one private compatibility wrapper at its
+single production position.
+
+A compact synthetic corpus fixes both already-NHWC and remap-required
+parameter forms, idempotence, public pre/Slice outputs, shared begin constants,
+pre-Transpose fan-out, output-shape mismatch, wrong permutation, and direct-
+owner/private-wrapper equality. Tier 0 UM Best Model and Tier 2 ALike supplied
+two measured zero-owner production calls, so no non-zero real-model ownership
+is claimed. UM Best Model remains accurate with zero process-tree SWAP and
+byte-identical direct artifacts across the mechanical move.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization

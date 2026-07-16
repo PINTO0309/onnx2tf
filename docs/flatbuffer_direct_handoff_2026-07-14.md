@@ -7975,3 +7975,68 @@ fan-out/public-output guards, statistics, dependencies, existing fixtures, and
 short zero-SWAP model ownership before changing source. Keep inference
 strictly sequential and minimal, then commit and push one coherent unit without
 creating a pull request.
+
+## Slice pre/post NHWC passthrough extraction: completed state
+
+The complete 148-line
+`_optimize_transpose_slice_prepost_nhwc_passthrough_chains` implementation is
+now owned by `passes/slice_prepost_layout.py`; the lowerer retains a one-call
+private compatibility wrapper at the unchanged single production position.
+After normalizing only the function name, the prior lowerer function and new
+owner ASTs are identical. The owner directly reuses the established Slice
+shape resolver in `static_shape_reconciliation.py`, preserving the existing
+dependency without copying it.
+
+The exact rank-four NHWC→NCHW Transpose, constant Slice, and inverse Transpose
+contract is unchanged. Both begin/size tensors must be constant and exclusive,
+the pre and Slice intermediates must be exclusive and non-public, permutations
+must be exact inverses, and input/output metadata must be rank four. The matcher
+continues to test the constants as-is before their NCHW→NHWC remap and accepts
+only the first representation reproducing the known post-Transpose shape.
+Constant rewrites, Slice input/output aliasing, two-Transpose removal,
+conditional pruning, fixed-point restart, and the historical statistic retain
+their exact order.
+
+The new focused corpus covers remap-required and already-NHWC constants,
+idempotence, public pre and Slice outputs, shared begin constants, pre-adapter
+fan-out, output-shape mismatch, wrong permutation, and direct-owner/private-
+wrapper equality. It passes with the architecture selector as `10 passed in
+1.77s`. The complete architecture suite passes `227 passed in 34.56s`; the
+branch-wide selection passes `626 passed in 36.18s`; and the complete optional-
+TensorFlow import-blocked suite, including direct conversion and direct
+`-cotof`, passes `11 passed in 9.32s`. Scoped Ruff, syntax compilation, and
+whitespace checks pass.
+
+Temporary instrumentation measured the single production call on Tier 0
+`UM_best_model.onnx` and Tier 2 `alike_t_opset11_192x320.onnx`; both were zero,
+so this checkpoint does not claim a non-zero production owner. ALike passed in
+6.744 seconds with `max_abs=2.345442771911621e-05` and process-tree SWAP zero.
+UM Best Model is the fixed artifact control. Before extraction it passed in
+3.335 seconds and after extraction in 3.228 seconds with identical
+`max_abs=2.384185791015625e-07` and process-tree SWAP zero. Its core artifacts
+are byte-identical:
+
+- float32 TFLite:
+  `fd4f73f2d267b7f300c164d749b2d0abf6d529cf093d32913642c7ad7c81bdbd`;
+- float16 TFLite:
+  `f003bfc1253a2dca9a81e6051bb2a9c9951f9bddbdd19b6a8111edfd11b9f2cb`;
+- tensor correspondence:
+  `87478284278c9d7e796c1e85a310f02f7f0b2f6cf87e0e74884c5465ed2857e2`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+Instrumentation and temporary outputs are removed before commit. Changed files
+are the new pass module, lowerer wrapper/import, focused corpus, architecture
+ownership check, and three branch documents. No dependency, public API, CLI,
+artifact, TensorFlow boundary, corpus profile, exclusion, or ONNX tier policy
+changes. No pull request is created; work remains commit/push only.
+
+The next raw source-order implementation is the 285-line
+`_optimize_transpose_shape_extract_nhwc_to_nchw_chains`. At restart, inventory
+its Gather/Slice remapping families, shared/public constant behavior,
+non-contiguous Slice-to-Gather conversion, production positions, statistic,
+existing fixtures, and short zero-SWAP model ownership before changing source.
+Keep inference strictly sequential and minimal, then commit and push one
+coherent unit without creating a pull request.

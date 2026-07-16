@@ -2888,6 +2888,71 @@ def test_nhwc_concat_legacy_optimizer_has_one_module_owner() -> None:
     assert len(production_calls) == 4
 
 
+def test_slice_prepost_layout_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "slice_prepost_layout.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    owner_name = "optimize_transpose_slice_prepost_nhwc_passthrough_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in owner_calls
+    assert "_build_tensor_producer_map" in owner_calls
+    assert "_infer_slice_output_shape_and_resolved_params" in owner_calls
+    assert "_read_transpose_perm" in owner_calls
+    assert "_replace_operator_input_at" in owner_calls
+    assert "_set_operator_outputs" in owner_calls
+    assert "_prune_unused_tensors" in owner_calls
+    assert "lower_from_onnx2tf" not in owner_source
+
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    dispatch = wrapper.body[0].value
+    assert isinstance(dispatch, ast.Call)
+    assert isinstance(dispatch.func, ast.Name)
+    assert dispatch.func.id == f"_{owner_name}_pass"
+    assert len(dispatch.args) == 1
+    assert isinstance(dispatch.args[0], ast.Name)
+    assert dispatch.args[0].id == "model_ir"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+
+
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
     owner_path = (
         REPO_ROOT
