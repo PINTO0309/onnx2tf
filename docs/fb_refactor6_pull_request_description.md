@@ -770,6 +770,10 @@ Latest checkpoint results:
   `14 passed`;
 - changed-file branch regression gate after the ownership extraction:
   `569 passed`;
+- focused QLinear Concat/Conv characterization and raw-owner gate:
+  `16 passed, 3 xfailed`;
+- changed-file branch regression gate including the QLinear fixture:
+  `587 passed, 3 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1175,6 +1179,16 @@ ordered runtime boundaries. A third strictly sequential YuNet INT8 before/
 after control passed with `max_abs=0`, zero SWAP, and durations of 6.290 and
 5.215 seconds. Pass metrics and all non-path artifact content remain identical.
 
+The next 608-line QLinear Concat/Conv propagation helper remains central while
+its contract is frozen. Dedicated tests now cover all four input adapter forms,
+multiple post-Quantize adapters, an additional direct Concat adapter, dynamic
+batch signatures, per-axis quantization-dimension remap, idempotence, and nine
+complete no-op guards. The former 119-line giant ModelIR fixture moved to the
+focused qlinear module with an identical AST. Three pre-existing unsafe paths
+are strict xfails: missing Concat or Quantize output tensors can reject after
+partial mutation, and a public Dequantize output can be changed from NCHW to
+NHWC. Production source is unchanged in this characterization checkpoint.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1196,5 +1210,7 @@ explicitly accepts zero-owner evidence. The 496-line
 that separately approved zero-owner mechanical extraction with its exact body,
 wrapper signature, production call order, statistics, and artifact control
 preserved. Resume by inventorying and characterizing the next raw source-order
-owner before changing it. No broad conversion sweep is implied by this
-checkpoint.
+owner before changing it. That owner is now identified as
+`_optimize_nhwc_propagation_qlinear_concat_conv`; its three strict xfails must
+be corrected as separate semantic checkpoints before any mechanical ownership
+move. No broad conversion sweep is implied by this checkpoint.

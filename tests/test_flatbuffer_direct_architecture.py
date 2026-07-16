@@ -9509,6 +9509,57 @@ def test_mean_hardsigmoid_muladd_has_one_module_owner() -> None:
     assert wrapper_name not in giant_source
 
 
+def test_qlinear_concat_conv_has_one_characterized_raw_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    helper_name = "_optimize_nhwc_propagation_qlinear_concat_conv"
+    owner = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    owner_source = ast.get_source_segment(lowering_source, owner)
+    assert owner_source is not None
+    call_names = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in call_names
+    assert "_build_tensor_producer_map" in call_names
+    assert "_read_transpose_perm" in call_names
+    assert "_set_operator_inputs" in call_names
+    assert "_replace_tensor_inputs" in call_names
+    assert "_prune_unused_tensors" in call_names
+    assert "del model_ir.operators[int(remove_idx)]" in owner_source
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(production_calls) == 1
+
+    focused_path = (
+        REPO_ROOT / "tests" / "test_flatbuffer_direct_qlinear_layout.py"
+    )
+    assert focused_path.is_file()
+    giant_source = (
+        REPO_ROOT / "tests" / "test_tflite_builder_direct.py"
+    ).read_text(encoding="utf-8")
+    assert helper_name not in giant_source
+
+
 def test_dynamic_range_quantization_uses_differential_graph_index() -> None:
     quantization_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "quantization.py"

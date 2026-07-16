@@ -10131,3 +10131,60 @@ At restart, inventory the next raw source-order helper before editing it. Fix
 its match/guard/rewrite contract, mutation order, all production positions, and
 the shortest sequential non-SWAP control first. Do not assume positive owner
 evidence, do not start a broad corpus sweep, and do not create a pull request.
+
+## QLinear Concat/Conv propagation characterization: completed state
+
+The next raw source-order owner is the 608-line
+`_optimize_nhwc_propagation_qlinear_concat_conv` helper. It remains unchanged
+in the lowerer, with one syntactic call inside the QLinear/Mean/Concat recovery
+sequence and two ordered runtime boundaries. This checkpoint does not extract
+or generalize it.
+
+The focused qlinear suite now fixes all four accepted input forms: quantized
+NHWC-to-NCHW Transpose before Dequantize, float Transpose before Quantize,
+singleton Reshape before Quantize, and singleton-spatial metadata
+reinterpretation. It also covers one or multiple post-Quantize adapters, an
+additional direct Concat adapter, axis remap, dynamic batch signatures, per-
+axis quantization-dimension remap, complete tensor shapes/signatures,
+idempotence, and nine atomic no-op guards. The former 119-line giant ModelIR
+fixture moved into this focused module with an identical AST, and the giant
+test no longer imports the private helper.
+
+Characterization exposes three pre-existing unsafe paths as strict xfails:
+
+- a missing Concat output tensor is detected after DQ/Quantize rewiring,
+  metadata updates, and axis mutation have begun;
+- a missing Quantize output tensor is detected even later, after the Concat
+  output metadata has also changed;
+- a public Dequantize output is permitted to change from NCHW to NHWC rather
+  than rejecting or preserving its public layout boundary.
+
+Validation completed as follows:
+
+- focused qlinear file: `17 passed, 3 xfailed in 0.53s`;
+- focused owner contract plus architecture selector:
+  `16 passed, 246 deselected, 3 xfailed in 0.64s`;
+- changed-file branch regression including the focused file:
+  `587 passed, 3 xfailed in 24.81s`;
+- moved giant fixture AST: exact;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Production source is unchanged, so the established QLinear recovery survey was
+not repeated. YuNet INT8, PPHumanSeg INT8, LPD-YuNet INT8, Version-RFB INT8,
+NanoDet INT8, YOLOX INT8, SSD MobileNet INT8, and dequantize_linear previously
+reached both runtime boundaries sequentially with zero rewrites and zero SWAP.
+The active Tier 0-4 op-set scan likewise found no positive owner. This remains
+zero-owner evidence, not a claim of production match coverage.
+
+Changed files are the focused qlinear suite, the mechanically reduced giant
+test, one architecture raw-owner gate, and three branch documents. Public API,
+CLI, production behavior, artifacts, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; work is commit/push only.
+
+At restart, first prevalidate the required Concat and Quantize output tensors
+before any candidate mutation and turn the two parameterized atomicity xfails
+green. Then separately reject or preserve a public Dequantize output and turn
+the final xfail green. Keep successful fingerprints, statistics, sequence
+position, and the existing zero-owner evidence unchanged. Do not create a pull
+request.
