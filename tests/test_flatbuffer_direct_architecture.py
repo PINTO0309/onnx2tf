@@ -14186,10 +14186,20 @@ def test_indexed_pre_add_direct_unary_owner_precedes_compatibility_fallback() ->
         / "pre_add_direct_unary_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compatibility_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_add_layout.py"
+    )
+    compatibility_source = compatibility_path.read_text(encoding="utf-8")
+    compatibility_tree = ast.parse(compatibility_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
 
     assert "def _resolve_candidate(" in owner_source
     assert "def _resolve_branch(" in owner_source
@@ -14207,20 +14217,48 @@ def test_indexed_pre_add_direct_unary_owner_precedes_compatibility_fallback() ->
         assert model_name not in owner_source.lower()
 
     wrapper_name = "_optimize_transpose_pre_add_nhwc_chains"
-    dispatch_name = "_optimize_transpose_pre_add_direct_unary_nhwc_chains_pass"
+    compatibility_name = "optimize_transpose_pre_add_nhwc_chains"
+    compatibility_dispatch_name = (
+        "_optimize_transpose_pre_add_nhwc_chains_pass"
+    )
+    indexed_dispatch_name = (
+        "_optimize_transpose_pre_add_direct_unary_nhwc_chains_pass"
+    )
+    assert "lower_from_onnx2tf" not in compatibility_source
+    compatibility_owner = next(
+        node
+        for node in compatibility_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compatibility_name
+    )
+    first_call = next(
+        node
+        for node in ast.walk(compatibility_owner.body[1])
+        if isinstance(node, ast.Call)
+    )
+    assert isinstance(first_call.func, ast.Name)
+    assert first_call.func.id == indexed_dispatch_name
+    assert {keyword.arg for keyword in first_call.keywords} == {"layout_state"}
+    assert "_build_tensor_consumer_map" in compatibility_source
+    assert "_build_tensor_producer_map" in compatibility_source
+    assert "_prune_unused_tensors" in compatibility_source
+    assert "while True" in compatibility_source
+
     wrapper = next(
         node
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
     )
-    first_call = next(
+    wrapper_calls = [
         node
-        for node in ast.walk(wrapper.body[1])
+        for node in ast.walk(wrapper)
         if isinstance(node, ast.Call)
-    )
-    assert isinstance(first_call.func, ast.Name)
-    assert first_call.func.id == dispatch_name
-    assert {keyword.arg for keyword in first_call.keywords} == {"layout_state"}
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == compatibility_dispatch_name
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state"
+    }
 
     lowerer = next(
         node

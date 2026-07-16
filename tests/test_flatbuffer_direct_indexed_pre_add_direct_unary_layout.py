@@ -18,6 +18,7 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_add_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes import pre_add_layout
 from onnx2tf.tflite_builder.passes.pre_add_direct_unary_layout import (
     _apply_plan,
     _resolve_candidate,
@@ -438,3 +439,23 @@ def test_candidate_and_max_rewrites_bound_dispatch() -> None:
         max_rewrites=1,
     ) == {_STATS_KEY: 1}
     _assert_index_matches(combined, graph_index)
+
+
+def test_composite_owner_matches_private_wrapper_on_compatibility_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pre_add_layout,
+        "_optimize_transpose_pre_add_direct_unary_nhwc_chains_pass",
+        lambda *args, **kwargs: {_STATS_KEY: 0},
+    )
+    direct = _model(legacy=True)
+    wrapped = copy.deepcopy(direct)
+
+    assert pre_add_layout.optimize_transpose_pre_add_nhwc_chains(direct) == {
+        "optimized_transpose_pre_add_nhwc_chains": 1
+    }
+    assert _optimize_transpose_pre_add_nhwc_chains(wrapped) == {
+        "optimized_transpose_pre_add_nhwc_chains": 1
+    }
+    assert _snapshot(direct) == _snapshot(wrapped)

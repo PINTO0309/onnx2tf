@@ -6987,6 +6987,27 @@ their exact recorded maximum errors. All float32 and float16 TFLite files are
 byte-identical to the prior checkpoint; final conversion-only checks also
 restore the fixed correspondence-report hashes.
 
+The complete indexed-first compatibility composite is now isolated in
+`passes/pre_add_layout.py`. Its 1,593-line implementation moved as one semantic
+unit with a function-name-normalized AST identical to the prior lowerer owner;
+this is not a source-line limit or a semantic split. The indexed direct/unary
+owner still runs first. Its fallback still owns Swish, unary, Mul-constant,
+Mul/Sub-constant, Gather, constant-Add, nested-Add, PReLU, direct-NCHW bridge,
+post aliases, and legacy-consumer handling in the same fixed-point order. All
+producer/consumer rebuilds, copy-on-write decisions, metadata and quantization
+updates, mutation order, marker behavior, pruning, and the single historical
+statistic are unchanged. The lowerer retains a one-call private compatibility
+wrapper at all four production positions and in the safe-transpose bundle.
+
+The focused fallback-equivalence fixture disables the indexed sub-owner and
+proves the module owner and lowerer wrapper produce identical ModelIR. The
+existing Gather/shared-constant, shared-Concat/unary, LeakyReLU, nested affine,
+QLinear, and indexed transactional fixtures remain active. FastestDet
+establishes non-zero fallback ownership: its eight composite calls remain
+`1,0,0,0,0,0,0,0`, while all eight indexed counts remain zero. Its sequential
+`-cotof` accuracy, zero process-tree SWAP, and five core artifacts are
+byte-identical across extraction.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`

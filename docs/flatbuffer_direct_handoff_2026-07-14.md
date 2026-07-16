@@ -8100,3 +8100,72 @@ statistics, and focused fixtures. Do not split or semantically narrow this
 boundary without characterized ownership and artifact evidence. Keep inference
 strictly sequential and minimal, then commit and push one coherent unit without
 creating a pull request.
+
+## Indexed-first pre-Add compatibility ownership extraction: completed state
+
+The complete 1,593-line `_optimize_transpose_pre_add_nhwc_chains`
+implementation is now owned by `passes/pre_add_layout.py`. The lowerer retains
+a one-call private compatibility wrapper at all four unchanged production
+positions and in the conservative safe-transpose bundle. This is an exact
+mechanical move: after normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The bounded `pre_add_direct_unary_layout` owner still runs first. The composite
+fallback retains its complete Swish, unary, Mul-constant, Mul/Sub-constant,
+Gather, constant-Add, nested-Add, PReLU, direct-NCHW bridge, post-alias, and
+legacy-consumer behavior. Full producer/consumer map construction, fixed-point
+restart, clone-on-write constants, shape/layout/dtype/quantization propagation,
+operator and tensor mutation order, marker behavior, pruning, and the single
+historical statistic are unchanged. This is not a source-line limit and does
+not claim that the fallback has been modernized.
+
+Before the move, the focused indexed, QLinear, and four active compatibility
+fixtures passed 27 tests. After adding forced-fallback module-owner/private-
+wrapper equality, those fixtures plus the complete architecture suite pass
+`256 passed in 35.28s`. The branch-wide extracted-owner selection passes
+`668 passed in 34.12s`; the complete optional-TensorFlow import-blocked suite,
+including direct conversion and direct `-cotof`, passes `11 passed in 9.53s`.
+Scoped Ruff, whole-lowerer Ruff with its established exclusions, syntax
+compilation, and whitespace checks pass.
+
+The first architecture selector run after the move failed because it still
+looked for the indexed-first assignment inside the lowerer function. This was
+an expected ownership-contract mismatch, not a conversion failure. The test
+now proves that `pre_add_layout.py` invokes the indexed owner first, contains
+the compatibility map/prune loop, never imports the lowerer, and that the
+lowerer retains exactly one dispatch call plus four Session-layout production
+positions and the safe-bundle position.
+
+`FastestDet.onnx` establishes positive real fallback ownership. Before and
+after extraction its eight composite results are `1,0,0,0,0,0,0,0`, while all
+eight bounded indexed-owner results are zero. The pre-extraction sequential
+`-cotof` run completed in 9.168 seconds and the post-extraction run in 9.394
+seconds. Both pass with `max_abs=1.3113021850585938e-05` and process-tree SWAP
+zero. The five core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+Changed files are the new composite pass module, lowerer import and wrapper,
+the focused forced-fallback equivalence test, architecture ownership checks,
+and the three branch documents. No dependency, public API, CLI, artifact name,
+TensorFlow boundary, corpus profile, exclusion policy, or ONNX tier policy
+changes. Temporary tracing and conversion outputs are removed before commit.
+PR #952 remains closed; work is commit/push only and no pull request is
+created.
+
+The next raw source-order implementation is the 166-line
+`_optimize_transpose_dual_pre_add_to_single_post_adapter_nhwc_chains`. At
+restart, inventory its strict dual-adapter and single-post contract, constant
+ownership, legacy-consumer and public-boundary guards, single production
+position, statistic, existing fixtures, and short zero-SWAP ownership before
+changing source. Keep inference strictly sequential and minimal, then commit
+and push one coherent unit without creating a pull request.
