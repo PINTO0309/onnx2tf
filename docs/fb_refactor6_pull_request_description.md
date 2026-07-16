@@ -755,6 +755,10 @@ Latest checkpoint results:
   `12 passed`;
 - changed-file branch regression gate after Conv/Mul affine extraction:
   `544 passed`;
+- focused Mean/HardSigmoid/MulAdd characterization and raw-owner gate:
+  `10 passed, 2 xfailed`;
+- changed-file branch regression gate after Mean/HardSigmoid characterization:
+  `565 passed, 2 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1123,6 +1127,20 @@ generated-schema artifacts. The preceding accuracy checkpoint remains
 `max_abs=4.470348358154297e-07`; duplicate inference was not run because the
 executed TFLite artifact is identical.
 
+The next quantized Mean/HardSigmoid/MulAdd helper remains central and is only
+characterized in this checkpoint. The full synthetic graph fixes both
+quantized branches, Mean-axis remap, decomposed HardSigmoid clamp, residual
+Mul/Add rewiring, bridge removal, legacy adapter insertion, idempotence, and
+eight rejection boundaries. Two pre-existing defects are strict xfails:
+invalid Mean axes reject after a partial mutation, and a public residual output
+is changed from NCHW to NHWC without preserving its boundary contract.
+
+YuNet INT8, PPHumanSeg INT8, and SSD MobileNet INT8 each reached both ordered
+runtime boundaries with zero rewrites. Their strictly sequential conversions
+completed in 1.007, 1.715, and 2.107 seconds, every process-tree monitor
+reported SWAP zero, and all conversions succeeded. This matches the earlier
+broader zero-owner survey; positive production ownership is not claimed.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1141,8 +1159,9 @@ model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
 implementation is the 487-line
-`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper. It has no dedicated
-focused module and should not be moved from the lowerer before its Mean axes,
-fused/decomposed HardSigmoid, affine constants, fan-out/public boundaries,
-metadata, mutation order, and shortest real owner are characterized. No broad
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper. Its focused
+contract and zero-owner evidence are now recorded, but extraction is blocked by
+the two strict xfails. Resume by making invalid Mean axes a pre-mutation guard,
+then separately preserve or reject a public residual output. Each correction
+must turn exactly one xfail green without altering successful behavior. No broad
 conversion sweep is implied by this checkpoint.

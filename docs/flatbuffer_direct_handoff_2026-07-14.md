@@ -9950,3 +9950,60 @@ fused and decomposed HardSigmoid roots, affine constant shapes, fan-out/public
 guards, metadata permutations, retry/mutation order, all production positions,
 and the smallest sequential non-SWAP real owner before changing source. Do not
 create a pull request.
+
+## Mean/HardSigmoid/MulAdd characterization: completed state
+
+The raw 487-line
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper remains unchanged in
+`lower_from_onnx2tf.py`. Its one syntactic call belongs to the ordered QLinear/
+Mean/Concat recovery sequence, which runs at two production boundaries. This
+checkpoint does not extract or otherwise generalize the helper.
+
+The new focused ModelIR graph fixes both NHWC-to-NCHW input adapters, the
+Dequantize/keepdims-Mean/Quantize/post-Transpose branch, the decomposed
+Mul/Add/Maximum/Minimum HardSigmoid branch, residual Mul/Add wiring, downstream
+Mean consumer, legacy residual consumer, three bridge removals, local
+NHWC-to-NCHW adapter insertion, metadata propagation, and idempotence. Eight
+complete no-op cases cover a wrong q0 permutation, public q0 bridge, q0 fanout,
+non-keepdims Mean, wrong post permutation, shared sigmoid output, wrong q1
+permutation, and per-axis quantization. The architecture selector records one
+raw owner/call plus the current full producer/consumer scans, constant reads and
+writes, direct insertion/deletion, and prune boundary.
+
+Characterization exposes two pre-existing unsafe paths as strict xfails:
+
+- invalid Mean axes are normalized only after the q0 Dequantize input and
+  output metadata have already changed, so a zero-statistic rejection is not
+  atomic;
+- a public residual `add0_out` is converted from NCHW metadata and semantics to
+  NHWC without retaining a public NCHW adapter or rejecting the candidate.
+
+Validation completed as follows:
+
+- focused characterization alone: `9 passed, 2 xfailed in 0.51s`;
+- focused characterization plus raw-owner selector:
+  `10 passed, 243 deselected, 2 xfailed in 1.95s`;
+- changed-file branch regression collection:
+  `565 passed, 2 xfailed in 25.51s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Three current short INT8 representatives were traced strictly sequentially.
+YuNet INT8, PPHumanSeg INT8, and SSD MobileNet INT8 each reached both ordered
+runtime boundaries, returned `0,0`, completed in 1.007, 1.715, and 2.107
+seconds, and recorded process-tree SWAP zero. All conversions succeeded. This
+confirms the earlier broader QLinear recovery survey; positive production
+ownership is not claimed and no broad corpus sweep was repeated.
+
+Changed files are the new focused characterization module, one architecture
+selector, and the three branch documents. Production source, public API, CLI,
+artifacts, TensorFlow boundary, dependencies, corpus profiles, exclusion
+policy, and ONNX operation-tier policy are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, make two separate semantic corrections before considering
+extraction. First, validate and plan normalized Mean axes before the first
+input or metadata mutation and turn only the atomicity xfail green. Second,
+reject or preserve public `add0_out` NCHW semantics and turn only the public-
+boundary xfail green. Each commit must retain the positive fingerprint,
+statistics, ordered call, sequential zero-SWAP artifact control, and must not
+create a pull request.

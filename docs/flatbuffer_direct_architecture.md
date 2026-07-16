@@ -7720,7 +7720,8 @@ Conv/Pool output passthrough compatibility is now owned by
 `convpool_output_passthrough_compat.py`. The complete corrected 556-line helper
 moved with a function-name-normalized AST identical to its prior lowerer
 implementation. The lowerer retains one private wrapper at the unchanged
-single production position. Its former sole giant direct-builder fixture moved to
+single production position. Its former sole giant direct-builder fixture moved
+to
 `test_flatbuffer_direct_convpool_output_passthrough_layout.py`, where a compact
 contract now covers the elementwise region, retained legacy NCHW adapter,
 rank-four external-runtime adapter, keepdims Mean-axis absorption, and seven
@@ -7739,6 +7740,24 @@ atomicity contract. Successful rewrite order and artifacts are unchanged.
 FastestDet, HumanSeg, OSNet, and inference_ops15 each produce one zero result in
 strictly sequential, zero-SWAP traces; positive production ownership is not
 claimed.
+
+The adjacent quantized Mean/HardSigmoid/MulAdd recovery remains a raw 487-line
+lowerer owner with one syntactic call inside the recovery sequence, executed at
+two ordered production boundaries. Its first dedicated ModelIR contract fixes
+the full two-branch graph, Mean axis remap, decomposed HardSigmoid clamp,
+residual Mul/Add rewiring, three bridge removals, legacy-output adapter,
+idempotence, and eight complete no-op guards. Architecture tests record the
+current full-map scans, constant writes, direct insertion/deletion, prune, and
+single raw call.
+
+Two strict xfails deliberately block extraction. Invalid Mean axes are checked
+after the first Dequantize input and metadata mutation, so a zero-statistic
+rejection is not atomic. A public residual `add0_out` is rewritten from NCHW to
+NHWC without preserving its declared output contract. YuNet INT8, PPHumanSeg
+INT8, and SSD MobileNet INT8 each produce two zero results in current strictly
+sequential, zero-SWAP traces, matching the earlier broader zero-owner survey.
+The two unsafe boundaries must be corrected as separate semantic checkpoints
+before any ownership move.
 
 ## Managed-corpus SWAP exclusion policy
 
