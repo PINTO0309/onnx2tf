@@ -8952,3 +8952,81 @@ report boundaries, both production positions, existing fixtures, and short
 zero-SWAP real-model ownership before changing source. Keep inference strictly
 sequential and minimal, then commit and push one coherent unit without creating
 a pull request.
+
+## Static/relaxed attention-QKV compatibility composite extraction: completed state
+
+The intervening 218-line rank-3-to-NHWC reshape helper was re-audited before
+this unit and remains intentionally unchanged. Its previous all-active Tier 0-4
+scan found zero complete production owners and no public compatibility fixture;
+the recorded no-change decision therefore still applies. No synthetic-only
+replacement was introduced.
+
+The complete 245-line indexed-first
+`_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains`
+composite is now owned by `passes/attention_qkv_reshape_compat_layout.py`. The
+lowerer retains one private compatibility wrapper at both unchanged production
+call positions and forwards Session `LayoutState`. After normalizing only the
+function name, the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the strict indexed static HAD semantic
+owner, one per-call `ModelIRGraphIndex`, caller LayoutState, combined statistic,
+HDA `[1,2,0]`, shared-constant copy-on-write, dynamic-signature, and relaxed
+raw fallback, shape/permutation constant cloning and updates, fixed-point
+restart, exact mutation/removal order, sole prune/report boundary, and removal
+of pruned names from LayoutState. The indexed immutable plan and module are
+unchanged.
+
+The eight-case indexed/compatibility suite plus the architecture ownership
+selector passes `9 passed in 1.93s`. It covers the indexed static HAD path, HDA
+fallback, shared-constant copy-on-write, dynamic fallback, bounded dispatch,
+stale-plan rejection, determinism, complete compatibility-owner/lowerer-wrapper
+equality, and LayoutState cleanup. The changed-file branch regression
+collection passes `508 passed in 28.47s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.28s`.
+
+Tier 3 `rf-detr-nano.onnx` is the strictly sequential positive artifact
+control. The previously established indexed invocation counts remain
+`5,0,0,0`, with zero raw-fallback rewrites for those accepted candidates. The
+pre conversion completed in 10.928 seconds and the post conversion in 11.288
+seconds; both recorded process-tree SWAP zero. The core artifacts are byte-
+identical:
+
+- float32 TFLite:
+  `fda7d97eaad2b19ee2ac31411099067e78b747515952b7c65ba52a0f1454f1fb`;
+- float16 TFLite:
+  `a80051b2d6bb871ee871f0d1528e1ea7c8d4e7f6ecbfc16daec4fa78d696fd1f`;
+- tensor correspondence:
+  `262235cec5a8df73ff2afd7f1eb28678cc7312f4a19dd09d278fd8db77cbdec4`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential accuracy checkpoint remains
+`max_abs=0.000102996826171875`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds a
+complete consumer map in a fixed-point loop and performs relaxed clone-on-write
+shape/permutation mutations instead of the indexed owner's immutable
+differential transaction. Broader hardening requires separate semantic
+fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new static/relaxed attention-QKV compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary conversion outputs
+are removed before commit. PR #952 remains closed; work is commit/push only and
+no pull request is created.
+
+The adjacent 293-line attention Gather cleanup and 190-line attention pre-
+projection rank-lift helpers retain their previously measured no-change
+decisions: active-corpus scans and selected ModelIR conversions found zero
+complete production owners. At restart, preserve those decisions and inventory
+the next raw source-order implementation with an existing public fixture,
+`_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains`, before
+changing source. Confirm real ownership, mutation dependencies, production
+position, and a short zero-SWAP artifact control first. Then commit and push one
+coherent unit without creating a pull request.

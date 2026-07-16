@@ -16,6 +16,9 @@ from onnx2tf.tflite_builder.passes.attention_qkv_reshape_layout import (
     _resolve_candidate,
     optimize_attention_qkv_had_reshape_transpose_chains,
 )
+from onnx2tf.tflite_builder.passes.attention_qkv_reshape_compat_layout import (
+    optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains_compat,
+)
 
 
 _STATS_KEY = (
@@ -237,17 +240,29 @@ def test_indexed_attention_qkv_had_rewrites_differentially() -> None:
 
 
 def test_indexed_attention_qkv_had_wrapper_prunes_and_tracks_layout() -> None:
-    model_ir = _make_ir()
-    layout_state = LayoutState.from_model_ir(model_ir)
+    compat_ir = _make_ir()
+    wrapper_ir = deepcopy(compat_ir)
+    compat_layout_state = LayoutState.from_model_ir(compat_ir)
+    wrapper_layout_state = LayoutState.from_model_ir(wrapper_ir)
     assert (
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-            model_ir,
-            layout_state=layout_state,
+        optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains_compat(
+            compat_ir,
+            layout_state=compat_layout_state,
         )
         == {_STATS_KEY: 1}
     )
-    assert set(model_ir.tensors) == {"x", "shape", "r", "perm", "z"}
-    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert (
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+            wrapper_ir,
+            layout_state=wrapper_layout_state,
+        )
+        == {_STATS_KEY: 1}
+    )
+    assert _fingerprint(compat_ir) == _fingerprint(wrapper_ir)
+    assert compat_layout_state.logical == wrapper_layout_state.logical
+    assert compat_layout_state.physical == wrapper_layout_state.physical
+    assert set(wrapper_ir.tensors) == {"x", "shape", "r", "perm", "z"}
+    assert wrapper_layout_state.validate_against_model_ir(wrapper_ir) == []
 
 
 def test_indexed_attention_qkv_preserves_hda_compatibility_fallback() -> None:
@@ -255,14 +270,23 @@ def test_indexed_attention_qkv_preserves_hda_compatibility_fallback() -> None:
     assert optimize_attention_qkv_had_reshape_transpose_chains(model_ir) == {
         _STATS_KEY: 0
     }
+    compat_ir = deepcopy(model_ir)
+    wrapper_ir = deepcopy(model_ir)
     assert (
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-            model_ir
+        optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains_compat(
+            compat_ir
         )
         == {_STATS_KEY: 1}
     )
+    assert (
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+            wrapper_ir
+        )
+        == {_STATS_KEY: 1}
+    )
+    assert _fingerprint(compat_ir) == _fingerprint(wrapper_ir)
     np.testing.assert_array_equal(
-        model_ir.tensors["perm"].data,
+        wrapper_ir.tensors["perm"].data,
         np.asarray([0, 2, 3, 1], dtype=np.int32),
     )
 
@@ -274,29 +298,38 @@ def test_indexed_attention_qkv_preserves_shared_constant_copy_on_write() -> None
         _STATS_KEY: 0
     }
     assert _fingerprint(model_ir) == before
+    compat_ir = deepcopy(model_ir)
+    wrapper_ir = deepcopy(model_ir)
     assert (
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-            model_ir
+        optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains_compat(
+            compat_ir
         )
         == {_STATS_KEY: 1}
     )
+    assert (
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+            wrapper_ir
+        )
+        == {_STATS_KEY: 1}
+    )
+    assert _fingerprint(compat_ir) == _fingerprint(wrapper_ir)
     np.testing.assert_array_equal(
-        model_ir.tensors["shape"].data,
+        wrapper_ir.tensors["shape"].data,
         np.asarray([3, 2, 4], dtype=np.int64),
     )
     np.testing.assert_array_equal(
-        model_ir.tensors["perm"].data,
+        wrapper_ir.tensors["perm"].data,
         np.asarray([1, 0, 2], dtype=np.int32),
     )
-    reshape, transpose = model_ir.operators[:2]
+    reshape, transpose = wrapper_ir.operators[:2]
     assert reshape.inputs[1] != "shape"
     assert transpose.inputs[1] != "perm"
     np.testing.assert_array_equal(
-        model_ir.tensors[reshape.inputs[1]].data,
+        wrapper_ir.tensors[reshape.inputs[1]].data,
         np.asarray([1, 3, 2, 4], dtype=np.int64),
     )
     np.testing.assert_array_equal(
-        model_ir.tensors[transpose.inputs[1]].data,
+        wrapper_ir.tensors[transpose.inputs[1]].data,
         np.asarray([0, 2, 1, 3], dtype=np.int32),
     )
 
@@ -306,12 +339,21 @@ def test_indexed_attention_qkv_preserves_dynamic_compatibility_fallback() -> Non
     assert optimize_attention_qkv_had_reshape_transpose_chains(model_ir) == {
         _STATS_KEY: 0
     }
+    compat_ir = deepcopy(model_ir)
+    wrapper_ir = deepcopy(model_ir)
     assert (
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-            model_ir
+        optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains_compat(
+            compat_ir
         )
         == {_STATS_KEY: 1}
     )
+    assert (
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+            wrapper_ir
+        )
+        == {_STATS_KEY: 1}
+    )
+    assert _fingerprint(compat_ir) == _fingerprint(wrapper_ir)
 
 
 def test_indexed_attention_qkv_candidate_and_bound_are_strict() -> None:

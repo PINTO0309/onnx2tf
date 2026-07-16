@@ -7351,6 +7351,26 @@ Its float32, float16, and correspondence outputs remain byte-identical to the
 pre-extraction baseline. The sequential `-cotof` gate passes with maximum
 absolute error `0.000102996826171875` and zero process-tree SWAP.
 
+The indexed-first static/relaxed QKV compatibility composite is now isolated
+in `attention_qkv_reshape_compat_layout.py`. The former 245-line lowerer
+implementation moved with a function-name-normalized AST identical to the
+module owner. It still creates one `ModelIRGraphIndex` per invocation,
+dispatches the strict static `[1,0,2]` owner first, forwards caller
+`LayoutState`, then runs the unchanged `[1,2,0]`, shared-constant copy-on-write,
+dynamic-signature, and relaxed fallback to fixed point. Shape/permutation
+constant cloning and updates, the combined statistic, the sole prune/report
+boundary, and removal of pruned tensor names from LayoutState remain in the
+compatibility owner. The lowerer retains one private adapter at both unchanged
+production call positions.
+
+The focused corpus compares compatibility-owner and lowerer-adapter results for
+the indexed static path, HDA fallback, shared-constant copy-on-write, dynamic
+fallback, and LayoutState cleanup. A strictly sequential pre/post RF-DETR Nano
+conversion records zero process-tree SWAP and reproduces all five core
+artifacts byte for byte. The indexed immutable plan is unchanged. Whole-graph
+fallback scans and relaxed clone-on-write mutation remain explicit future
+semantic work.
+
 The static Swish-to-Squeeze rank adapter now has a bounded indexed owner in
 `pre_unary_squeeze_suffix_layout.py`. It accepts only the production-proven
 `NHWC -> NCHW -> Logistic/Mul -> Squeeze(axis=2) -> Transpose([0,2,1])`
