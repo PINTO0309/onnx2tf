@@ -785,6 +785,10 @@ Latest checkpoint results:
   `20 passed`;
 - changed-file branch regression after the ownership extraction:
   `591 passed`;
+- focused indexed Conv-input adapter characterization:
+  `3 passed, 2 xfailed`;
+- changed-file focused branch regression including that characterization:
+  `594 passed, 2 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1246,5 +1250,10 @@ explicitly accepts zero-owner evidence. The 496-line
 completed separately approved zero-owner mechanical extractions. Their exact
 bodies, wrapper signatures, production call order, statistics, and artifact
 controls are preserved. Resume by inventorying and characterizing the next raw
-source-order owner before changing it. No broad conversion sweep is implied by
-this checkpoint.
+source-order owner before changing it. That boundary is the existing indexed
+Conv-input adapter repair pair and its shared-index runner. Characterization
+found that both repair functions read a malformed source `shape_signature`
+after rewriting the Conv input; the resulting `IndexError` leaves a partial
+mutation. Two strict xfails freeze those paths. Prevalidate the signature before
+the first mutation, turn both xfails green, and only then perform any mechanical
+ownership move. No broad conversion sweep is implied by this checkpoint.

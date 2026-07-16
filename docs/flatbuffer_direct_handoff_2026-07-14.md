@@ -10311,3 +10311,48 @@ At restart, inventory the next raw helper in actual production source order and
 characterize its positive, rejection, ownership, and call-boundary behavior
 before editing it. Keep validation minimal and strictly sequential, do not run
 a broad corpus sweep, and do not create a pull request.
+
+## Indexed Conv-input adapter repair characterization: completed state
+
+The next raw ownership boundary is the existing Conv-input adapter repair
+group in `lower_from_onnx2tf.py`: singleton-Reshape repair, stale NCHW-to-NHWC
+Transpose repair, and `_run_indexed_conv_input_adapter_repairs`. The runner
+already builds one `ModelIRGraphIndex` for the pair. Its primary and fallback
+production calls, the later standalone stale-Transpose compatibility call,
+multiple successful rewrites, complete legacy-pair equality, index equality,
+fan-out protection, and graph-output protection were already characterized.
+
+The extraction audit found one shared pre-existing atomicity defect. Each raw
+repair rewrites the Conv input through `_set_operator_inputs` before reading
+the source `shape_signature` needed to update Conv output metadata. If that
+signature is present but shorter than rank four, indexing it raises
+`IndexError` after the graph edge has changed. The new parameterized strict
+xfail requires a zero statistic and complete unchanged ModelIR fingerprint for
+both singleton-Reshape and stale-Transpose candidates. It fails at the expected
+post-mutation exception in both cases.
+
+Validation completed as follows:
+
+- focused Conv-input adapter selector:
+  `3 passed, 257 deselected, 2 xfailed in 0.82s`;
+- changed-file focused branch regression, excluding the giant legacy module:
+  `594 passed, 2 xfailed in 23.69s`;
+- targeted Ruff: passed.
+
+One exploratory broad command accidentally included
+`tests/test_tflite_builder_direct.py` and is not the branch gate. It completed
+with `1335 passed, 2 xfailed, 6 failed`. Four failures require the intentionally
+absent TensorFlow optional extra, one reaches an incompatible user-site Torch
+binary, and the standalone giant-test SiNet fixture already fails at checkpoint
+`e7ec3a4b` with a zero rewrite. None is caused by this test-only
+characterization; no production source changed in this checkpoint.
+
+Changed files are the focused indexed Conv-input repair test and three branch
+documents. PR #952 remains closed; work is commit/push only.
+
+At restart, materialize and validate the source shape/signature before the
+first indexed Conv-input rewrite in both raw repairs. Turn both strict xfails
+green while preserving every successful fingerprint, statistic, shared-index
+behavior, and production call boundary. Do not extract the group until that
+atomicity correction is separately committed and verified. Do not create a
+pull request.

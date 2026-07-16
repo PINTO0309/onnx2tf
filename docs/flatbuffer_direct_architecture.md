@@ -4263,6 +4263,14 @@ resulting ModelIR with the former explicit pair, proves one index build without
 legacy producer/consumer maps, exercises multiple matches, and preserves
 fan-out and graph-output adapters.
 
+The extraction audit adds two strict atomicity characterizations for malformed
+source `shape_signature` metadata. Both raw repairs currently rewrite the Conv
+input before materializing the source signature used for output metadata. A
+signature shorter than the required rank therefore raises `IndexError` after
+the first edge mutation. The expected contract is a zero-statistic, complete
+ModelIR no-op. Signature materialization and rank validation must move before
+the indexed setter in both repairs before this ownership boundary is extracted.
+
 Wrong-way NCHW-to-NHWC Transpose-before-Conv sanitation is owned by the Torch/
 TensorFlow-free `passes/conv_input_layout.py` module. A graph containing a
 Transpose constructs or reuses one `ModelIRGraphIndex`; a Transpose-free graph

@@ -244,3 +244,38 @@ def test_indexed_conv_transpose_repair_preserves_protected_adapter(
     assert graph_index.duplicate_producers == refreshed.duplicate_producers
     assert graph_index._operator_indices_by_id == refreshed._operator_indices_by_id
     assert graph_index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
+@pytest.mark.parametrize(
+    ("repair", "source_name", "expected_stats"),
+    [
+        (
+            _repair_singleton_nhwc_conv_input_reshapes,
+            "singleton_source",
+            {"repaired_singleton_nhwc_conv_input_reshapes": 0},
+        ),
+        (
+            _repair_stale_nchw_to_nhwc_conv_input_transposes,
+            "transpose_source0",
+            {"repaired_stale_nchw_to_nhwc_conv_input_transposes": 0},
+        ),
+    ],
+    ids=["singleton_reshape", "stale_transpose"],
+)
+@pytest.mark.xfail(
+    strict=True,
+    reason="source shape_signature is read after the first Conv input mutation",
+)
+def test_conv_input_adapter_repair_rejects_invalid_source_signature_atomically(
+    repair,
+    source_name: str,
+    expected_stats: dict[str, int],
+) -> None:
+    model_ir = _make_conv_input_adapter_model_ir()
+    model_ir.tensors[source_name].shape_signature = [1, 1]
+    before = _normalize(copy.deepcopy(model_ir))
+
+    stats = repair(model_ir)
+
+    assert stats == expected_stats
+    assert _normalize(model_ir) == before
