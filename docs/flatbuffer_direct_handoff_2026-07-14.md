@@ -10922,3 +10922,51 @@ owner/wrapper statistics plus complete ModelIR equality across LOGISTIC,
 decomposed HardSigmoid, legacy-adapter, multiple-match, and collision cases.
 Keep validation minimal and strictly sequential, then commit and push; do not
 create a pull request.
+
+## QLinear SiLU prefix ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/qlinear_silu_prefix_layout.py`. Its function and
+the corrected predecessor at checkpoint `0cf699fd` are each 513 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains `_optimize_nhwc_prefix_qlinear_silu_chains` as a one-return
+compatibility wrapper. `_run_qlinear_mean_concat_recovery_sequence` still
+calls that name in its original position, and both production sequence
+boundaries are unchanged.
+
+The focused suite executes direct module owner and lowerer wrapper on deep
+copies of four contracts: LOGISTIC, decomposed HardSigmoid, legacy consumer
+adapter insertion, and invalid reserved-name collision. Statistics, complete
+ModelIR fingerprints/layout state, and metadata are identical. Architecture
+tests parse transactional planning, conditional prune, and ordered consumer
+deduplication from the module owner, prevent a lowerer import cycle, require a
+single wrapper dispatch, and preserve the existing ordered recovery sequence.
+Extraction made `_is_singleton_constant_tensor` unused in the lowerer, so that
+import alone was removed; the lowerer retains exactly its eight earlier Ruff
+findings.
+
+Validation completed as follows:
+
+- corrected old/new owner AST comparison: exact, 513 lines each;
+- focused owner/wrapper and architecture selector:
+  `28 passed, 245 deselected in 1.96s`;
+- changed-file focused branch regression: `645 passed in 23.53s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.40s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No real-model conversion was repeated. The owner move is mechanically exact,
+direct owner/wrapper equality covers all non-zero synthetic families, and the
+prior sequential QLinear group audit established zero production rewrites and
+zero process-tree SWAP for every measured candidate. Public API, CLI, valid
+behavior/statistics, ordered production boundaries, TensorFlow isolation,
+dependencies, corpus profiles, exclusions, and ONNX operation tiers are
+unchanged. PR #952 remains closed; future work is commit/push only and must not
+create a pull request.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: `_optimize_transpose_mean_maxpool_concat_conv_chains` (310 lines).
+Freeze its positive, rejection, fixed-point, metadata, quantization, pruning,
+statistics, and ordered production boundaries before deciding on correctness
+changes or mechanical ownership. Reuse the earlier zero-owner model evidence,
+keep any additional validation minimal and strictly sequential, then commit
+and push; do not create a pull request.

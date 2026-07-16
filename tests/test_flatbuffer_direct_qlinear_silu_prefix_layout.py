@@ -15,6 +15,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_nhwc_prefix_qlinear_silu_chains,
 )
+from onnx2tf.tflite_builder.passes.qlinear_silu_prefix_layout import (
+    _optimize_nhwc_prefix_qlinear_silu_chains as _optimize_nhwc_prefix_qlinear_silu_chains_owner,
+)
 
 
 _INTERNAL_PERM_NAME = "__nhwc_to_nchw_perm_rank4__"
@@ -242,6 +245,38 @@ def _prefix_model_ir(model_ir: ModelIR, prefix: str) -> ModelIR:
         op.inputs = [tensor_names[name] for name in op.inputs]
         op.outputs = [tensor_names[name] for name in op.outputs]
     return prefixed
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["logistic", "hard_sigmoid", "legacy_adapter", "perm_collision"],
+)
+def test_qlinear_silu_prefix_owner_matches_lowerer_wrapper(case: str) -> None:
+    owner_model_ir = _build_qlinear_silu_prefix_chain(
+        pattern="hard_sigmoid" if case == "hard_sigmoid" else "logistic",
+        legacy_consumer=case in {"legacy_adapter", "perm_collision"},
+    )
+    if case == "perm_collision":
+        _tensor(
+            owner_model_ir,
+            _INTERNAL_PERM_NAME,
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 1, 2, 3], dtype=np.int32),
+        )
+        owner_model_ir.outputs.append(_INTERNAL_PERM_NAME)
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = _optimize_nhwc_prefix_qlinear_silu_chains_owner(
+        owner_model_ir
+    )
+    wrapper_stats = _optimize_nhwc_prefix_qlinear_silu_chains(
+        wrapper_model_ir
+    )
+
+    assert owner_stats == wrapper_stats
+    assert _fingerprint(owner_model_ir) == _fingerprint(wrapper_model_ir)
+    assert owner_model_ir.metadata == wrapper_model_ir.metadata
 
 
 @pytest.mark.parametrize(

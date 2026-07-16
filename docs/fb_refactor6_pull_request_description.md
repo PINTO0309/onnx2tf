@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty-six
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-seven
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -41,7 +41,8 @@ lowerer and into focused pass modules:
 - indexed-first factorized/singleton ExpandDims compatibility recovery;
 - indexed-first static/dynamic flatten-HW compatibility recovery;
 - indexed-first static/relaxed attention-QKV compatibility recovery;
-- stale NCHW-to-NHWC channelwise-binary Transpose repair.
+- stale NCHW-to-NHWC channelwise-binary Transpose repair;
+- QLinear SiLU prefix NHWC propagation and legacy-adapter recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -677,6 +678,24 @@ slot behavior, fixed-point counts, permutation reuse/collision handling, all
 ordinary rejections, and production call boundaries remain unchanged. No
 strict xfail remains for this owner.
 
+### QLinear SiLU prefix ownership extraction
+
+The corrected 513-line owner now resides in
+`passes/qlinear_silu_prefix_layout.py`. Its function AST is identical to the
+corrected lowerer predecessor at checkpoint `0cf699fd`. The lowerer retains
+the historical private name as a one-return compatibility wrapper, so the
+ordered QLinear recovery helper and both of its production boundaries remain
+unchanged. The owner module imports only ModelIR utilities and cannot import
+the central lowerer.
+
+Direct owner and wrapper executions are compared on deep-copied LOGISTIC,
+decomposed HardSigmoid, legacy-adapter, and reserved-name collision graphs.
+They produce identical statistics, complete graph/tensor fingerprints, layout
+state, and diagnostic metadata. Architecture checks retain pre-mutation
+planning, conditional pruning, ordered consumer deduplication, exact 513-line
+ownership, the thin wrapper, and the existing recovery sequence. This is a
+mechanical ownership move after the separately committed correctness fixes.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -910,6 +929,10 @@ Latest checkpoint results:
   `24 passed`;
 - changed-file focused branch regression after consumer deduplication:
   `641 passed`;
+- focused QLinear SiLU owner/wrapper and architecture extraction gate:
+  `28 passed`;
+- changed-file focused branch regression after ownership extraction:
+  `645 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1459,7 +1482,10 @@ strict xfail remains for duplicate planning when the same legacy consumer uses
 the Mul output in two input slots. Consumer indices are now deduplicated in
 first-observed order; same-consumer multi-slot and distinct-consumer order
 fixtures are green, and no strict xfail remains. Resume by mechanically
-extracting the corrected 513-line owner into a focused pass module. Preserve
-its exact AST, private lowerer name, ordered recovery sequence, statistics, and
-all production boundaries. No broad conversion sweep is implied by this
+extracting the corrected 513-line owner into a focused pass module. That move
+is now complete with exact AST identity, a one-return private wrapper, direct
+owner/wrapper equality, and unchanged ordered production boundaries. Resume by
+inventorying and characterizing the next raw source-order owner,
+`_optimize_transpose_mean_maxpool_concat_conv_chains` (310 lines), before any
+semantic or ownership change. No broad conversion sweep is implied by this
 checkpoint.

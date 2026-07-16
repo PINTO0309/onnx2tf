@@ -4152,6 +4152,18 @@ consumer order. The former strict xfail is green; the corrected raw owner is
 513 lines and has no remaining expected failure. Architecture coverage keeps
 the ordered deduplication assignment before the legacy-consumer loop.
 
+The corrected implementation is now owned by
+`passes/qlinear_silu_prefix_layout.py`. Its 513-line function AST is identical
+to the corrected lowerer predecessor at checkpoint `0cf699fd`; the lowerer
+keeps a one-return private compatibility wrapper. The ordered
+`_run_qlinear_mean_concat_recovery_sequence` continues to call that private
+name in the same position, and its two production boundaries are unchanged.
+Direct owner/wrapper characterization compares statistics, complete ModelIR
+fingerprints, layout state, and metadata for LOGISTIC, decomposed HardSigmoid,
+legacy-adapter, and reserved-name collision cases. The module cannot import the
+lowerer, while architecture checks keep all transactional and deduplication
+invariants on the module owner.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner
