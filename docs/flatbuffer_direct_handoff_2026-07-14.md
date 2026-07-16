@@ -10264,3 +10264,50 @@ wrapper and the single syntactic call/two runtime boundaries, prove old/new AST
 identity after function-name normalization, and repeat focused, branch,
 optional-boundary, and one strictly sequential zero-SWAP artifact control. Do
 not create a pull request.
+
+## QLinear Concat/Conv ownership extraction: completed state
+
+The corrected 612-line QLinear Concat/Conv propagation owner now resides in
+`onnx2tf/tflite_builder/passes/qlinear_concat_conv_compat.py`. The lowerer
+imports it under a private pass alias and retains a two-line compatibility
+wrapper. Its single syntactic call in the ordered QLinear/Mean/Concat recovery
+sequence and both runtime boundaries are unchanged. This move is mechanical;
+it does not generalize the semantics or claim positive production ownership.
+
+The old and new owner bodies are both 612 lines and have identical normalized
+ASTs after changing only the function name. The focused suite executes the
+module owner and lowerer wrapper on deep copies and confirms identical return
+statistics and complete ModelIR fingerprints. Architecture tests require the
+wrapper to dispatch exactly once, keep the one production call, preserve the
+public-output guard before required-output validation and the first mutation,
+and prevent the owner module from importing the lowerer. Removing the lowerer's
+now-unused `_invert_perm` import leaves its whole-file Ruff result at exactly
+the same eight pre-existing findings.
+
+Validation completed as follows:
+
+- normalized old/new owner AST comparison: exact;
+- focused owner/wrapper and architecture selector:
+  `20 passed, 246 deselected in 0.61s`;
+- changed-file branch regression: `591 passed in 23.37s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.27s`;
+- targeted Ruff, Python compilation, whitespace, and diff checks: passed.
+
+YuNet INT8 was run strictly sequentially at corrected checkpoint `e2ccb4ac` and
+after the extraction. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.389 and 5.279 seconds. Internal pass metrics are
+exact. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema, and
+generated-schema artifacts are byte-identical; the three JSON differences
+contain output-directory or temporary-file paths only.
+
+Changed files are the new focused owner, the lowerer import/wrapper and unused-
+import cleanup, the focused owner/wrapper comparison, the architecture
+ownership/source-order checks, and three branch documents. Public API, CLI,
+successful behavior/statistics, artifacts, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, inventory the next raw helper in actual production source order and
+characterize its positive, rejection, ownership, and call-boundary behavior
+before editing it. Keep validation minimal and strictly sequential, do not run
+a broad corpus sweep, and do not create a pull request.

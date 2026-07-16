@@ -9509,20 +9509,45 @@ def test_mean_hardsigmoid_muladd_has_one_module_owner() -> None:
     assert wrapper_name not in giant_source
 
 
-def test_qlinear_concat_conv_has_one_characterized_raw_owner() -> None:
+def test_qlinear_concat_conv_has_one_module_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
-    helper_name = "_optimize_nhwc_propagation_qlinear_concat_conv"
-    owner = next(
+    wrapper_name = "_optimize_nhwc_propagation_qlinear_concat_conv"
+    wrapper = next(
         node
         for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
     )
-    owner_source = ast.get_source_segment(lowering_source, owner)
-    assert owner_source is not None
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_optimize_nhwc_propagation_qlinear_concat_conv_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "qlinear_concat_conv_compat.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "optimize_nhwc_propagation_qlinear_concat_conv"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
     call_names = {
         node.func.id
         for node in ast.walk(owner)
@@ -9534,17 +9559,20 @@ def test_qlinear_concat_conv_has_one_characterized_raw_owner() -> None:
     assert "_set_operator_inputs" in call_names
     assert "_replace_tensor_inputs" in call_names
     assert "_prune_unused_tensors" in call_names
-    assert "del model_ir.operators[int(remove_idx)]" in owner_source
-    required_output_validation = owner_source.index(
+    assert "del model_ir.operators[int(remove_idx)]" in owner_function_source
+    required_output_validation = owner_function_source.index(
         "if concat_out_tensor is None or q_out_tensor is None:"
     )
-    public_pending_tensor_guard = owner_source.index(
+    public_pending_tensor_guard = owner_function_source.index(
         "str(tensor_name) in model_outputs\n"
         "                for tensor_name in pending_tensor_shape_updates"
     )
-    first_input_mutation = owner_source.index("_set_operator_inputs(")
+    first_input_mutation = owner_function_source.index(
+        "_set_operator_inputs("
+    )
     assert public_pending_tensor_guard < required_output_validation
     assert required_output_validation < first_input_mutation
+    assert "lower_from_onnx2tf" not in owner_source
 
     lowerer = next(
         node
@@ -9556,7 +9584,7 @@ def test_qlinear_concat_conv_has_one_characterized_raw_owner() -> None:
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == helper_name
+        and node.func.id == wrapper_name
     ]
     assert len(production_calls) == 1
 
@@ -9567,7 +9595,7 @@ def test_qlinear_concat_conv_has_one_characterized_raw_owner() -> None:
     giant_source = (
         REPO_ROOT / "tests" / "test_tflite_builder_direct.py"
     ).read_text(encoding="utf-8")
-    assert helper_name not in giant_source
+    assert wrapper_name not in giant_source
 
 
 def test_dynamic_range_quantization_uses_differential_graph_index() -> None:

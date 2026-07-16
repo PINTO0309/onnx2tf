@@ -7765,15 +7765,19 @@ sequential, zero-SWAP traces, matching the earlier broader zero-owner survey.
 The completed ownership move retains those boundaries and adds a direct owner/
 wrapper ModelIR fingerprint comparison.
 
-The following QLinear Concat/Conv propagation remains a raw 612-line lowerer
-owner with one syntactic call in the same recovery sequence and two ordered
-runtime boundaries. Its dedicated contract now covers Pattern 1 quantized
-pre-Transposes, Pattern 2 float pre-Transpose before Quantize, Pattern 3
-singleton Reshape before Quantize, Pattern 4 singleton-spatial metadata
-reinterpretation, multiple output adapters, a direct Concat adapter, dynamic
-batch signatures, per-axis qdim remap, idempotence, and nine rejection guards.
-The former 119-line giant ModelIR fixture is now in the focused qlinear module
-with an identical AST.
+The following QLinear Concat/Conv propagation is now owned by
+`qlinear_concat_conv_compat.py`. Its corrected 612-line function body is
+AST-identical to the lowerer predecessor after normalizing only the function
+name. The lowerer retains a two-line private wrapper, one syntactic call in the
+same recovery sequence, and two ordered runtime boundaries. Its dedicated
+contract covers Pattern 1 quantized pre-Transposes, Pattern 2 float pre-
+Transpose before Quantize, Pattern 3 singleton Reshape before Quantize, Pattern
+4 singleton-spatial metadata reinterpretation, multiple output adapters, a
+direct Concat adapter, dynamic batch signatures, per-axis qdim remap,
+idempotence, and nine rejection guards. The former 119-line giant ModelIR
+fixture is now in the focused qlinear module with an identical AST. Direct
+owner and compatibility-wrapper calls produce identical complete ModelIR
+fingerprints and statistics.
 
 Required `concat_out` and `q_out` tensors are now prevalidated after all
 prospective input shapes and before the first input or metadata mutation. Both

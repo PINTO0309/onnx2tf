@@ -781,6 +781,10 @@ Latest checkpoint results:
 - focused QLinear public Dequantize-output guard: `19 passed`;
 - changed-file branch regression after the public-output correction:
   `590 passed`;
+- focused QLinear Concat/Conv owner/wrapper and architecture gate:
+  `20 passed`;
+- changed-file branch regression after the ownership extraction:
+  `591 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1186,16 +1190,21 @@ ordered runtime boundaries. A third strictly sequential YuNet INT8 before/
 after control passed with `max_abs=0`, zero SWAP, and durations of 6.290 and
 5.215 seconds. Pass metrics and all non-path artifact content remain identical.
 
-The now 612-line QLinear Concat/Conv propagation helper remains central while
-its contract is frozen. Dedicated tests now cover all four input adapter forms,
+The corrected 612-line QLinear Concat/Conv propagation helper is now owned by
+`qlinear_concat_conv_compat.py`. Its function body is AST-identical to the
+corrected lowerer predecessor after normalizing only the function name. The
+lowerer retains a two-line private wrapper, its single syntactic call, and both
+ordered runtime boundaries. Dedicated tests cover all four input adapter forms,
 multiple post-Quantize adapters, an additional direct Concat adapter, dynamic
 batch signatures, per-axis quantization-dimension remap, idempotence, and nine
 complete no-op guards. The former 119-line giant ModelIR fixture moved to the
 focused qlinear module with an identical AST. Required Concat and Quantize
 output tensors are validated before the first candidate mutation, making both
 missing-tensor cases complete no-ops. A public tensor that would receive a
-pending layout metadata update now rejects before mutation, while an already-
-NHWC public Dequantize output remains eligible. No strict xfail remains.
+pending layout metadata update rejects before mutation, while an already-NHWC
+public Dequantize output remains eligible. Direct owner and compatibility-
+wrapper calls produce identical complete ModelIR fingerprints and statistics.
+No strict xfail remains.
 
 The required-output correction used YuNet INT8 as a strictly sequential before/
 after artifact control. Both runs passed with `max_abs=0`, zero process-tree
@@ -1207,6 +1216,13 @@ The public-output correction repeated the YuNet INT8 control. Before and after
 runs passed with `max_abs=0`, zero process-tree SWAP, and durations of 6.426 and
 5.259 seconds. Internal pass metrics and all non-path artifact content remain
 identical.
+
+The ownership extraction repeated the strictly sequential YuNet INT8 control
+at the corrected `e2ccb4ac` checkpoint and after the move. Both runs passed with
+`max_abs=0`, zero process-tree SWAP, and durations of 6.389 and 5.279 seconds.
+Internal pass metrics are exact. Float32/float16 TFLite, tensor-correspondence,
+op-error CSV, schema, and generated-schema artifacts are byte-identical; the
+three JSON differences contain output or temporary paths only.
 
 ## Scope and follow-up
 
@@ -1225,13 +1241,10 @@ dedicated positive and rejection contract, but the structurally matching gaze
 model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The 496-line
-`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper has now completed
-that separately approved zero-owner mechanical extraction with its exact body,
-wrapper signature, production call order, statistics, and artifact control
-preserved. Resume by inventorying and characterizing the next raw source-order
-owner before changing it. That owner is now identified as
-`_optimize_nhwc_propagation_qlinear_concat_conv`; required output prevalidation
-and the public Dequantize-output guard are complete with no strict xfail. A
-mechanical ownership move may proceed only with exact body, wrapper, sequence,
-statistics, and zero-owner artifact preservation. No broad conversion sweep is
-implied by this checkpoint.
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper and the following
+612-line `_optimize_nhwc_propagation_qlinear_concat_conv` helper have now
+completed separately approved zero-owner mechanical extractions. Their exact
+bodies, wrapper signatures, production call order, statistics, and artifact
+controls are preserved. Resume by inventorying and characterizing the next raw
+source-order owner before changing it. No broad conversion sweep is implied by
+this checkpoint.
