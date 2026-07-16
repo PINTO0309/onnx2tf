@@ -16,6 +16,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_mean_maxpool_concat_conv_chains,
 )
+from onnx2tf.tflite_builder.passes.mean_maxpool_concat_layout import (
+    _optimize_transpose_mean_maxpool_concat_conv_chains as _optimize_transpose_mean_maxpool_concat_conv_chains_owner,
+)
 
 
 def _normalize(value: Any) -> Any:
@@ -266,6 +269,42 @@ def _prefix_model_ir(model_ir: ModelIR, prefix: str) -> ModelIR:
         op.inputs = [tensor_names[name] for name in op.inputs]
         op.outputs = [tensor_names[name] for name in op.outputs]
     return prefixed
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["static", "dynamic", "multiple_post", "multiple_chain", "rejection"],
+)
+def test_mean_maxpool_concat_owner_matches_lowerer_wrapper(case: str) -> None:
+    owner_model_ir = _build_mean_maxpool_concat_chain(
+        post_count=2 if case == "multiple_post" else 1,
+        dynamic_batch=case == "dynamic",
+    )
+    if case == "multiple_chain":
+        second = _prefix_model_ir(
+            _build_mean_maxpool_concat_chain(),
+            "second_",
+        )
+        owner_model_ir.inputs.extend(second.inputs)
+        owner_model_ir.outputs.extend(second.outputs)
+        owner_model_ir.tensors.update(second.tensors)
+        owner_model_ir.operators.extend(second.operators)
+    elif case == "rejection":
+        owner_model_ir.tensors["mean_axes"].data = np.asarray(
+            [1, 2],
+            dtype=np.int32,
+        )
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = _optimize_transpose_mean_maxpool_concat_conv_chains_owner(
+        owner_model_ir
+    )
+    wrapper_stats = _optimize_transpose_mean_maxpool_concat_conv_chains(
+        wrapper_model_ir
+    )
+
+    assert owner_stats == wrapper_stats
+    assert _normalize(owner_model_ir) == _normalize(wrapper_model_ir)
 
 
 def test_mean_maxpool_concat_chain_rewrites_to_nhwc() -> None:

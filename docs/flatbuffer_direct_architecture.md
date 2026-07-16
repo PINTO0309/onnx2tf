@@ -4195,6 +4195,16 @@ central lowerer's existing Ruff findings to seven. Architecture tests keep
 axes ownership and all plan objects before the first setter/constant/alias
 mutation and keep conditional pruning after convergence.
 
+The corrected owner is now in `passes/mean_maxpool_concat_layout.py`. Its
+382-line function AST is identical to the corrected lowerer predecessor at
+checkpoint `7b0f08a9`; the lowerer keeps a one-return private wrapper. The
+ordered QLinear recovery sequence and its two production boundaries remain
+unchanged. Direct owner/wrapper tests compare the complete ModelIR and
+statistics for static, dynamic, multiple-post, multiple-chain, and rejection
+contracts. The module cannot import the lowerer, and architecture checks apply
+all ownership/planning/prune invariants to the module owner. Removing the
+extracted owner's unused lowerer import leaves seven central Ruff findings.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner

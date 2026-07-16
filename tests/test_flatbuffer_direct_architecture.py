@@ -1078,16 +1078,27 @@ def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:
 
 
 def test_mean_maxpool_concat_corrected_owner_contract_is_explicit() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "mean_maxpool_concat_layout.py"
+    )
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
     owner_name = "_optimize_transpose_mean_maxpool_concat_conv_chains"
     owner = next(
         node
-        for node in lowering_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == owner_name
     )
+    assert "lower_from_onnx2tf" not in owner_source
     assert owner.end_lineno - owner.lineno + 1 == 382
     call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
@@ -1185,6 +1196,21 @@ def test_mean_maxpool_concat_corrected_owner_contract_is_explicit() -> None:
         )
     )
     assert ast.unparse(prune_guard.test) == "optimized > 0"
+
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    dispatch = wrapper.body[0].value
+    assert isinstance(dispatch, ast.Call)
+    assert isinstance(dispatch.func, ast.Name)
+    assert dispatch.func.id == f"{owner_name}_pass"
+    assert len(dispatch.args) == 1
+    assert isinstance(dispatch.args[0], ast.Name)
+    assert dispatch.args[0].id == "model_ir"
 
 
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:

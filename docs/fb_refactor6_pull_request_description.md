@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty-seven
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-eight
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -42,7 +42,8 @@ lowerer and into focused pass modules:
 - indexed-first static/dynamic flatten-HW compatibility recovery;
 - indexed-first static/relaxed attention-QKV compatibility recovery;
 - stale NCHW-to-NHWC channelwise-binary Transpose repair;
-- QLinear SiLU prefix NHWC propagation and legacy-adapter recovery.
+- QLinear SiLU prefix NHWC propagation and legacy-adapter recovery;
+- Mean/MaxPool/Concat/Conv NHWC recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -741,6 +742,24 @@ seven. Valid candidate order, statistics, multiple-post and multiple-chain
 behavior, ordered production boundaries, and TensorFlow isolation are
 unchanged.
 
+### Mean/MaxPool/Concat/Conv ownership extraction
+
+The corrected 382-line owner now resides in
+`passes/mean_maxpool_concat_layout.py`. Its function AST is identical to the
+corrected lowerer predecessor at checkpoint `7b0f08a9`. The lowerer retains a
+one-return private compatibility wrapper, and the ordered QLinear recovery
+sequence plus both production boundaries continue to call the historical name
+in the same position. The focused module cannot import the lowerer.
+
+Direct owner and wrapper executions are compared on deep-copied static,
+dynamic-batch, multiple-post, multiple-chain, and rejection graphs. They
+produce identical statistics and complete ModelIR including constants,
+options, quantization, tensors, topology, and metadata. Architecture checks
+retain axes ownership, transactional planning, conditional prune, exact
+382-line module ownership, the thin wrapper, and the existing ordered
+sequence. Extraction removes the now-unused `_quant_scale_count` lowerer import
+and preserves its seven remaining Ruff findings.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -985,6 +1004,10 @@ Latest checkpoint results:
 - focused Mean/MaxPool/Concat transactional correction and architecture gate:
   `29 passed`;
 - changed-file focused branch regression after the correction: `673 passed`;
+- focused Mean/MaxPool/Concat owner/wrapper and architecture extraction gate:
+  `34 passed`;
+- changed-file focused branch regression after ownership extraction:
+  `678 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1547,5 +1570,9 @@ before the first edge, constant, option, or tensor mutation. That correction is
 now complete, all xfails are green, and the unused producer-map scan is gone.
 Resume by mechanically extracting the corrected 382-line owner into a focused
 pass module while preserving its exact AST, private lowerer name, ordered
-recovery sequence, statistics, and both production boundaries. No broad
-conversion sweep is implied by this checkpoint.
+recovery sequence, statistics, and both production boundaries. That extraction
+is now complete with direct owner/wrapper equality and seven lowerer Ruff
+findings preserved. Resume by inventorying and characterizing the next raw
+source-order owner, `_canonicalize_softmax_transpose_chains` (190 lines),
+before any semantic or ownership change. No broad conversion sweep is implied
+by this checkpoint.

@@ -11088,3 +11088,49 @@ statistics plus complete ModelIR/metadata equality for static, dynamic,
 multiple-post, multiple-chain, per-axis, and rejection cases. Keep validation
 minimal and strictly sequential, commit and push, and do not create a pull
 request.
+
+## Mean/MaxPool/Concat/Conv ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/mean_maxpool_concat_layout.py`. Its function and
+the corrected predecessor at checkpoint `7b0f08a9` are each 382 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains `_optimize_transpose_mean_maxpool_concat_conv_chains` as a
+one-return compatibility wrapper. Its position in
+`_run_qlinear_mean_concat_recovery_sequence` and both production sequence
+boundaries are unchanged.
+
+Direct owner/wrapper characterization covers static, dynamic batch,
+multiple-post, multiple-chain, and rejection graphs. Deep-copied executions
+produce identical statistics and complete normalized ModelIR state, including
+constant payloads, options, per-axis quantization, tensor metadata, topology,
+and diagnostics. Architecture tests parse axes ownership, rank-four planning,
+commit ordering, and conditional pruning from the module owner, prevent a
+lowerer import cycle, require one wrapper dispatch, and preserve the ordered
+recovery sequence. Extraction made `_quant_scale_count` unused in the lowerer,
+so that import was removed; seven prior Ruff findings remain.
+
+Validation completed as follows:
+
+- corrected old/new owner AST comparison: exact, 382 lines each;
+- focused owner/wrapper and architecture selector:
+  `34 passed, 246 deselected in 2.00s`;
+- changed-file focused branch regression: `678 passed in 22.62s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.31s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No model conversion was repeated. The ownership move is mechanically exact,
+direct tests cover every synthetic non-zero family, and the previous sequential
+QLinear recovery audit established zero production rewrites and zero process-
+tree SWAP for every measured candidate. Public API, CLI, valid behavior/
+statistics, ordered boundaries, TensorFlow isolation, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; future work is commit/push only and must not create a pull request.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: `_canonicalize_softmax_transpose_chains` (190 lines). Freeze its
+positive and rejection topology, axis option changes, aliasing, fixed-point/
+pruning behavior, statistics, and ordered production boundaries before any
+correction or extraction. Reuse existing model evidence, keep additional
+validation minimal and strictly sequential, commit and push, and do not create
+a pull request.
