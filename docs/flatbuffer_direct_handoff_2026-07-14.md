@@ -11845,3 +11845,57 @@ setters, metadata writes, rewires, and removals before the first mutation.
 Turn all 19 strict xfails green while preserving the twenty existing cases,
 statistics, fixed point, pruning behavior, and both production boundaries.
 Validate sequentially, commit and push, and do not create a pull request.
+
+## Nested-Concat/Mul/Transpose transactional correction: completed state
+
+All nineteen former strict xfails are green. The corrected raw owner is 675
+lines and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite
+refreshes it exactly once. Indexed setters and one batched removal replace
+repeated complete producer/consumer reconstruction and direct operator
+deletion.
+
+Before mutation, each candidate proves unique producers, strict leaf pre-
+Transpose/nested-Concat/Mul/post-Transpose/Add graph order, exact internal
+consumers, private intermediate boundaries, valid normalized Concat axes, and
+complete rank-four source, every Concat-output, and Mul-output shape/effective-
+signature metadata. Missing or short metadata, rank-three sources, malformed
+axes, duplicate post producers, reverse topology, and public aliases now leave
+the complete ModelIR unchanged.
+
+Every recursive Concat input replacement, remapped axis/options dictionary,
+shape/signature permutation, quantization action, Add rewire, and removal is
+planned before commit. All per-axis QDIM values follow the NCHW-to-NHWC
+permutation for every retained Concat output and the Mul output. The Add-side
+NHWC channel broadcast is validated against the planned Mul shape.
+
+The Mul constant uses one immutable ownership plan. Scalars and already
+compatible NHWC broadcasts remain unchanged. Required rank-four rotations
+reject public inputs and variables; shared and public-output values receive a
+deterministic collision-safe private clone; private single-use values update in
+place. The constant QDIM follows its data permutation, and clones preserve
+dtype, quantization, logical/physical layout, and ONNX provenance.
+
+Validation completed sequentially as follows:
+
+- corrected focused safety and one-index contract: `42 passed in 0.56s`;
+- corrected focused contract, the three adjacent extracted Concat bridge
+  contracts, and ordered architecture suite: `493 passed in 19.70s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.68s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is limited to fully proven candidates; incomplete evidence leaves the graph
+unchanged. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, both ordered runtime boundaries, and TensorFlow
+isolation are unchanged. The 675-line count is descriptive only; 2,000 remains
+the ONNX operation-count tier threshold. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 675-line
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains` owner into a
+focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve both ordered positions. Prove corrected checkpoint/module
+AST identity and direct owner/wrapper equality for static/dynamic, multiple,
+scalar, shared/public constants, quantization, pruning, rejection, and atomicity
+cases. Validate sequentially, commit and push, and do not create a pull request.

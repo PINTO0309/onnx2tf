@@ -8363,6 +8363,32 @@ both production boundaries must remain unchanged. The 356-line count records
 the current owner size only; the 2,000 threshold in this project applies to
 ONNX operation-count tiers, not source-file or function length.
 
+That correction is now implemented in the 675-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated producer/consumer reconstruction and
+is maintained by indexed input setters plus one batched adapter removal. Two
+independent matches construct and refresh the index exactly once.
+
+Candidate planning proves unique producers, strict pre-Transpose/nested-
+Concat/Mul/post-Transpose/Add order, exact internal consumers, private bridge
+tensors, valid normalized axes, and complete rank-four source, every Concat
+output, and Mul-output shape/signature metadata. Every nested Concat input and
+axis update, output metadata permutation, QDIM result, Add rewire, and removal
+is immutable before commit. Missing tensors, rank-three sources, short or
+malformed signatures, malformed axes, duplicate producers, reverse topology,
+and public aliases now return zero with complete ModelIR equality.
+
+The Mul constant has a separate immutable ownership plan. Scalars and values
+already broadcastable in NHWC remain unchanged. A required NCHW-to-NHWC
+rotation rejects public inputs and variables, updates a private single-use
+constant, or creates a deterministic collision-safe clone for unrelated users
+and public outputs. Per-axis QDIM follows the same permutation for the constant,
+every nested Concat output, and the Mul output. The Add-side NHWC channel
+broadcast is also checked against the planned Mul shape. All nineteen former
+strict xfails are green. Explicit one-index, reverse source/adapter order, and
+duplicate source-producer contracts bring the focused suite to forty-two cases
+without changing valid statistics, fixed point, pruning, or either production
+boundary.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

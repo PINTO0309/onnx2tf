@@ -1684,3 +1684,12 @@ duplicate producers, reverse topology, and a public internal alias. Resume by
 building one indexed recursive-tree/topology/metadata/constant/quantization/
 removal plan before mutation, then turn all 19 xfails green without changing
 valid behavior, statistics, pruning, or the two ordered recovery boundaries.
+That transactional correction is now complete in the 675-line raw owner. One
+differential `ModelIRGraphIndex`, strict recursive topology and rank-four
+metadata preflight, an ownership-aware Mul-constant plan, complete QDIM
+remapping, indexed setters, and batched adapter removal turn all 19 former
+xfails green. Focused coverage now has 42 green cases, including explicit
+single-index reuse across two matches plus reverse and duplicate source-
+producer rejection, while valid behavior and both ordered positions remain
+unchanged. Resume by mechanically extracting the corrected owner with exact
+AST and owner/wrapper equality; do not create a pull request.

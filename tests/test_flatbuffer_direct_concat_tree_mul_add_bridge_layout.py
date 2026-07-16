@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -280,6 +281,30 @@ def test_concat_tree_rewrites_multiple_and_fixed_point() -> None:
     assert _normalize(model_ir) == after_first
 
 
+def test_concat_tree_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(branches=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(
+        model_ir
+    )
+
+    assert stats == {
+        "optimized_concat_tree_mul_add_transpose_nhwc_bridge_chains": 2,
+    }
+    assert refresh_count == 1
+
+
 def test_concat_tree_accepts_scalar_mul_constant() -> None:
     model_ir = _model()
     constant = model_ir.tensors["branch0_mul_const"]
@@ -470,10 +495,6 @@ def test_concat_tree_preserves_existing_rejections(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="required rank-four metadata is not prevalidated",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -511,10 +532,6 @@ def test_concat_tree_rejects_incomplete_metadata(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mutable/public Mul constants are rotated without ownership plan",
-)
 @pytest.mark.parametrize("ownership", ["public-input", "variable"])
 def test_concat_tree_preserves_mul_constant_ownership(ownership: str) -> None:
     model_ir = _model()
@@ -527,10 +544,6 @@ def test_concat_tree_preserves_mul_constant_ownership(ownership: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="public Mul constant output is changed instead of cloned",
-)
 def test_concat_tree_clones_public_mul_constant_output() -> None:
     model_ir = _model()
     constant_name = "branch0_mul_const"
@@ -547,10 +560,6 @@ def test_concat_tree_clones_public_mul_constant_output() -> None:
     assert np.array_equal(model_ir.tensors[constant_name].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="per-axis quantized dimensions are not remapped",
-)
 def test_concat_tree_remaps_per_axis_quantization() -> None:
     model_ir = _model()
     for name in (
@@ -581,10 +590,6 @@ def test_concat_tree_remaps_per_axis_quantization() -> None:
         assert quantization.quantized_dimension == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="malformed Concat axes are not transactional no-ops",
-)
 @pytest.mark.parametrize("concat_index", [3, 4])
 def test_concat_tree_rejects_malformed_axis(concat_index: int) -> None:
     model_ir = _model()
@@ -593,10 +598,6 @@ def test_concat_tree_rejects_malformed_axis(concat_index: int) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="metadata failure after constant rotation leaves partial mutation",
-)
 def test_concat_tree_rejects_late_inner_metadata_atomically() -> None:
     model_ir = _model()
     model_ir.tensors["branch0_cat_h_nchw"].shape_signature = [1, None, 7, 2]
@@ -604,10 +605,6 @@ def test_concat_tree_rejects_late_inner_metadata_atomically() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="duplicate producers, reverse order, and public aliases are accepted",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -615,6 +612,8 @@ def test_concat_tree_rejects_late_inner_metadata_atomically() -> None:
         "reverse-post-add",
         "reverse-inner-outer",
         "public-pre-output",
+        "reverse-source-pre",
+        "duplicate-source-producer",
     ],
 )
 def test_concat_tree_rejects_invalid_topology(case: str) -> None:
@@ -640,6 +639,29 @@ def test_concat_tree_rejects_invalid_topology(case: str) -> None:
         )
     elif case == "public-pre-output":
         model_ir.inputs.append("branch0_x0_nchw")
+    elif case == "reverse-source-pre":
+        model_ir.operators.append(
+            OperatorIR(
+                "IDENTITY",
+                ["branch0_x1_nhwc"],
+                ["branch0_x0_nhwc"],
+            )
+        )
+    elif case == "duplicate-source-producer":
+        model_ir.operators.extend(
+            [
+                OperatorIR(
+                    "IDENTITY",
+                    ["branch0_x1_nhwc"],
+                    ["branch0_x0_nhwc"],
+                ),
+                OperatorIR(
+                    "IDENTITY",
+                    ["branch0_x2_nhwc"],
+                    ["branch0_x0_nhwc"],
+                ),
+            ]
+        )
 
     _assert_transactional_rejection(model_ir)
 
@@ -656,7 +678,7 @@ def test_concat_tree_keeps_raw_owner_and_ordered_boundaries() -> None:
         and node.name
         == "_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 356
+    assert owner.end_lineno - owner.lineno + 1 == 675
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 3
 
     lowerer = next(
