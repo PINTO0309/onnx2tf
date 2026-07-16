@@ -6879,6 +6879,29 @@ reader. Both models then retained byte-identical float32, float16, and
 correspondence artifacts. The sequential yolo_test accuracy gate passes with
 maximum absolute error `2.4437904357910156e-06` and zero process-tree SWAP.
 
+The static rank-four to rank-three flatten-HW suffix now has a bounded indexed
+owner in `flatten_hw_reshape_layout.py`. It accepts only the exact semantic
+family `NHWC -> NCHW -> [N,C,H*W] -> [N,H*W,C]`. Candidate resolution checks
+typed rank-four and rank-three permutation constants, exact positive shapes
+and signatures, dtype and per-tensor quantization, graph ordering and
+boundaries, exclusive mutable data edges, an exclusive typed reshape-shape
+constant, and Session layout compatibility. Each candidate becomes an
+immutable operator/tensor plan that is fully resolved again immediately
+before differential mutation. The owner has a deterministic candidate bound,
+uses one shared graph index, reconciles `LayoutState`, and never performs
+internal pruning or a whole-graph producer/consumer rebuild.
+
+The existing wrapper remains the compatibility boundary for dynamic or
+otherwise relaxed variants and performs the single historical prune. Its raw
+path now refuses to mutate a reshape-shape tensor visible through another
+consumer, graph input/output, producer, or variable state. Thus strict
+rejection cannot corrupt a shared constant. LINEA is the sole established
+non-zero short zero-SWAP production model: indexed invocation counts are
+`2, 0, 0, 0`, while thirteen other measured representatives remain zero at
+all invocations. LINEA's float32, float16, and correspondence artifacts remain
+byte-identical, and its sequential `-cotof` gate passes at maximum absolute
+error `0.002297189086675644` with zero process-tree SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

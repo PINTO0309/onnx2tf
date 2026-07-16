@@ -6256,3 +6256,96 @@ all unchanged production boundaries. Record real non-zero ownership and any
 problem before source work, keep strict rejects on the compatibility path,
 and use only the smallest sequential zero-SWAP model gate. Continue with
 coherent commit/push units only; do not create a pull request.
+
+## Flatten-HW reshape suffix checkpoint: pre-change record
+
+Before changing source, the raw
+`_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains` helper was
+instrumented at all four unchanged production invocations. Fourteen previously
+measured short Tier 0-4 representatives were converted strictly sequentially:
+IAT-LLIE, LINEA, YuNet INT8, FastestDet, PPHumanSeg, OSNet, SiNet,
+Tiny-YOLOv2, YOLOv7-tiny, DAMO-YOLO, NanoDet, YOLOX INT8, YOLO-Free, and
+yolo_test. All fourteen conversions exited 0, none timed out, and every
+process-tree monitor recorded `peak_swap_kib=0`. Individual conversion times
+were 1.793-8.535 seconds.
+
+Only LINEA establishes real ownership. Its four invocation counts are
+`2, 0, 0, 0`: the first prefix invocation collapses two exact
+`NHWC -> NCHW -> [N,C,H*W] -> [N,H*W,C]` chains, with final shapes
+`[1,6400,128]` and `[1,1600,128]`. The other thirteen models record zero at
+every invocation. The unchanged pre-extraction LINEA artifacts are fixed as:
+
+- float32: `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16: `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- correspondence: `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`.
+
+No observed conversion or accuracy regression prompted this checkpoint.
+However, the two proven rewrites are currently owned by an unbounded
+`while True` full-operator scan that rebuilds the whole consumer map after
+each rewrite. The helper does not use the shared graph index or Session
+`LayoutState`, accepts reshape/permutation constants without typed ownership
+contracts, and mutates the reshape constant in place even when another
+operator or a graph boundary can observe it. It also does not revalidate an
+immutable plan immediately before mutation. These are recorded latent
+correctness, interaction, and efficiency problems before implementation.
+The safe scope is therefore only LINEA's exact static family; relaxed or
+shared-constant variants must remain unchanged on a compatibility fallback.
+
+### Implemented result and verification
+
+`flatten_hw_reshape_layout.py` now owns that exact static family. It dispatches
+the indexed Transpose set once, validates typed `[0,3,1,2]` and `[0,2,1]`
+constants, exact positive shape/signature views, dtype and per-tensor
+quantization, operator order, graph boundaries, exclusive data edges, an
+exclusive typed reshape constant, and Session layout compatibility. Complete
+operator/tensor contracts are stored in an immutable plan and resolved again
+before apply. Apply uses graph-index-aware input/output mutation, removes both
+Transposes differentially, and reconciles `LayoutState`; the owner neither
+prunes nor builds whole-graph maps. The wrapper keeps the sole compatibility
+prune and raw fallback. Shared, boundary-visible, produced, or variable shape
+constants are rejected before the fallback can mutate them.
+
+All four LINEA boundaries now report indexed counts `2, 0, 0, 0`; the wrapper
+totals are the same, proving no residual raw rewrite for accepted candidates.
+The post-extraction artifacts are byte-for-byte identical to the pre-change
+files and retain the three hashes recorded above. The single sequential
+managed LINEA `-cotof` gate exits 0 in 21.914 seconds, reports maximum absolute
+error `0.002297189086675644` with `pass=True`, and records
+`peak_swap_kib=0`. No new regression or exclusion was found.
+
+A mechanical context patch made while hardening the fallback initially placed
+the local `model_inputs` snapshot in an earlier legacy loop rather than this
+wrapper. Immediate targeted diff inspection found the misplaced line and the
+undefined target reference before conversion execution; both were corrected,
+then the dedicated suite was rerun. This did not reach a committed or tested
+checkpoint and produced no artifact difference.
+
+Verification completed under `uv`:
+
+- 14 sequential short Tier 0-4 characterization conversions: all exit 0,
+  1.793-8.535 seconds each, no timeout, and SWAP 0;
+- focused owner plus architecture selectors: 10 passed;
+- the four adjacent reshape-suffix owners, architecture suite, active
+  compatibility selectors, and TensorFlow-import-blocked explicit direct,
+  default direct, and direct `-cotof`: 238 passed, 773 deselected in 47.59
+  seconds;
+- scoped Ruff, syntax compilation, and `git diff --check`: passed;
+- whole-lowerer Ruff retains exactly the same ten inherited F841 findings and
+  reports no new finding.
+
+Changed files in this checkpoint are
+`onnx2tf/tflite_builder/passes/flatten_hw_reshape_layout.py`,
+`onnx2tf/tflite_builder/lower_from_onnx2tf.py`,
+`tests/test_flatbuffer_direct_indexed_flatten_hw_reshape_layout.py`,
+`tests/test_flatbuffer_direct_architecture.py`,
+`docs/flatbuffer_direct_architecture.md`, and this handoff. No public API,
+CLI behavior, dependency, corpus profile/exclusion, timeout policy, or
+optional TensorFlow boundary changed.
+
+After confirming this checkpoint is clean and synchronized, characterize the
+next raw
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`
+helper at each unchanged production boundary. Record any non-zero model and
+problem before source work, retain relaxed cases on fallback, and use only the
+smallest sequential zero-SWAP accuracy gate. Continue with coherent
+commit/push units only; do not create a pull request.

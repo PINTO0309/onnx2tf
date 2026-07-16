@@ -201,6 +201,9 @@ from onnx2tf.tflite_builder.passes.pre_unary_reshape_suffix_layout import (
 from onnx2tf.tflite_builder.passes.expanddims_reshape_layout import (
     optimize_transpose_factorized_expanddims_nhwc_chains as _optimize_transpose_factorized_expanddims_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.flatten_hw_reshape_layout import (
+    optimize_transpose_flatten_hw_reshape_nhwc_chains as _optimize_transpose_flatten_hw_reshape_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.slice_logistic_concat_reshape_tail_layout import (
     optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains as _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains_pass,
 )
@@ -14033,6 +14036,8 @@ def _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
 
 def _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Collapse NHWC->NCHW->RESHAPE->TRANSPOSE flatten wrappers into one RESHAPE.
@@ -14045,13 +14050,29 @@ def _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
     Rewrite:
       x_nhwc --RESHAPE([N,H*W,C])--> y
     """
-    rewritten = 0
+    indexed_stats = _optimize_transpose_flatten_hw_reshape_nhwc_chains_pass(
+        model_ir,
+        graph_index=ModelIRGraphIndex(model_ir),
+        layout_state=layout_state,
+    )
+    rewritten = int(
+        indexed_stats.get(
+            "optimized_transpose_reshape_transpose_to_flatten_hw_nhwc_chains",
+            0,
+        )
+    )
+    tensors_before_fallback_prune = (
+        set(str(name) for name in model_ir.tensors)
+        if layout_state is not None
+        else set()
+    )
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_ncw_to_nwc = [0, 2, 1]
 
     while True:
         changed = False
         consumers = _build_tensor_consumer_map(model_ir)
+        model_inputs = set(str(v) for v in model_ir.inputs)
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -14132,7 +14153,21 @@ def _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
                 continue
 
             shape_tensor = model_ir.tensors.get(str(reshape_op.inputs[1]), None)
-            if _read_const_ints_from_tensor(shape_tensor) is None:
+            shape_name = str(reshape_op.inputs[1])
+            if (
+                shape_name in model_outputs
+                or shape_name in model_inputs
+                or shape_tensor is None
+                or bool(shape_tensor.is_variable)
+                or any(
+                    shape_name == str(output_name)
+                    for candidate_op in model_ir.operators
+                    for output_name in candidate_op.outputs
+                )
+                or set(int(value) for value in consumers.get(shape_name, []))
+                != {int(reshape_idx)}
+                or _read_const_ints_from_tensor(shape_tensor) is None
+            ):
                 continue
             target_shape = [int(n), int(hw), int(c)]
             if not _write_const_ints_to_tensor(shape_tensor, target_shape):
@@ -14167,6 +14202,10 @@ def _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
             break
 
     _prune_unused_tensors(model_ir)
+    if layout_state is not None:
+        layout_state.remove(
+            tensors_before_fallback_prune - set(str(name) for name in model_ir.tensors)
+        )
     return {
         "optimized_transpose_reshape_transpose_to_flatten_hw_nhwc_chains": int(rewritten)
     }
@@ -26131,7 +26170,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
+        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
         _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
         _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
@@ -26904,7 +26946,10 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
+    _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
     _run_channel_shuffle_gather_layout_pass_cluster(
         include_two_way_shuffle=False,
