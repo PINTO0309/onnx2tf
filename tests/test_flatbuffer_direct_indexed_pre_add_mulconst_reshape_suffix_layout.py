@@ -19,6 +19,12 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes import (
+    pre_add_mulconst_reshape_suffix_compat_layout as compat_layout,
+)
+from onnx2tf.tflite_builder.passes.pre_add_mulconst_reshape_suffix_compat_layout import (
+    optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_compat,
+)
 from onnx2tf.tflite_builder.passes.pre_add_mulconst_reshape_suffix_layout import (
     _apply_plan,
     _resolve_candidate,
@@ -373,11 +379,24 @@ def test_candidate_and_max_rewrites_bound_dispatch() -> None:
 
 def test_compatibility_wrapper_keeps_one_prune_boundary() -> None:
     model = _model(legacy=False)
+    wrapped_model = copy.deepcopy(model)
 
-    assert _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(
-        model,
-        layout_state=LayoutState.from_model_ir(model),
-    ) == {_STATS_KEY: 1}
+    stats = (
+        optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_compat(
+            model,
+            layout_state=LayoutState.from_model_ir(model),
+        )
+    )
+    wrapped_stats = (
+        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(
+            wrapped_model,
+            layout_state=LayoutState.from_model_ir(wrapped_model),
+        )
+    )
+
+    assert stats == {_STATS_KEY: 1}
+    assert wrapped_stats == stats
+    assert _snapshot(wrapped_model) == _snapshot(model)
 
     prune_events = [
         event
@@ -392,3 +411,47 @@ def test_compatibility_wrapper_keeps_one_prune_boundary() -> None:
         "to_nchw",
         "to_nwc",
     }.issubset(set(prune_events[0]["removed_names"]))
+
+
+def test_compatibility_fallback_preserves_direct_and_mulconst_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _model(mul_const=True, legacy=True)
+    wrapped_model = copy.deepcopy(model)
+    monkeypatch.setattr(
+        compat_layout,
+        "_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_pass",
+        lambda model_ir, *, graph_index, layout_state: {_STATS_KEY: 0},
+    )
+
+    stats = (
+        optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_compat(
+            model,
+            layout_state=LayoutState.from_model_ir(model),
+        )
+    )
+    wrapped_stats = (
+        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(
+            wrapped_model,
+            layout_state=LayoutState.from_model_ir(wrapped_model),
+        )
+    )
+
+    assert stats == {_STATS_KEY: 1}
+    assert wrapped_stats == stats
+    assert _snapshot(wrapped_model) == _snapshot(model)
+
+    add = next(operator for operator in model.operators if operator.op_type == "ADD")
+    reshape = next(
+        operator for operator in model.operators if operator.op_type == "RESHAPE"
+    )
+    assert add.inputs == ["a", "b_scaled"]
+    assert add.outputs == ["sum_nhwc"]
+    assert reshape.inputs == ["sum_nhwc", "reshape_shape"]
+    assert reshape.outputs == ["sum_nwc"]
+    assert any(
+        operator.op_type == "TRANSPOSE"
+        and operator.inputs[0] == "sum_nhwc"
+        and operator.outputs == ["sum"]
+        for operator in model.operators
+    )

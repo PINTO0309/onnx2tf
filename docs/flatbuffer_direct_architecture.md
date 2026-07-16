@@ -7169,6 +7169,27 @@ Its float32, float16, and correspondence artifacts remain byte-identical to
 the pre-extraction baseline, and the sequential accuracy gate passes with
 maximum absolute error `4.470348358154297e-07` and zero process SWAP.
 
+The indexed-first composite and its raw compatibility fallback are now isolated
+in `pre_add_mulconst_reshape_suffix_compat_layout.py`. The former 509-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. It still constructs one `ModelIRGraphIndex` for the indexed
+dispatch, forwards the caller's `LayoutState`, starts the combined statistic
+from the indexed result, runs the unchanged direct/direct and
+direct/Mul-constant fallback to fixed point, and performs the sole historical
+prune/report boundary. The lowerer retains one private wrapper at the unchanged
+production position and forwards Session layout state without exposing the new
+owner publicly.
+
+The complete thirteen-case family suite now runs the compatibility module owner
+and lowerer wrapper on deep copies, fixes their complete ModelIR equality and
+single-prune behavior, and forces the indexed dispatch to zero to prove the raw
+fallback still owns both accepted input forms. IAT-LLIE retains combined and
+indexed counts `5,4,4` with fallback counts `0,0,0`; its two strictly sequential
+conversions report zero process-tree SWAP and reproduce the five core artifacts
+byte for byte. The indexed immutable plan is unchanged. The raw fallback still
+has its historical producer/consumer rebuilds and looser constant ownership;
+semantic hardening remains separate from this exact ownership move.
+
 The formerly adjacent raw direct/direct-only helper has been removed. It was
 not a second semantic owner: the compatibility helper above has always
 accepted the same direct/direct producer and suffix contracts before it, in

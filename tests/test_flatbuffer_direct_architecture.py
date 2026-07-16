@@ -14651,6 +14651,15 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
         / "pre_add_mulconst_reshape_suffix_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_add_mulconst_reshape_suffix_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -14695,14 +14704,22 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
         "_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains"
     )
     dispatch_name = f"{wrapper_name}_pass"
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_build_tensor_producer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -14710,6 +14727,19 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
     assert len(dispatch_calls) == 1
     assert {keyword.arg for keyword in dispatch_calls[0].keywords} == {
         "graph_index",
+        "layout_state",
+    }
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
         "layout_state",
     }
 

@@ -8598,3 +8598,75 @@ legacy consumers, combined statistic, production positions, existing positive
 IAT-LLIE ownership, and fallback fixtures before changing source. Keep
 inference strictly sequential and minimal, then commit and push one coherent
 unit without creating a pull request.
+
+## Pre-Add/Mul/Reshape-suffix compatibility composite extraction: completed state
+
+The complete 509-line indexed-first
+`_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains`
+composite is now owned by
+`passes/pre_add_mulconst_reshape_suffix_compat_layout.py`. The lowerer retains
+one private compatibility wrapper at the unchanged production position and
+forwards the Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the existing indexed semantic owner as its
+first dispatch, one per-call `ModelIRGraphIndex`, caller LayoutState forwarding,
+combined statistic accumulation, direct/direct and direct/Mul-constant raw
+fallback, Mul and reshape constant mutation/copy-on-write, legacy NCHW adapter,
+fixed-point restart, exact mutation/removal order, and the sole historical
+prune/report boundary. The indexed immutable plan and its module are unchanged.
+
+The complete thirteen-case family suite covers direct and Mul-constant indexed
+paths, typed and shared constants, immutable-plan guards, graph/layout state,
+bounded dispatch, the compatibility module owner versus lowerer wrapper on deep
+copies, the single prune event, and a forced-zero indexed dispatch that proves
+the raw fallback still rewrites the accepted family. It passes
+`13 passed in 0.52s`; the branch-wide selection including the full family
+passes `740 passed in 31.18s`; and the optional-TensorFlow import-blocked suite
+passes `11 passed in 9.43s`.
+
+Tier 2 IAT-LLIE is the strictly sequential positive artifact control. Its three
+combined and indexed results remain `5,4,4`, while raw fallback results remain
+`0,0,0`, before and after extraction. The pre conversion completed in 2.162
+seconds and the post conversion in 2.074 seconds; both recorded process-tree
+SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881`;
+- float16 TFLite:
+  `4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43`;
+- tensor correspondence:
+  `a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding IAT-LLIE sequential accuracy checkpoint remains
+`max_abs=4.470348358154297e-07`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps within a fixed-point loop and has looser producer,
+variable-state, and graph-visibility ownership for mutable constants than the
+indexed plan. Replacing it with an immutable transaction requires independent
+semantic fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new pre-Add/Mul/Reshape-suffix compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility family corpus,
+updated architecture ownership test, and three branch documents. No public
+API, CLI, artifact name, TensorFlow boundary, dependency, corpus profile,
+exclusion policy, or ONNX operation-tier policy changed. Temporary tracing and
+conversion outputs are removed before commit. PR #952 remains closed; work is
+commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 302-line indexed-first
+compatibility composite
+`_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains`. At
+restart, inventory its indexed Swish owner, plain-unary and relaxed raw
+fallback, GraphIndex construction and LayoutState forwarding, reshape constant
+ownership, combined statistic, single prune/report boundary, production
+position, existing positive LINEA ownership, and fallback fixtures before
+changing source. Keep inference strictly sequential and minimal, then commit
+and push one coherent unit without creating a pull request.
