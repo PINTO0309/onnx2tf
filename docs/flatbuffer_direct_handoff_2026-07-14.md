@@ -10649,9 +10649,44 @@ valid behavior/statistics, TensorFlow boundary, dependencies, corpus profiles,
 exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
 work is commit/push only.
 
-At restart, mechanically extract only the corrected 129-line repair owner into
+At restart, mechanically extract only the corrected 132-line repair owner into
 a focused pass-family module. Keep its lowerer private wrapper, the two
 standalone calls, and the three-round convergence runner call. Leave the runner
 in the lowerer because it coordinates separate broadcast and shape owners.
 Prove exact old/new AST and direct owner/wrapper fingerprint equality. Do not
 create a pull request.
+
+## Channelwise-constant stale-binary rank characterization: completed state
+
+The final pre-extraction audit distinguishes the two evidence branches in the
+stale channelwise-binary Transpose repair. Conv-peer matching short-circuits
+safely on a short source shape. Channelwise-constant matching first accepts the
+`[1,1,1,C]` constant prefix, then reads `source_shape[3]` and
+`adapter_shape[3]` before the common rank guard. A short source or adapter shape
+therefore raises `IndexError` before the helper can return its expected no-op.
+
+Two new parameterized strict xfails isolate those source and adapter cases with
+the independent second adapter protected as a graph output. Each requires a
+zero statistic and complete unchanged ModelIR fingerprint. The earlier source-
+signature correction remains green.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `6 passed, 257 deselected, 2 xfailed in 0.80s`;
+- changed-file focused branch regression:
+  `615 passed, 2 xfailed in 23.62s`;
+- targeted Ruff: passed.
+
+Production source is unchanged from checkpoint `b84b9d13`. The uncommitted
+ownership move was deliberately rolled back before this characterization, so
+the branch remains at a complete raw-owner checkpoint. Public API, CLI,
+successful behavior, TensorFlow boundary, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, move `len(source_shape) == 4` and `len(adapter_shape) == 4` guards
+before channelwise-constant and Conv-peer evidence evaluation. Turn both strict
+xfails green while preserving candidate order, statistics, and GraphIndex
+updates. Only then redo the mechanical repair-owner extraction; keep the
+convergence runner central. Do not create a pull request.

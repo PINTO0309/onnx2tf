@@ -4237,12 +4237,18 @@ rebuilt between matches. Fan-out adapters remain unchanged, and both data-
 input positions plus channelwise-constant and Conv-peer match families retain
 their former behavior.
 
-Its focused extraction audit confirms that a short source shape is a complete
-no-op. The source `shape_signature` is now materialized and required to be rank
-four before the indexed setter. A malformed signature therefore retains a
-complete ModelIR fingerprint and zero statistic instead of being assigned to a
-rank-four output after input rewiring. Architecture tests keep signature
-materialization before the first mutation. No strict xfail remains.
+Its focused extraction audit confirms that a short source shape in the Conv-
+peer evidence branch is a complete no-op. The source `shape_signature` is now
+materialized and required to be rank four before the indexed setter. A
+malformed signature therefore retains a complete ModelIR fingerprint and zero
+statistic instead of being assigned to a rank-four output after input rewiring.
+Architecture tests keep signature materialization before the first mutation.
+
+The channelwise-constant evidence branch has two remaining strict xfails. Its
+`[1,1,1,C]` prefix guard is followed by `source_shape[3]` and
+`adapter_shape[3]` reads before the common rank check. Short source or adapter
+metadata therefore raises before returning a no-op. Rank-four validation must
+precede both evidence branches before ownership extraction.
 
 The two terminal fixed three-round broadcast/Transpose/shape convergence loops
 are owned by `_run_indexed_binary_layout_convergence`. One index is built per

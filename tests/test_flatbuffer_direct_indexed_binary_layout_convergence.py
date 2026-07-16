@@ -276,6 +276,35 @@ def test_stale_binary_transpose_repair_rejects_invalid_metadata_atomically(
     assert _normalize(model_ir) == before
 
 
+@pytest.mark.parametrize("tensor_name", ["source0", "adapter0"])
+@pytest.mark.xfail(
+    strict=True,
+    reason="channelwise-constant matching indexes source/adapter before rank guards",
+)
+def test_stale_binary_transpose_repair_prevalidates_channelwise_ranks(
+    tensor_name: str,
+) -> None:
+    model_ir = _make_binary_layout_convergence_model_ir()
+    model_ir.outputs.append("adapter1")
+    model_ir.tensors["channelwise_bias"] = _tensor(
+        "channelwise_bias",
+        [1, 1, 1, 3],
+        data=np.zeros((1, 1, 1, 3), dtype=np.float32),
+    )
+    add_op = next(op for op in model_ir.operators if op.outputs == ["add0"])
+    add_op.inputs[1] = "channelwise_bias"
+    model_ir.tensors[tensor_name].shape = [1, 4, 2]
+    model_ir.tensors[tensor_name].shape_signature = [1, 4, 2]
+    before = _normalize(copy.deepcopy(model_ir))
+
+    stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+    }
+    assert _normalize(model_ir) == before
+
+
 def test_indexed_binary_layout_convergence_matches_legacy_sequence(
     monkeypatch,
 ) -> None:
