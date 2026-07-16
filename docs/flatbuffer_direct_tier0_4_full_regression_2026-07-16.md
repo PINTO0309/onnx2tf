@@ -91,5 +91,44 @@ recorded, causally attributed, locally testable correction may proceed.
 
 ## Execution status
 
-Pending. The runner infrastructure checkpoint is complete; the 381-model
-strictly sequential run has not started yet.
+### Aborted environment-contaminated attempt
+
+The first attempt was stopped after 81 entries because every model failed in
+0.58-0.80 seconds before conversion. All 81 entries have the same normalized
+signature SHA-256:
+
+`5c700d994ec8cc08efa71cf0fc9b0ec1ef78363ff8d416f321f96fcf297e40bf`
+
+The signature reports that Python 3.12 in `.venv` attempted to load
+`libtorch_python.so` from the user's Python 3.10 installation under
+`~/.local/lib/python3.10/site-packages/torch/lib`. The inherited environment
+was:
+
+- `PYTHONPATH=/usr/local/lib/python3.10/dist-packages:`;
+- `LD_LIBRARY_PATH` beginning with
+  `/home/b920405/.local/lib/python3.10/site-packages/torch/lib`.
+
+An ordinary `uv run python` reproduced the undefined `_PyCode_GetExtra`
+symbol error. Running the same interpreter with `PYTHONNOUSERSITE=1` and both
+`PYTHONPATH` and `LD_LIBRARY_PATH` cleared imported the correct uv-managed
+Torch 2.11.0+cpu from `.venv/lib/python3.12/site-packages`. This is a launch-
+environment failure, not evidence of 81 model regressions. The complete
+aborted state and per-model logs are retained outside the repository and will
+not be resumed. A fresh authoritative output directory is required so the
+invalid entries cannot be mixed with actual conversion results.
+
+The corrective action is limited to the process environment: launch the
+runner with `PYTHONNOUSERSITE=1`, empty `PYTHONPATH`, and empty
+`LD_LIBRARY_PATH`. No converter, lowerer, exporter, model, baseline, or
+acceptance rule is changed. A single-model monitored canary must succeed
+before the 381-model run starts again.
+
+### Authoritative run
+
+The clean-environment canary used `1x128x64x64.onnx` with the exact production
+command shape `-tb flatbuffer_direct -cotof -fdopt`. It completed in 4.475
+seconds with classification `pass`, TFLite maximum absolute error
+`9.5367431640625e-07`, native PyTorch maximum absolute error
+`1.0728836059570312e-06`, and process-tree SWAP zero. The authoritative run
+will therefore start from an empty directory with the same sanitized
+environment and the full managed profile.
