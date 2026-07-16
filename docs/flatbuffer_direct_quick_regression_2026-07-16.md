@@ -30,6 +30,65 @@ as one-off runtime variance, and no SWAP exclusion was added. See
 [Follow-up resolution](#follow-up-resolution) and the machine-readable
 [`docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-16_followup.json`](baselines/flatbuffer_direct_quick_tier0_4_2026-07-16_followup.json).
 
+## `5b387bc6` post-checkpoint rerun: pre-investigation record
+
+After the indexed pre-Add Mul-constant reshape-suffix checkpoint was committed,
+the same fixed 49-model profile was rerun before any further source change.
+Execution remained strictly sequential with a 45-second per-model ceiling and
+subprocess-tree `VmSwap` monitoring. The run completed in 452.114 seconds with
+42 passes, four preserved numeric failures, two preserved missing reports, and
+one new runtime candidate. No converter returned a nonzero exit status and all
+49 entries recorded `peak_swap_kib=0`.
+
+The only classification or numeric-result difference from the fixed
+`f5a40947` result is `LINEA.onnx`. It previously passed in 23.331 seconds with
+maximum absolute error `0.002297189086675644`; this run reached the 45-second
+ceiling at 45.108 seconds before writing its accuracy report. Conversion had
+already produced float32 and float16 TFLite files, the tensor-correspondence
+report, and both op-error reports. The subprocess logs are empty because its
+buffered output had not flushed when the runner terminated it. The generated
+artifact hashes are:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence report:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`.
+
+This is recorded as an unconfirmed runtime candidate, not a semantic
+regression. Pre-change characterization had already shown zero rewrites from
+the extracted helper on LINEA, while the only non-zero production model for
+that owner is IAT-LLIE. IAT-LLIE passed this broad run in 17.404 seconds with
+maximum absolute error `4.470348358154297e-07` and zero SWAP. The safe next
+step is one isolated LINEA run with additional headroom, followed by artifact,
+accuracy, and pass-metric comparison. No pass guard, source fix, timeout
+exclusion, baseline promotion, or managed-profile change has been made in
+response to this first timeout.
+
+The compact immutable result is
+[`docs/baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_result.json`](baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_result.json).
+
+### `LINEA.onnx` follow-up resolution
+
+After the pre-investigation record above was fixed, LINEA was run once in
+isolation with a 90-second ceiling. It passed in 25.213 seconds with the exact
+prior maximum absolute error `0.002297189086675644` and zero process SWAP. Its
+float32, float16, and correspondence-report SHA-256 values exactly match the
+artifacts already produced by the terminated broad-run subprocess. The
+complete pass-metric totals also match: 521 events, six changed statuses, 479
+skips, 36 unchanged statuses, 117,726 preflight operator visits, 42 snapshots,
+and 90 state builds.
+
+The broad-run timeout is therefore classified as runtime variance, not an
+`fb-refactor5` semantic regression. No source fix, pass disablement, exclusion,
+timeout-policy change, managed-profile update, or baseline promotion was
+applied. The fixed 49-model selection has zero newly confirmed regressions:
+all 42 comparable passes and six known non-passes retain their numeric or
+normalized failure behavior, while LINEA retains its pass behavior under the
+focused rerun. The machine-readable follow-up is
+[`docs/baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_linea_followup.json`](baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_linea_followup.json).
+
 ## Scope and selection
 
 The selection manifest is

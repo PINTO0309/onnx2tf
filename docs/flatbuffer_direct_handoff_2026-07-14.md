@@ -5830,7 +5830,9 @@ whole-file inherited Ruff findings and optional exporter limitations recorded
 earlier in this handoff remain unchanged. The optional TensorFlow suite was
 not synchronized or executed; only its import-blocked direct boundary was
 tested. No broad Tier run was performed because this checkpoint deliberately
-used the only short real model with non-zero owner coverage.
+used the only short real model with non-zero owner coverage. A later
+post-commit 49-model measured-quick gate is recorded below and supersedes that
+model-level limitation without changing source.
 
 The original Goal remains incomplete: the fixed pipeline contract, remaining
 raw layout/reshape helpers, op-family lowering consolidation, quantization and
@@ -5849,3 +5851,33 @@ problem before changing source. Extract only a bounded family with real
 coverage, retain strict rejects on the compatibility path, and validate with
 focused fixtures plus the smallest sequential zero-SWAP model set. Continue
 to commit and push coherent units only; do not create a pull request.
+
+## Post-checkpoint Tier 0-4 measured-quick regression gate
+
+Commit `5b387bc6` was subsequently checked against the fixed 49-model Tier 0-4
+measured-quick profile. The runner used `uv`, one converter/inference
+subprocess at a time, a fixed model order, a 45-second per-model ceiling, and
+subprocess-tree `VmSwap` monitoring. The broad run completed in 452.114
+seconds. Every model recorded zero SWAP and no converter returned a nonzero
+exit status.
+
+The initial result contained 42 passes, the six preserved known non-passes,
+and one new unconfirmed LINEA timeout. This issue was recorded in detail,
+including all generated artifact hashes and the exact difference from the
+prior 23.331-second pass, before any follow-up action. No source was changed.
+One isolated 90-second-headroom run then restored LINEA to pass in 25.213
+seconds with exact prior maximum absolute error `0.002297189086675644`, zero
+SWAP, identical TFLite/report hashes, and identical pass metrics. The timeout
+is therefore runtime variance rather than a semantic regression.
+
+The final classification is zero newly confirmed regressions among the 49
+selected models. IAT-LLIE, the only non-zero production model for the newly
+indexed owner, passed in 17.404 seconds with maximum absolute error
+`4.470348358154297e-07` and zero SWAP. DEIM retained its user-approved success
+classification in 37.006 seconds. No source fix, exclusion, timeout-policy
+change, or managed-profile update was necessary. Detailed and compact evidence
+is stored in:
+
+- `docs/flatbuffer_direct_quick_regression_2026-07-16.md`;
+- `docs/baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_result.json`;
+- `docs/baselines/flatbuffer_direct_quick_tier0_4_5b387bc6_linea_followup.json`.

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "branch": "fb-refactor5",
+  "commit": "5b387bc6f457754e733040ab585f4a224e423df1",
+  "evidence_state": "followup_complete_no_source_fix",
+  "model": "LINEA.onnx",
+  "execution": {
+    "inference_concurrency": 1,
+    "timeout_sec": 90,
+    "swap_monitor": "converter subprocess tree VmSwap"
+  },
+  "pre_investigation": {
+    "classification": "timeout",
+    "duration_sec": 45.10805058479309,
+    "peak_swap_kib": 0
+  },
+  "followup": {
+    "classification": "pass",
+    "duration_sec": 25.212692260742188,
+    "tflite_max_abs": 0.002297189086675644,
+    "peak_swap_kib": 0,
+    "onnx2tf_exit_code": 0,
+    "pass_metrics": {
+      "event_count": 521,
+      "status_counts": {
+        "changed": 6,
+        "skipped": 479,
+        "unchanged": 36
+      },
+      "totals": {
+        "fingerprint_count": 0,
+        "preflight_operators_visited": 117726,
+        "snapshot_count": 42,
+        "state_build_count": 90
+      }
+    }
+  },
+  "artifacts": {
+    "float32_sha256": "fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611",
+    "float16_sha256": "c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8",
+    "correspondence_sha256": "ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd",
+    "identical_to_timeout_run": true
+  },
+  "classification": "runtime_variance_not_semantic_regression",
+  "source_fix_applied": false,
+  "profile_changed": false,
+  "exclusion_added": false
+}
