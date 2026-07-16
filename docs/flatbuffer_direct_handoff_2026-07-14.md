@@ -7302,3 +7302,100 @@ regression is known. After synchronization, inspect the next unmodularized
 production helper in actual source order. Establish real ownership before any
 semantic change, keep model checks short, sequential, and zero-SWAP, commit and
 push coherent units, and do not create a pull request.
+
+## Static SQUEEZE-axis sanitization extraction: pre-change record
+
+Work resumed on `fb-refactor6` from merge checkpoint `e41037f1`, with a clean
+tree based on the merged `fb-refactor5` result. The earlier handoff's named
+pre-Add/Mul-constant/Reshape suffix candidate was re-audited before source
+work and found to be stale: that implementation is already completely owned
+by `passes/pre_add_mulconst_reshape_suffix_layout.py`. The next small
+unmodularized helper in actual lowerer source order was therefore
+`_sanitize_squeeze_axes_with_static_input_shapes`, a 135-line terminal
+metadata guard.
+
+The helper normalizes explicit SQUEEZE axes after all late layout and shape
+rewrites. It removes invalid and duplicate axes, may repair a non-constant
+input dimension to singleton, treats a same-rank constant payload as
+authoritative evidence against an invalid squeeze, and reconciles output shape
+and signature metadata. It has one production invocation, performs no
+topology, layout-state, lineage, quantization, constant-buffer, or artifact
+mutation, and shares its pure inference helpers with static shape
+reconciliation. No conversion failure prompted this checkpoint; the recorded
+problem was that the cohesive SQUEEZE policy still lived in the central
+lowerer.
+
+Real ownership was measured before movement with temporary, uncommitted stats
+instrumentation. The eight shortest active Tier 0 models containing ONNX
+Squeeze were run strictly sequentially through `-tb flatbuffer_direct -cotof`
+with a 60-second process-group ceiling:
+
+- `gru_14_b1.onnx` and `gru_14_b2.onnx`;
+- `torch_lstm.onnx`, `GRU.onnx`, and `GRU_org.onnx`;
+- `CNN_AUTOENCODER.onnx`, `ts_ad_model.onnx`, and `UM_best_model.onnx`.
+
+All eight passed in 2.41-3.12 seconds, every process-tree SWAP peak was zero,
+and all eight recorded zero sanitizer updates in all three counters. This is
+retained as a production zero-owner control; the existing positive synthetic
+fixtures remain the semantic owner. `GRU.onnx` fixed the pre-change artifacts:
+
+- float32:
+  `f597fff552422165dcf034aa5628618c8349ae4dc776c750fbdc13de5f086b8f`;
+- float16:
+  `6bc8c810326efe563dd9730f0875b628b0cc8fa1bfa51337f39b6e4c462ef830`;
+- tensor correspondence:
+  `00f802d0ba18acc81ba8bb32e6915b374e33f0cef6ff2b3d4cb965915e2be3f7`.
+
+The safe scope was an exact owner move only. Preserve the operator order,
+axis normalization, constant-data guard, metadata mutation order, stats keys,
+terminal scheduling, and private compatibility name. Do not add topology or
+layout inference to this mechanical checkpoint.
+
+## Static SQUEEZE-axis sanitization extraction: completed state
+
+`passes/squeeze_shape_sanitization.py` now owns the complete implementation;
+`lower_from_onnx2tf.py` retains a thin wrapper with the historical name and
+the same signature. The owner imports the two SQUEEZE shape helpers from the
+already extracted static-shape module and has no dependency on the lowerer.
+It retains the original one-pass operator traversal because the terminal
+production boundary has no reusable live graph index and the policy needs no
+producer or consumer query. Constructing a new index solely for this scan
+would add work without reducing repeated traversal.
+
+Focused tests cover non-constant singleton repair, negative/duplicate/invalid
+axis normalization, constant-payload rejection of a non-singleton axis,
+output metadata reconciliation, exact counter values, idempotence, and direct
+module/compatibility-wrapper equivalence. The architecture contract fixes the
+single owner, shared inference-helper calls, absence of producer/consumer map
+builders, and absence of a lowerer import cycle.
+
+Post-extraction `GRU.onnx` completed in 2.572 seconds with
+`evaluation_pass=true`, maximum absolute error `8.940696716308594e-08`, and
+process-tree SWAP zero. Its float32, float16, and correspondence SHA-256 values
+are byte-identical to all three pre-change values above.
+
+Verification for this checkpoint is:
+
+- the new owner, the two existing SQUEEZE sanitizer fixtures, the complete
+  shape-reconciliation suite, and the complete architecture contract:
+  `226 passed in 39.81s`;
+- scoped Ruff, Python syntax compilation, and `git diff --check`: pass before
+  documentation synchronization; the same final checks are required before
+  commit.
+
+This checkpoint changes the new SQUEEZE owner, its lowerer wrapper, a focused
+test module, the architecture contract, the architecture document, and this
+handoff. The first `uv run` after the merged 2.6.4 release bump also corrected
+the editable root-package version recorded in `uv.lock` from 2.6.3 to 2.6.4;
+the dependency set and every resolved third-party version are unchanged. The
+checkpoint changes no public API, CLI, artifact, dependency, TensorFlow
+boundary, corpus profile, exclusion, or ONNX model. No failure or regression
+is known.
+
+After this checkpoint is synchronized, inspect
+`_replace_expand_dims_and_squeeze_with_reshape`, the next unmodularized helper
+in source order. It performs topology and LayoutState mutation, so first freeze
+its real invocation counts, exact artifacts, dynamic-shape branches,
+pre-operator insertion order, pruning behavior, and wrapper contract before
+moving any code. Continue with short sequential zero-SWAP validation, commit
+and push coherent units, and do not create a pull request.

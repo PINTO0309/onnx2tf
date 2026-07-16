@@ -1649,6 +1649,54 @@ def test_hardswish_shape_sanitizer_has_one_indexed_module_owner() -> None:
     assert "lower_from_onnx2tf" not in owner_source
 
 
+def test_squeeze_shape_sanitizer_has_one_module_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_sanitize_squeeze_axes_with_static_input_shapes"
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_sanitize_squeeze_axes_with_static_input_shapes_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "squeeze_shape_sanitization.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "sanitize_squeeze_axes_with_static_input_shapes"
+    )
+    owner_call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_parse_axes_option" in owner_call_names
+    assert "_infer_squeeze_output_shape_and_signature" in owner_call_names
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
 def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

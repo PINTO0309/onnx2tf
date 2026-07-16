@@ -4054,6 +4054,18 @@ dead pruning, dynamic metadata, HARD_SWISH repair, and Conv/RELU fusion, proves
 one index build, and compares the complete final ModelIR with the former
 ten-call sequence.
 
+The final static SQUEEZE-axis guard is owned by
+`passes/squeeze_shape_sanitization.py`. The lowerer retains only the historical
+private wrapper and its one terminal production call. The owner normalizes
+negative, duplicate, and out-of-range axes, repairs a non-constant static input
+dimension only when a constant payload does not disprove singleton extent,
+and reconciles the SQUEEZE output shape and signature through the shared static
+shape inference helpers. It intentionally performs one operator-list traversal
+instead of constructing a fresh graph index for its single terminal call; it
+does not query producers or consumers and does not change topology. Dedicated
+tests preserve wrapper equivalence, constant-payload authority, metadata
+repair, counters, idempotence, and the no-import-cycle boundary.
+
 Rank-four channelwise broadcast-constant repair now builds one
 `ModelIRGraphIndex` instead of independently scanning the graph for producers,
 consumers, and binary candidates. Exact ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW
