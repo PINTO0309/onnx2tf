@@ -7765,7 +7765,7 @@ sequential, zero-SWAP traces, matching the earlier broader zero-owner survey.
 The completed ownership move retains those boundaries and adds a direct owner/
 wrapper ModelIR fingerprint comparison.
 
-The following QLinear Concat/Conv propagation remains a raw 608-line lowerer
+The following QLinear Concat/Conv propagation remains a raw 607-line lowerer
 owner with one syntactic call in the same recovery sequence and two ordered
 runtime boundaries. Its dedicated contract now covers Pattern 1 quantized
 pre-Transposes, Pattern 2 float pre-Transpose before Quantize, Pattern 3
@@ -7775,14 +7775,13 @@ batch signatures, per-axis qdim remap, idempotence, and nine rejection guards.
 The former 119-line giant ModelIR fixture is now in the focused qlinear module
 with an identical AST.
 
-Three strict xfails block extraction. Required `concat_out` and `q_out` tensors
-are checked only after planned input/metadata mutations begin, so either
-missing tensor produces a zero-statistic partial rewrite. A Dequantize output
-declared as a ModelIR output is not protected before its input and metadata are
-changed from NCHW to NHWC. These must be fixed as separate atomicity and public-
-boundary checkpoints. The established eight-model QLinear recovery survey
-recorded zero rewrites for this helper, so no duplicate real-model conversion
-was run for characterization and positive production ownership is not claimed.
+Required `concat_out` and `q_out` tensors are now prevalidated after all
+prospective input shapes and before the first input or metadata mutation. Both
+missing-tensor cases retain a complete ModelIR fingerprint and zero statistic.
+One strict xfail still blocks extraction: a Dequantize output declared as a
+ModelIR output is not protected before its input and metadata are changed from
+NCHW to NHWC. The established eight-model QLinear recovery survey recorded zero
+rewrites for this helper, so positive production ownership is not claimed.
 
 ## Managed-corpus SWAP exclusion policy
 

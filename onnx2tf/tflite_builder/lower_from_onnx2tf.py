@@ -4597,6 +4597,11 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
             if not prospective_valid:
                 continue
 
+            concat_out_tensor = model_ir.tensors.get(concat_out_name, None)
+            q_out_tensor = model_ir.tensors.get(q_out_name, None)
+            if concat_out_tensor is None or q_out_tensor is None:
+                continue
+
             for op_idx, new_input_name in pending_dq_input_rewrites.items():
                 _set_operator_inputs(
                     model_ir=model_ir,
@@ -4690,15 +4695,9 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
                     )
                 )
 
-            concat_out_tensor = model_ir.tensors.get(concat_out_name, None)
-            if concat_out_tensor is None:
-                continue
             concat_out_tensor.shape = [int(v) for v in concat_shape]
             concat_out_tensor.shape_signature = [int(v) for v in concat_signature]
 
-            q_out_tensor = model_ir.tensors.get(q_out_name, None)
-            if q_out_tensor is None:
-                continue
             q_out_tensor.shape = [int(v) for v in concat_shape]
             q_out_tensor.shape_signature = [int(v) for v in concat_signature]
             _remap_qdim_for_permute(q_out_tensor, rank4_perm_nchw_to_nhwc)

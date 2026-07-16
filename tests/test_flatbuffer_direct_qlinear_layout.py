@@ -319,10 +319,6 @@ def test_qlinear_concat_conv_rejects_unsafe_boundaries(case: str) -> None:
     "missing_tensor_name",
     ["cat_f_nchw", "cat_q_nchw"],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason="required output tensors are checked after candidate mutation",
-)
 def test_qlinear_concat_conv_missing_output_tensor_rejection_is_atomic(
     missing_tensor_name: str,
 ) -> None:

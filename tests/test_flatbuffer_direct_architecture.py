@@ -9535,6 +9535,11 @@ def test_qlinear_concat_conv_has_one_characterized_raw_owner() -> None:
     assert "_replace_tensor_inputs" in call_names
     assert "_prune_unused_tensors" in call_names
     assert "del model_ir.operators[int(remove_idx)]" in owner_source
+    required_output_validation = owner_source.index(
+        "if concat_out_tensor is None or q_out_tensor is None:"
+    )
+    first_input_mutation = owner_source.index("_set_operator_inputs(")
+    assert required_output_validation < first_input_mutation
 
     lowerer = next(
         node

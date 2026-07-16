@@ -10188,3 +10188,40 @@ green. Then separately reject or preserve a public Dequantize output and turn
 the final xfail green. Keep successful fingerprints, statistics, sequence
 position, and the existing zero-owner evidence unchanged. Do not create a pull
 request.
+
+## QLinear Concat/Conv required-output atomicity: completed state
+
+The first QLinear semantic correction is complete. After all candidate input
+forms and prospective Concat shapes are validated, the helper now resolves both
+the Concat output tensor and Quantize output tensor before applying any pending
+DQ/Quantize input rewrite, metadata update, qdim remap, or axis change. A
+missing required output therefore returns zero statistic with a complete
+unchanged ModelIR fingerprint. The successful mutation sequence is unchanged;
+moving and reusing the two tensor references reduced the raw owner from 608 to
+607 lines.
+
+The focused owner contract and architecture selector pass `18 passed, 246
+deselected, 1 xfailed in 0.64s`; only the public Dequantize-output boundary
+remains xfailed. The changed-file branch regression passes `589 passed, 1
+xfailed in 24.76s`. The TensorFlow-import-blocked optional-boundary suite passes
+`11 passed in 9.25s`. Targeted test Ruff, Python compilation, and whitespace
+checks pass.
+
+YuNet INT8 was run strictly sequentially at commit `526bd6fa` and with the
+atomicity correction. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.329 and 5.291 seconds. Internal pass metrics are
+identical. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema,
+and generated-schema artifacts are byte-identical; the three JSON files differ
+only in output-directory and temporary-file paths.
+
+Changed files are the central raw helper, focused atomicity fixture,
+architecture source-order gate, and three branch documents. Public API, CLI,
+successful behavior/statistics, artifacts, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, reject or preserve only a public Dequantize output before any
+pending rewrite is committed. Turn the final strict xfail green, retain all
+private-output success fingerprints/statistics and the existing zero-owner
+evidence, and repeat one strictly sequential zero-SWAP artifact control. Do not
+create a pull request.
