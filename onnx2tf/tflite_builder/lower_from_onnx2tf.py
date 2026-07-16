@@ -189,6 +189,9 @@ from onnx2tf.tflite_builder.passes.split_mixed_concat_layout import (
 from onnx2tf.tflite_builder.passes.concat_input_adapter_layout import (
     optimize_transpose_input_chains_pre_concat_to_single_post_adapter as _optimize_transpose_input_chains_pre_concat_to_single_post_adapter_pass,
 )
+from onnx2tf.tflite_builder.passes.pre_add_direct_unary_layout import (
+    optimize_transpose_pre_add_direct_unary_nhwc_chains as _optimize_transpose_pre_add_direct_unary_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.slice_logistic_concat_reshape_tail_layout import (
     optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains as _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains_pass,
 )
@@ -9037,7 +9040,11 @@ def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir: ModelI
     return _optimize_transpose_gather_transpose_axis_remap_nhwc_chains_pass(model_ir)
 
 
-def _optimize_transpose_pre_add_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_pre_add_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Convert NCHW Add blocks back to NHWC when wrapped by transpose adapters.
 
@@ -9057,7 +9064,16 @@ def _optimize_transpose_pre_add_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]
     - Swish-wrapped NCHW inputs are recognized as:
         pre_nhwc --T(0,3,1,2)--> x_nchw --LOGISTIC--> s --MUL(x_nchw,s)--> x_swish_nchw
     """
-    optimized = 0
+    indexed_stats = _optimize_transpose_pre_add_direct_unary_nhwc_chains_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
+    optimized = int(
+        indexed_stats.get(
+            "optimized_transpose_pre_add_direct_unary_nhwc_chains",
+            0,
+        )
+    )
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     unary_passthrough_ops = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU", "HARD_SWISH", "LEAKY_RELU"}
@@ -26283,7 +26299,10 @@ def lower_onnx_to_ir(
 
     def _run_layout_reshape_attention_recovery_prefix() -> None:
         _run_layout_recovery_prefix_pass_sequence()
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -26314,7 +26333,10 @@ def lower_onnx_to_ir(
         )
 
     def _run_preadd_mean_attention_recovery_sequence() -> None:
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(
@@ -26456,7 +26478,10 @@ def lower_onnx_to_ir(
         )
         _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
         _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         run_layout_transpose_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -27287,7 +27312,10 @@ def lower_onnx_to_ir(
     # Late bridge rewrites above can recreate strict
     # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
     _run_terminal_affine_concat_split_recovery_sequence()
-    _optimize_transpose_pre_add_nhwc_chains(model_ir)
+    _optimize_transpose_pre_add_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _run_channel_slice_pad_mul_layout_pass_cluster()
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(
         model_ir,

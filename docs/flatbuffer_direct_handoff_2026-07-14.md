@@ -5577,14 +5577,14 @@ the bridge, and YuNet retains byte-identical artifacts.
 
 The unquantized pseudo-Swish, tanh-GELU, center/size/offset, pseudo-LeakyReLU,
 PReLU, connected elementwise/Concat, StridedSlice/Concat, Split/mixed-Concat,
-general Concat input-adapter, and Slice/Logistic/Concat/Reshape tail recovery
-helpers are now indexed at their unchanged production positions. The channel-
-shuffle/gather cluster immediately following the extracted tail is already a
-small orchestrator over semantic owners. The next standalone raw recovery
-helper in this ordered prefix is `_optimize_transpose_pre_add_nhwc_chains`; it
-has four direct production positions and one reference in the conservative
-safe-transpose bundle. It has not yet been characterized or changed. The
-composite pre-Concat dispatcher still retains its previously documented
+general Concat input-adapter, Slice/Logistic/Concat/Reshape tail, and strict
+direct/unary pre-Add recovery helpers are now indexed at their unchanged
+production positions. The broader pre-Add compatibility helper remains in
+place for its Swish, Gather, affine, PReLU, broadcast, nested-Add, and direct-
+fallback families, including the conservative safe-transpose entry. The next
+standalone raw recovery helper in the ordered prefix is
+`_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains`.
+The composite pre-Concat dispatcher also retains its previously documented
 legacy-family fallback after the indexed families.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
@@ -5596,13 +5596,12 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Characterize `_optimize_transpose_pre_add_nhwc_chains` at all four direct
-   production positions and through the conservative safe-transpose bundle.
-   Fix its runtime match set, direct and Swish-wrapped operands, optional unary
-   suffix, binary operand order, shared constant ownership, retained NCHW
-   consumers, and interaction with the preceding indexed tail and channel-
-   shuffle owners before selecting a bounded semantic owner. Do not modify it
-   during characterization.
+2. Characterize
+   `_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains`
+   at its ordered production boundary before modifying it. Fix its runtime
+   match set, shape/layout contracts, constant ownership, public boundaries,
+   and interaction with the new pre-Add indexed owner, then select only a
+   bounded semantic family with real non-zero coverage.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
@@ -5616,3 +5615,102 @@ verification gates.
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not
    create a pull request.
+
+## Pre-Add direct/unary extraction: pre-fix observation
+
+The first implementation attempt for the bounded
+`pre_add_direct_unary_layout` owner passed 232 focused, interaction, QLinear,
+and architecture tests. A sequential three-model `-cotof` check then found an
+important coverage problem before any follow-up source adjustment: the new
+owner reported zero rewrites at every one of its production invocations for
+`sinet_320_op.onnx`, `FastestDet.onnx`, and
+`human_segmentation_pphumanseg_2021oct_org.onnx`.
+
+This is not a conversion regression. All three models passed, used zero
+model-process SWAP, reproduced their exact recorded maximum errors, and
+reproduced their fixed float32, float16, and correspondence-report hashes.
+The observed values were:
+
+- SiNet: max abs `2.572051016613841e-09`, owner events eleven zeroes;
+- FastestDet: max abs `1.3113021850585938e-05`, owner events eight zeroes;
+- HumanSeg: max abs `2.384185791015625e-07`, owner events eight zeroes.
+
+The preserved legacy helper therefore still performed every applicable
+rewrite. Characterization before the implementation had already shown why a
+strict direct-only output contract is insufficient: FastestDet uses an
+`ADD -> unary -> post-transpose` suffix and a shared input requiring the
+historical direct fallback, HumanSeg contains both optional-unary and shared
+branch forms, and SiNet is primarily affine/PReLU/fallback rather than the
+bounded direct/unary family. No production fix was made in response to this
+observation. The next investigation step is to check the previously
+characterized OSNet strict residuals and then either add a transactionally
+validated optional-output-unary contract or narrow the checkpoint claim to a
+real, non-zero production family. The broad affine, PReLU, Gather, nested-Add,
+and direct-fallback behavior must remain on the compatibility path.
+
+After adding the bounded optional-output-unary contract, the first post-change
+focused run exposed one public-report compatibility difference before cleanup
+was adjusted. OSNet moved six residual Adds and HumanSeg moved one; SiNet and
+FastestDet correctly remained on the compatibility path. All four models
+passed with zero SWAP, exact recorded accuracy, and byte-identical float32 and
+float16 TFLite files. OSNet, FastestDet, and SiNet also retained their exact
+correspondence hashes. HumanSeg alone changed its correspondence hash from
+`87fd06dbd120aac7f0229b02484f7929d6e752c60c19555d6795221cb0a21e46`
+to
+`3d0848515e026eb3f1b4c6f69b936da77584eaa2e5793f3276ae3cb447783f34`.
+
+The JSON diff is fully classified: record content and all 370 historical
+lineage events are unchanged, but the indexed owner pruned eight now-unused
+adapter tensors immediately after its first rewrite. The compatibility helper
+historically pruned the same eight names later as the first portion of a
+larger event. This split one `prune_unused_tensors` event into two, increased
+`lineage_event_count` from 370 to 371, and shifted later event indexes by one.
+The TFLite graph and numeric behavior did not change. This report-only issue
+was recorded before changing cleanup ownership; the safe correction is to
+leave pruning at the existing compatibility-wrapper boundary instead of
+performing an extra early prune in the indexed sub-owner.
+
+## Pre-Add direct/unary extraction: final checkpoint
+
+Cleanup ownership now remains at the historical compatibility-wrapper exit.
+The indexed sub-owner no longer emits an early prune event. Final sequential
+conversion-only checks reproduce HumanSeg correspondence
+`87fd06dbd120aac7f0229b02484f7929d6e752c60c19555d6795221cb0a21e46`
+and OSNet correspondence
+`35a42832e43b2076b00399ba7b22a1ff5aff83795cd333474d6bf61bf7221677`.
+Their float32/float16 hashes also remain fixed. The optional-output-unary
+contract remains active: the first production call indexes one HumanSeg
+residual and six OSNet residuals. FastestDet and SiNet remain zero-match in the
+bounded owner and continue through the characterized compatibility families.
+
+The final focused model gate ran SiNet, OSNet, FastestDet, and HumanSeg in
+that fixed order, with one converter/inference subprocess at a time. All four
+passed, recorded zero model-process SWAP, and retained exact maximum absolute
+errors `2.572051016613841e-09`, `2.193450927734375e-05`,
+`1.3113021850585938e-05`, and `2.384185791015625e-07`, respectively. Every
+float32 and float16 TFLite file was byte-identical to its fixed checkpoint.
+
+The final synthetic/architecture gate passes 235 tests in 47.81 seconds. The
+TensorFlow import-blocked explicit direct, default-direct, and direct `-cotof`
+gate passes three tests in 4.24 seconds. Scoped Ruff, syntax compilation, and
+`git diff --check` pass; the lowerer uses only its existing F841 exclusion.
+
+The checkpoint changes these tracked files:
+
+- `onnx2tf/tflite_builder/passes/pre_add_direct_unary_layout.py`: immutable
+  direct/unary residual plan, indexed resolution, differential apply, optional
+  output unary, post aliases, and retained legacy boundary;
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`: indexed-first compatibility
+  wrapper and Session `LayoutState` at all four direct production calls;
+- `tests/test_flatbuffer_direct_indexed_pre_add_direct_unary_layout.py`:
+  focused capability, ownership, rejection, bounded-dispatch, stale-plan,
+  cleanup-boundary, and determinism coverage;
+- `tests/test_flatbuffer_direct_architecture.py`: indexed ownership and
+  unchanged call-boundary contract;
+- `docs/flatbuffer_direct_architecture.md` and this handoff: design,
+  pre-fix finding, report-diff attribution, final evidence, remaining work,
+  and restart instruction.
+
+No ONNX corpus model, generated TFLite artifact, dependency file, managed
+quick profile, exclusion policy, or public API is changed. No broad Tier run
+was performed for this bounded checkpoint.

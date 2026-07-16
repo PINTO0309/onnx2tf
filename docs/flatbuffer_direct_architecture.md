@@ -6732,6 +6732,66 @@ state, stale plans, and twenty-four transactional rejections. The related gate
 passes 603 tests, all five nanodet conversion artifacts remain byte-identical
 to checkpoint `762dcdef`, and sequential `-cotof` remains below `1e-1`.
 
+Strict direct/unary residual-Add adapter recovery is owned by
+`passes/pre_add_direct_unary_layout.py`. The existing
+`_optimize_transpose_pre_add_nhwc_chains` entry point remains the compatibility
+owner at all four production positions and in the conservative safe-transpose
+bundle. It invokes the indexed sub-owner first, then retains the historical
+implementation for Swish, Gather, constant affine, PReLU, broadcast, nested
+Add, and direct-fallback patterns. Direct production calls receive the Session
+`LayoutState`; the safe-bundle call remains source compatible without one.
+
+The bounded input contract is an equal-shape rank-four residual Add. Each
+operand must be either a typed NHWC-to-NCHW Transpose result or one of the
+historical seven unary operations fed exclusively by such a Transpose. A
+direct adapter may remain for unrelated NCHW consumers; a unary branch must
+be closed so its input adapter can be removed and its output metadata can be
+changed to NHWC. The output suffix may be the Add itself or one exclusive
+unary of the same family. At least one private typed NCHW-to-NHWC post adapter
+must expose the canonical NHWC result.
+
+The resolver proves graph order, unique producers, exact consumer slots,
+static and dynamic views, dtype, per-tensor quantization, explicit or unknown
+physical layout, typed immutable permutations, post aliases, public
+boundaries, and the old-NCHW/new-NHWC view relation. Multiple post adapters
+become aliases of the first output. Arbitrary NCHW consumers are preserved by
+retaining one local inverse adapter only when its INT32 permutation buffer is
+owned exclusively by the accepted post set. Shared or produced post constants
+reject the indexed candidate and leave it to compatibility behavior.
+
+One immutable plan owns input classification, optional unary rewires,
+metadata/LayoutState changes, Add and output-unary producer identity, post
+aliases, retained-boundary rewrites, adapter removal, complete tensor and
+operator contracts, and graph boundaries. The candidate is fully resolved a
+second time immediately before apply. A graph-ordered Add candidate list,
+candidate-only operation, rewrite bound, and one differential
+`ModelIRGraphIndex` replace repeated producer/consumer map construction for
+the accepted family. The indexed owner intentionally does not prune tensors:
+the compatibility wrapper retains the single historical cleanup boundary so
+lineage event grouping and correspondence reports remain byte-identical.
+
+The initial direct-output-only version was evaluated before being broadened.
+It produced zero indexed matches on SiNet, FastestDet, HumanSeg, and OSNet
+while the fallback preserved every result. Characterizing that finding showed
+that OSNet's strict residuals all use an optional ReLU suffix. After adding the
+bounded output-unary contract, the indexed first call owns six OSNet residuals
+and one HumanSeg residual. FastestDet remains on the direct-fallback path and
+SiNet remains on affine/PReLU paths. A first cleanup attempt split one HumanSeg
+lineage prune event; moving cleanup back to the wrapper restored the exact
+correspondence report without changing the graph.
+
+Twenty focused cases cover every input-unary type, direct and unary mixing,
+optional output unary, multiple post aliases, retained NCHW consumers,
+dynamic signatures, quantization and ownership guards, stale-plan rejection,
+bounded dispatch, idempotence, GraphIndex/LayoutState consistency, and the
+single cleanup boundary. The focused, QLinear, active compatibility, and full
+architecture gate passes 235 tests. TensorFlow-blocked direct, default-direct,
+and direct `-cotof` pass three tests. Sequential focused `-cotof` checks pass
+for SiNet, OSNet, FastestDet, and HumanSeg with zero model-process SWAP and
+their exact recorded maximum errors. All float32 and float16 TFLite files are
+byte-identical to the prior checkpoint; final conversion-only checks also
+restore the fixed correspondence-report hashes.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
