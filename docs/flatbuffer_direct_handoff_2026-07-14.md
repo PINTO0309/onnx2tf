@@ -10396,3 +10396,53 @@ compatibility wrappers for all three names, preserve the primary and fallback
 runner calls plus the later standalone stale-Transpose call, prove normalized
 old/new body identity, and compare direct owners with wrappers on complete
 ModelIR fingerprints and statistics. Do not create a pull request.
+
+## Conv-input adapter repair ownership extraction: completed state
+
+The corrected singleton-Reshape repair, stale NCHW-to-NHWC Transpose repair,
+and shared-index runner now reside in
+`onnx2tf/tflite_builder/passes/conv_input_adapter_repair.py`. The lowerer
+imports all three under private pass aliases and keeps private compatibility
+wrappers with the historical signatures. The primary and fallback runner calls
+and the later standalone stale-Transpose compatibility call are unchanged.
+
+The three old/new function bodies are individually AST-identical: 104 lines for
+singleton Reshape, 122 lines for stale Transpose, and 23 lines for the runner.
+Focused tests execute each owner and wrapper on deep copies and compare return
+statistics and complete ModelIR fingerprints. Architecture tests require one
+wrapper dispatch per API, module ownership of indexed candidate lookup,
+producer/consumer access, differential setter/removal, source-signature
+prevalidation, shared-index repair order, two runner production calls, and the
+standalone stale-Transpose call. The owner module does not import the lowerer.
+The whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+Validation completed as follows:
+
+- old/new AST comparisons: exact for all three owners;
+- focused owner/wrapper and architecture selector:
+  `8 passed, 257 deselected in 0.63s`;
+- changed-file focused branch regression: `599 passed in 23.36s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.35s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Tier 1 `face_blendshapes.onnx` is the historical positive model for the
+singleton-Reshape repair. It was run strictly sequentially at corrected
+checkpoint `a76ad6ff` and after extraction. Both runs passed `-cotof` with
+`max_abs=1.3709068298339844e-06`, zero process-tree SWAP, and durations of
+4.933 and 3.867 seconds. Pass metrics are exact. Float32/float16 TFLite, tensor-
+correspondence, op-error CSV, schema, and generated-schema artifacts are byte-
+identical. The three JSON differences contain only output-directory or
+temporary-file paths. The other historical positive model, Tier 3
+`sgscsh.onnx`, was not rerun because the requested policy favors one minimal,
+short positive control.
+
+Changed files are the new owner module, lowerer imports/wrappers, focused owner-
+wrapper comparison, architecture ownership checks, and three branch documents.
+Public API, CLI, valid-candidate behavior/statistics, TensorFlow boundary,
+dependencies, corpus profiles, exclusions, and ONNX operation tiers are
+unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, characterize the next 181-line raw source-order owner,
+`_repair_mixed_nhwc_inputs_for_nchw_concat`, before editing it. Fix any unsafe
+path in a separate checkpoint before a mechanical extraction. Keep validation
+minimal and strictly sequential; do not create a pull request.

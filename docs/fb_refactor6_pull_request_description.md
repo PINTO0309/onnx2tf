@@ -791,6 +791,9 @@ Latest checkpoint results:
   `594 passed, 2 xfailed`;
 - focused Conv-input source-signature atomicity correction: `5 passed`;
 - changed-file focused branch regression after the correction: `596 passed`;
+- focused Conv-input adapter owner/wrapper and architecture gate: `8 passed`;
+- changed-file focused branch regression after the ownership extraction:
+  `599 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1230,6 +1233,23 @@ Internal pass metrics are exact. Float32/float16 TFLite, tensor-correspondence,
 op-error CSV, schema, and generated-schema artifacts are byte-identical; the
 three JSON differences contain output or temporary paths only.
 
+The corrected Conv-input adapter repair pair and shared-index runner are now
+owned by `conv_input_adapter_repair.py`. Their 104-, 122-, and 23-line function
+bodies are individually AST-identical to the corrected lowerer predecessors.
+The lowerer retains private compatibility wrappers for all three names, the
+primary and fallback runner calls, and the later standalone stale-Transpose
+call. Direct owners and wrappers produce identical complete ModelIR
+fingerprints and statistics for singleton-Reshape, stale-Transpose, and grouped
+execution.
+
+Tier 1 `face_blendshapes.onnx`, the historical positive singleton-repair model,
+was run strictly sequentially at corrected checkpoint `a76ad6ff` and after the
+move. Both runs passed with `max_abs=1.3709068298339844e-06`, zero process-tree
+SWAP, and durations of 4.933 and 3.867 seconds. Pass metrics are exact. Float32/
+float16 TFLite, tensor-correspondence, op-error CSV, schema, and generated-
+schema artifacts are byte-identical; the three JSON differences contain output
+or temporary paths only.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1258,7 +1278,9 @@ found that both repair functions read a malformed source `shape_signature`
 after rewriting the Conv input; the resulting `IndexError` leaves a partial
 mutation. Both repairs now materialize and rank-validate that signature before
 the first indexed edge mutation, so both former strict xfails are green with a
-zero statistic and complete ModelIR no-op. A mechanical ownership move may now
-proceed only with exact function bodies, wrappers, sequence, shared-index
-behavior, statistics, and production boundaries preserved. No broad conversion
-sweep is implied by this checkpoint.
+zero statistic and complete ModelIR no-op. Their exact mechanical ownership
+move is complete with bodies, wrappers, sequence, shared-index behavior,
+statistics, and production boundaries preserved. Resume by characterizing the
+next raw source-order owner,
+`_repair_mixed_nhwc_inputs_for_nchw_concat`, before changing it. No broad
+conversion sweep is implied by this checkpoint.

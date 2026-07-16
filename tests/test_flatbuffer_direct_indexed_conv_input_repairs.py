@@ -15,6 +15,11 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_stale_nchw_to_nhwc_conv_input_transposes,
     _run_indexed_conv_input_adapter_repairs,
 )
+from onnx2tf.tflite_builder.passes.conv_input_adapter_repair import (
+    _repair_singleton_nhwc_conv_input_reshapes as _repair_singleton_nhwc_conv_input_reshapes_owner,
+    _repair_stale_nchw_to_nhwc_conv_input_transposes as _repair_stale_nchw_to_nhwc_conv_input_transposes_owner,
+    _run_indexed_conv_input_adapter_repairs as _run_indexed_conv_input_adapter_repairs_owner,
+)
 
 
 def _normalize(value: Any) -> Any:
@@ -203,6 +208,38 @@ def test_indexed_conv_input_adapter_repairs_match_legacy_pair(
         "transpose_source1",
     ]
     assert _normalize(model_ir) == _normalize(legacy_model_ir)
+
+
+@pytest.mark.parametrize(
+    ("owner", "wrapper"),
+    [
+        (
+            _repair_singleton_nhwc_conv_input_reshapes_owner,
+            _repair_singleton_nhwc_conv_input_reshapes,
+        ),
+        (
+            _repair_stale_nchw_to_nhwc_conv_input_transposes_owner,
+            _repair_stale_nchw_to_nhwc_conv_input_transposes,
+        ),
+        (
+            _run_indexed_conv_input_adapter_repairs_owner,
+            _run_indexed_conv_input_adapter_repairs,
+        ),
+    ],
+    ids=["singleton_reshape", "stale_transpose", "shared_index_runner"],
+)
+def test_conv_input_adapter_repair_owner_matches_compatibility_wrapper(
+    owner,
+    wrapper,
+) -> None:
+    owner_model_ir = _make_conv_input_adapter_model_ir()
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = owner(owner_model_ir)
+    wrapper_stats = wrapper(wrapper_model_ir)
+
+    assert owner_stats == wrapper_stats
+    assert _normalize(owner_model_ir) == _normalize(wrapper_model_ir)
 
 
 @pytest.mark.parametrize("protection", ["fanout", "graph_output"])

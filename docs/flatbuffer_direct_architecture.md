@@ -4249,19 +4249,22 @@ sequence while a separate multi-match case compares the maintained index with
 a fresh rebuild.
 
 The adjacent singleton-Reshape and stale NCHW-to-NHWC Transpose repairs in
-front of NHWC Conv inputs accept one shared `ModelIRGraphIndex`. Both enumerate
-only indexed `CONV_2D` candidates, obtain the adapter producer and exact
-consumer list from the index, rewrite the Conv data input through the indexed
-setter, and remove an accepted adapter through differential compaction. The
-primary and fallback pairs run through
-`_run_indexed_conv_input_adapter_repairs`, which builds one index for both
-repairs. The later standalone stale-Transpose cleanup remains outside that
-ownership boundary and builds its own compatibility index. Exact singleton
-shape, Transpose permutation, filter input-channel, single-consumer, and graph-
-output guards remain unchanged. Characterization compares the complete
+front of NHWC Conv inputs are now owned by
+`passes/conv_input_adapter_repair.py`. Their shared runner builds one
+`ModelIRGraphIndex`. Both enumerate only indexed `CONV_2D` candidates, obtain
+the adapter producer and exact consumer list from the index, rewrite the Conv
+data input through the indexed setter, and remove an accepted adapter through
+differential compaction. The lowerer keeps private compatibility wrappers for
+both repairs and the runner. Primary and fallback execute the runner; the later
+standalone stale-Transpose cleanup remains outside that ownership boundary and
+builds its own compatibility index. Exact singleton shape, Transpose
+permutation, filter input-channel, single-consumer, and graph-output guards
+remain unchanged. The 104-, 122-, and 23-line owner bodies are AST-identical to
+the corrected lowerer predecessors. Characterization compares the complete
 resulting ModelIR with the former explicit pair, proves one index build without
-legacy producer/consumer maps, exercises multiple matches, and preserves
-fan-out and graph-output adapters.
+legacy producer/consumer maps, exercises multiple matches, preserves fan-out
+and graph-output adapters, and proves direct owner/wrapper fingerprint and
+statistic equality for all three APIs.
 
 The extraction audit added two atomicity characterizations for malformed source
 `shape_signature` metadata. Both raw repairs now materialize and require a

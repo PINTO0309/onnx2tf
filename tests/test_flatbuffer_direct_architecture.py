@@ -2607,11 +2607,21 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
 
 
 def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "conv_input_adapter_repair.py"
+    )
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
+    assert "lower_from_onnx2tf" not in owner_source
     repair_names = [
         "_repair_singleton_nhwc_conv_input_reshapes",
         "_repair_stale_nchw_to_nhwc_conv_input_transposes",
@@ -2619,7 +2629,7 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
     for repair_name in repair_names:
         repair = next(
             node
-            for node in lowering_tree.body
+            for node in owner_tree.body
             if isinstance(node, ast.FunctionDef) and node.name == repair_name
         )
         call_names = {
@@ -2663,10 +2673,31 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
         assert isinstance(setter_index_keyword.value, ast.Name)
         assert setter_index_keyword.value.id == "graph_index"
 
+        wrapper = next(
+            node
+            for node in lowering_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == repair_name
+        )
+        wrapper_calls = [
+            node
+            for node in ast.walk(wrapper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == f"{repair_name}_pass"
+        ]
+        assert len(wrapper_calls) == 1
+        wrapper_index_keyword = next(
+            keyword
+            for keyword in wrapper_calls[0].keywords
+            if keyword.arg == "graph_index"
+        )
+        assert isinstance(wrapper_index_keyword.value, ast.Name)
+        assert wrapper_index_keyword.value.id == "graph_index"
+
     helper_name = "_run_indexed_conv_input_adapter_repairs"
     helper = next(
         node
-        for node in lowering_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     helper_calls = [
@@ -2686,6 +2717,20 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
         )
         assert isinstance(index_keyword.value, ast.Name)
         assert index_keyword.value.id == "graph_index"
+
+    helper_wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    helper_wrapper_calls = [
+        node
+        for node in ast.walk(helper_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"{helper_name}_pass"
+    ]
+    assert len(helper_wrapper_calls) == 1
 
     lowerer = next(
         node
