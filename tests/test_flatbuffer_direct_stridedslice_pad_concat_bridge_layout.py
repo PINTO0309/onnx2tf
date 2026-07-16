@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes.stridedslice_pad_concat_bridge_layout import (
+    _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains as _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains_owner,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -291,6 +294,148 @@ def _model(
             extra_add=extra_add,
         )
     return model_ir
+
+
+def _owner_wrapper_case(case: str) -> ModelIR:
+    if case == "dynamic":
+        return _model(dynamic_batch=True)
+    if case == "multiple":
+        return _model(branches=2)
+    if case == "multi-add":
+        return _model(extra_add=True)
+    if case == "mirror-pad":
+        return _model(mirror_pad=True)
+    model_ir = _model()
+
+    if case == "scalar":
+        tensor = model_ir.tensors["branch0_mul_const"]
+        tensor.shape = [1]
+        tensor.shape_signature = [1]
+        tensor.data = np.asarray([2.0], dtype=np.float32)
+    elif case == "shared-constants":
+        for name in (
+            "branch0_slice_end",
+            "branch0_pads",
+            "branch0_mul_const",
+        ):
+            output = f"{name}_copy"
+            _tensor(
+                model_ir,
+                output,
+                list(np.asarray(model_ir.tensors[name].data).shape),
+            )
+            model_ir.outputs.append(output)
+            model_ir.operators.append(
+                OperatorIR("IDENTITY", [name], [output])
+            )
+    elif case == "public-index-output":
+        model_ir.outputs.append("branch0_slice_end")
+    elif case == "public-index-input":
+        model_ir.inputs.append("branch0_slice_begin")
+    elif case == "wrong-index-dtype":
+        tensor = model_ir.tensors["branch0_pads"]
+        tensor.dtype = "FLOAT32"
+        tensor.data = np.asarray(tensor.data, dtype=np.float32)
+    elif case == "public-mul":
+        model_ir.outputs.append("branch0_mul_const")
+    elif case == "variable-mul":
+        model_ir.tensors["branch0_mul_const"].is_variable = True
+    elif case == "per-axis":
+        for name in (
+            "branch0_x0_slice",
+            "branch0_x1_slice",
+            "branch0_x0_pad",
+            "branch0_x1_pad",
+            "branch0_cat_nchw",
+            "branch0_mul_const",
+            "branch0_mul_out",
+        ):
+            model_ir.tensors[name].quantization = QuantParamIR(
+                scale=[0.1, 0.2, 0.3, 0.4],
+                zero_point=[0, 0, 0, 0],
+                quantized_dimension=1,
+            )
+    elif case == "unmatched":
+        _tensor(model_ir, "unused", [1])
+        model_ir.tensors["branch0_to_nhwc_perm"].data = np.asarray(
+            [0, 3, 1, 2],
+            dtype=np.int32,
+        )
+    elif case == "missing-metadata":
+        del model_ir.tensors["branch0_x0_slice"]
+    elif case == "missing-post":
+        del model_ir.tensors["branch0_mul_out_nhwc"]
+    elif case == "malformed-options":
+        model_ir.operators[1].options["beginMask"] = None
+    elif case == "reverse-topology":
+        model_ir.operators[1], model_ir.operators[2] = (
+            model_ir.operators[2],
+            model_ir.operators[1],
+        )
+    elif case == "public-intermediate":
+        model_ir.outputs.append("branch0_x0_slice")
+    elif case == "duplicate-source":
+        model_ir.operators.extend(
+            [
+                OperatorIR(
+                    "IDENTITY",
+                    ["branch0_x1_nhwc"],
+                    ["branch0_x0_nhwc"],
+                ),
+                OperatorIR(
+                    "IDENTITY",
+                    ["branch0_x0_nhwc"],
+                    ["branch0_x0_nhwc"],
+                ),
+            ]
+        )
+    return model_ir
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary",
+        "dynamic",
+        "multiple",
+        "multi-add",
+        "mirror-pad",
+        "scalar",
+        "shared-constants",
+        "public-index-output",
+        "public-index-input",
+        "wrong-index-dtype",
+        "public-mul",
+        "variable-mul",
+        "per-axis",
+        "unmatched",
+        "missing-metadata",
+        "missing-post",
+        "malformed-options",
+        "reverse-topology",
+        "public-intermediate",
+        "duplicate-source",
+    ],
+)
+def test_slice_pad_concat_owner_and_wrapper_are_identical(
+    case: str,
+) -> None:
+    owner_model = _owner_wrapper_case(case)
+    wrapper_model = copy.deepcopy(owner_model)
+
+    owner_stats = (
+        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains_owner(
+            owner_model
+        )
+    )
+    wrapper_stats = (
+        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
+            wrapper_model
+        )
+    )
+
+    assert wrapper_stats == owner_stats
+    assert _normalize(wrapper_model) == _normalize(owner_model)
 
 
 def _assert_transactional_rejection(model_ir: ModelIR) -> None:
@@ -978,20 +1123,61 @@ def test_slice_pad_concat_rejects_malformed_options(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-def test_slice_pad_concat_keeps_raw_owner_and_ordered_calls() -> None:
-    lowering_path = (
-        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+def test_slice_pad_concat_keeps_owner_wrapper_and_ordered_calls() -> None:
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "stridedslice_pad_concat_bridge_layout.py"
     )
-    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
     owner = next(
         node
-        for node in lowering_tree.body
+        for node in pass_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name
         == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
     )
     assert owner.end_lineno - owner.lineno + 1 == 1100
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and (
+            any(
+                alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+                for alias in node.names
+            )
+            if isinstance(node, ast.Import)
+            else node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        )
+        for node in pass_tree.body
+    )
+
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    wrapper_call = wrapper.body[0].value
+    assert isinstance(wrapper_call, ast.Call)
+    assert isinstance(wrapper_call.func, ast.Name)
+    assert (
+        wrapper_call.func.id
+        == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains_pass"
+    )
+    assert len(wrapper_call.args) == 1
+    assert isinstance(wrapper_call.args[0], ast.Name)
+    assert wrapper_call.args[0].id == "model_ir"
+    assert wrapper_call.keywords == []
 
     lowerer = next(
         node

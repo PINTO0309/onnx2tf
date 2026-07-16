@@ -1718,4 +1718,12 @@ atomic output rename, and batched removal turn all 42 former xfails green.
 Focused coverage now has 70 green cases, including missing post-output and
 single-index contracts, while all three production calls remain unchanged.
 Resume by mechanically extracting the corrected owner with exact AST and
-owner/wrapper equality; do not create a pull request.
+owner/wrapper equality; do not create a pull request. That extraction is now
+complete in `passes/stridedslice_pad_concat_bridge_layout.py`. Its 1,100-line
+function AST is exact to checkpoint `95a5555b`, the lowerer retains a one-
+return wrapper, and all three production calls are unchanged. Twenty direct
+owner/wrapper families produce identical statistics and complete normalized
+ModelIR state. Resume by inventorying and characterizing the next substantive
+raw source-order owner,
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains` (218
+lines), before semantic or ownership changes. Do not create a pull request.

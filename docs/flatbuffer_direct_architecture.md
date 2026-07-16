@@ -8485,6 +8485,24 @@ explicit one-index reuse bring the focused contract to seventy cases without
 changing Pad/MirrorPad options, multiple Add users, statistics, fixed point,
 pruning, or any of the three production calls.
 
+Ownership now resides in
+`passes/stridedslice_pad_concat_bridge_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `95a5555b` are each 1,100 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical private name as a one-return compatibility wrapper.
+All three production calls are unchanged, and the focused module does not
+import the lowerer.
+
+Twenty direct owner/wrapper comparisons cover static and dynamic metadata,
+multiple matches, multiple Add users, Pad and MirrorPad, scalar constants,
+grouped shared constants, public-output/index-input/wrong-dtype index
+ownership, public and variable Mul constants, per-axis quantization, unmatched
+pruning, missing retained/post metadata, malformed options, reverse topology,
+public intermediates, and duplicate source producers. Statistics and complete
+normalized ModelIR state are identical in every case. The mechanical move does
+not alter public APIs, artifacts, dependencies, corpus policy, ordered runtime
+behavior, or TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

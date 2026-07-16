@@ -12065,3 +12065,52 @@ checkpoint/module AST identity and direct owner/wrapper equality for static/
 dynamic, multiple, multi-Add, Pad/MirrorPad, scalar, grouped shared/public
 constants, quantization, pruning, rejection, and atomicity cases. Validate
 sequentially, commit and push, and do not create a pull request.
+
+## StridedSlice/Pad/Concat ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/stridedslice_pad_concat_bridge_layout.py`. Its
+function and the corrected raw owner at checkpoint `95a5555b` are each 1,100
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains_pass`
+alias and keeps the historical private name as a one-return wrapper. All three
+production calls remain unchanged. The pass module does not import the lowerer.
+
+Twenty direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two matches, multiple Add users, Pad and MirrorPad, scalar Mul,
+grouped shared constants, public index outputs, public-input and wrong-dtype
+index rejection, public and variable Mul ownership, per-axis quantization,
+unmatched pruning, missing retained and post-output metadata, malformed
+options, reverse topology, a public intermediate, and duplicate source
+producers. Deep-copied executions produce identical statistics and complete
+normalized ModelIR state, including buffers, quantization, options,
+provenance, topology, metadata, lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 1,100 lines each;
+- focused safety plus owner/wrapper contract: `90 passed in 0.65s`;
+- focused contract, the four adjacent extracted Concat bridge contracts, and
+  ordered architecture suite: `600 passed in 18.48s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.41s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+Pad/MirrorPad and multiple-Add behavior, all three ordered runtime calls, and
+TensorFlow isolation are unchanged. PR #952 remains closed; no pull request
+was created, reopened, or updated.
+
+At restart, inventory and characterize the next substantive raw source-order
+owner before editing it: the 218-line
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`.
+No focused public fixture currently owns this pass; only architecture coverage
+references it. Build focused synthetic ModelIR cases for positive, dynamic,
+multiple-match, shape-constant ownership, metadata, quantization, topology,
+public boundaries, pruning, fixed point, statistics, and every production-call
+boundary. Record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.
