@@ -11134,3 +11134,54 @@ pruning behavior, statistics, and ordered production boundaries before any
 correction or extraction. Reuse existing model evidence, keep additional
 validation minimal and strictly sequential, commit and push, and do not create
 a pull request.
+
+## Softmax/Transpose canonicalizer characterization: completed state
+
+The raw 190-line `_canonicalize_softmax_transpose_chains` owner and its two
+ordered production boundaries are unchanged. A focused synthetic contract now
+freezes the successful nonterminal and terminal chain, independent graph-order
+matches, fixed-point idempotence, shared-permutation cloning and collision-safe
+names, Softmax option/axis/provenance preservation, historical unmatched-graph
+pruning, ten existing topology/arity/fan-out/public-output/per-axis rejection
+guards, and both nested recovery-sequence boundaries.
+
+Twenty-four concrete unsafe cases are strict xfails:
+
+- the Softmax input is replanned as NHWC but the Softmax output remains NWHC,
+  causing the post-Transpose shape and signature to swap H/W;
+- six non-last, out-of-range, or malformed Softmax axes are rewritten even
+  though only normalized rank-four axis three is semantically invariant;
+- seven missing or incomplete rank-four tensor/signature cases still mutate;
+- five public-input, variable, dtype-invalid, buffer-dtype-invalid, or
+  quantized permutation constants are modified in place;
+- one public permutation output is modified instead of preserved through a
+  private constant clone;
+- duplicate Softmax/post producers, reverse Softmax/post order, and a public
+  internal input are not rejected.
+
+Each unsafe case requires a zero statistic and byte-for-byte normalized
+ModelIR equality. Production code, public API, CLI, artifacts, dependencies,
+corpus profiles, exclusions, operation tiers, and TensorFlow boundaries are
+unchanged. No additional model conversion was run; this checkpoint is
+synthetic characterization only. PR #952 remains closed, and no pull request
+may be created or reopened.
+
+Validation completed as follows:
+
+- focused characterization: `16 passed, 24 xfailed in 0.72s`;
+- characterization, terminal Softmax owner, and architecture integration:
+  `293 passed, 24 xfailed in 20.76s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.32s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+At restart, correct the raw owner transactionally before extracting it.
+Require a normalized last-axis Softmax, unique topologically ordered producers,
+private intermediate tensors, complete rank-four shape/signature metadata,
+and immutable local INT32 permutation buffers. Public constant outputs may be
+preserved through private clones, but public inputs and variable permutations
+must reject. Precompute both permutation actions, every metadata value, marker
+options, clone names, and pruning consequences before the first mutation. Turn
+all 24 strict xfails green while preserving the successful graph-order count,
+fixed point, shared-buffer cloning, terminal-output behavior, marker contract,
+and both ordered boundaries. Validate sequentially, commit and push, and do not
+create a pull request.

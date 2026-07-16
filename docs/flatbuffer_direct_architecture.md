@@ -7972,6 +7972,44 @@ reliably short is retained as excluded history with a normalized reason such
 as `repeated_quick_ceiling_timeout`. Do not increase the quick ceiling or
 change converter source merely to keep that model in the short-runtime set.
 
+## Raw Softmax/Transpose canonicalizer characterization
+
+The remaining raw `_canonicalize_softmax_transpose_chains` owner is frozen at
+its two existing ordered production boundaries before any implementation
+change. Its positive contract matches the private chain
+`NHWC-to-NCHW Transpose -> NCHW-to-NWHC Transpose -> last-axis Softmax ->
+NCHW-to-NWHC Transpose`. The existing rewrite changes the two inner
+permutations to NCHW-to-NHWC and NHWC-to-NCHW, adds the shared terminal-
+cleanup marker, preserves all other Softmax options/provenance, accepts a
+terminal public output only when it has no internal consumer, clones a shared
+permutation buffer, processes independent branches in graph order, reaches a
+fixed point, and retains historical unused-tensor pruning on a zero-match
+graph.
+
+The characterization records 24 concrete unsafe cases as strict xfails. One
+case exposes incomplete metadata planning: the Softmax input is changed to
+NHWC, but the Softmax output keeps its former NWHC metadata and the post-
+Transpose is consequently assigned an H/W-swapped shape. Six cases prove that
+the rewrite accepts non-last, out-of-range, and malformed Softmax axes even
+though only normalized axis three preserves the chain's meaning. Seven cases
+show that missing or non-rank-four source/intermediate/destination metadata is
+accepted. Five cases show in-place mutation of a public-input, variable,
+wrong-TensorIR-dtype, wrong-buffer-dtype, or quantized permutation tensor. A
+public constant output is also mutated instead of being preserved through a
+private clone. The final four cases cover duplicate Softmax/post producers,
+reverse Softmax/post order, and an internally produced tensor also declared as
+a public input. Every rejection contract requires a zero statistic and an
+unchanged complete ModelIR state.
+
+Production source is intentionally unchanged at this checkpoint. Correction
+must resolve every required rank-four shape/signature, normalized last-axis
+Softmax semantics, unique and topologically ordered producers, private
+intermediates, and a complete immutable permutation update/clone plan before
+the first tensor, operator, option, lineage, or metadata mutation. Valid
+graph-order statistics, fixed-point behavior, marker sharing, pruning,
+terminal-output behavior, and both ordered runtime boundaries must remain
+unchanged.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

@@ -1575,4 +1575,13 @@ is now complete with direct owner/wrapper equality and seven lowerer Ruff
 findings preserved. Resume by inventorying and characterizing the next raw
 source-order owner, `_canonicalize_softmax_transpose_chains` (190 lines),
 before any semantic or ownership change. No broad conversion sweep is implied
-by this checkpoint.
+by this checkpoint. Its characterization is now complete without production
+source changes: 16 positive, rejection, alias, pruning, fixed-point, and
+ordered-boundary cases pass, while 24 concrete safety cases are recorded as
+strict xfails. They isolate incomplete Softmax-output metadata propagation,
+unsafe non-last or malformed axis acceptance, missing/rank-invalid metadata,
+mutable or public permutation ownership, public constant-output mutation,
+duplicate producers, reverse topology, and public internal aliases. Resume by
+building the full topology/metadata/permutation plan before the first mutation
+and turning every strict xfail green while preserving valid statistics and
+both production boundaries.
