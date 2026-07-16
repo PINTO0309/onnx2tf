@@ -8389,6 +8389,23 @@ duplicate source-producer contracts bring the focused suite to forty-two cases
 without changing valid statistics, fixed point, pruning, or either production
 boundary.
 
+Ownership now resides in
+`passes/concat_tree_mul_add_bridge_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `4111187c` are each 675 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and keeps the historical private name as a one-return compatibility wrapper.
+Both terminal recovery-sequence positions and their immediate neighboring calls
+are unchanged, and the focused module does not import the lowerer.
+
+Seventeen direct owner/wrapper comparisons cover static and dynamic metadata,
+multiple matches, scalar, shared, public-output, public-input, and variable Mul
+constants, per-axis quantization, unmatched pruning, missing and late metadata,
+malformed axes, reverse nested topology, public internal boundaries, and
+reverse or duplicate source producers. Statistics and complete normalized
+ModelIR state are identical in every case. The move adds no semantic change and
+does not alter public APIs, artifacts, dependencies, corpus policy, ordered
+behavior, or TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

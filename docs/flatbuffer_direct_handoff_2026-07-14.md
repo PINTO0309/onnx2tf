@@ -11899,3 +11899,53 @@ wrapper and preserve both ordered positions. Prove corrected checkpoint/module
 AST identity and direct owner/wrapper equality for static/dynamic, multiple,
 scalar, shared/public constants, quantization, pruning, rejection, and atomicity
 cases. Validate sequentially, commit and push, and do not create a pull request.
+
+## Nested-Concat/Mul/Transpose ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/concat_tree_mul_add_bridge_layout.py`. Its
+function and the corrected raw owner at checkpoint `4111187c` are each 675
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains_pass` alias and
+keeps the historical private name as a one-return wrapper. Its position after
+the extracted Concat/Mul/Add/Add/Mean/Reshape owner and before singleton-gate
+recovery in both terminal sequences is unchanged. The pass module does not
+import the lowerer.
+
+Seventeen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two matches, scalar constants, shared collision-safe and public-
+output clones, public-input and variable rejection, per-axis quantization,
+unmatched pruning, missing and late metadata, malformed axes, reverse nested
+topology, a public internal boundary, and reverse or duplicate source
+producers. Deep-copied executions produce identical statistics and complete
+normalized ModelIR state, including buffers, quantization, options,
+provenance, topology, metadata, lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 675 lines each;
+- focused safety plus owner/wrapper contract: `59 passed in 0.58s`;
+- focused contract, the three adjacent extracted Concat bridge contracts, and
+  ordered architecture suite: `510 passed in 19.29s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.54s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+ordered runtime behavior, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: the 543-line
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`.
+Its existing public fixture remains in `tests/test_tflite_builder_direct.py`,
+and all three production calls are already asserted by architecture tests.
+Move the fixture into a focused module; freeze positive, multiple-match,
+StridedSlice/Pad constants, Concat/Mul/Add constants, metadata, quantization,
+topology, public-boundary, pruning, fixed-point, statistics, and ordered-call
+behavior; and record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.

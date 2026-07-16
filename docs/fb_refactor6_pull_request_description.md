@@ -1692,4 +1692,13 @@ xfails green. Focused coverage now has 42 green cases, including explicit
 single-index reuse across two matches plus reverse and duplicate source-
 producer rejection, while valid behavior and both ordered positions remain
 unchanged. Resume by mechanically extracting the corrected owner with exact
-AST and owner/wrapper equality; do not create a pull request.
+AST and owner/wrapper equality; do not create a pull request. That extraction
+is now complete in `passes/concat_tree_mul_add_bridge_layout.py`. Its 675-line
+function AST is exact to checkpoint `4111187c`, the lowerer retains a one-
+return wrapper, and both ordered positions are unchanged. Seventeen direct
+owner/wrapper families produce identical statistics and complete normalized
+ModelIR state. Resume by inventorying and characterizing the next raw source-
+order owner,
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`
+(543 lines), before any semantic or ownership change. Do not create a pull
+request.
