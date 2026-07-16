@@ -1077,7 +1077,7 @@ def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:
     assert dispatch.args[0].id == "model_ir"
 
 
-def test_mean_maxpool_concat_raw_owner_contract_is_explicit() -> None:
+def test_mean_maxpool_concat_corrected_owner_contract_is_explicit() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -1088,7 +1088,7 @@ def test_mean_maxpool_concat_raw_owner_contract_is_explicit() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == owner_name
     )
-    assert owner.end_lineno - owner.lineno + 1 == 310
+    assert owner.end_lineno - owner.lineno + 1 == 382
     call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
         for node in ast.walk(owner)
@@ -1096,7 +1096,7 @@ def test_mean_maxpool_concat_raw_owner_contract_is_explicit() -> None:
         and isinstance(node.func, (ast.Name, ast.Attribute))
     }
     assert "_build_tensor_consumer_map" in call_names
-    assert "_build_tensor_producer_map" in call_names
+    assert "_build_tensor_producer_map" not in call_names
     assert "ModelIRGraphIndex" not in call_names
     assert "_read_transpose_perm" in call_names
     assert "_read_const_ints_from_tensor" in call_names
@@ -1104,10 +1104,87 @@ def test_mean_maxpool_concat_raw_owner_contract_is_explicit() -> None:
     assert "_set_operator_inputs" in call_names
     assert "_replace_tensor_inputs" in call_names
     assert "_prune_unused_tensors" in call_names
+    assert "_rank4_shape_and_signature" in call_names
     outer_loops = [node for node in owner.body if isinstance(node, ast.While)]
     assert len(outer_loops) == 1
     assert isinstance(outer_loops[0].test, ast.Constant)
     assert outer_loops[0].test.value is True
+
+    axes_guard = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.If)
+        and "mean_axes_name in model_ir.inputs" in ast.unparse(node.test)
+        and "mean_axes_name in model_ir.outputs" in ast.unparse(node.test)
+        and "mean_axes_tensor.is_variable" in ast.unparse(node.test)
+    )
+    planned_concat_inputs = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "planned_concat_inputs"
+            for target in node.targets
+        )
+    )
+    tensor_plans = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "tensor_plans"
+    )
+    concat_shape_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "concat_shape_plan"
+            for target in node.targets
+        )
+    )
+    remove_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "remove_indices"
+            for target in node.targets
+        )
+    )
+    mutation_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {
+            "_set_operator_inputs",
+            "_write_const_ints_to_tensor",
+            "_replace_tensor_inputs",
+        }
+    ]
+    first_mutation_line = min(node.lineno for node in mutation_calls)
+    assert axes_guard.lineno < first_mutation_line
+    assert planned_concat_inputs.lineno < first_mutation_line
+    assert tensor_plans.lineno < first_mutation_line
+    assert concat_shape_plan.lineno < first_mutation_line
+    assert remove_plan.lineno < first_mutation_line
+
+    prune_guard = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Name)
+            and candidate.func.id == "_prune_unused_tensors"
+            for candidate in ast.walk(node)
+        )
+    )
+    assert ast.unparse(prune_guard.test) == "optimized > 0"
 
 
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:

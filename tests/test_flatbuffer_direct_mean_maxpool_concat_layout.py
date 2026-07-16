@@ -370,6 +370,9 @@ def test_mean_maxpool_concat_is_idempotent_after_rewrite() -> None:
         "pre_output_fanout",
         "mean_without_keepdims",
         "wrong_mean_axes",
+        "wrong_axes_tensor_dtype",
+        "wrong_axes_data_dtype",
+        "quantized_axes",
         "wrong_pool_post_perm",
         "wrong_concat_axis",
         "wrong_qcat_quantized_dimension",
@@ -397,6 +400,22 @@ def test_mean_maxpool_concat_rejects_unsafe_boundaries(case: str) -> None:
             [1, 2],
             dtype=np.int32,
         )
+    elif case == "wrong_axes_tensor_dtype":
+        model_ir.tensors["mean_axes"].dtype = "INT64"
+        model_ir.tensors["mean_axes"].data = np.asarray(
+            [2, 3],
+            dtype=np.int64,
+        )
+    elif case == "wrong_axes_data_dtype":
+        model_ir.tensors["mean_axes"].data = np.asarray(
+            [2, 3],
+            dtype=np.int64,
+        )
+    elif case == "quantized_axes":
+        model_ir.tensors["mean_axes"].quantization = QuantParamIR(
+            scale=[1.0],
+            zero_point=[0],
+        )
     elif case == "wrong_pool_post_perm":
         pool_post = next(op for op in model_ir.operators if op.outputs == ["pool_nchw"])
         pool_post.inputs[1] = "perm_nchw_to_nhwc"
@@ -423,13 +442,6 @@ def test_mean_maxpool_concat_rejects_unsafe_boundaries(case: str) -> None:
 
 
 @pytest.mark.parametrize("tensor_name", ["q_raw_nhwc", "pool_nhwc"])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the raw helper reads short target signatures after rewiring inputs, "
-        "axes, and Concat metadata"
-    ),
-)
 def test_mean_maxpool_concat_rejects_short_signatures_atomically(
     tensor_name: str,
 ) -> None:
@@ -446,13 +458,6 @@ def test_mean_maxpool_concat_rejects_short_signatures_atomically(
 
 
 @pytest.mark.parametrize("invalid_extra", ["missing", "rank3", "short_signature"])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the raw helper rewires both branches and Concat before validating "
-        "all additional Concat input tensors and metadata"
-    ),
-)
 def test_mean_maxpool_concat_prevalidates_every_concat_input_atomically(
     invalid_extra: str,
 ) -> None:
@@ -482,13 +487,6 @@ def test_mean_maxpool_concat_prevalidates_every_concat_input_atomically(
 
 
 @pytest.mark.parametrize("ownership", ["shared", "public", "input", "variable"])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the raw helper mutates the Mean axes constant without checking "
-        "shared, boundary, or variable ownership"
-    ),
-)
 def test_mean_maxpool_concat_preserves_nonlocal_axes_ownership(
     ownership: str,
 ) -> None:

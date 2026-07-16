@@ -4183,6 +4183,18 @@ resolve every source/target tensor, effective signature, planned Concat input,
 output shape/signature, axis option, and QDIM update before the first ModelIR
 mutation. Rejection must preserve graph and diagnostic metadata completely.
 
+The corrected raw owner is 382 lines and now performs that complete planning.
+It accepts only a local immutable INT32 axes tensor with exact INT32 backing
+data, resolves rank-four effective metadata for every involved and planned
+tensor, computes Mean/Concat/QDIM/alias/removal changes, and then enters a
+mutation-only commit block with no later rejection. Pruning is guarded by the
+non-zero rewrite count. All nine former xfails plus axes TensorIR dtype, buffer
+dtype, and quantization guards are green. The unused producer-map construction
+was removed, leaving one consumer map per fixed-point round and reducing the
+central lowerer's existing Ruff findings to seven. Architecture tests keep
+axes ownership and all plan objects before the first setter/constant/alias
+mutation and keep conditional pruning after convergence.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner

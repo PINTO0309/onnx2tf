@@ -4272,10 +4272,20 @@ def _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir: ModelIR) -> Di
             return [int(v) for v in list(tensor.shape_signature)]
         return [int(v) for v in list(tensor.shape)]
 
+    def _rank4_shape_and_signature(
+        tensor: Optional[TensorIR],
+    ) -> Optional[Tuple[List[int], List[int]]]:
+        if tensor is None:
+            return None
+        shape = [int(v) for v in list(tensor.shape)]
+        signature = _tensor_shape_signature(tensor)
+        if len(shape) != 4 or len(signature) != 4:
+            return None
+        return shape, signature
+
     while True:
         changed = False
         consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
             if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
@@ -4322,6 +4332,23 @@ def _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir: ModelIR) -> Di
 
             mean_axes_name = str(mean_op.inputs[1])
             mean_axes_tensor = model_ir.tensors.get(mean_axes_name, None)
+            if (
+                mean_axes_tensor is None
+                or str(mean_axes_tensor.dtype).upper() != "INT32"
+                or bool(mean_axes_tensor.is_variable)
+                or mean_axes_tensor.quantization is not None
+                or mean_axes_name in model_ir.inputs
+                or mean_axes_name in model_ir.outputs
+                or [int(v) for v in consumers.get(mean_axes_name, [])]
+                != [int(mean_idx)]
+            ):
+                continue
+            try:
+                mean_axes_data = np.asarray(mean_axes_tensor.data)
+            except Exception:
+                continue
+            if mean_axes_data.dtype != np.dtype(np.int32):
+                continue
             mean_axes_raw = _read_const_ints_from_tensor(mean_axes_tensor)
             if mean_axes_raw is None:
                 continue
@@ -4438,91 +4465,139 @@ def _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir: ModelIR) -> Di
             if not valid_posts:
                 continue
 
-            dq_mean_out_tensor = model_ir.tensors.get(dq_mean_out_name, None)
-            mean_out_tensor = model_ir.tensors.get(mean_out_name, None)
-            pool_out_tensor = model_ir.tensors.get(pool_out_name, None)
-            concat_out_tensor = model_ir.tensors.get(concat_out_name, None)
-            q_cat_tensor = model_ir.tensors.get(q_cat_name, None)
-            if any(t is None for t in [dq_mean_out_tensor, mean_out_tensor, pool_out_tensor, concat_out_tensor, q_cat_tensor]):
+            planned_concat_inputs = [
+                (
+                    str(pool_out_name)
+                    if str(input_name) == str(pool_nchw_name)
+                    else str(input_name)
+                )
+                for input_name in list(concat_op.inputs)
+            ]
+            rank4_tensor_names = [
+                q_raw_name,
+                q_nchw_name,
+                dq_mean_out_name,
+                mean_out_name,
+                dq_pool_out_name,
+                pool_out_name,
+                pool_nchw_name,
+                concat_out_name,
+                q_cat_name,
+            ] + list(planned_concat_inputs)
+            post_output_names = [
+                str(model_ir.operators[int(post_idx)].outputs[0])
+                for post_idx in removable_post_indices
+            ]
+            rank4_tensor_names.extend(post_output_names)
+            tensor_plans: Dict[
+                str,
+                Tuple[TensorIR, List[int], List[int]],
+            ] = {}
+            metadata_valid = True
+            for tensor_name in rank4_tensor_names:
+                if tensor_name in tensor_plans:
+                    continue
+                tensor = model_ir.tensors.get(str(tensor_name), None)
+                shape_and_signature = _rank4_shape_and_signature(tensor)
+                if tensor is None or shape_and_signature is None:
+                    metadata_valid = False
+                    break
+                tensor_plans[str(tensor_name)] = (
+                    tensor,
+                    list(shape_and_signature[0]),
+                    list(shape_and_signature[1]),
+                )
+            if not metadata_valid:
                 continue
 
-            # Keep the QDIM semantics deterministic for this metadata rewrite.
-            if q_cat_tensor is not None and q_cat_tensor.quantization is not None and _quant_scale_count(q_cat_tensor.quantization) > 1:
-                if int(q_cat_tensor.quantization.quantized_dimension) != 1:
-                    continue
+            dq_mean_out_tensor = tensor_plans[dq_mean_out_name][0]
+            mean_out_tensor = tensor_plans[mean_out_name][0]
+            concat_out_tensor = tensor_plans[concat_out_name][0]
+            q_cat_tensor = tensor_plans[q_cat_name][0]
 
-            # Rewire mean branch to consume NHWC quantized source directly.
+            q_cat_has_per_axis_quantization = (
+                q_cat_tensor.quantization is not None
+                and _quant_scale_count(q_cat_tensor.quantization) > 1
+            )
+            if (
+                q_cat_has_per_axis_quantization
+                and int(q_cat_tensor.quantization.quantized_dimension) != 1
+            ):
+                continue
+
+            q_raw_shape_plan = list(tensor_plans[q_raw_name][1])
+            q_raw_signature_plan = list(tensor_plans[q_raw_name][2])
+            mean_axes_new = [
+                int(old_to_new_axis[int(axis)]) for axis in mean_axes_old
+            ]
+            mean_shape_plan = list(q_raw_shape_plan)
+            mean_signature_plan = list(q_raw_signature_plan)
+            for axis in mean_axes_new:
+                mean_shape_plan[int(axis)] = 1
+                mean_signature_plan[int(axis)] = 1
+
+            concat_input_metadata: List[Tuple[List[int], List[int]]] = []
+            for tensor_name in planned_concat_inputs:
+                if str(tensor_name) == str(mean_out_name):
+                    concat_input_metadata.append(
+                        (list(mean_shape_plan), list(mean_signature_plan))
+                    )
+                else:
+                    concat_input_metadata.append(
+                        (
+                            list(tensor_plans[str(tensor_name)][1]),
+                            list(tensor_plans[str(tensor_name)][2]),
+                        )
+                    )
+            if len(concat_input_metadata) == 0:
+                continue
+            concat_shape_plan = list(concat_input_metadata[0][0])
+            for shape_i, _ in concat_input_metadata[1:]:
+                concat_shape_plan[3] += int(shape_i[3])
+            concat_signature_plan = list(concat_input_metadata[0][1])
+            if any(
+                int(signature_i[3]) < 0
+                for _, signature_i in concat_input_metadata
+            ):
+                concat_signature_plan[3] = -1
+            else:
+                concat_signature_plan[3] = int(
+                    sum(
+                        int(signature_i[3])
+                        for _, signature_i in concat_input_metadata
+                    )
+                )
+
+            remove_indices = sorted(
+                set(
+                    [int(pre_idx), int(pool_post_idx)]
+                    + [int(v) for v in removable_post_indices]
+                ),
+                reverse=True,
+            )
+
+            # Commit only after every edge, tensor, signature, and axis is valid.
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=dq_mean_op,
                 new_inputs=[q_raw_name],
             )
-            dq_mean_out_tensor.shape = [int(v) for v in list(q_raw_tensor.shape)]
-            dq_mean_out_tensor.shape_signature = _tensor_shape_signature(q_raw_tensor)
-
-            mean_axes_new = [int(old_to_new_axis[int(axis)]) for axis in mean_axes_old]
+            dq_mean_out_tensor.shape = list(q_raw_shape_plan)
+            dq_mean_out_tensor.shape_signature = list(q_raw_signature_plan)
             _write_const_ints_to_tensor(mean_axes_tensor, mean_axes_new)
-
-            q_raw_signature = _tensor_shape_signature(q_raw_tensor)
-            mean_shape = [int(v) for v in list(q_raw_tensor.shape)]
-            mean_signature = [int(v) for v in list(q_raw_signature)]
-            for axis in mean_axes_new:
-                mean_shape[int(axis)] = 1
-                mean_signature[int(axis)] = 1
-            mean_out_tensor.shape = [int(v) for v in list(mean_shape)]
-            mean_out_tensor.shape_signature = [int(v) for v in list(mean_signature)]
-
-            # Replace pool NCHW adapter output with NHWC pool output.
+            mean_out_tensor.shape = list(mean_shape_plan)
+            mean_out_tensor.shape_signature = list(mean_signature_plan)
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=concat_op,
-                new_inputs=[
-                    str(pool_out_name) if str(input_name) == str(pool_nchw_name) else str(input_name)
-                    for input_name in list(concat_op.inputs)
-                ],
+                new_inputs=list(planned_concat_inputs),
             )
             concat_op.options["axis"] = 3
-
-            concat_inputs = [model_ir.tensors.get(str(input_name), None) for input_name in list(concat_op.inputs)]
-            if any(t is None for t in concat_inputs):
-                continue
-            first_tensor = concat_inputs[0]
-            if first_tensor is None:
-                continue
-            if len(list(first_tensor.shape)) != 4:
-                continue
-            concat_shape = [int(v) for v in list(first_tensor.shape)]
-            concat_signature = _tensor_shape_signature(first_tensor)
-            dynamic_concat_axis = False
-            for tensor in concat_inputs[1:]:
-                if tensor is None:
-                    continue
-                shape_i = [int(v) for v in list(tensor.shape)]
-                if len(shape_i) != 4:
-                    valid_posts = False
-                    break
-                concat_shape[3] += int(shape_i[3])
-            if not valid_posts:
-                continue
-            for tensor in concat_inputs:
-                if tensor is None:
-                    continue
-                sig_i = _tensor_shape_signature(tensor)
-                if int(sig_i[3]) < 0:
-                    dynamic_concat_axis = True
-                    break
-            if dynamic_concat_axis:
-                concat_signature[3] = -1
-            else:
-                concat_signature[3] = int(
-                    sum(int(_tensor_shape_signature(tensor)[3]) for tensor in concat_inputs if tensor is not None)
-                )
-
-            concat_out_tensor.shape = [int(v) for v in list(concat_shape)]
-            concat_out_tensor.shape_signature = [int(v) for v in list(concat_signature)]
-            q_cat_tensor.shape = [int(v) for v in list(concat_shape)]
-            q_cat_tensor.shape_signature = [int(v) for v in list(concat_signature)]
-            if q_cat_tensor.quantization is not None and _quant_scale_count(q_cat_tensor.quantization) > 1:
+            concat_out_tensor.shape = list(concat_shape_plan)
+            concat_out_tensor.shape_signature = list(concat_signature_plan)
+            q_cat_tensor.shape = list(concat_shape_plan)
+            q_cat_tensor.shape_signature = list(concat_signature_plan)
+            if q_cat_has_per_axis_quantization:
                 q_cat_tensor.quantization.quantized_dimension = 3
 
             # Remove post-quantize transpose adapters and reconnect their consumers.
@@ -4531,10 +4606,6 @@ def _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir: ModelIR) -> Di
                 post_out_name = str(post_op.outputs[0])
                 _replace_tensor_inputs(model_ir, post_out_name, q_cat_name)
 
-            remove_indices = sorted(
-                set([int(pre_idx), int(pool_post_idx)] + [int(v) for v in removable_post_indices]),
-                reverse=True,
-            )
             for remove_idx in remove_indices:
                 del model_ir.operators[int(remove_idx)]
 
@@ -4545,7 +4616,8 @@ def _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir: ModelIR) -> Di
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    if optimized > 0:
+        _prune_unused_tensors(model_ir)
     return {
         "optimized_transpose_mean_maxpool_concat_conv_chains": int(optimized),
     }

@@ -11033,3 +11033,58 @@ alias rewiring, and removals. Turn all nine strict xfails green while preserving
 valid candidate order/statistics and production boundaries. Do not extract the
 owner until the correction is committed; keep tests strictly sequential,
 commit and push, and do not create a pull request.
+
+## Mean/MaxPool/Concat/Conv transactional correction: completed state
+
+All nine strict xfails from the preceding characterization are green. The raw
+owner now requires `mean_axes` to satisfy every local-ownership invariant:
+
+- TensorIR dtype and backing NumPy dtype are both INT32;
+- the tensor is non-variable and unquantized;
+- it is absent from graph inputs and graph outputs;
+- its exact consumer list contains only the matched Mean.
+
+Before the first ModelIR mutation, the owner resolves rank-four shape and
+effective signature for the NHWC source, removed NCHW intermediates, both
+DEQUANTIZE branches, Mean and pool outputs, every pool-substituted Concat input,
+Concat/Quantize outputs, and every removable post-adapter output. It computes
+the new Mean axes/shape/signature, complete Concat shape/signature, optional
+per-axis QDIM remap, post aliases, and removal indices as one local plan. The
+commit phase has no rejection branch after its first setter. Missing/rank-three/
+short-signature Concat inputs and short source/pool signatures now return zero
+without graph, constant, option, tensor, or metadata mutation.
+
+Pruning is conditional on a non-zero rewrite. The owner no longer constructs
+the producer map that was never read, removing one whole-graph scan from every
+fixed-point round. Three additional ordinary guards verify axes TensorIR dtype,
+buffer dtype, and quantization state. Valid static/dynamic, multiple-post,
+multiple-chain, per-axis quantization, rejection, and idempotence contracts all
+remain green.
+
+Validation completed as follows:
+
+- focused corrected-owner plus ordered-boundary architecture selector:
+  `29 passed, 246 deselected in 1.97s`;
+- changed-file focused branch regression: `673 passed in 22.86s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 10.27s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- central lowerer Ruff findings decreased from eight to seven after removal of
+  the unused producer-map assignment.
+
+No real-model conversion was repeated because the prior sequential QLinear
+recovery audit established zero production rewrites and zero process-tree SWAP
+for every measured candidate. Public API, CLI, valid behavior/statistics,
+ordered boundaries, TensorFlow isolation, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+future work is commit/push only and must not create a pull request.
+
+At restart, mechanically extract the corrected 382-line
+`_optimize_transpose_mean_maxpool_concat_conv_chains` owner into a focused
+Mean/MaxPool/Concat pass module. Keep the historical private lowerer name as a
+one-return wrapper and preserve its position in
+`_run_qlinear_mean_concat_recovery_sequence` plus both production sequence
+boundaries. Prove exact corrected old/new AST identity and direct owner/wrapper
+statistics plus complete ModelIR/metadata equality for static, dynamic,
+multiple-post, multiple-chain, per-axis, and rejection cases. Keep validation
+minimal and strictly sequential, commit and push, and do not create a pull
+request.

@@ -720,6 +720,27 @@ but currently raise or leave partial/nonlocal mutations. The earlier
 sequential QLinear group audit already established zero production rewrites
 and zero SWAP, so no duplicate model conversion was run.
 
+### Mean/MaxPool/Concat/Conv transactional correction
+
+All nine characterized defects are corrected. The Mean axes tensor must now be
+an unquantized, non-variable INT32 tensor backed by an INT32 buffer, absent from
+graph inputs/outputs, and consumed only by the matched Mean. Every source,
+intermediate, removed-adapter output, post-adapter output, and planned Concat
+input is resolved with rank-four shape and effective signature before mutation.
+The pool substitution, Mean axes/shape/signature, Concat shape/signature,
+per-axis QDIM update, aliases, and removal indices are calculated as one local
+plan. Only a complete plan commits setters, constant data, options, tensor
+metadata, aliases, and operator removals. Pruning runs only after a non-zero
+rewrite, making rejection a complete metadata-preserving no-op.
+
+The former nine strict xfails and three additional axes dtype/buffer/
+quantization guards now pass. The owner also stops building its previously
+unused whole-graph producer map, reducing one full scan per fixed-point round
+and lowering the central lowerer's pre-existing Ruff findings from eight to
+seven. Valid candidate order, statistics, multiple-post and multiple-chain
+behavior, ordered production boundaries, and TensorFlow isolation are
+unchanged.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -961,6 +982,9 @@ Latest checkpoint results:
   `17 passed, 9 xfailed`;
 - changed-file focused branch regression including the characterization:
   `661 passed, 9 xfailed`;
+- focused Mean/MaxPool/Concat transactional correction and architecture gate:
+  `29 passed`;
+- changed-file focused branch regression after the correction: `673 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1519,6 +1543,9 @@ semantic or ownership change. That characterization now freezes positive,
 fixed-point, rejection, metadata, quantization, pruning, and ordered-boundary
 behavior and isolates nine strict xfails. Resume by enforcing local immutable
 axes ownership and building a complete rank-four branch/Concat metadata plan
-before the first edge, constant, option, or tensor mutation. Turn every xfail
-green before extracting the owner. No broad conversion sweep is implied by
-this checkpoint.
+before the first edge, constant, option, or tensor mutation. That correction is
+now complete, all xfails are green, and the unused producer-map scan is gone.
+Resume by mechanically extracting the corrected 382-line owner into a focused
+pass module while preserving its exact AST, private lowerer name, ordered
+recovery sequence, statistics, and both production boundaries. No broad
+conversion sweep is implied by this checkpoint.
