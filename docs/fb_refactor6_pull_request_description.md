@@ -1701,4 +1701,12 @@ ModelIR state. Resume by inventorying and characterizing the next raw source-
 order owner,
 `_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`
 (543 lines), before any semantic or ownership change. Do not create a pull
-request.
+request. That characterization is now complete without production changes. Its
+public fixture moved out of the giant direct test, 26 positive/rejection/call-
+boundary cases pass, and 42 strict xfails isolate incomplete rank-four
+metadata, untyped or unsafe Slice/Pad/Mul constant ownership, missing per-axis
+QDIM remapping, public branch intermediates, duplicate or reverse topology,
+and malformed options. Resume by building one indexed topology/metadata/
+grouped-constant/quantization/rename/removal plan before mutation, then turn
+all 42 xfails green without changing valid multi-Add, Pad/MirrorPad, statistics,
+pruning, or the three production calls. Do not create a pull request.

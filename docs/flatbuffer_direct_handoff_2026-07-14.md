@@ -11949,3 +11949,60 @@ topology, public-boundary, pruning, fixed-point, statistics, and ordered-call
 behavior; and record unsafe behavior as strict xfails before correction. Keep
 validation minimal and strictly sequential, commit and push coherent
 checkpoints, and do not create a pull request.
+
+## StridedSlice/Pad/Concat bridge characterization: completed state
+
+The 543-line raw
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`
+owner and all three production calls are unchanged. The existing public fixture
+moved from `test_tflite_builder_direct.py` into the focused
+`test_flatbuffer_direct_stridedslice_pad_concat_bridge_layout.py`, reducing the
+giant direct test by 117 lines and removing its private owner import.
+
+The twenty-six green cases freeze static and dynamic-batch signatures, two
+independent graph-order matches and fixed point, multiple Add users, Pad and
+MirrorPad options/provenance, scalar Mul constants, collision-safe external-
+user clones for Slice-end, Pad, and Mul constants, zero-match no-prune behavior,
+seventeen existing rejection guards, statistics, the current 543-line/two-
+While owner shape, and all three ordered production calls.
+
+Forty-two reproduced safety problems are strict xfails:
+
+- ten incomplete source/Slice/Pad/Concat/Mul metadata cases;
+- sixteen unsafe public-input, variable, wrong-dtype, or quantized Slice-vector
+  and Pad-matrix constant paths;
+- two changed public Slice/Pad constant outputs that mutate instead of clone;
+- three unsafe public-input, variable, or public-output Mul-constant paths;
+- one complete per-axis QDIM case;
+- two public Slice/Pad intermediate boundaries;
+- six duplicate-producer, reverse-order, or public-alias cases;
+- two malformed Concat/Slice option cases that raise.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `26 passed, 42 xfailed in 1.23s`;
+- focused characterization plus ordered architecture suite:
+  `274 passed, 42 xfailed in 18.98s`;
+- focused characterization, the four adjacent extracted Concat bridge
+  contracts, and ordered architecture suite:
+  `536 passed, 42 xfailed in 20.06s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.31s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, ordered
+runtime behavior, and TensorFlow isolation are unchanged. The 543-line count
+is descriptive only; 2,000 remains the ONNX operation-count tier threshold. PR
+#952 remains closed; no pull request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use one
+`ModelIRGraphIndex` to prove unique producers, strict pre-Transpose/
+StridedSlice/Pad/Concat/Mul/post-Transpose/Add order, exact private internal
+consumers, complete rank-four metadata, and the supported ordered multi-Add
+tail. Precompute grouped ownership/type-safe unquantized INT32 actions for all
+Slice vectors and Pad matrices, an ownership-aware Mul-constant action, every
+QDIM remap, normalized mask/axis option, clone name, indexed setter, Mul-output
+rename, and batched removal before the first mutation. Turn all 42 strict
+xfails green while preserving the twenty-six existing cases, statistics,
+fixed point, pruning, Pad/MirrorPad behavior, and all three production calls.
+Validate sequentially, commit and push, and do not create a pull request.

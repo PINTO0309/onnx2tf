@@ -8406,6 +8406,56 @@ ModelIR state are identical in every case. The move adds no semantic change and
 does not alter public APIs, artifacts, dependencies, corpus policy, ordered
 behavior, or TensorFlow isolation.
 
+## Raw StridedSlice/Pad/Concat bridge characterization
+
+The next raw source-order owner is the 543-line
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`.
+Production code and all three historical call sites remain unchanged. Its
+public fixture moved from the giant direct test into
+`test_flatbuffer_direct_stridedslice_pad_concat_bridge_layout.py`, removing the
+associated private lowerer import and 117 fixture lines from the central test.
+
+Twenty-six green characterization cases freeze static and dynamic signatures,
+two independent matches and fixed point, multiple Add users, ordinary Pad and
+MirrorPad provenance/options, scalar Mul constants, collision-safe cloning of
+shared Slice-end/Pad/Mul constants, zero-match no-prune behavior, seventeen
+existing rejection guards, statistics, the raw owner's current two-loop shape,
+and all three production calls.
+
+Forty-two concrete safety gaps are strict xfails:
+
+- ten missing, rank-three, or short-signature source/Slice/Pad/Concat/Mul
+  metadata cases still rewrite;
+- sixteen public-input, variable, wrong-dtype, or quantized Slice begin/end/
+  stride and Pad constants lack an immutable typed ownership plan;
+- changed public Slice-end and Pad constants mutate rather than clone;
+- public-input and variable Mul constants rotate in place, and a public Mul
+  output is not preserved through a private clone;
+- per-axis QDIM is not remapped for Slice, Pad, Concat, Mul constant, or renamed
+  Mul output tensors;
+- public Slice and Pad intermediates change physical layout without an adapter
+  or complete rejection;
+- duplicate post producers, reverse post/Add or Slice/Pad order, a public pre-
+  Transpose alias, and reverse or duplicate source producers are accepted;
+- malformed Concat axes and Slice masks raise rather than producing an atomic
+  no-op.
+
+Correction must build one `ModelIRGraphIndex` and a complete immutable plan for
+every branch before the first mutation. The plan must prove strict pre-
+Transpose/StridedSlice/Pad/Concat/Mul/post-Transpose/Add order, unique
+producers, exact private consumers, complete rank-four metadata, normalized
+options, and the supported multi-Add tail. Slice vectors and Pad matrices must
+have explicit unquantized INT32 metadata and be grouped by tensor identity and
+target value; public inputs and variables must reject when treated as constants,
+while unrelated users and changed public outputs receive deterministic clones.
+The Mul constant needs the same ownership policy, and all retained per-axis
+QDIM values must follow the data permutation. Every clone name, constant action,
+metadata/QDIM result, input/output setter, mask/axis option, Mul-output rename,
+and adapter removal must be known before commit. Valid statistics, Pad and
+MirrorPad behavior, multiple Add users, fixed point, pruning, and all three call
+boundaries must remain unchanged. The 543-line count is descriptive only; 2,000
+remains the ONNX operation-count tier threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
