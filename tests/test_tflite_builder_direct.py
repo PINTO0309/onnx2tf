@@ -123,7 +123,6 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_sinet_concat_resize_affine_transpose_chains,
     _optimize_sinet_dual_resize_affine_transpose_chains,
     _optimize_transposeconv_output_nhwc_passthrough_chains,
-    _optimize_batchmatmul_reshape_se_nhwc_chains,
     _optimize_attention_qkv_gather_reshape_transpose_hoist_chains,
     _optimize_attention_qkv_slice_replace_gather_reshape_chains,
     _optimize_attention_qkv_slice_to_split_chains,
@@ -28660,91 +28659,6 @@ def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain_with_affine_
 
 
 
-def test_flatbuffer_direct_batchmatmul_reshape_se_nhwc_chains() -> None:
-    model_ir = ModelIR("batchmatmul_reshape_se_nhwc_chain_test")
-    model_ir.inputs = ["lhs_mat", "rhs_mat"]
-    model_ir.outputs = ["z"]
-
-    def _add_tensor(name: str, shape: list[int], dtype: str = "FLOAT32", data: np.ndarray | None = None) -> None:
-        model_ir.tensors[name] = TensorIR(
-            name=name,
-            dtype=dtype,
-            shape=[int(v) for v in shape],
-            shape_signature=[int(v) for v in shape],
-            data=data,
-            is_variable=False if data is not None else True,
-        )
-
-    _add_tensor("lhs_mat", [1, 64, 96])
-    _add_tensor("rhs_mat", [1, 256, 96])
-    _add_tensor("bmm_out", [1, 64, 256])
-    _add_tensor("x_nchw", [1, 64, 16, 16])
-    _add_tensor("mean_nchw", [1, 64, 1, 1])
-    _add_tensor("mean_nhwc", [1, 1, 1, 64])
-    _add_tensor("conv1_out", [1, 1, 1, 64])
-    _add_tensor("conv2_out_nhwc", [1, 1, 1, 64])
-    _add_tensor("gate_nchw", [1, 64, 1, 1])
-    _add_tensor("gate_sig", [1, 64, 1, 1])
-    _add_tensor("y_nchw", [1, 64, 16, 16])
-    _add_tensor("y_nhwc", [1, 16, 16, 64])
-    _add_tensor("z", [1, 16, 16, 64])
-
-    _add_tensor("shape_x", [4], "INT32", np.asarray([1, 64, 16, 16], dtype=np.int32))
-    _add_tensor("mean_axes", [2], "INT32", np.asarray([2, 3], dtype=np.int32))
-    _add_tensor("perm_nhwc_to_nchw", [4], "INT32", np.asarray([0, 3, 1, 2], dtype=np.int32))
-    _add_tensor("perm_nchw_to_nhwc", [4], "INT32", np.asarray([0, 2, 3, 1], dtype=np.int32))
-    _add_tensor("conv_w", [64, 1, 1, 64], data=np.ones((64, 1, 1, 64), dtype=np.float32))
-    _add_tensor("conv_b", [64], data=np.zeros((64,), dtype=np.float32))
-
-    model_ir.operators = [
-        OperatorIR(
-            op_type="BATCH_MATMUL",
-            inputs=["lhs_mat", "rhs_mat"],
-            outputs=["bmm_out"],
-            options={"adjX": False, "adjY": True},
-        ),
-        OperatorIR(op_type="RESHAPE", inputs=["bmm_out", "shape_x"], outputs=["x_nchw"], options={"newShape": [1, 64, 16, 16]}),
-        OperatorIR(op_type="MEAN", inputs=["x_nchw", "mean_axes"], outputs=["mean_nchw"], options={"keepDims": True, "axes": [2, 3]}),
-        OperatorIR(op_type="TRANSPOSE", inputs=["mean_nchw", "perm_nchw_to_nhwc"], outputs=["mean_nhwc"]),
-        OperatorIR(
-            op_type="CONV_2D",
-            inputs=["mean_nhwc", "conv_w", "conv_b"],
-            outputs=["conv1_out"],
-            options={"padding": "SAME", "strideH": 1, "strideW": 1, "dilationHFactor": 1, "dilationWFactor": 1},
-        ),
-        OperatorIR(
-            op_type="CONV_2D",
-            inputs=["conv1_out", "conv_w", "conv_b"],
-            outputs=["conv2_out_nhwc"],
-            options={"padding": "SAME", "strideH": 1, "strideW": 1, "dilationHFactor": 1, "dilationWFactor": 1},
-        ),
-        OperatorIR(op_type="TRANSPOSE", inputs=["conv2_out_nhwc", "perm_nhwc_to_nchw"], outputs=["gate_nchw"]),
-        OperatorIR(op_type="LOGISTIC", inputs=["gate_nchw"], outputs=["gate_sig"]),
-        OperatorIR(op_type="MUL", inputs=["x_nchw", "gate_sig"], outputs=["y_nchw"]),
-        OperatorIR(op_type="TRANSPOSE", inputs=["y_nchw", "perm_nchw_to_nhwc"], outputs=["y_nhwc"]),
-        OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
-    ]
-
-    stats = _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
-    assert stats["optimized_batchmatmul_reshape_se_nhwc_chains"] == 1
-    assert all(str(op.op_type) != "TRANSPOSE" for op in model_ir.operators)
-
-    bmm_op = next(op for op in model_ir.operators if str(op.op_type) == "BATCH_MATMUL")
-    assert list(bmm_op.inputs) == ["rhs_mat", "lhs_mat"]
-    assert bool(dict(bmm_op.options).get("adjY", False))
-
-    shape_vals = np.asarray(model_ir.tensors["shape_x"].data, dtype=np.int32).reshape(-1).tolist()
-    assert shape_vals == [1, 16, 16, 64]
-    mean_axes_vals = np.asarray(model_ir.tensors["mean_axes"].data, dtype=np.int32).reshape(-1).tolist()
-    assert mean_axes_vals == [1, 2]
-
-    gate_op = next(op for op in model_ir.operators if str(op.op_type) == "LOGISTIC")
-    assert list(gate_op.inputs) == ["conv2_out_nhwc"]
-
-    mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
-    assert list(mul_op.outputs) == ["y_nhwc"]
-    relu_op = next(op for op in model_ir.operators if str(op.op_type) == "RELU")
-    assert list(relu_op.inputs) == ["y_nhwc"]
 
 
 def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain() -> None:

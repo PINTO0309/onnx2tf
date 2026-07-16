@@ -7131,6 +7131,24 @@ known valid, so a late rejection can leave partial input, metadata, and constant
 changes; transactional hardening remains separate from this exact ownership
 checkpoint.
 
+The BatchMatMul-to-SE layout compatibility rule is now isolated in
+`passes/batchmatmul_se_layout.py`. Its complete 363-line implementation moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+preserves the BatchMatMul/Reshape source, NCHW Mean and axis remap, NHWC Conv
+gate branch, reverse gate adapter, Logistic and residual Mul merge, constant
+updates, alias rewiring, metadata and quantization propagation, fixed-point
+restart, pruning, statistics, and both ordered production positions. The
+lowerer retains a one-call private wrapper.
+
+The former giant direct-builder SE fixture is now a focused module and runs the
+pass owner and private wrapper on deep copies, comparing the complete ModelIR.
+LINEA supplies two measured zero-owner invocations before and after the move,
+records zero process-tree SWAP, and reproduces all five core artifacts byte for
+byte. Positive production ownership is therefore not claimed. The raw owner
+still performs a long sequence of constant, option, edge, metadata, and alias
+mutations without an immutable all-or-nothing plan; transactional hardening
+remains separate from this exact ownership checkpoint.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.
