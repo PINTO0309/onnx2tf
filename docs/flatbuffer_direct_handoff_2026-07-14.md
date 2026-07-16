@@ -10489,3 +10489,49 @@ collision-free tensor names across the whole plan, clone and remap per-axis
 quantization, and compute the final output metadata. Then commit insertions and
 input/output updates in the existing order. Turn all three strict xfails green
 before extracting the owner. Do not create a pull request.
+
+## Mixed NHWC-input/NCHW-Concat transactional repair: completed state
+
+The raw mixed-Concat owner now separates candidate planning from graph commit.
+Before mutation it resolves the required Concat output tensor, validates every
+input shape and every prospective source signature, reserves collision-free
+adapter and permutation names across the whole candidate, computes all adapter
+and final output shapes, and clones quantization metadata. Per-axis
+quantization remaps an original NHWC channel dimension `3` to NCHW dimension
+`1`; per-tensor quantization remains unchanged.
+
+Only a complete plan enters the commit phase. It inserts permutation tensors,
+adapter tensors, and Transpose operators in the historical input order, then
+rewrites Concat inputs and output metadata. A malformed later signature can no
+longer leave an earlier adapter behind, and an unresolved output cannot enter
+the plan. All three former strict xfails now pass. Architecture checks require
+output/signature resolution and plan append before the first ModelIR tensor,
+operator, or input mutation.
+
+Validation completed as follows:
+
+- focused mixed-Concat owner and architecture selector:
+  `13 passed, 254 deselected in 0.67s`;
+- changed-file focused branch regression: `609 passed in 23.55s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.36s`;
+- targeted Ruff and Python compilation: passed.
+
+Tier 3 `sgscsh.onnx` was run strictly sequentially at characterization
+checkpoint `ec9f6bf0` and after the correction. Both runs passed `-cotof` with
+`max_abs=2.5331974029541016e-07`, zero process-tree SWAP, and durations of
+15.216 and 14.375 seconds. Pass metrics are exact. Float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical. The three JSON differences contain only output-directory or
+temporary-file paths.
+
+Changed files are the raw repair owner, focused transactional/quantization
+fixtures, architecture mutation-order guard, and three branch documents.
+Public API, CLI, valid float/per-tensor behavior/statistics, TensorFlow
+boundary, dependencies, corpus profiles, exclusions, and ONNX operation tiers
+are unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, mechanically extract the corrected owner into a focused pass-family
+module. Keep the lowerer private compatibility wrapper and both fallback/final
+production calls, prove normalized old/new body identity, and compare direct
+owner/wrapper complete ModelIR fingerprints and statistics. Do not create a
+pull request.

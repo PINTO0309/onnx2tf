@@ -2780,8 +2780,71 @@ def test_mixed_nhwc_nchw_concat_repair_remains_a_raw_owner() -> None:
         and isinstance(node.func, (ast.Name, ast.Attribute))
     }
     assert "_clone_quantization" in owner_calls
+    assert "_quant_scale_count" in owner_calls
     assert "_set_operator_inputs" in owner_calls
     assert "insert" in owner_calls
+
+    tensor_insertions = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Attribute)
+            and isinstance(target.value.value, ast.Name)
+            and target.value.value.id == "model_ir"
+            and target.value.attr == "tensors"
+            for target in node.targets
+        )
+    ]
+    operator_insertions = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "insert"
+    ]
+    input_setters = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_set_operator_inputs"
+    ]
+    first_mutation_line = min(
+        node.lineno
+        for node in tensor_insertions + operator_insertions + input_setters
+    )
+    output_assignment = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "output_tensor"
+            for target in node.targets
+        )
+    )
+    source_signature_assignment = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "source_signature"
+            for target in node.targets
+        )
+    )
+    plan_append = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "adapter_plans"
+        and node.func.attr == "append"
+    )
+    assert output_assignment.lineno < first_mutation_line
+    assert source_signature_assignment.lineno < first_mutation_line
+    assert plan_append.lineno < first_mutation_line
 
     lowerer = next(
         node

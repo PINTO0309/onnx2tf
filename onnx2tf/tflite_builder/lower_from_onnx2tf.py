@@ -4174,8 +4174,7 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
     repaired = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
 
-    def _unique_tensor_name(base: str) -> str:
-        existing = set(model_ir.tensors.keys())
+    def _unique_tensor_name(base: str, existing: set[str]) -> str:
         if str(base) not in existing:
             return str(base)
         suffix = 1
@@ -4204,6 +4203,12 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
             ]
             if any(tensor is None for tensor in input_tensors):
                 continue
+            output_tensor = model_ir.tensors.get(
+                str(concat_op.outputs[0]),
+                None,
+            )
+            if output_tensor is None:
+                continue
             input_shapes = [
                 [int(v) for v in list(tensor.shape)]
                 for tensor in input_tensors
@@ -4223,15 +4228,7 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
                 key=lambda item: int(item[1]),
             )
             if int(canonical_count) < 2:
-                output_tensor = model_ir.tensors.get(
-                    str(concat_op.outputs[0]),
-                    None,
-                )
-                output_shape = (
-                    [int(v) for v in list(output_tensor.shape)]
-                    if output_tensor is not None
-                    else []
-                )
+                output_shape = [int(v) for v in list(output_tensor.shape)]
                 if (
                     len(output_shape) != 4
                     or any(int(v) <= 0 for v in output_shape)
@@ -4260,32 +4257,91 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
                 continue
 
             new_inputs = [str(v) for v in list(concat_op.inputs)]
-            insert_pos = int(concat_idx)
+            reserved_tensor_names = set(model_ir.tensors.keys())
+            adapter_plans: List[Dict[str, Any]] = []
+            planned_input_shapes = [list(shape) for shape in input_shapes]
             for input_idx in nhwc_input_indices:
                 source_name = str(new_inputs[int(input_idx)])
                 source_tensor = model_ir.tensors[source_name]
                 source_shape = [int(v) for v in list(source_tensor.shape)]
-                adapter_name = _unique_tensor_name(
-                    f"{source_name}_nchw_concat_adapter"
+                source_signature = (
+                    [int(v) for v in list(source_tensor.shape_signature)]
+                    if source_tensor.shape_signature is not None
+                    else list(source_shape)
                 )
-                perm_name = _unique_tensor_name(f"{adapter_name}_perm")
+                if len(source_signature) != 4:
+                    valid = False
+                    break
+                adapter_name = _unique_tensor_name(
+                    f"{source_name}_nchw_concat_adapter",
+                    reserved_tensor_names,
+                )
+                reserved_tensor_names.add(adapter_name)
+                perm_name = _unique_tensor_name(
+                    f"{adapter_name}_perm",
+                    reserved_tensor_names,
+                )
+                reserved_tensor_names.add(perm_name)
                 adapter_shape = [
                     int(source_shape[0]),
                     int(source_shape[3]),
                     int(source_shape[1]),
                     int(source_shape[2]),
                 ]
-                source_signature = (
-                    [int(v) for v in list(source_tensor.shape_signature)]
-                    if source_tensor.shape_signature is not None
-                    else list(source_shape)
-                )
                 adapter_signature = [
                     int(source_signature[0]),
                     int(source_signature[3]),
                     int(source_signature[1]),
                     int(source_signature[2]),
                 ]
+                adapter_quantization = _clone_quantization(
+                    source_tensor.quantization
+                )
+                if _quant_scale_count(adapter_quantization) > 1:
+                    if isinstance(adapter_quantization, dict):
+                        old_qdim = int(
+                            adapter_quantization.get("quantized_dimension", 0)
+                        )
+                    else:
+                        old_qdim = int(adapter_quantization.quantized_dimension)
+                    if old_qdim not in perm_nhwc_to_nchw:
+                        valid = False
+                        break
+                    new_qdim = int(perm_nhwc_to_nchw.index(old_qdim))
+                    if isinstance(adapter_quantization, dict):
+                        adapter_quantization["quantized_dimension"] = new_qdim
+                    else:
+                        adapter_quantization.quantized_dimension = new_qdim
+                adapter_plans.append(
+                    {
+                        "input_idx": int(input_idx),
+                        "source_name": source_name,
+                        "source_tensor": source_tensor,
+                        "adapter_name": adapter_name,
+                        "perm_name": perm_name,
+                        "adapter_shape": adapter_shape,
+                        "adapter_signature": adapter_signature,
+                        "adapter_quantization": adapter_quantization,
+                    }
+                )
+                new_inputs[int(input_idx)] = adapter_name
+                planned_input_shapes[int(input_idx)] = list(adapter_shape)
+            if not valid:
+                continue
+
+            output_shape = [
+                int(input_shapes[0][0]),
+                int(sum(int(shape[1]) for shape in planned_input_shapes)),
+                height,
+                width,
+            ]
+
+            insert_pos = int(concat_idx)
+            for adapter_plan in adapter_plans:
+                source_name = str(adapter_plan["source_name"])
+                source_tensor = adapter_plan["source_tensor"]
+                adapter_name = str(adapter_plan["adapter_name"])
+                perm_name = str(adapter_plan["perm_name"])
                 model_ir.tensors[perm_name] = TensorIR(
                     name=perm_name,
                     dtype="INT32",
@@ -4297,11 +4353,11 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
                 model_ir.tensors[adapter_name] = TensorIR(
                     name=adapter_name,
                     dtype=str(source_tensor.dtype),
-                    shape=adapter_shape,
-                    shape_signature=adapter_signature,
+                    shape=list(adapter_plan["adapter_shape"]),
+                    shape_signature=list(adapter_plan["adapter_signature"]),
                     data=None,
                     is_variable=False,
-                    quantization=_clone_quantization(source_tensor.quantization),
+                    quantization=adapter_plan["adapter_quantization"],
                 )
                 model_ir.operators.insert(
                     insert_pos,
@@ -4312,28 +4368,14 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
                     ),
                 )
                 insert_pos += 1
-                new_inputs[int(input_idx)] = adapter_name
 
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=concat_op,
                 new_inputs=new_inputs,
             )
-            output_tensor = model_ir.tensors.get(str(concat_op.outputs[0]), None)
-            if output_tensor is not None:
-                channel_count = int(
-                    sum(
-                        int(model_ir.tensors[name].shape[1])
-                        for name in new_inputs
-                    )
-                )
-                output_tensor.shape = [
-                    int(input_shapes[0][0]),
-                    channel_count,
-                    height,
-                    width,
-                ]
-                output_tensor.shape_signature = list(output_tensor.shape)
+            output_tensor.shape = list(output_shape)
+            output_tensor.shape_signature = list(output_shape)
             repaired += 1
             changed = True
             break

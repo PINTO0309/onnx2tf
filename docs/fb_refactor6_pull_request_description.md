@@ -798,6 +798,8 @@ Latest checkpoint results:
   `10 passed, 3 xfailed`;
 - changed-file focused branch regression including that characterization:
   `606 passed, 3 xfailed`;
+- focused mixed-Concat transactional-plan correction: `13 passed`;
+- changed-file focused branch regression after the correction: `609 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1254,6 +1256,23 @@ float16 TFLite, tensor-correspondence, op-error CSV, schema, and generated-
 schema artifacts are byte-identical; the three JSON differences contain output
 or temporary paths only.
 
+The following mixed NHWC-input/NCHW-Concat repair now builds a complete adapter
+plan before mutation. It resolves the required output tensor, materializes all
+source signatures, reserves collision-free names, computes adapter/output
+metadata, clones quantization, and remaps a per-axis NHWC dimension to NCHW.
+Only a fully valid plan commits tensors, Transpose operators, Concat inputs, and
+output metadata in the historical order. The three former strict xfails are
+green.
+
+Tier 3 `sgscsh.onnx`, the historical positive mixed-Concat repair model, was
+run strictly sequentially at characterization checkpoint `ec9f6bf0` and after
+the correction. Both runs passed with
+`max_abs=2.5331974029541016e-07`, zero process-tree SWAP, and durations of
+15.216 and 14.375 seconds. Pass metrics are exact. Float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical; the three JSON differences contain output or temporary paths
+only.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1291,6 +1310,8 @@ characterization now freezes its three-input and two-input output-contract
 success paths, idempotence, four no-op guards, two production calls, and three
 pre-existing defects as strict xfails: partial insertion before a later invalid
 source signature, mutation without a required Concat output tensor, and stale
-per-axis quantized dimension after NHWC-to-NCHW adaptation. Correct those three
-paths before any ownership extraction. No broad conversion sweep is implied by
-this checkpoint.
+per-axis quantized dimension after NHWC-to-NCHW adaptation. A complete
+prevalidation plan now corrects all three paths with no remaining strict xfail.
+Perform any ownership extraction mechanically, preserving the corrected body,
+two production calls, statistics, and artifact control. No broad conversion
+sweep is implied by this checkpoint.

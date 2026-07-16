@@ -4283,15 +4283,15 @@ invalid rank, and an already-NCHW no-op. A raw-owner architecture gate fixes
 quantization cloning, direct operator insertion, the compatibility input
 setter, and both production positions.
 
-Three unsafe paths are strict xfails. Adapter creation mutates the ModelIR one
-input at a time, so a malformed signature on a later NHWC input raises after an
-earlier adapter is already inserted. The required Concat output tensor is
-resolved only after adapter insertion and input rewiring, allowing a rewrite to
-succeed with an unresolved output. Finally, cloned per-axis quantization keeps
-the NHWC channel dimension `3` instead of remapping it to NCHW dimension `1`.
-All prospective adapters, the required output, and quantization metadata must
-be validated into an immutable plan before the first tensor or operator
-insertion.
+The owner now resolves the required Concat output tensor and builds all
+prospective adapters into a complete plan before the first tensor or operator
+insertion. Every source signature is rank-validated, tensor names are reserved
+across the plan, final input/output shapes are computed up front, and cloned
+per-axis quantization remaps NHWC dimension `3` to NCHW dimension `1`. A
+malformed later signature or missing output is therefore a zero-statistic,
+complete ModelIR no-op. The commit phase retains historical tensor and operator
+insertion order. Architecture tests keep output/signature resolution and plan
+construction before the first mutation. No strict xfail remains.
 
 Wrong-way NCHW-to-NHWC Transpose-before-Conv sanitation is owned by the Torch/
 TensorFlow-free `passes/conv_input_layout.py` module. A graph containing a

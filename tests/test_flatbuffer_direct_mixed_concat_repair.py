@@ -170,10 +170,6 @@ def test_mixed_concat_repair_rejection_is_complete_noop(mutation: str) -> None:
     assert _normalize(model_ir) == before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a later malformed NHWC signature is detected after the first adapter insertion",
-)
 def test_mixed_concat_repair_prevalidates_all_source_signatures_atomically() -> None:
     model_ir = _make_mixed_concat_model_ir(include_second_nhwc=True)
     model_ir.tensors["nhwc1"].shape_signature = [1, 4]
@@ -185,10 +181,6 @@ def test_mixed_concat_repair_prevalidates_all_source_signatures_atomically() -> 
     assert _normalize(model_ir) == before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the required Concat output tensor is resolved after adapter insertion",
-)
 def test_mixed_concat_repair_requires_output_tensor_before_mutation() -> None:
     model_ir = _make_mixed_concat_model_ir()
     model_ir.tensors.pop("concat_out")
@@ -200,10 +192,6 @@ def test_mixed_concat_repair_requires_output_tensor_before_mutation() -> None:
     assert _normalize(model_ir) == before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the cloned per-axis quantization dimension is not remapped for NHWC-to-NCHW",
-)
 def test_mixed_concat_repair_remaps_per_axis_quantized_dimension() -> None:
     model_ir = _make_mixed_concat_model_ir(quantized=True)
 
