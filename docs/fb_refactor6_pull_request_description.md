@@ -664,6 +664,19 @@ that operator index twice and the helper plans both slots twice, leaving four
 adapters instead of two. That behavior is documented before a separate fix;
 it is not silently combined with this transactional correction.
 
+### QLinear SiLU legacy-consumer deduplication
+
+The remaining strict xfail is fixed by deduplicating final-Mul consumer
+operator indices in first-observed order before classifying their input slots.
+The consumer map may still represent every matching edge, but each downstream
+operator is planned exactly once and every matching slot within that operator
+receives exactly one adapter. A same-consumer two-slot ADD now creates two
+adapters rather than four. A separate two-consumer fixture proves distinct
+consumer order, deterministic adapter naming, and one adapter per edge. Single-
+slot behavior, fixed-point counts, permutation reuse/collision handling, all
+ordinary rejections, and production call boundaries remain unchanged. No
+strict xfail remains for this owner.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -893,6 +906,10 @@ Latest checkpoint results:
   `22 passed, 1 xfailed`;
 - changed-file focused branch regression after the correction:
   `639 passed, 1 xfailed`;
+- focused QLinear SiLU consumer deduplication and architecture gate:
+  `24 passed`;
+- changed-file focused branch regression after consumer deduplication:
+  `641 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1439,6 +1456,10 @@ statistics, production call boundaries, or artifacts. That correction is now
 complete: metadata and adapter planning precede mutation, permutation creation
 is lazy and collision-safe, and all four xfails are green. One newly isolated
 strict xfail remains for duplicate planning when the same legacy consumer uses
-the Mul output in two input slots. Deduplicate consumer operator indices while
-preserving first-observed order, turn that fixture green, and only then extract
-the corrected owner. No broad conversion sweep is implied by this checkpoint.
+the Mul output in two input slots. Consumer indices are now deduplicated in
+first-observed order; same-consumer multi-slot and distinct-consumer order
+fixtures are green, and no strict xfail remains. Resume by mechanically
+extracting the corrected 513-line owner into a focused pass module. Preserve
+its exact AST, private lowerer name, ordered recovery sequence, statistics, and
+all production boundaries. No broad conversion sweep is implied by this
+checkpoint.

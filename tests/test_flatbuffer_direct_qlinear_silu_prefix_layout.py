@@ -350,13 +350,6 @@ def test_qlinear_silu_prefix_reuses_exact_internal_perm_tensor() -> None:
     assert f"{_INTERNAL_PERM_NAME}_1" not in model_ir.tensors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the consumer map repeats one operator per matching input slot, so "
-        "the raw helper plans both slots twice and leaves four adapters"
-    ),
-)
 def test_qlinear_silu_prefix_plans_each_legacy_consumer_slot_once() -> None:
     model_ir = _build_qlinear_silu_prefix_chain(legacy_consumer=True)
     legacy_op = next(
@@ -376,6 +369,47 @@ def test_qlinear_silu_prefix_plans_each_legacy_consumer_slot_once() -> None:
     assert legacy_op.inputs == [
         "mul_out_nchw_nchw_adapter",
         "mul_out_nchw_nchw_adapter_1",
+    ]
+
+
+def test_qlinear_silu_prefix_preserves_distinct_legacy_consumer_order() -> None:
+    model_ir = _build_qlinear_silu_prefix_chain(legacy_consumer=True)
+    _tensor(
+        model_ir,
+        "side_relu_out",
+        [1, 4, 2, 3],
+        dtype="INT8",
+        quantized=True,
+    )
+    _tensor(
+        model_ir,
+        "side_final_y",
+        [1, 4, 2, 3],
+        dtype="INT8",
+        quantized=True,
+    )
+    model_ir.outputs.append("side_final_y")
+    model_ir.operators.extend(
+        [
+            OperatorIR("RELU", ["mul_out_nchw"], ["side_relu_out"]),
+            OperatorIR("IDENTITY", ["side_relu_out"], ["side_final_y"]),
+        ]
+    )
+
+    stats = _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)
+
+    assert stats == {"optimized_nhwc_prefix_qlinear_silu_chains": 1}
+    adapter_ops = [op for op in model_ir.operators if op.op_type == "TRANSPOSE"]
+    assert [op.outputs for op in adapter_ops] == [
+        ["mul_out_nchw_nchw_adapter"],
+        ["mul_out_nchw_nchw_adapter_1"],
+    ]
+    relu_inputs = [
+        op.inputs for op in model_ir.operators if op.op_type == "RELU"
+    ]
+    assert relu_inputs == [
+        ["mul_out_nchw_nchw_adapter"],
+        ["mul_out_nchw_nchw_adapter_1"],
     ]
 
 

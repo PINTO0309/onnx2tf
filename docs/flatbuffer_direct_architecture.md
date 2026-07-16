@@ -4143,6 +4143,15 @@ two-slot ADD therefore receives four Transpose adapters. The next correction
 must deduplicate consumer operator indices in first-observed order without
 changing distinct-consumer order, adapter naming, or single-slot behavior.
 
+The corrected owner now deduplicates final-Mul consumer operator indices with
+an insertion-ordered set before classifying Transpose and legacy consumers.
+Each distinct operator is visited once, then all matching slots in that
+operator are planned once. Same-consumer two-slot and two-distinct-consumer
+fixtures prove exactly two adapters, stable first-observed naming, and stable
+consumer order. The former strict xfail is green; the corrected raw owner is
+513 lines and has no remaining expected failure. Architecture coverage keeps
+the ordered deduplication assignment before the legacy-consumer loop.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner

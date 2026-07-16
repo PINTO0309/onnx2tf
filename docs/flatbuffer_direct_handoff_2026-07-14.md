@@ -10883,3 +10883,42 @@ should the 509-line owner be mechanically extracted into a focused pass module
 with an exact corrected AST and a lowerer compatibility wrapper. Keep tests
 strictly sequential, commit and push coherent units, and do not create a pull
 request.
+
+## QLinear SiLU legacy-consumer deduplication: completed state
+
+The sole remaining strict xfail is green. The raw owner now converts the final
+Mul consumer edge list into first-observed unique operator indices before
+classifying Transpose and legacy consumers. It does not reorder distinct
+operators. Each unique legacy operator is visited once and its matching input
+slots are enumerated once, so a two-slot ADD receives two adapters instead of
+four. A second fixture with two independent RELU consumers proves stable
+consumer order, deterministic `_adapter`/`_adapter_1` naming, and one adapter
+per edge. Existing single-slot, exact-permutation reuse, collision-safe
+allocation, fixed-point, rejection, idempotence, and malformed-metadata tests
+remain green.
+
+Validation completed as follows:
+
+- focused QLinear SiLU plus ordered-owner architecture selector:
+  `24 passed, 245 deselected in 0.66s`;
+- changed-file focused branch regression: `641 passed in 23.41s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.38s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+No additional model conversion was run because the earlier sequential QLinear
+group audit established zero production rewrites and zero process-tree SWAP
+for every measured candidate. Public API, CLI, valid statistics, ordered
+production boundaries, TensorFlow isolation, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers remain unchanged. PR #952 remains closed;
+future work is commit/push only and must not create a pull request.
+
+At restart, mechanically extract the corrected 513-line
+`_optimize_nhwc_prefix_qlinear_silu_chains` owner into a focused QLinear SiLU
+pass module. Keep the historical lowerer private function as a thin wrapper and
+preserve its position inside both `_run_qlinear_mean_concat_recovery_sequence`
+invocations. Prove exact corrected old/new AST identity and direct
+owner/wrapper statistics plus complete ModelIR equality across LOGISTIC,
+decomposed HardSigmoid, legacy-adapter, multiple-match, and collision cases.
+Keep validation minimal and strictly sequential, then commit and push; do not
+create a pull request.

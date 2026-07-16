@@ -4529,7 +4529,11 @@ def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, in
             if not _all_per_tensor_quantized([sig_q_tensor, mul_out_tensor]):
                 continue
 
-            mul_users = [int(v) for v in consumers.get(mul_out_name, [])]
+            mul_users = list(
+                dict.fromkeys(
+                    int(v) for v in consumers.get(mul_out_name, [])
+                )
+            )
             removable_post_ops: List[OperatorIR] = []
             legacy_user_input_slots: List[Tuple[int, int]] = []
             users_supported = True

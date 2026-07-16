@@ -942,7 +942,7 @@ def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == owner_name
     )
-    assert owner.end_lineno - owner.lineno + 1 == 509
+    assert owner.end_lineno - owner.lineno + 1 == 513
     call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
         for node in ast.walk(owner)
@@ -1028,6 +1028,27 @@ def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:
         )
     )
     assert ast.unparse(prune_guard.test) == "optimized > 0"
+
+    mul_users_assignment = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "mul_users"
+            for target in node.targets
+        )
+    )
+    assert "dict.fromkeys" in ast.unparse(mul_users_assignment.value)
+    legacy_user_loop = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "user_idx"
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "mul_users"
+    )
+    assert mul_users_assignment.lineno < legacy_user_loop.lineno
 
 
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
