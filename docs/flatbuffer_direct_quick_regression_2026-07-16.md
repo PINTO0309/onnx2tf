@@ -1,5 +1,46 @@
 # `flatbuffer_direct` Tier 0–4 measured-quick regression check — 2026-07-16
 
+## `0e666234` current-HEAD rerun: problem recorded before profile change
+
+The fixed 49-model Tier 0-4 measured-quick profile was run again at commit
+`0e666234864272cab221fe11dde79923564b9ebb`. This closes the evidence gap
+created by the two later indexed-owner checkpoints: it is a current-HEAD run,
+not an inference from the earlier broad checkpoint. Execution used `uv`, the
+fixed profile order, exactly one converter/inference subprocess at a time, a
+45-second per-model ceiling, and converter-process-tree `VmSwap` monitoring.
+The run completed all 49 entries in 503.563 seconds. No converter returned a
+nonzero exit code and every entry recorded `peak_swap_kib=0`.
+
+The raw result is 42 passes, the six preserved known non-passes, and one
+timeout. Against the stable `f5a40947` result, all classifications and all
+available numeric maximum errors match except
+`hybridnets_384x640_sim.onnx`. LINEA, which timed out once in the intervening
+`5b387bc6` run, passed in 33.889 seconds with its exact established maximum
+absolute error `0.002297189086675644`. The indexed-owner production model
+IAT-LLIE passed in 20.659 seconds at `4.470348358154297e-07`. DEIM passed under
+the user-approved TopK-index acceptance in 34.205 seconds. All used zero SWAP.
+
+HybridNets reached the 45-second ceiling at 45.115 seconds after producing
+float32, float16, and tensor-correspondence artifacts. Its logs remained empty
+because buffered output had not flushed. This problem is recorded before any
+profile or code change. The current float32 TFLite SHA-256 is
+`413855e793ba823ff7a4d24cc05c029435391959715ec6bce94c3652c58b9d7b`,
+byte-identical to both prior successful 90-second diagnostics. Its float16 and
+correspondence hashes are respectively
+`5236d0f9a8d6e73a53717b2beae51a9151a01463d562bed98cbc154c1377a6b1` and
+`695d06e02c666923faceb374959e18add9bccb31ebdabac41c5e437de96da699`.
+The established successful maximum absolute error is
+`0.0002593994140625`. This is therefore not a semantic branch regression.
+
+The timeout is no longer treated as a one-off: it has now occurred in two
+separate 45-second quick runs, despite intervening 25.559- and 31.960-second
+passes. That makes HybridNets an unreliable member of a relatively short
+validation set. Under the user instruction to exclude expected-timeout models,
+the safe follow-up is a profile-only exclusion with reason
+`repeated_quick_ceiling_timeout`; no converter source fix or additional
+conversion is warranted. The immutable pre-change evidence is
+[`docs/baselines/flatbuffer_direct_quick_tier0_4_0e666234_result.json`](baselines/flatbuffer_direct_quick_tier0_4_0e666234_result.json).
+
 ## Pre-fix outcome
 
 This document freezes the regression evidence **before any source fix**. The

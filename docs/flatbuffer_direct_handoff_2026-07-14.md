@@ -6489,3 +6489,26 @@ all unchanged production invocations with short zero-SWAP models, and record
 any non-zero owner or problem before source changes. Continue with sequential
 inference only, minimal conversion gates, coherent commit/push units, and no
 pull request.
+
+## Current-HEAD 49-model measured-quick gate: pre-exclusion record
+
+Commit `0e666234` was subsequently exercised with the fixed 49-model Tier 0-4
+measured-quick profile. This was a strictly sequential `uv` run with a
+45-second per-model ceiling and subprocess-tree SWAP monitoring. It completed
+all entries in 503.563 seconds with 42 passes, six preserved known non-passes,
+and one timeout. Every model recorded `peak_swap_kib=0`; no converter returned
+a nonzero exit status. All classifications and available numeric errors match
+the stable `f5a40947` result except HybridNets. LINEA, IAT-LLIE, and DEIM all
+passed with their established results.
+
+Before any follow-up change, the HybridNets issue is fixed in detail in
+`docs/baselines/flatbuffer_direct_quick_tier0_4_0e666234_result.json` and the
+quick-regression report. It timed out at 45.115 seconds after writing all three
+normal conversion artifacts. The float32 artifact is byte-identical to the
+prior successful diagnostic, whose maximum absolute error was
+`0.0002593994140625`, and SWAP remained zero. This is the model's second
+45-second quick-ceiling timeout, so it is runtime variance rather than a
+semantic regression but is no longer reliably short. The next action is a
+profile-only exclusion with `repeated_quick_ceiling_timeout`, as required by
+the user timeout-exclusion policy. Do not modify converter source or rerun the
+model before applying that policy update.
