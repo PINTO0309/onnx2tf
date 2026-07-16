@@ -8451,3 +8451,77 @@ legacy NCHW consumers, constant copy-on-write, production positions, statistic,
 fixtures, and short zero-SWAP ownership before changing source. Keep inference
 strictly sequential and minimal, then commit and push one coherent unit without
 creating a pull request.
+
+## Residual affine/post-Transpose fan-out ownership extraction: completed state
+
+The complete 477-line
+`_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains`
+implementation is now owned by `passes/residual_affine_fanout_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at all three unchanged
+source positions. After normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The owner preserves the shared dual NHWC-to-NCHW pre-Add prefix, each
+Mul-constant→Add-constant→post-Transpose branch, optional legacy NCHW
+consumers, the exact profitability guard, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, one retained legacy
+adapter, tensor metadata and quantization propagation, exact mutation/removal
+order, fixed-point restart, pruning, and statistic. No dependency, graph-index
+path, guard, or semantic policy was introduced.
+
+The focused positive fixture has two affine/post-Transpose branches, one legacy
+NCHW consumer, and a Mul constant shared with an unrelated consumer. It invokes
+the module owner and lowerer wrapper on deep copies, compares every operator,
+tensor name, shape/signature, dtype, quantization, and NumPy payload, proves
+copy-on-write, and checks idempotence. A second fixture fixes the public
+post-output no-op guard. The direct owner plus complete architecture gate passes
+`235 passed in 31.39s`; the complete indexed SiNet residual suite passes
+`207 passed in 0.77s`; the branch-wide selection passes
+`716 passed in 33.19s`; and the optional-TensorFlow import-blocked suite passes
+`11 passed in 10.03s`.
+
+SiNet is the strictly sequential artifact control. Its fourteen runtime helper
+results are all zero before and after extraction. The pre conversion completed
+in 2.438 seconds and the post conversion in 2.587 seconds; both recorded
+process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding SiNet accuracy checkpoint remains
+`max_abs=2.572051016613841e-09`. No duplicate inference was added because the
+executed TFLite artifact is identical. FastestDet supplied eight additional
+pre-move zero-owner invocations in 2.120 seconds with zero SWAP, but is not used
+as the post-move artifact control. No non-zero production owner is claimed;
+the positive contract is synthetic.
+
+One compatibility weakness remains recorded rather than changed. Side
+constants are validated for data, rank, broadcast compatibility, and consumer
+sharing, but not completely for producer ownership, variable state, or graph
+visibility. Adding immutable ownership and transactional revalidation requires
+separate negative fixtures and a semantic checkpoint; it is not mixed into
+this exact mechanical move.
+
+Changed files are the new residual affine fan-out pass module, lowerer import
+and wrapper, focused corpus, architecture ownership test, and three branch
+documents. No public API, CLI, artifact name, TensorFlow boundary, dependency,
+corpus profile, exclusion policy, or ONNX operation-tier policy changed.
+Temporary tracing and conversion outputs are removed before commit. PR #952
+remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 401-line
+`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`. At
+restart, inventory its pre-Transpose and unary-family guards, every
+Mul/Add/post-Transpose branch, constant sharing and mutation, graph-output
+boundaries, all three production positions, statistic, existing fixtures, and
+short zero-SWAP ownership before changing source. Keep inference strictly
+sequential and minimal, then commit and push one coherent unit without creating
+a pull request.

@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving seventeen
+This branch continues the staged `flatbuffer_direct` refactor by moving eighteen
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -22,7 +22,8 @@ lowerer and into focused pass modules:
 - late dual-pre-Add to single-post adapter recovery;
 - terminal affine/Reshape/FullyConnected layout recovery;
 - terminal PReLU/Reshape/BatchMatMul layout recovery;
-- residual Add/Mul/Add/PReLU compatibility recovery.
+- residual Add/Mul/Add/PReLU compatibility recovery;
+- residual Add/Mul/Add/post-Transpose fan-out compatibility recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -280,6 +281,23 @@ The raw compatibility owner still has looser producer, variable-state, and
 graph-visibility contracts for constants than newer indexed passes. Hardening
 those boundaries remains a separate transactional checkpoint.
 
+### Residual Add/Mul/Add/post-Transpose fan-out recovery
+
+`passes/residual_affine_fanout_layout.py` owns the former 477-line compatibility
+helper. It preserves the shared dual pre-Add prefix, multiple
+Mul-constant→Add-constant→post-Transpose branches, optional legacy NCHW
+consumers, the exact profitability decision, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, retained legacy
+adapter, tensor metadata and quantization, mutation/removal order, fixed-point
+restart, pruning, statistic, and all three source call positions. The lowerer
+retains a one-call private wrapper. The complete old/new owner ASTs are
+identical after function-name normalization.
+
+The compatibility owner still does not fully validate constant producers,
+variable state, or graph visibility. Those ownership guards remain a separate
+semantic-hardening checkpoint so this mechanical move cannot change artifact
+behavior.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -341,6 +359,8 @@ The new focused tests cover:
   fan-out guards, one-dimensional alpha rejection, and owner/wrapper equality;
 - residual affine/PReLU direct module-owner/private-wrapper full ModelIR
   equality plus the complete indexed SiNet residual contract suite;
+- residual affine fan-out multi-branch, legacy-adapter, shared-constant
+  copy-on-write, idempotence, public-output no-op, and owner/wrapper equality;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -380,6 +400,9 @@ Latest checkpoint results:
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
+- residual affine fan-out direct owner plus architecture suite: `235 passed`;
+- complete indexed SiNet residual suite after fan-out extraction: `207 passed`;
+- final branch gate after residual affine fan-out extraction: `716 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -520,6 +543,15 @@ generated-schema outputs. The immediately preceding SiNet accuracy baseline
 remains `max_abs=2.572051016613841e-09`; no duplicate inference was run because
 the executed TFLite is unchanged.
 
+The residual affine fan-out extraction also used `sinet_320_op.onnx` as its
+fixed artifact control. Its fourteen runtime results are all zero before and
+after extraction. The pre/post conversion-only runs completed in 2.438 and
+2.587 seconds, recorded process-tree SWAP zero, and produced byte-identical
+float32, float16, tensor-correspondence, schema, and generated-schema outputs.
+The immediately preceding SiNet accuracy baseline remains
+`max_abs=2.572051016613841e-09`; no duplicate inference was run because the
+executed TFLite is unchanged. The positive owner contract is synthetic.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -528,9 +560,10 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 477-line
-`_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains` helper. Its
-shared residual Add, multiple affine/post-Transpose branches, legacy consumers,
-constant copy-on-write, statistic, production positions, and short-model
-ownership must be characterized before extraction; no broad conversion sweep
-is implied by this mechanical checkpoint.
+The next raw source-order boundary is the 401-line
+`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains` helper.
+Its NHWC-to-NCHW pre-Transpose, accepted unary family, multiple
+Mul/Add/post-Transpose branches, constant copy-on-write, statistic, three
+production positions, existing fixtures, and short-model ownership must be
+characterized before extraction; no broad conversion sweep is implied by this
+mechanical checkpoint.

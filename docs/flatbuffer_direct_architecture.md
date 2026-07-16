@@ -7091,6 +7091,31 @@ artifacts are unchanged across extraction. Constant producers, variable state,
 and graph visibility remain less strict than the newer indexed planning
 contracts and are recorded as future semantic-hardening boundaries.
 
+The adjacent residual Add/Mul/Add/post-Transpose fan-out compatibility rule is
+isolated in `passes/residual_affine_fanout_layout.py`. Its former 477-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. The fixed-point matcher still accepts two NHWC-to-NCHW
+Transpose inputs feeding one residual Add, one or more
+Mul-constant→Add-constant→NCHW-to-NHWC branches, and optional legacy NCHW
+consumers. It preserves the exact profitability guard, per-branch constant
+prevalidation and rotation, shared-constant copy-on-write, one retained legacy
+adapter, tensor metadata and quantization propagation, removal order, pruning,
+statistic, and all three production positions. The lowerer retains a one-call
+private wrapper.
+
+The focused positive fixture fixes a two-branch graph with a legacy consumer
+and a Mul constant shared outside the candidate. It runs the module owner and
+private wrapper on deep copies, compares the complete ModelIR, proves that the
+shared NCHW constant is retained while an NHWC clone is created, and verifies
+idempotence. A public post-Transpose output supplies the no-op boundary case.
+SiNet reaches the owner fourteen times with zero rewrites before and after the
+move; its two strictly sequential conversions report zero process-tree SWAP
+and produce byte-identical float32, float16, correspondence, schema, and
+generated-schema artifacts. Positive production ownership is therefore not
+claimed. Constant producer, variable-state, and graph-visibility validation
+remain looser than newer immutable indexed contracts and require a separate
+semantic-hardening checkpoint.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`
