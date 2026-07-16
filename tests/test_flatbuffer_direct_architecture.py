@@ -2300,10 +2300,18 @@ def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    swish_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "quantized_swish_layout.py"
+    )
     owner_source = owner_path.read_text(encoding="utf-8")
     owner_tree = ast.parse(owner_source)
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
+    swish_tree = ast.parse(swish_path.read_text(encoding="utf-8"))
     owner_name = "sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
     owner = next(
         node
@@ -2373,16 +2381,16 @@ def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
 
     swish_owner = next(
         node
-        for node in lowering_tree.body
+        for node in swish_tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == "_optimize_transpose_swish_qdq_nhwc_islands"
+        and node.name == "optimize_transpose_swish_qdq_nhwc_islands"
     )
     swish_invocations = [
         node
         for node in ast.walk(swish_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == wrapper_name
+        and node.func.id == owner_name
     ]
     assert len(swish_invocations) == 1
 
@@ -2491,11 +2499,12 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
         for call in runner_phase_calls
     )
 
+    orchestrator_name = "optimize_transpose_swish_qdq_nhwc_islands"
     swish_orchestrator = next(
         node
-        for node in lowerer_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == "_optimize_transpose_swish_qdq_nhwc_islands"
+        and node.name == orchestrator_name
     )
     runner_invocations = [
         node
@@ -2632,6 +2641,93 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
     assert "_concat_has_quantize_transpose_tail" not in nested_names
     assert "_has_concat_closure_from_tensor" not in nested_names
     assert "_copy_shape_signature" not in nested_names
+
+    orchestrator_calls = [
+        node.func.id
+        for node in ast.walk(swish_orchestrator)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert orchestrator_calls.count(
+        "sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
+    ) == 1
+    assert orchestrator_calls.count("_prune_unused_tensors") == 1
+    assert "lower_from_onnx2tf" not in owner_path.read_text(encoding="utf-8")
+
+    wrapper_name = "_optimize_transpose_swish_qdq_nhwc_islands"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"_{orchestrator_name}_pass"
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].args[0], ast.Name)
+    assert wrapper_calls[0].args[0].id == "model_ir"
+    assert {
+        keyword.arg for keyword in wrapper_calls[0].keywords
+    } == {"min_spatial_stage", "require_concat_closure"}
+
+    closure_owner_name = (
+        "optimize_transpose_swish_residual_concat_closure_nhwc_chains"
+    )
+    closure_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == closure_owner_name
+    )
+    closure_owner_calls = [
+        node
+        for node in ast.walk(closure_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == orchestrator_name
+    ]
+    assert len(closure_owner_calls) == 1
+    closure_keywords = {
+        keyword.arg: keyword.value for keyword in closure_owner_calls[0].keywords
+    }
+    assert isinstance(closure_keywords["min_spatial_stage"], ast.Constant)
+    assert closure_keywords["min_spatial_stage"].value == 0
+    assert isinstance(closure_keywords["require_concat_closure"], ast.Constant)
+    assert closure_keywords["require_concat_closure"].value is True
+
+    closure_wrapper_name = (
+        "_optimize_transpose_swish_residual_concat_closure_nhwc_chains"
+    )
+    closure_wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == closure_wrapper_name
+    )
+    closure_wrapper_calls = [
+        node
+        for node in ast.walk(closure_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"_{closure_owner_name}_pass"
+    ]
+    assert len(closure_wrapper_calls) == 1
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node.func.id
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {wrapper_name, closure_wrapper_name}
+    ]
+    assert production_calls.count(wrapper_name) == 1
+    assert production_calls.count(closure_wrapper_name) == 1
 
 
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:

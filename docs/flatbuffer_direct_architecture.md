@@ -4441,8 +4441,23 @@ the runner, preserving ordered behavior and cumulative statistics while
 avoiding another full index build. An extraction-time check compiles the exact
 prior committed late-loop AST and confirms complete ModelIR, rewritten-state,
 axis-count, and two-input-adapter-removal equality on the mixed direct/DQ
-fixture. The Swish compatibility orchestrator is now 69 lines with no raw
-top-level mutation loop.
+fixture.
+
+The complete Swish-QDQ orchestration is now owned by
+`optimize_transpose_swish_qdq_nhwc_islands` in that same module. It preserves
+the ordered primary, first inverse-post, late Concat/post, independent
+Conv-input safety-valve, and final pruning boundaries. The propagated-tensor,
+Concat-axis, and removed-post statistics are aggregated only after each
+phase's explicit result is returned. The spatial-agnostic residual-Concat
+closure is a second module owner that fixes `min_spatial_stage=0` and
+`require_concat_closure=True` before remapping the established statistics.
+Both historical lowerer names are thin compatibility wrappers and the two
+production positions remain one call each. After normalizing only the public
+function and safety-owner names, both moved orchestration ASTs are identical
+to their prior committed lowerer implementations. Focused tests additionally
+fix phase order, option forwarding, statistics aggregation, closure remapping,
+wrapper equality, direct safety-owner dispatch, final pruning, and the absence
+of a lowerer import cycle.
 
 Concat-input exact-grid Q/DQ bypass is owned by
 `passes/quantization_cleanup.py`. The owner recognizes only

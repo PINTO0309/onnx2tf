@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving seven
+This branch continues the staged `flatbuffer_direct` refactor by moving eight
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -12,7 +12,8 @@ lowerer and into focused pass modules:
 - singleton-broadcast rank-four binary NHWC/NCHW adaptation;
 - final static runtime-shape/signature consistency;
 - dynamic boundary-signature map realignment;
-- Transpose/QDQ bridge and residual-closure optimization.
+- Transpose/QDQ bridge and residual-closure optimization;
+- quantized Swish NHWC-island and residual-Concat orchestration.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -122,6 +123,25 @@ quantization cloning, mutation order, pruning, and statistics are unchanged.
 The owner remains a mechanical compatibility implementation; differential
 GraphIndex mutation is a separate follow-up requiring family-level evidence.
 
+### Quantized Swish orchestration
+
+`passes/quantized_swish_layout.py` now owns the complete orchestration around
+its previously extracted indexed phase owners. The public module owner retains
+the exact ordered sequence of primary branch/metadata rewriting, first inverse
+post-Transpose cleanup, late mixed-input Concat normalization and post cleanup,
+the independent wrong-way Conv-input safety valve, and final tensor pruning.
+Its statistics still aggregate rewritten branches, removed pre-Transposes,
+the union of propagated tensors, primary plus late Concat-axis changes, and
+all post/safety-valve removals under the historical keys.
+
+The spatial-agnostic residual-Concat closure remains a separate entry point.
+It invokes the same owner with `min_spatial_stage=0` and
+`require_concat_closure=True`, then remaps the established result to the four
+closure-specific keys. Both private lowerer symbols are retained as thin
+compatibility wrappers, and their two production call positions are
+unchanged. After normalizing only function and safety-owner names, both moved
+function ASTs are identical to their pre-extraction implementations.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -159,6 +179,8 @@ The new focused tests cover:
   malformed, missing, and rank-mismatched cases;
 - direct QDQ Pattern A/B rewrites and guards plus end-to-end A/B/C/D and legacy-
   fan-out closure fixtures;
+- quantized Swish primary/post/late/safety/prune phase order, option forwarding,
+  statistics aggregation, closure remapping, and wrapper equality;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -169,15 +191,21 @@ Latest checkpoint results:
   `21 passed` after adding boundary realignment;
 - focused Transpose-QDQ owner, A/B/C/D integrations, and ownership selector:
   `12 passed`;
+- focused indexed Swish owners, legacy variants, safety delegation, and
+  ownership selectors: `26 passed`;
 - complete flatbuffer-direct architecture suite: `224 passed`;
 - final combined branch gate across all extracted owners, active legacy
-  selectors, shape reconciliation, and architecture: `318 passed`;
+  selectors, shape reconciliation, and architecture: `321 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
   both statistics and final metadata;
 - full old/new Transpose-QDQ owner AST comparison: identical after function-
   name normalization;
+- both old/new Swish-QDQ orchestration ASTs: identical after normalizing the
+  public function and safety-owner names;
+- TensorFlow-import-blocked import, direct conversion, and direct `-cotof`:
+  `3 passed`;
 - Ruff checks, Python compilation, and whitespace checks: passed.
 
 Earlier checkpoints on this branch also passed their complete focused plus
@@ -215,6 +243,16 @@ sweep removes nine bridge pairs. It passed after extraction in 5.204 seconds
 with `max_abs = 0`, zero SWAP, and byte-identical float32, float16, and tensor-
 correspondence artifacts.
 
+No active passing Tier 0-4 model up to 100 MiB contains the complete ONNX
+Transpose/Q/DQ/Sigmoid/Mul source family. `dequantize_linear.onnx` was
+therefore used only as a bounded zero-owner artifact and known-failure control,
+not as evidence of numeric success. Its post-extraction conversion still
+exited zero in 12.789 seconds,
+recorded zero process-tree SWAP, retained its established
+`max_abs=58.7506103515625` and normalized failure signature, and reproduced
+byte-identical float32, float16, tensor-correspondence, schema, and generated-
+schema artifacts.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -223,6 +261,7 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order candidate is the Swish-QDQ NHWC-island orchestration
-and residual-Concat closure, which should move only after its primary, late,
-and safety-valve ownership boundaries are characterized.
+The next raw source-order candidate is the HardSwish SE/Conv/HardSigmoid/Mul
+pre/post NHWC-chain helper. It should be characterized at every production
+position before any extraction because it still combines several strict
+subgraph families in one compatibility implementation.

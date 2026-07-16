@@ -7806,3 +7806,63 @@ primary/late/safety-valve ownership boundaries, both option combinations,
 stats aggregation, production call expansion, and a short positive real model.
 Continue with sequential zero-SWAP validation, commit and push coherent
 checkpoints, and do not create a pull request.
+
+## Swish-QDQ orchestration ownership extraction: completed state
+
+The complete `_optimize_transpose_swish_qdq_nhwc_islands` orchestration and
+its residual-Concat closure are now owned by
+`passes/quantized_swish_layout.py`. The central lowerer retains both historical
+private symbols as thin wrappers, and the closure and normal production
+positions remain one call each. This is a mechanical ownership move over the
+already indexed phase owners: primary branch/metadata processing, first
+inverse-post cleanup, late Concat/post cleanup, the independently owned
+wrong-way Conv-input safety valve, and final unused-tensor pruning retain their
+exact order and statistics.
+
+Temporary instrumentation was removed before implementation. The established
+160-spatial fixture and the 80-spatial closure fixture both recorded primary
+results of three rewritten branches, two removed pre-Transposes, one rewritten
+Concat axis, and twenty-four propagated tensors. Their first post cleanup
+removed two Transposes; late cleanup and the safety valve were zero. The
+independent safety fixture recorded zero primary/late work and two safety-valve
+removals. Both public orchestration ASTs are identical to their prior committed
+lowerer functions after normalizing only the moved function and direct safety-
+owner names.
+
+Three new focused tests fix exact phase order, both forwarded options,
+statistics aggregation across disjoint rewritten-tensor sets, closure option
+fixing and result remapping, and public-owner/private-wrapper equality. The
+focused indexed Swish module, existing safety delegation, both legacy Swish
+variants, and the two ownership selectors pass `26 passed in 2.26s`. The
+complete architecture suite passes `224 passed in 38.42s`. The final branch
+selection across all extracted owners and active legacy selectors passes
+`321 passed in 38.50s`. TensorFlow-import-blocked import, explicit direct
+conversion, and direct `-cotof` pass `3 passed in 4.85s`. Scoped Ruff, syntax
+compilation, and whitespace checks all pass.
+
+A read-only scan of active passing Tier 0-4 models up to 100 MiB found no graph
+with the complete ONNX Transpose/Q/DQ/Sigmoid/Mul source family. The bounded
+`dequantize_linear.onnx` candidate recorded zero closure and normal rewrites,
+so positive semantics remain fixed by the existing synthetic fixtures rather
+than a claimed production owner. Its single post-extraction sequential run
+exited zero in 12.789 seconds with process-tree SWAP zero. The established
+known `tflite_fail`, `max_abs=58.7506103515625`, and normalized error-signature
+hash were unchanged. Float32, float16, correspondence, `schema.fbs`, and
+`schema_generated.py` hashes were byte-identical to the pre-extraction
+control. This checkpoint does not reclassify or improve that known failure.
+
+Changed files are the quantized-Swish pass module, the lowerer wrappers, the
+focused indexed-Swish tests, architecture ownership checks, and the three
+branch design/handoff documents. No package, public API, CLI, artifact name,
+corpus profile, exclusion policy, or TensorFlow boundary changes. Temporary
+instrumentation and all temporary conversion outputs are removed before the
+checkpoint. No new pull request is created; future work remains commit/push
+only.
+
+The next raw source-order implementation is
+`_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains`.
+At restart, first characterize all production positions, exact family
+boundaries, statistics, and short zero-SWAP model ownership before changing
+source. Keep inference sequential and minimal, preserve any compatibility
+fallback that lacks a real owner, commit and push one coherent unit, and do not
+create a pull request.

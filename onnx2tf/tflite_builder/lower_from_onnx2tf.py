@@ -421,9 +421,8 @@ from onnx2tf.tflite_builder.passes.quantized_gate import (
     optimize_transpose_dequant_logistic_mul_quantize_bridges,
 )
 from onnx2tf.tflite_builder.passes.quantized_swish_layout import (
-    remove_inverse_post_transposes_for_swish_qdq,
-    run_swish_qdq_late_concat_and_post_cleanup,
-    run_swish_qdq_nhwc_primary_phases,
+    optimize_transpose_swish_qdq_nhwc_islands as _optimize_transpose_swish_qdq_nhwc_islands_pass,
+    optimize_transpose_swish_residual_concat_closure_nhwc_chains as _optimize_transpose_swish_residual_concat_closure_nhwc_chains_pass,
 )
 from onnx2tf.tflite_builder.passes.conv_input_layout import (
     sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv as _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv_pass,
@@ -1283,100 +1282,19 @@ def _optimize_transpose_swish_qdq_nhwc_islands(
     min_spatial_stage: int = 160,
     require_concat_closure: bool = False,
 ) -> Dict[str, int]:
-    """
-    Rewrite transpose-wrapped quantized Swish islands from NCHW back to NHWC.
-
-    Strictly matches branches of:
-      T(0,3,1,2) -> DQ -> LOGISTIC -> Q -> DQ
-                   DQ ----------------------> MUL -> (Q)?
-
-    and then propagates NHWC metadata through layout-agnostic quant/elementwise
-    operators, upgrades rank-4 CONCAT axis 1->3 when inputs are NHWC-aligned,
-    and removes inverse post-transposes fed by rewritten tensors.
-    """
-    removed_post = 0
-
-    rewritten_tensors: set[str] = set()
-
-    primary_result = run_swish_qdq_nhwc_primary_phases(
+    return _optimize_transpose_swish_qdq_nhwc_islands_pass(
         model_ir,
         min_spatial_stage=int(min_spatial_stage),
         require_concat_closure=bool(require_concat_closure),
     )
-    rewritten_branches = int(primary_result.rewritten_branches)
-    removed_pre = int(primary_result.removed_pre_transposes)
-    rewritten_concat_axis = int(primary_result.rewritten_concat_axes)
-    rewritten_tensors.update(primary_result.rewritten_tensors)
-
-    # 3) Remove inverse post-transposes fed by rewritten NHWC tensors.
-    post_cleanup = remove_inverse_post_transposes_for_swish_qdq(
-        model_ir,
-        rewritten_tensors,
-    )
-    removed_post += int(post_cleanup.removed_post_transposes)
-
-    # 3b/3c) Normalize late mixed Concat inputs, then remove newly unlocked
-    # inverse post-Transposes through one shared differential index.
-    late_result = run_swish_qdq_late_concat_and_post_cleanup(
-        model_ir,
-        rewritten_tensors,
-    )
-    rewritten_concat_axis += int(late_result.rewritten_concat_axes)
-    removed_post += int(late_result.removed_transposes)
-    rewritten_tensors.update(late_result.rewritten_tensors)
-
-    # 4) Keep the historical Swish-pass timing while delegating this independent
-    # Conv-input safety valve to its single indexed semantic owner.
-    wrong_way_stats = _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
-        model_ir
-    )
-    removed_post += int(
-        wrong_way_stats.get(
-            "sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv",
-            0,
-        )
-    )
-
-    propagated_tensors = int(len(rewritten_tensors))
-    _prune_unused_tensors(model_ir)
-    return {
-        "rewritten_transpose_swish_branches_to_nhwc": int(rewritten_branches),
-        "removed_transpose_swish_pre": int(removed_pre),
-        "propagated_nhwc_tensor_metadata": int(propagated_tensors),
-        "rewritten_concat_axis_to_nhwc": int(rewritten_concat_axis),
-        "removed_transpose_swish_post": int(removed_post),
-    }
 
 
 def _optimize_transpose_swish_residual_concat_closure_nhwc_chains(
     model_ir: ModelIR,
 ) -> Dict[str, int]:
-    """
-    Rewrite Swish + Residual + Concat islands as a single closure.
-
-    Unlike the legacy swish-qdq pass, this closure pass is spatial-size agnostic
-    and only rewrites branches that are proven to terminate at
-    CONCAT(axis=1) -> QUANTIZE -> TRANSPOSE(0,2,3,1) tails.
-    """
-    stats = _optimize_transpose_swish_qdq_nhwc_islands(
-        model_ir,
-        min_spatial_stage=0,
-        require_concat_closure=True,
+    return _optimize_transpose_swish_residual_concat_closure_nhwc_chains_pass(
+        model_ir
     )
-    return {
-        "optimized_transpose_swish_residual_concat_closure_nhwc_chains": int(
-            stats.get("rewritten_transpose_swish_branches_to_nhwc", 0)
-        ),
-        "removed_transpose_swish_residual_concat_closure_pre": int(
-            stats.get("removed_transpose_swish_pre", 0)
-        ),
-        "rewritten_transpose_swish_residual_concat_closure_axis_to_nhwc": int(
-            stats.get("rewritten_concat_axis_to_nhwc", 0)
-        ),
-        "removed_transpose_swish_residual_concat_closure_post": int(
-            stats.get("removed_transpose_swish_post", 0)
-        ),
-    }
 
 
 def _optimize_transpose_binary_bridges(
