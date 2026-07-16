@@ -10007,3 +10007,44 @@ reject or preserve public `add0_out` NCHW semantics and turn only the public-
 boundary xfail green. Each commit must retain the positive fingerprint,
 statistics, ordered call, sequential zero-SWAP artifact control, and must not
 create a pull request.
+
+## Mean/HardSigmoid/MulAdd Mean-axis atomicity: completed state
+
+The first semantic correction is complete without changing the successful
+rewrite. After all topology, tensor, and per-tensor quantization guards, the
+helper now normalizes Mean axes and commits the axes constant before changing
+the q0 Dequantize input or any dependent tensor metadata. An out-of-range axis
+therefore rejects with zero statistic and a byte-identical ModelIR fingerprint.
+The same atomic contract covers the historical no-change writer rejection when
+an axis maps to itself. The architecture selector fixes validation/write-before-
+rewiring source order.
+
+The focused graph and raw-owner selector pass `12 passed, 243 deselected, 1
+xfailed in 1.93s`; the only remaining strict xfail is the public residual
+output boundary. The changed-file branch regression passes `567 passed, 1
+xfailed in 24.78s`. The TensorFlow-import-blocked optional-boundary suite passes
+`11 passed in 9.29s`. Targeted test Ruff, Python compilation, and whitespace
+checks pass. Whole-file Ruff for the central lowerer still reports its eight
+pre-existing unused import/local findings; they are unrelated and were not
+mixed into this checkpoint.
+
+YuNet INT8 was executed once at the characterization commit and once with the
+correction, strictly sequentially through the managed process-tree SWAP
+monitor. Both runs passed `-cotof` with `max_abs=0`, zero SWAP, and durations of
+5.280 and 5.320 seconds. Internal pass metrics are identical. Float32 and
+float16 TFLite, tensor-correspondence, op-error CSV, schema, and generated-
+schema artifacts are byte-identical. Accuracy and op-error JSON content differs
+only in output-directory and temporary-file paths.
+
+Changed files are the central helper, its focused fixture, the architecture
+source-order gate, and the three branch documents. Public API, CLI, artifact
+names, successful rewrite order/statistic, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, correct only the public `add0_out` boundary. The safest current
+contract is an early complete no-op when `add0_out` is a declared ModelIR
+output; place that guard before the first axes write or other mutation, turn the
+remaining strict xfail green, retain the positive rewrite fingerprint and
+statistics, and repeat one strictly sequential zero-SWAP artifact control. Do
+not create a pull request.

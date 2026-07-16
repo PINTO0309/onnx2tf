@@ -759,6 +759,10 @@ Latest checkpoint results:
   `10 passed, 2 xfailed`;
 - changed-file branch regression gate after Mean/HardSigmoid characterization:
   `565 passed, 2 xfailed`;
+- focused Mean-axis atomicity correction and raw-owner gate:
+  `12 passed, 1 xfailed`;
+- changed-file branch regression gate after the Mean-axis correction:
+  `567 passed, 1 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1131,15 +1135,25 @@ The next quantized Mean/HardSigmoid/MulAdd helper remains central and is only
 characterized in this checkpoint. The full synthetic graph fixes both
 quantized branches, Mean-axis remap, decomposed HardSigmoid clamp, residual
 Mul/Add rewiring, bridge removal, legacy adapter insertion, idempotence, and
-eight rejection boundaries. Two pre-existing defects are strict xfails:
-invalid Mean axes reject after a partial mutation, and a public residual output
-is changed from NCHW to NHWC without preserving its boundary contract.
+eight rejection boundaries. The first of two pre-existing defects is now
+fixed: Mean axes, including a rejected no-change constant update, are validated
+before any graph rewiring or dependent metadata mutation. The remaining strict
+xfail records that a public residual output is changed from NCHW to NHWC without
+preserving its boundary contract.
 
 YuNet INT8, PPHumanSeg INT8, and SSD MobileNet INT8 each reached both ordered
 runtime boundaries with zero rewrites. Their strictly sequential conversions
 completed in 1.007, 1.715, and 2.107 seconds, every process-tree monitor
 reported SWAP zero, and all conversions succeeded. This matches the earlier
 broader zero-owner survey; positive production ownership is not claimed.
+
+The Mean-axis correction used YuNet INT8 as a strictly sequential before/after
+artifact control. Both runs passed with `max_abs=0` and process-tree SWAP zero
+in 5.280 and 5.320 seconds. Pass metrics are identical; float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical. The remaining JSON differences contain output or temporary
+paths only. The TensorFlow-import-blocked optional-boundary suite remains
+`11 passed`.
 
 ## Scope and follow-up
 
@@ -1158,10 +1172,10 @@ dedicated positive and rejection contract, but the structurally matching gaze
 model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
-implementation is the 487-line
+implementation is now the 494-line
 `_optimize_transpose_mean_hardsigmoid_muladd_chains` helper. Its focused
-contract and zero-owner evidence are now recorded, but extraction is blocked by
-the two strict xfails. Resume by making invalid Mean axes a pre-mutation guard,
-then separately preserve or reject a public residual output. Each correction
-must turn exactly one xfail green without altering successful behavior. No broad
-conversion sweep is implied by this checkpoint.
+contract and zero-owner evidence are now recorded. Invalid or non-committing
+Mean-axis updates are atomic, but extraction remains blocked by the public
+residual-output strict xfail. Resume by separately preserving or rejecting that
+public output without altering successful behavior. No broad conversion sweep
+is implied by this checkpoint.

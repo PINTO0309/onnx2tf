@@ -240,15 +240,18 @@ def test_mean_hardsigmoid_muladd_rejects_unsafe_boundaries(case: str) -> None:
     assert _fingerprint(model_ir) == _fingerprint(before)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mean axes are validated after the first input/metadata mutation",
+@pytest.mark.parametrize(
+    "mean_axes",
+    [[4], [0]],
+    ids=["out_of_range", "unchanged_constant"],
 )
-def test_mean_hardsigmoid_muladd_invalid_axes_rejection_is_atomic() -> None:
+def test_mean_hardsigmoid_muladd_axes_rejection_is_atomic(
+    mean_axes: list[int],
+) -> None:
     model_ir = _build_chain()
-    model_ir.tensors["mean_axes"].data = np.asarray([4], dtype=np.int32)
-    model_ir.tensors["mean_axes"].shape = [1]
-    model_ir.tensors["mean_axes"].shape_signature = [1]
+    model_ir.tensors["mean_axes"].data = np.asarray(mean_axes, dtype=np.int32)
+    model_ir.tensors["mean_axes"].shape = [len(mean_axes)]
+    model_ir.tensors["mean_axes"].shape_signature = [len(mean_axes)]
     before = deepcopy(model_ir)
 
     stats = _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir)

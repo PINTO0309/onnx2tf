@@ -4447,16 +4447,8 @@ def _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir: ModelIR) -> Dic
             ):
                 continue
 
-            # 1) Bypass pre0 transpose on mean branch.
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=dq0_op,
-                new_inputs=[q0_raw_name],
-            )
-            dq0_out_tensor.shape = [int(v) for v in list(q0_raw_tensor.shape)]
-            dq0_out_tensor.shape_signature = _tensor_signature(q0_raw_tensor)
-
-            # 2) Remap mean axes from NCHW to NHWC side.
+            # Validate and commit the axes constant before graph rewiring or
+            # dependent metadata mutation so a rejected update remains a no-op.
             rank = len(list(q0_raw_tensor.shape))
             normalized_axes: List[int] = []
             valid_axes = True
@@ -4470,10 +4462,25 @@ def _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir: ModelIR) -> Dic
                 normalized_axes.append(int(a))
             if not valid_axes:
                 continue
-            new_axes = [int(perm_nhwc_to_nchw[int(axis)]) for axis in normalized_axes]
-            if not _write_const_ints_to_tensor(mean_axes_tensor, [int(v) for v in new_axes]):
+            new_axes = [
+                int(perm_nhwc_to_nchw[int(axis)]) for axis in normalized_axes
+            ]
+            if not _write_const_ints_to_tensor(
+                mean_axes_tensor,
+                [int(v) for v in new_axes],
+            ):
                 continue
 
+            # 1) Bypass pre0 transpose on mean branch.
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=dq0_op,
+                new_inputs=[q0_raw_name],
+            )
+            dq0_out_tensor.shape = [int(v) for v in list(q0_raw_tensor.shape)]
+            dq0_out_tensor.shape_signature = _tensor_signature(q0_raw_tensor)
+
+            # 2) Remap mean axes from NCHW to NHWC side.
             mean_shape = [int(v) for v in list(q0_raw_tensor.shape)]
             mean_sig = _tensor_signature(q0_raw_tensor)
             for axis in new_axes:
