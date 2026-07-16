@@ -1601,4 +1601,12 @@ positions preserved. Seven pre-existing lowerer Ruff findings remain.
 The next raw source-order owner is the 394-line
 `_optimize_concat_mul_add_transpose_nhwc_bridge_chains`, which already has
 ordinary and legacy-consumer public fixtures and must be characterized before
-editing.
+editing. That characterization is now complete without production changes.
+The two public fixtures moved to a focused module, reducing the giant direct
+test by 211 lines; 18 positive/rejection/boundary cases pass and 16 concrete
+safety cases are strict xfails. The latter isolate a non-topological legacy
+adapter, incomplete metadata, mutable/public constant ownership, missing
+per-axis QDIM remaps, reserved adapter-name overwrite, late partial mutation,
+duplicate producers, reverse order, and public internal aliases. Resume by
+building the complete topology/metadata/constant/adapter plan before mutation
+and turning all strict xfails green.

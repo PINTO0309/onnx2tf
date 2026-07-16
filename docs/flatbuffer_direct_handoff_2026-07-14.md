@@ -11288,3 +11288,66 @@ quantization, public-boundary, pruning, fixed-point, statistics, and ordered-
 production-boundary behavior. Record unsafe behavior as strict xfails before
 correction. Keep conversion validation minimal and strictly sequential,
 commit and push coherent checkpoints, and do not create a pull request.
+
+## Concat/Mul/Transpose/Add bridge characterization: completed state
+
+The raw 394-line `_optimize_concat_mul_add_transpose_nhwc_bridge_chains` owner
+and both ordered production positions are unchanged. Its ordinary and legacy-
+consumer fixtures were moved from `test_tflite_builder_direct.py` into the
+focused `test_flatbuffer_direct_concat_mul_add_bridge_layout.py`, reducing the
+giant direct test by 211 lines while preserving and expanding the same public
+behavior.
+
+The focused contract covers ordinary static and dynamic-batch signatures,
+legacy-consumer and public-Concat-output compatibility adapters, two
+independent graph-order matches, second-call fixed point, four-dimensional and
+scalar Mul constants, shared-constant collision-safe cloning, zero-match no-
+prune behavior, Concat options/axis/provenance, nine existing arity/layout/
+fan-out/public-output/constant rejection guards, statistics, and both nested
+recovery-sequence boundaries.
+
+Sixteen concrete problems are strict xfails:
+
+- the appended legacy adapter is later than its existing consumer, violating
+  topological order;
+- five missing/rank-three/short-signature retained metadata cases still
+  rewrite;
+- public-input and variable Mul constants rotate in place, and a public
+  constant output is not cloned;
+- ordinary and legacy per-axis quantized tensors retain QDIM 1 after moving to
+  NHWC instead of remapping to QDIM 3;
+- the fixed adapter-permutation name overwrites a public input rather than
+  allocating a private collision-safe constant;
+- malformed legacy metadata raises only after Mul-constant mutation;
+- a duplicate post producer, reverse post/Add order, and a produced internal
+  tensor also declared as a public input are not rejected.
+
+Validation completed as follows:
+
+- focused characterization: `18 passed, 16 xfailed in 0.75s`;
+- focused characterization plus ordered architecture suite:
+  `266 passed, 16 xfailed in 20.88s`;
+- broad direct/architecture collection: `1005 passed, 16 xfailed, 6 failed in
+  172.21s`; four failures require the absent TensorFlow extra, one requires a
+  compatible PyTorch binary, and one is an independently failing unchanged
+  SiNet helper expectation that also fails alone;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.42s`;
+- targeted Ruff for the new focused module, Python compilation, and whitespace
+  checks: passed. The giant direct test retains ten unrelated pre-existing
+  unused-import findings after removal of this owner's import.
+
+No model conversion was run. Production source, public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, and TensorFlow
+isolation are unchanged. PR #952 remains closed; no pull request was created,
+reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Build
+one indexed, graph-order candidate plan that validates unique producers,
+strict operator order, public boundaries, complete rank-four shape/signature
+metadata, constant ownership, and quantization. Precompute Mul-constant update
+or clone, QDIM remaps, canonical Concat metadata/name, adapter-permutation
+reuse or private clone, all setters/removals, and the adapter insertion index
+before mutation. Insert the adapter before its first legacy consumer, turn all
+16 strict xfails green, preserve the 18 existing cases and both production
+boundaries, validate sequentially, commit and push, and do not create a pull
+request.

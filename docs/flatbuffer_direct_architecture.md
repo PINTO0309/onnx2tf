@@ -8045,6 +8045,44 @@ clones, negative last axis, terminal output, pruning, incomplete metadata,
 unsafe axis, and a post-plan atomic rejection. Statistics and complete
 normalized ModelIR state are identical in every case.
 
+## Raw Concat/Mul/Transpose/Add bridge characterization
+
+The next raw source-order owner is the 394-line
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains`. It remains unchanged
+at the third position of both terminal Concat recovery sequences. Its former
+ordinary and legacy-consumer fixtures have been moved out of the giant direct
+test module into a focused contract, reducing that central file by 211 lines.
+The focused contract freezes ordinary static and dynamic-signature rewrites,
+legacy-consumer and public-Concat-output adapters, graph-order multiple
+matches, fixed-point behavior, scalar and rotated Mul constants, shared-
+constant collision-safe cloning, zero-match no-prune behavior, operator
+options/provenance, nine existing rejection guards, statistics, and both
+ordered production boundaries.
+
+Sixteen reproduced safety gaps are strict xfails. A legacy adapter is appended
+after its consumer and therefore leaves the ModelIR non-topological. Five
+missing, rank-three, or short-signature retained tensors are accepted. A
+public-input or variable Mul constant is rotated in place, while a public
+constant output is not preserved through a private clone. Ordinary and legacy
+per-axis cases retain NCHW quantized dimension one after their tensors move to
+NHWC instead of remapping it to three. The reserved adapter-permutation name
+can overwrite a public input, and malformed legacy metadata raises after the
+Mul constant has already changed. Duplicate post producers, reverse post/Add
+order, and a produced pre-adapter tensor also declared as a public input are
+also rewritten. Every rejection or atomicity contract compares the complete
+normalized ModelIR state.
+
+Production source is intentionally unchanged. Correction must build a unique,
+topologically ordered chain plan; validate complete rank-four effective
+metadata; plan every constant update or clone, QDIM remap, canonical tensor,
+adapter constant/name, operator setter, removal, and adapter insertion before
+the first mutation; and insert any compatibility adapter before its earliest
+consumer. Public inputs and variables must reject, public outputs must remain
+stable, and rejected candidates must not reserve names or emit lineage. Valid
+candidate order, statistics, scalar handling, collision behavior, fixed point,
+pruning, public Concat outputs, and both ordered runtime boundaries must remain
+unchanged.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
