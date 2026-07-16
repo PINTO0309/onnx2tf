@@ -7008,6 +7008,28 @@ establishes non-zero fallback ownership: its eight composite calls remain
 `-cotof` accuracy, zero process-tree SWAP, and five core artifacts are
 byte-identical across extraction.
 
+The adjacent late dual-pre-Add/single-post adapter rule is isolated in
+`passes/dual_pre_add_layout.py`. Its complete 166-line implementation moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+still accepts only two exclusive rank-four NHWC-to-NCHW Transpose results
+feeding one non-public Add with no existing NCHW-to-NHWC post consumer, moves
+the Add to NHWC, and inserts one NHWC-to-NCHW compatibility adapter after it.
+Tensor metadata and quantization cloning, unique-name selection, operator
+order, fixed-point restart, unconditional prune boundary, statistic, and the
+single late production position remain unchanged. The lowerer retains a
+one-call private wrapper.
+
+Nine focused tests fix the positive rewrite, quantization cloning,
+idempotence, public Add and adapter outputs, wrong permutation, rank mismatch,
+input fan-out, existing inverse post adapter, and direct-owner/private-wrapper
+equality. FastestDet, OSNet, and HumanSeg supplied three sequential zero-owner
+controls with process-tree SWAP zero; FastestDet's five core artifacts are
+byte-identical across extraction. The historical helper reuses an existing
+`__nhwc_to_nchw_perm_rank4__` tensor without validating its dtype, payload,
+producer, or visibility. This latent name-collision risk is recorded rather
+than changed in the mechanical checkpoint; hardening requires an independent
+compatibility fixture and artifact gate.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`

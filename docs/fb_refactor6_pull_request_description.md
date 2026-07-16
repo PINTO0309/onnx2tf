@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirteen
+This branch continues the staged `flatbuffer_direct` refactor by moving fourteen
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -18,7 +18,8 @@ lowerer and into focused pass modules:
 - the remaining generic NHWC pre-Concat compatibility matcher;
 - strict rank-four Transpose/Slice/inverse-Transpose passthrough;
 - Shape-extraction layout recovery for Gather and Slice consumers;
-- the complete indexed-first pre-Add compatibility composite.
+- the complete indexed-first pre-Add compatibility composite;
+- late dual-pre-Add to single-post adapter recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -214,6 +215,22 @@ positions and in the safe-transpose bundle. After normalizing only the function
 name, the old and new complete owner ASTs are identical. This move is not a
 source-line limit and does not broaden the indexed owner.
 
+### Dual-pre-Add to single-post adapter recovery
+
+`passes/dual_pre_add_layout.py` owns the former 166-line late helper. It
+preserves the strict two-exclusive-input-adapter contract, public Add/output
+guards, existing inverse-post rejection, NHWC Add metadata, quantization
+cloning, one inserted NCHW compatibility adapter, fixed-point order,
+unconditional prune boundary, and statistic. The lowerer retains a one-call
+private wrapper at the unchanged single late production position. The complete
+old and new owner ASTs are identical after function-name normalization.
+
+The historical fixed permutation name is deliberately unchanged. An existing
+`__nhwc_to_nchw_perm_rank4__` tensor is not yet validated for dtype, payload,
+producer, or graph visibility; that latent collision risk requires a separate
+semantic hardening checkpoint rather than being folded into this ownership
+move.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -265,6 +282,8 @@ The new focused tests cover:
 - indexed-direct and forced-fallback pre-Add owner/wrapper equality, plus
   Gather/shared-constant, shared-Concat/unary, LeakyReLU, nested affine,
   QLinear, stale-plan, bounded-dispatch, and cleanup-boundary behavior;
+- dual-pre-Add positive rewrite, quantization clone, idempotence, public,
+  permutation, rank, fan-out, existing-post guards, and owner/wrapper equality;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -295,6 +314,8 @@ Latest checkpoint results:
 - focused pre-Add owners, compatibility fixtures, and architecture suite:
   `256 passed`;
 - final branch gate after pre-Add composite extraction: `668 passed`;
+- focused dual-pre-Add owner plus architecture suite: `238 passed`;
+- final branch gate after dual-pre-Add extraction: `678 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -397,6 +418,15 @@ Before and after extraction, sequential `-cotof` passed with identical
 `max_abs=1.3113021850585938e-05`, process-tree SWAP zero, and byte-identical
 float32, float16, tensor-correspondence, schema, and generated-schema outputs.
 
+The dual-pre-Add extraction characterized FastestDet, OSNet, and HumanSeg
+strictly sequentially. Each reached the helper once, reported zero rewrites,
+and recorded process-tree SWAP zero. FastestDet is the artifact control: its
+pre/post conversion-only runs completed in 1.614 and 1.593 seconds and produced
+byte-identical float32, float16, tensor-correspondence, schema, and generated-
+schema outputs. Its immediately preceding sequential `-cotof` checkpoint had
+already passed at `max_abs=1.3113021850585938e-05`; no redundant inference run
+was added because the executed TFLite artifact is byte-identical.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -405,9 +435,9 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 166-line
-`_optimize_transpose_dual_pre_add_to_single_post_adapter_nhwc_chains` helper.
-Its exact dual-adapter contract, single production position, constant ownership,
-legacy consumers, statistic, and short-model ownership must be characterized
-before extraction; no broad conversion sweep is implied by this mechanical
-checkpoint.
+The next raw source-order boundary is the 293-line
+`_optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains` helper. Its
+terminal affine/Reshape/FullyConnected contract, constant ownership, output
+boundary, statistic, single production position, and short-model ownership
+must be characterized before extraction; no broad conversion sweep is implied
+by this mechanical checkpoint.
