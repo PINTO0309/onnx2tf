@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty-four
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-five
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -12,6 +12,7 @@ lowerer and into focused pass modules:
 - singleton-broadcast rank-four binary NHWC/NCHW adaptation;
 - rank-three/four channelwise broadcast-constant runtime-layout repair;
 - Conv/Pool output elementwise-passthrough compatibility recovery;
+- indexed-first Conv/Mul/Add affine-fold compatibility orchestration;
 - final static runtime-shape/signature consistency;
 - dynamic boundary-signature map realignment;
 - Transpose/QDQ bridge and residual-closure optimization;
@@ -145,6 +146,23 @@ historical statistic remain unchanged. The pre-extraction atomicity correction
 is retained: all external runtime shapes are planned before the first metadata
 or graph mutation. The focused success and rejection corpus compares module
 owner and compatibility wrapper over complete ModelIR fingerprints.
+
+### Conv/Mul/Add affine-fold orchestration
+
+`passes/conv_mul_affine_fold_compat.py` now owns the complete indexed-first
+orchestration formerly embedded in the lowerer. It invokes the existing bounded
+`conv_mul_affine_fold.py` owner with one `ModelIRGraphIndex` and caller
+`LayoutState`, then runs the unchanged raw compatibility fallback for relaxed
+scalar/dynamic coefficients, missing bias, fused ReLU, Add-only, Mul/Add, and
+historically shared constants. The single prune and removal of pruned names
+from LayoutState remain at the orchestration exit.
+
+The moved 381-line function is AST-identical after normalizing only its name;
+two comments document legacy unused locals without changing that AST. The
+lowerer retains a signature-compatible wrapper at all three ordered production
+positions. Focused tests compare compatibility owner and wrapper across the
+complete ModelIR and LayoutState while retaining the indexed atomicity,
+determinism, signed-zero, and raw fallback contracts.
 
 ### Static shape-signature consistency
 
@@ -733,6 +751,10 @@ Latest checkpoint results:
   `544 passed`;
 - focused Conv/Pool owner/wrapper and production-boundary gate: `12 passed`;
 - changed-file branch regression gate after Conv/Pool extraction: `544 passed`;
+- focused indexed/compatibility Conv/Mul affine owner and architecture gate:
+  `12 passed`;
+- changed-file branch regression gate after Conv/Mul affine extraction:
+  `544 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1091,6 +1113,16 @@ tensor and computes its NHWC shape before the first graph or metadata mutation.
 The former strict xfail is a passing multi-input atomicity contract; successful
 rewrite order, statistics, and serialized artifacts are unchanged.
 
+The Conv/Mul affine orchestration extraction used Tier 2
+`iat_llie_180x320.onnx` as its positive artifact control. Its three ordered
+results remain `12,0,0`: all twelve first-pass folds are indexed Mul-only folds
+and the raw fallback has no residual rewrite. Pre/post conversion-only runs
+completed in 0.808 and 0.791 seconds, recorded process-tree SWAP zero, and
+produced byte-identical float32, float16, tensor-correspondence, schema, and
+generated-schema artifacts. The preceding accuracy checkpoint remains
+`max_abs=4.470348358154297e-07`; duplicate inference was not run because the
+executed TFLite artifact is identical.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1108,10 +1140,9 @@ dedicated positive and rejection contract, but the structurally matching gaze
 model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
-implementation is the 381-line `_optimize_fold_conv_mul_add_affine_chains`
-compatibility fallback. Its indexed owner and focused tests already exist, but
-the raw fixed-point fallback and its three production positions remain central.
-Resume by separating indexed and raw statistics/cleanup ownership and proving
-the raw fallback's candidate order, constant copy-on-write, activation guards,
-and smallest non-zero owner before changing source. No broad conversion sweep
-is implied by this checkpoint.
+implementation is the 487-line
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper. It has no dedicated
+focused module and should not be moved from the lowerer before its Mean axes,
+fused/decomposed HardSigmoid, affine constants, fan-out/public boundaries,
+metadata, mutation order, and shortest real owner are characterized. No broad
+conversion sweep is implied by this checkpoint.

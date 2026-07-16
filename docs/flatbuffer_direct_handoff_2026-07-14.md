@@ -9893,3 +9893,60 @@ three production positions remain central. Separate indexed and raw ownership,
 statistics, and cleanup boundaries; prove raw candidate order, constant
 copy-on-write, activation guards, and the smallest non-zero sequential owner
 before changing source. Do not create a pull request.
+
+## Conv/Mul affine compatibility orchestration extraction: completed state
+
+The complete 381-line indexed-first
+`_optimize_fold_conv_mul_add_affine_chains` orchestration is now owned by
+`passes/conv_mul_affine_fold_compat.py`. The existing bounded indexed owner
+remains in `conv_mul_affine_fold.py`; the compatibility owner invokes it first
+with one `ModelIRGraphIndex` and caller `LayoutState`, then executes the exact
+historical raw fallback. The lowerer keeps one signature-compatible private
+wrapper at all three unchanged production positions.
+
+After normalizing only the function name, the pre-move lowerer owner and new
+compatibility owner have identical ASTs. Two `noqa` comments merely document
+legacy unused locals and do not alter that AST. Add-only, Mul/Add, fused-ReLU,
+missing-bias, scalar/dynamic coefficients, shared constants, missing-bias
+creation, signed-zero behavior, direct removal order, single prune, four
+statistics, and LayoutState removal of pruned tensor names are unchanged.
+
+The focused wrapper boundary now runs the compatibility owner and lowerer
+wrapper on deep copies, compares complete ModelIR fingerprints and statistics,
+and compares logical/physical LayoutState maps. Existing indexed planning,
+stale-plan atomicity, determinism, rewrite bounds, legacy signed-zero bits, and
+raw fallback cases remain active. The architecture gate fixes the two-module
+ownership, indexed-before-raw order, one compatibility prune, one lowerer
+dispatch, and three production calls with Session LayoutState.
+
+Validation completed as follows:
+
+- full old/new orchestration AST comparison after name normalization: exact;
+- focused indexed/compatibility owner plus architecture selector:
+  `12 passed, 242 deselected in 1.89s`;
+- changed-file branch regression collection: `544 passed in 24.55s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.29s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Tier 2 `iat_llie_180x320.onnx` is the strictly sequential positive artifact
+control. Its three ordered results remain `12,0,0`; all twelve first-pass
+rewrites are indexed Mul-only folds and no raw fallback rewrite remains. The
+pre/post conversion-only runs completed in 0.808 and 0.791 seconds, recorded
+process-tree SWAP zero, and produced byte-identical float32, float16, tensor-
+correspondence, schema, and generated-schema artifacts. The established
+accuracy remains `max_abs=4.470348358154297e-07`; duplicate inference was not
+run because the executed TFLite artifact is identical.
+
+Changed files are the new compatibility orchestration owner, lowerer import and
+wrapper, indexed/fallback owner-wrapper fixture, architecture ownership gate,
+and three branch documents. No public API, CLI, artifact name, pass order,
+statistic, TensorFlow boundary, dependency, corpus profile, exclusion policy,
+or ONNX operation-tier policy changed. PR #952 remains closed; work is commit/
+push only.
+
+At restart, characterize the next raw 487-line
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper. Fix its Mean axes,
+fused and decomposed HardSigmoid roots, affine constant shapes, fan-out/public
+guards, metadata permutations, retry/mutation order, all production positions,
+and the smallest sequential non-SWAP real owner before changing source. Do not
+create a pull request.

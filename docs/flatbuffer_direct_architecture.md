@@ -7581,11 +7581,14 @@ rewrite changes the Conv output and removes Mul through differential
 deterministic candidate/rewrite bound without internal pruning or complete
 producer/consumer-map reconstruction.
 
-The existing wrapper remains the single compatibility and cleanup boundary.
-Add-only, Mul/Add, fused-ReLU, missing-bias, scalar or relaxed coefficients,
-dynamic signatures, quantized/shared/public constants, and all other strict
-rejects therefore continue through the historical implementation. The
-indexed bias calculation deliberately retains the legacy float32
+`conv_mul_affine_fold_compat.py` now owns the single indexed-first
+compatibility and cleanup boundary; the lowerer retains only a thin private
+wrapper at all three production positions. The complete 381-line orchestration
+moved with an AST identical after function-name normalization. Add-only,
+Mul/Add, fused-ReLU, missing-bias, scalar or relaxed coefficients, dynamic
+signatures, quantized/shared/public constants, and all other strict rejects
+therefore continue through the historical raw fallback after indexed dispatch.
+The indexed bias calculation deliberately retains the legacy float32
 `bias * scale + positive_zero` operation order. That apparently redundant
 addition canonicalizes an IEEE-754 negative-zero product to positive zero and
 is required for byte-identical serialized buffers.
@@ -7593,9 +7596,9 @@ is required for byte-identical serialized buffers.
 Tier 2 `iat_llie_180x320.onnx` establishes the real owner with indexed counts
 `12, 0, 0`; all twelve are Mul-only folds and the fallback has no residual
 rewrite. Its float32, float16, and correspondence artifacts remain
-byte-identical to the pre-extraction baseline. The sequential `-cotof` gate
-passes with maximum absolute error `4.470348358154297e-07` and zero
-process-tree SWAP.
+byte-identical across compatibility extraction. The sequential `-cotof` gate
+passes with maximum absolute error `4.470348358154297e-07`; both extraction
+control runs record zero process-tree SWAP.
 
 Producer/activation fusion is isolated in `activation_fusion.py`. The public
 compatibility surface remains the private lowerer wrapper

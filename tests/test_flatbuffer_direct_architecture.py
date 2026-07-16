@@ -15590,7 +15590,7 @@ def test_indexed_pre_swish_squeeze_suffix_owner_precedes_fallback() -> None:
     assert layout_keyword.value.attr == "layout_state"
 
 
-def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
+def test_indexed_conv_mul_affine_owner_precedes_compat_fallback() -> None:
     owner_path = (
         REPO_ROOT
         / "onnx2tf"
@@ -15599,10 +15599,20 @@ def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
         / "conv_mul_affine_fold.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "conv_mul_affine_fold_compat.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
 
     assert "def _resolve_candidate(" in owner_source
     assert "def _apply_plan(" in owner_source
@@ -15618,16 +15628,16 @@ def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
     for model_name in ("iat", "linea", "yunet", "humanseg", "osnet", "sinet"):
         assert model_name not in owner_source.lower()
 
-    wrapper_name = "_optimize_fold_conv_mul_add_affine_chains"
-    dispatch_name = "_optimize_conv_mul_affine_mul_only_chains_pass"
-    wrapper = next(
+    compat_owner_name = "optimize_fold_conv_mul_add_affine_chains"
+    compat_owner = next(
         node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
     )
+    dispatch_name = "_optimize_conv_mul_affine_mul_only_chains_pass"
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -15639,12 +15649,37 @@ def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+    compat_owner_source = ast.get_source_segment(compat_source, compat_owner)
+    assert compat_owner_source is not None
+    assert "_build_tensor_consumer_map(model_ir)" in compat_owner_source
+    assert "while True:" in compat_owner_source
+    assert "del model_ir.operators[int(remove_idx)]" in compat_owner_source
+    assert "lower_from_onnx2tf" not in compat_source
+
+    wrapper_name = "_optimize_fold_conv_mul_add_affine_chains"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_fold_conv_mul_add_affine_chains_pass"
+    ]
+    assert len(wrapper_dispatches) == 1
+    assert {keyword.arg for keyword in wrapper_dispatches[0].keywords} == {
+        "enable_conv_add_only_fold",
+        "layout_state",
+    }
 
     lowerer = next(
         node

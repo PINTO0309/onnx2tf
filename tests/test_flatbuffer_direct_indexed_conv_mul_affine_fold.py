@@ -16,6 +16,9 @@ from onnx2tf.tflite_builder.passes.conv_mul_affine_fold import (
     _resolve_candidate,
     optimize_conv_mul_affine_mul_only_chains,
 )
+from onnx2tf.tflite_builder.passes.conv_mul_affine_fold_compat import (
+    optimize_fold_conv_mul_add_affine_chains,
+)
 
 
 _TOTAL_KEY = "folded_conv_mul_add_affine_chains"
@@ -149,6 +152,42 @@ def _fingerprint(model_ir: ModelIR) -> tuple[object, ...]:
     )
 
 
+def _run_compat_owner_and_wrapper(
+    model_ir: ModelIR,
+    *,
+    enable_conv_add_only_fold: bool = True,
+    with_layout_state: bool = False,
+) -> tuple[ModelIR, dict[str, int], LayoutState | None]:
+    owner_model_ir = deepcopy(model_ir)
+    wrapper_model_ir = deepcopy(model_ir)
+    owner_layout_state = (
+        LayoutState.from_model_ir(owner_model_ir)
+        if with_layout_state
+        else None
+    )
+    wrapper_layout_state = (
+        LayoutState.from_model_ir(wrapper_model_ir)
+        if with_layout_state
+        else None
+    )
+    owner_stats = optimize_fold_conv_mul_add_affine_chains(
+        owner_model_ir,
+        enable_conv_add_only_fold=enable_conv_add_only_fold,
+        layout_state=owner_layout_state,
+    )
+    wrapper_stats = _optimize_fold_conv_mul_add_affine_chains(
+        wrapper_model_ir,
+        enable_conv_add_only_fold=enable_conv_add_only_fold,
+        layout_state=wrapper_layout_state,
+    )
+    assert owner_stats == wrapper_stats
+    assert _fingerprint(owner_model_ir) == _fingerprint(wrapper_model_ir)
+    if owner_layout_state is not None and wrapper_layout_state is not None:
+        assert owner_layout_state.logical == wrapper_layout_state.logical
+        assert owner_layout_state.physical == wrapper_layout_state.physical
+    return wrapper_model_ir, wrapper_stats, wrapper_layout_state
+
+
 def test_indexed_conv_mul_fold_preserves_index_layout_and_lineage() -> None:
     model_ir = _make_conv_mul_ir()
     graph_index = ModelIRGraphIndex(model_ir)
@@ -278,14 +317,14 @@ def test_indexed_conv_mul_fold_preserves_legacy_signed_zero_bits() -> None:
 
 
 def test_indexed_conv_mul_wrapper_keeps_one_prune_and_layout_boundary() -> None:
-    model_ir = _make_conv_mul_ir()
-    layout_state = LayoutState.from_model_ir(model_ir)
+    model_ir, stats, layout_state = _run_compat_owner_and_wrapper(
+        _make_conv_mul_ir(),
+        with_layout_state=True,
+    )
 
-    assert _optimize_fold_conv_mul_add_affine_chains(
-        model_ir,
-        layout_state=layout_state,
-    ) == _stats(1, mul_only=1)
+    assert stats == _stats(1, mul_only=1)
     assert set(model_ir.tensors) == {"x", "w", "b", "mul_out", "y"}
+    assert layout_state is not None
     assert layout_state.validate_against_model_ir(model_ir) == []
 
 
