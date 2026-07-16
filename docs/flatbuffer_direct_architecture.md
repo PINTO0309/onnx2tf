@@ -8083,6 +8083,34 @@ candidate order, statistics, scalar handling, collision behavior, fixed point,
 pruning, public Concat outputs, and both ordered runtime boundaries must remain
 unchanged.
 
+The correction is now implemented in the 652-line raw owner. One
+`ModelIRGraphIndex` replaces full producer/consumer-map reconstruction in each
+fixed-point round and is updated differentially through every setter, removal,
+and adapter insertion. The complete candidate plan requires unique producers,
+strict pre-Transpose/Concat/Mul/post-Transpose/Add order, private internal
+edges, rank-four source/Concat/Mul metadata, valid broadcast constants, and a
+complete immutable name set before mutation.
+
+Mul constants are classified as unchanged scalar/broadcast values, private
+in-place rotations, or collision-safe clones for shared and public-output
+ownership. Public inputs and variables reject. NCHW-to-NHWC QDIM is cloned and
+remapped for the Concat tensor, Mul output, and rotated Mul constant, including
+the legacy canonical tensor. Adapter-permutation constants are reused only
+when immutable and safe; otherwise a private collision-safe INT32 constant is
+planned without overwriting the reserved name. Canonical Concat metadata,
+options, all setters, the removal set, and adapter placement are also planned
+before commit. Compatibility adapters are inserted directly after their
+Concat producer and therefore precede every legacy consumer.
+
+All 16 former strict xfails are green. Additional coverage proves one graph-
+index construction for two matches and validates complete ModelIR invariants
+for legacy/public-output adapters plus ordinary/legacy per-axis quantization.
+The nine former rejections, scalar and shared constants, dynamic signatures,
+multiple-match count, fixed point, no-match no-prune behavior, options/
+provenance, and both ordered production boundaries remain green. Removing the
+obsolete local `add_out_name` assignment reduces pre-existing lowerer Ruff
+findings from seven to six.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

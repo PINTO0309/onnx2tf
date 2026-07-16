@@ -1609,4 +1609,12 @@ adapter, incomplete metadata, mutable/public constant ownership, missing
 per-axis QDIM remaps, reserved adapter-name overwrite, late partial mutation,
 duplicate producers, reverse order, and public internal aliases. Resume by
 building the complete topology/metadata/constant/adapter plan before mutation
-and turning all strict xfails green.
+and turning all strict xfails green. That correction is now complete in the
+652-line raw owner. A single differential `ModelIRGraphIndex`, complete
+rank-four and topological preflight, ownership-aware constant rotation/cloning,
+NCHW-to-NHWC QDIM remapping, private collision-safe adapter constants, and
+producer-before-consumer adapter insertion turn all 16 xfails green. Valid
+statistics, fixed point, public Concat outputs, pruning behavior, and both
+ordered boundaries remain intact. Resume by mechanically extracting the
+corrected owner into a focused pass module; six pre-existing lowerer Ruff
+findings remain.

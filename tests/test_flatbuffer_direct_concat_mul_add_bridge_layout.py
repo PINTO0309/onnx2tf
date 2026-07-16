@@ -9,6 +9,8 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+import onnx2tf.tflite_builder.lower_from_onnx2tf as lowerer_module
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import validate_model_ir_invariants
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -334,6 +336,7 @@ def test_concat_mul_add_bridge_preserves_nchw_concat_boundary_with_adapter(
     ]
     assert model_ir.tensors["branch0_cat_nchw"].shape == [1, 4, 3, 2]
     assert model_ir.tensors["branch0_cat_nchw_nhwc"].shape == [1, 3, 2, 4]
+    assert validate_model_ir_invariants(model_ir) == []
 
 
 def test_concat_mul_add_bridge_rewrites_multiple_chains_and_reaches_fixed_point() -> None:
@@ -355,6 +358,30 @@ def test_concat_mul_add_bridge_rewrites_multiple_chains_and_reaches_fixed_point(
         for operator in model_ir.operators
         if operator.op_type == "CONCATENATION"
     ] == [3, 3]
+
+
+def test_concat_mul_add_bridge_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(branches=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = lowerer_module._optimize_concat_mul_add_transpose_nhwc_bridge_chains(
+        model_ir
+    )
+
+    assert stats == {
+        "optimized_concat_mul_add_transpose_nhwc_bridge_chains": 2,
+    }
+    assert refresh_count == 1
 
 
 def test_concat_mul_add_bridge_clones_shared_mul_constant_collision_safely() -> None:
@@ -510,10 +537,6 @@ def test_concat_mul_add_bridge_rejects_existing_unsafe_contracts(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Legacy adapter is appended after the consumer it must produce for",
-)
 def test_concat_mul_add_bridge_keeps_legacy_adapter_topological() -> None:
     model_ir = _model(legacy_consumer=True)
 
@@ -537,10 +560,6 @@ def test_concat_mul_add_bridge_keeps_legacy_adapter_topological() -> None:
     assert adapter_index < legacy_index
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="All retained rank-four metadata must be validated before constant rotation",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -568,10 +587,6 @@ def test_concat_mul_add_bridge_rejects_incomplete_metadata(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Mutable and public-input constants cannot be rewritten in place",
-)
 @pytest.mark.parametrize("case", ["public-input", "variable"])
 def test_concat_mul_add_bridge_rejects_mutable_mul_constant(case: str) -> None:
     model_ir = _model()
@@ -584,10 +599,6 @@ def test_concat_mul_add_bridge_rejects_mutable_mul_constant(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="A public constant output must be preserved through a private rotated clone",
-)
 def test_concat_mul_add_bridge_clones_public_mul_constant_output() -> None:
     model_ir = _model()
     constant_name = "branch0_mul_const"
@@ -608,10 +619,6 @@ def test_concat_mul_add_bridge_clones_public_mul_constant_output() -> None:
     assert np.array_equal(model_ir.tensors[constant_name].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Per-axis QDIM must follow every NCHW-to-NHWC metadata rotation",
-)
 @pytest.mark.parametrize("legacy_consumer", [False, True])
 def test_concat_mul_add_bridge_remaps_per_axis_quantization(
     legacy_consumer: bool,
@@ -651,12 +658,9 @@ def test_concat_mul_add_bridge_remaps_per_axis_quantization(
         quantization = model_ir.tensors[name].quantization
         assert isinstance(quantization, QuantParamIR)
         assert quantization.quantized_dimension == 3
+    assert validate_model_ir_invariants(model_ir) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Reserved adapter constants must not be overwritten or exposed as inputs",
-)
 def test_concat_mul_add_bridge_uses_private_collision_safe_adapter_constant() -> None:
     model_ir = _model(legacy_consumer=True)
     _tensor(
@@ -687,10 +691,6 @@ def test_concat_mul_add_bridge_uses_private_collision_safe_adapter_constant() ->
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Late legacy metadata errors must not leave rotated constants behind",
-)
 def test_concat_mul_add_bridge_rejects_late_metadata_error_atomically() -> None:
     model_ir = _model(legacy_consumer=True)
     model_ir.tensors["branch0_cat_nchw"].shape_signature = [1, None, 3, 2]
@@ -698,10 +698,6 @@ def test_concat_mul_add_bridge_rejects_late_metadata_error_atomically() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Duplicate producers, reverse order, and public internal aliases must reject",
-)
 @pytest.mark.parametrize(
     "case",
     ["duplicate-post-output", "reverse-post-add", "public-pre-output-input"],
@@ -739,7 +735,7 @@ def test_concat_mul_add_bridge_keeps_raw_owner_and_ordered_boundaries() -> None:
         if isinstance(node, ast.FunctionDef)
         and node.name == "_optimize_concat_mul_add_transpose_nhwc_bridge_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 394
+    assert owner.end_lineno - owner.lineno + 1 == 652
     assert any(isinstance(node, ast.While) for node in ast.walk(owner))
 
     lowerer = next(

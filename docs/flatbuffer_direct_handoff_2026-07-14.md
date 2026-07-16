@@ -11351,3 +11351,66 @@ before mutation. Insert the adapter before its first legacy consumer, turn all
 16 strict xfails green, preserve the 18 existing cases and both production
 boundaries, validate sequentially, commit and push, and do not create a pull
 request.
+
+## Concat/Mul/Transpose/Add transactional correction: completed state
+
+All 16 strict xfails are green. The corrected raw owner is 652 lines and uses
+one `ModelIRGraphIndex` for candidate enumeration, unique-producer checks,
+consumer ownership, setters, batched removals, and adapter insertion. Two
+independent matches allocate the index once; complete maps are no longer
+rebuilt on each fixed-point round.
+
+Before the first mutation, each candidate now proves strict
+pre-Transpose/Concat/Mul/post-Transpose/Add order, unique retained producers,
+private internal edges, complete rank-four source/Concat/Mul shapes and
+effective signatures, valid Concat axis/options, NHWC add-bias broadcast, and
+all public-boundary rules. Missing tensors, short signatures, duplicate post
+producers, reverse post/Add order, and public internal aliases return zero with
+complete ModelIR equality.
+
+Mul constants have a complete immutable plan. Scalars and already compatible
+lower-rank broadcasts remain untouched. Rank-three or rank-four constants are
+rotated only after ownership and broadcast validation; shared and public-
+output constants receive deterministic private clones, while public inputs
+and variables reject. Per-axis quantization is cloned and remapped with the
+same permutation for the Mul constant, canonical Concat tensor, and Mul output.
+Both ordinary and legacy variants now use QDIM 3 for NHWC while the legacy
+adapter output retains its original NCHW metadata.
+
+Canonical tensor names and adapter-permutation names use candidate-local
+reservations that are published only on commit. A reserved, public, variable,
+wrong-dtype, quantized, or wrong-value adapter constant is preserved and a
+private INT32 constant is allocated. Every setter, removal, metadata update,
+option update, and adapter insertion is planned before commit. Compatibility
+adapters are inserted immediately after Concat, ahead of the main Mul and all
+legacy consumers, so both legacy and public-Concat-output graphs validate as
+topological ModelIR.
+
+Validation completed as follows:
+
+- focused corrected owner, including one-index and invariant checks:
+  `35 passed in 0.59s`;
+- focused corrected owner plus ordered architecture suite:
+  `283 passed in 20.49s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.35s`;
+- targeted Python compilation, focused-test Ruff, and whitespace checks:
+  passed;
+- central lowerer Ruff findings decreased from seven to six because the
+  corrected owner removed an unused local assignment.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to proven candidates; incomplete evidence now leaves the
+original graph intact. Public API, CLI, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, both ordered runtime boundaries, and
+TensorFlow isolation are unchanged. PR #952 remains closed; no pull request
+was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 652-line
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains` owner into a focused
+pass module. Keep the historical lowerer private name as a one-return wrapper
+and preserve its position in both terminal recovery sequences. Prove corrected
+checkpoint/module AST identity plus direct owner/wrapper equality for ordinary
+static/dynamic, multiple, scalar, shared/public constants, legacy/public
+Concat adapters, per-axis quantization, collision, pruning, rejection, and
+atomicity cases. Validate sequentially, commit and push, and do not create a
+pull request.
