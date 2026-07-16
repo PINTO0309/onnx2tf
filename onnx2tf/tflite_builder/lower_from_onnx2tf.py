@@ -4237,6 +4237,8 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                 source_shape = [int(v) for v in list(source_tensor.shape)]
                 adapter_shape = [int(v) for v in list(adapter_tensor.shape)]
                 const_shape = [int(v) for v in list(const_tensor.shape)]
+                if len(source_shape) != 4 or len(adapter_shape) != 4:
+                    continue
                 channelwise_const_matches = (
                     len(const_shape) == 4
                     and const_shape[:3] == [1, 1, 1]
@@ -4258,9 +4260,7 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                     in {"CONV_2D", "DEPTHWISE_CONV_2D", "TRANSPOSE_CONV"}
                 )
                 if (
-                    len(source_shape) != 4
-                    or len(adapter_shape) != 4
-                    or not (
+                    not (
                         channelwise_const_matches or nhwc_peer_matches
                     )
                 ):

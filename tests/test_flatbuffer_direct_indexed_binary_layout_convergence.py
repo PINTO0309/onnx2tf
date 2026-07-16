@@ -277,10 +277,6 @@ def test_stale_binary_transpose_repair_rejects_invalid_metadata_atomically(
 
 
 @pytest.mark.parametrize("tensor_name", ["source0", "adapter0"])
-@pytest.mark.xfail(
-    strict=True,
-    reason="channelwise-constant matching indexes source/adapter before rank guards",
-)
 def test_stale_binary_transpose_repair_prevalidates_channelwise_ranks(
     tensor_name: str,
 ) -> None:

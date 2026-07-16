@@ -813,6 +813,8 @@ Latest checkpoint results:
   `6 passed, 2 xfailed`;
 - changed-file focused branch regression including that characterization:
   `615 passed, 2 xfailed`;
+- focused channelwise-constant binary rank correction: `8 passed`;
+- changed-file focused branch regression after the correction: `617 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1346,7 +1348,7 @@ The source signature is now materialized and rank-validated before the indexed
 setter, so the former strict xfail is green with a zero statistic and complete
 ModelIR no-op. A final branch-specific audit found that the channelwise-
 constant matcher still indexes short source/adapter shapes before its rank
-guard; two strict xfails freeze those exception paths. Move both rank guards
-before channel evidence, then extract only the corrected repair owner and leave
-the three-round convergence runner in the lowerer. No broad conversion sweep is
-implied by this checkpoint.
+guard; both rank-four checks now precede channel evidence, so the two former
+strict xfails are green complete no-ops. Extract only the corrected repair owner
+and leave the three-round convergence runner in the lowerer. No broad conversion
+sweep is implied by this checkpoint.

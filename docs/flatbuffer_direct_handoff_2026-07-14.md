@@ -10690,3 +10690,38 @@ before channelwise-constant and Conv-peer evidence evaluation. Turn both strict
 xfails green while preserving candidate order, statistics, and GraphIndex
 updates. Only then redo the mechanical repair-owner extraction; keep the
 convergence runner central. Do not create a pull request.
+
+## Channelwise-constant stale-binary rank safety: completed state
+
+The stale binary repair now rejects a source or adapter whose shape is not rank
+four before evaluating either channelwise-constant or Conv-peer evidence. The
+existing evidence expressions, candidate order, input-position order, indexed
+setter/removal sequence, output metadata update, and statistics are unchanged.
+Both former strict xfails are complete zero-statistic ModelIR no-ops. The
+earlier malformed-signature guard remains before the first mutation.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `8 passed, 257 deselected in 2.07s`;
+- changed-file focused branch regression: `617 passed in 23.23s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff and Python compilation: passed.
+
+No real-model conversion was added because the change only prevents invalid-
+rank metadata from reaching channel evidence and the requested validation
+policy favors minimal conversions. Production success behavior is covered by
+the existing multiple-match, both-input-position, channelwise-constant, Conv-
+peer, fan-out, index-equivalence, and convergence-runner fixtures.
+
+Changed files are the raw repair, focused rank fixtures, architecture guard-
+order check, and three branch documents. Public API, CLI, valid behavior/
+statistics, TensorFlow boundary, dependencies, corpus profiles, exclusions,
+and ONNX operation tiers are unchanged. PR #952 remains closed; work is
+commit/push only.
+
+At restart, mechanically extract only the corrected repair owner into a focused
+pass-family module. Keep the lowerer private wrapper, both standalone calls,
+and the three-round convergence runner call. Leave the runner central, prove
+exact old/new AST and direct owner/wrapper fingerprint equality, and do not
+create a pull request.

@@ -4244,11 +4244,11 @@ malformed signature therefore retains a complete ModelIR fingerprint and zero
 statistic instead of being assigned to a rank-four output after input rewiring.
 Architecture tests keep signature materialization before the first mutation.
 
-The channelwise-constant evidence branch has two remaining strict xfails. Its
-`[1,1,1,C]` prefix guard is followed by `source_shape[3]` and
-`adapter_shape[3]` reads before the common rank check. Short source or adapter
-metadata therefore raises before returning a no-op. Rank-four validation must
-precede both evidence branches before ownership extraction.
+The channelwise-constant evidence branch now requires rank-four source and
+adapter shapes before its `[1,1,1,C]` channel checks or either `[3]` read. Short
+source or adapter metadata therefore returns a complete zero-statistic no-op.
+Architecture tests keep the shared rank guard before both channelwise-constant
+and Conv-peer evidence assignments. No strict xfail remains.
 
 The two terminal fixed three-round broadcast/Transpose/shape convergence loops
 are owned by `_run_indexed_binary_layout_convergence`. One index is built per

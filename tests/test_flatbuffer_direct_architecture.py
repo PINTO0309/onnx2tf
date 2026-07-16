@@ -2533,6 +2533,24 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
     assert "producer" in repair_call_names
     assert "consumer_indices" in repair_call_names
     assert "remove_operator" in repair_call_names
+    channelwise_assignment = next(
+        node
+        for node in ast.walk(repair)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "channelwise_const_matches"
+            for target in node.targets
+        )
+    )
+    rank_guard = next(
+        node
+        for node in ast.walk(repair)
+        if isinstance(node, ast.If)
+        and "len(source_shape)" in ast.unparse(node.test)
+        and "len(adapter_shape)" in ast.unparse(node.test)
+    )
+    assert rank_guard.lineno < channelwise_assignment.lineno
     setter_call = next(
         node
         for node in ast.walk(repair)
