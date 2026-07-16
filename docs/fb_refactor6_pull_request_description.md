@@ -1644,4 +1644,12 @@ adapter insertion turn all 27 former xfails green. Focused coverage now has 46
 green cases, including one-index construction and explicit public-output
 clones, while both ordered recovery boundaries remain unchanged. Resume by
 mechanically extracting the corrected owner into a focused pass module with
-exact AST and owner/wrapper equality.
+exact AST and owner/wrapper equality. That extraction is now complete in
+`passes/concat_mul_add_transpose_add_bridge_layout.py`. Its 866-line function
+AST is exact to checkpoint `4a5f0394`, the lowerer retains a one-return
+compatibility wrapper, and both ordered positions are unchanged. Nineteen
+direct owner/wrapper families produce identical statistics and complete
+normalized ModelIR state. Resume by inventorying and characterizing the next
+raw source-order owner,
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains` (461
+lines), before any semantic or ownership change.

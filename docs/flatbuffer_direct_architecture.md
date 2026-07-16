@@ -8209,6 +8209,24 @@ explicitly verified as successful private-clone rewrites. The original 18
 characterization cases, plus clone and one-index coverage, now form 46 green
 focused tests.
 
+Ownership now resides in
+`passes/concat_mul_add_transpose_add_bridge_layout.py`. The extracted function
+and the corrected raw owner at checkpoint `4a5f0394` are each 866 lines and
+have identical ASTs. The lowerer imports the module owner under a private pass
+alias and retains the historical function name as a one-return compatibility
+wrapper. Both terminal recovery-sequence positions and their immediate
+neighbors remain unchanged, and the focused module has no lowerer import.
+
+Nineteen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, multiple matches, scalar constants, separate shared Mul/Add
+constant collisions, separate public-output clones, legacy adapters, ordinary
+and legacy per-axis quantization, adapter collision, unmatched pruning,
+missing and malformed metadata, late constant evidence, malformed axis,
+reverse topology, and a public internal boundary. Statistics and complete
+normalized ModelIR state are identical in every case. The mechanical move
+does not alter public APIs, artifacts, dependencies, corpus policy, ordered
+runtime behavior, or TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
