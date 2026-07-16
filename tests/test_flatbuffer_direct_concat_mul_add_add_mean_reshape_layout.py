@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains,
 )
+from onnx2tf.tflite_builder.passes.concat_mul_add_add_mean_reshape_layout import (
+    _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains as _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains_owner,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -281,6 +284,179 @@ def _model(
             dynamic_batch=dynamic_batch,
         )
     return model_ir
+
+
+def _owner_wrapper_case(case: str) -> ModelIR:
+    if case == "dynamic":
+        return _model(dynamic_batch=True)
+    if case == "multiple":
+        return _model(branches=2)
+    model_ir = _model()
+
+    if case == "scalar":
+        for name, value in (
+            ("branch0_mul_const", 2.0),
+            ("branch0_add0_const", 3.0),
+            ("branch0_add1_const", 4.0),
+        ):
+            tensor = model_ir.tensors[name]
+            tensor.shape = [1]
+            tensor.shape_signature = [1]
+            tensor.data = np.asarray([value], dtype=np.float32)
+    elif case in {"shared-mul", "shared-add0", "shared-add1"}:
+        constant_name = {
+            "shared-mul": "branch0_mul_const",
+            "shared-add0": "branch0_add0_const",
+            "shared-add1": "branch0_add1_const",
+        }[case]
+        output = f"{constant_name}_copy"
+        _tensor(
+            model_ir,
+            output,
+            list(np.asarray(model_ir.tensors[constant_name].data).shape),
+        )
+        model_ir.outputs.append(output)
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [constant_name], [output])
+        )
+        collision = f"{constant_name}_nhwc"
+        _tensor(
+            model_ir,
+            collision,
+            [1],
+            data=np.asarray([99.0], dtype=np.float32),
+        )
+        model_ir.outputs.append(collision)
+    elif case in {"public-mul", "public-add0", "public-add1"}:
+        model_ir.outputs.append(
+            {
+                "public-mul": "branch0_mul_const",
+                "public-add0": "branch0_add0_const",
+                "public-add1": "branch0_add1_const",
+            }[case]
+        )
+    elif case == "shared-axes":
+        _tensor(model_ir, "axes_copy", [2], dtype="INT32")
+        model_ir.outputs.append("axes_copy")
+        model_ir.operators.append(
+            OperatorIR(
+                "IDENTITY",
+                ["branch0_mean_axes"],
+                ["axes_copy"],
+            )
+        )
+    elif case == "public-axes":
+        model_ir.outputs.append("branch0_mean_axes")
+    elif case in {"reshape-exact", "public-reshape"}:
+        model_ir.tensors["branch0_reshape_shape"].data = np.asarray(
+            [1, 4, 1, 1],
+            dtype=np.int32,
+        )
+        if case == "public-reshape":
+            model_ir.outputs.append("branch0_reshape_shape")
+    elif case == "per-axis":
+        for name in (
+            "branch0_cat_nchw",
+            "branch0_mul_const",
+            "branch0_mul_out",
+            "branch0_add0_const",
+            "branch0_add0_out",
+            "branch0_add1_out",
+            "branch0_mean_out",
+        ):
+            model_ir.tensors[name].quantization = QuantParamIR(
+                scale=[0.1, 0.2, 0.3, 0.4],
+                zero_point=[0, 0, 0, 0],
+                quantized_dimension=1,
+            )
+        model_ir.tensors["branch0_add1_const"].quantization = QuantParamIR(
+            scale=[0.1, 0.2, 0.3, 0.4],
+            zero_point=[0, 0, 0, 0],
+            quantized_dimension=0,
+        )
+    elif case == "identity-axes":
+        axes = model_ir.tensors["branch0_mean_axes"]
+        axes.shape = [1]
+        axes.shape_signature = [1]
+        axes.data = np.asarray([0], dtype=np.int32)
+    elif case == "unmatched":
+        _tensor(model_ir, "unused", [1])
+        model_ir.tensors["branch0_to_nchw_perm"].data = np.asarray(
+            [0, 2, 3, 1],
+            dtype=np.int32,
+        )
+    elif case == "missing-metadata":
+        del model_ir.tensors["branch0_mean_out"]
+    elif case == "late-add0":
+        tensor = model_ir.tensors["branch0_add0_const"]
+        tensor.shape = [2, 2]
+        tensor.shape_signature = [2, 2]
+        tensor.data = np.zeros((2, 2), dtype=np.float32)
+    elif case == "late-mean":
+        model_ir.tensors["branch0_reshape_shape"].data = np.asarray(
+            [1, 4, 1, 1],
+            dtype=np.int32,
+        )
+        model_ir.tensors["branch0_mean_out"].shape = [1, None, 1, 1]
+    elif case == "malformed-axis":
+        model_ir.operators[2].options["axis"] = None
+    elif case == "reverse-topology":
+        model_ir.operators[6], model_ir.operators[7] = (
+            model_ir.operators[7],
+            model_ir.operators[6],
+        )
+    elif case == "public-internal":
+        model_ir.inputs.append("branch0_x0_nchw")
+    return model_ir
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary",
+        "dynamic",
+        "multiple",
+        "scalar",
+        "shared-mul",
+        "shared-add0",
+        "shared-add1",
+        "public-mul",
+        "public-add0",
+        "public-add1",
+        "shared-axes",
+        "public-axes",
+        "reshape-exact",
+        "public-reshape",
+        "per-axis",
+        "identity-axes",
+        "unmatched",
+        "missing-metadata",
+        "late-add0",
+        "late-mean",
+        "malformed-axis",
+        "reverse-topology",
+        "public-internal",
+    ],
+)
+def test_concat_mean_reshape_owner_and_wrapper_are_identical(
+    case: str,
+) -> None:
+    owner_model = _owner_wrapper_case(case)
+    wrapper_model = copy.deepcopy(owner_model)
+
+    owner_stats = (
+        _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains_owner(
+            owner_model
+        )
+    )
+    wrapper_stats = (
+        _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(
+            wrapper_model
+        )
+    )
+
+    assert wrapper_stats == owner_stats
+    assert _normalize(wrapper_model) == _normalize(owner_model)
 
 
 def _assert_transactional_rejection(model_ir: ModelIR) -> None:
@@ -942,20 +1118,61 @@ def test_concat_mean_reshape_accepts_identity_axis_mapping() -> None:
     ]
 
 
-def test_concat_mean_reshape_keeps_raw_owner_and_ordered_boundaries() -> None:
-    lowering_path = (
-        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+def test_concat_mean_reshape_keeps_owner_wrapper_and_ordered_boundaries() -> None:
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "concat_mul_add_add_mean_reshape_layout.py"
     )
-    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
     owner = next(
         node
-        for node in lowering_tree.body
+        for node in pass_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name
         == "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains"
     )
     assert owner.end_lineno - owner.lineno + 1 == 869
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and (
+            any(
+                alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+                for alias in node.names
+            )
+            if isinstance(node, ast.Import)
+            else node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        )
+        for node in pass_tree.body
+    )
+
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains"
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    wrapper_call = wrapper.body[0].value
+    assert isinstance(wrapper_call, ast.Call)
+    assert isinstance(wrapper_call.func, ast.Name)
+    assert (
+        wrapper_call.func.id
+        == "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains_pass"
+    )
+    assert len(wrapper_call.args) == 1
+    assert isinstance(wrapper_call.args[0], ast.Name)
+    assert wrapper_call.args[0].id == "model_ir"
+    assert wrapper_call.keywords == []
 
     lowerer = next(
         node

@@ -1668,4 +1668,11 @@ safe Mean-axes and conditional Reshape-shape plans, identity-axis acceptance,
 and batched indexed removal turn all 42 former xfails green. Focused coverage
 has 65 green cases and both ordered recovery positions remain unchanged.
 Resume by mechanically extracting the corrected owner with exact AST and
-owner/wrapper equality.
+owner/wrapper equality. That extraction is now complete in
+`passes/concat_mul_add_add_mean_reshape_layout.py`. Its 869-line function AST
+is exact to checkpoint `3c3579fd`, the lowerer retains a one-return wrapper,
+and both ordered positions are unchanged. Twenty-three direct owner/wrapper
+families produce identical statistics and complete normalized ModelIR state.
+Resume by inventorying and characterizing the next raw source-order owner,
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains` (356 lines),
+before any semantic or ownership change.

@@ -8305,6 +8305,24 @@ before the first mutation. All 42 former strict xfails are green, and an
 explicit Concat fan-out guard plus one-index test bring the focused contract to
 65 green cases.
 
+Ownership now resides in
+`passes/concat_mul_add_add_mean_reshape_layout.py`. The extracted function and
+the corrected raw owner at checkpoint `3c3579fd` are each 869 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical function name as a one-return compatibility
+wrapper. Both terminal recovery-sequence positions and their immediate
+neighbors remain unchanged, and the focused module has no lowerer import.
+
+Twenty-three direct owner/wrapper comparisons cover static and dynamic
+metadata, multiple matches, scalar constants, separate shared and public-
+output actions for all three affine constants, shared/public Mean axes, exact
+and public Reshape shapes, QDIM, identity axes, unmatched pruning, missing and
+late metadata, late affine evidence, malformed axis, reverse topology, and a
+public internal boundary. Statistics and complete normalized ModelIR state are
+identical in every case. The move adds no semantic change and does not alter
+public APIs, artifacts, dependencies, corpus policy, ordered behavior, or
+TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
