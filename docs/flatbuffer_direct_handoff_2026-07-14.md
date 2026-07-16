@@ -6732,3 +6732,41 @@ unchanged production invocations and scan the active corpus before source
 work. Continue to use only short sequential zero-SWAP conversion gates,
 record problems before fixes, commit and push coherent units, and do not
 create a pull request.
+
+## Mean/Mul/Add pre/post recovery: measured no-change decision
+
+The raw `_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains` helper
+was next inspected and measured without changing source. A read-only scan of
+all 381 active managed Tier 0-4 ONNX graphs completed in 8.818 seconds. Every
+graph loaded, no process-tree SWAP occurred, and the scan found zero loose
+`Transpose[0,3,1,2] -> ReduceMean -> Mul` starts and zero complete
+`Mul(const) -> Add(const) -> Transpose[0,2,3,1]` families at the ONNX
+boundary.
+
+Because layout lowering can create ModelIR-only adapters, six short models
+covering the most likely reduction/layout families were then instrumented at
+all five unchanged production invocations: IAT-LLIE, LINEA, FastestDet,
+PPHumanSeg, OSNet, and SiNet. They converted strictly sequentially, all exited
+0 in 2.065-8.028 seconds, and every process-tree monitor reported SWAP 0.
+Every helper invocation returned zero rewrites. The other eight previously
+measured representatives were not repeated because the complete active-corpus
+scan found no ONNX start and the six ModelIR boundaries established no owner.
+
+The helper retains an unbounded whole-graph loop and rebuilds a complete
+consumer map after every accepted rewrite. It accepts reduction axes and
+binary constants without typed producer/variable/graph-boundary ownership,
+can mutate a shared axes tensor in place, permits relaxed or unknown target
+shapes, changes multiple operator edges and tensor views without immutable
+full-plan revalidation, and neither updates a shared graph index nor the
+Session layout state. Alias rewiring also scans the whole graph. These are
+latent correctness and interaction hazards, but no current real model owns
+the path. The compatibility feature is therefore neither removed nor replaced
+by an unproven synthetic-only pass, and no converter source or test behavior
+changes in this checkpoint.
+
+The ordered mean/attention cluster immediately after this helper is already
+delegated to bounded pass modules. At resume, inspect the next raw helper in
+actual production order before selecting a source target; continue to record
+non-zero ownership and problems before implementation, use minimal sequential
+zero-SWAP validation, commit and push coherent units, and do not create a pull
+request.
