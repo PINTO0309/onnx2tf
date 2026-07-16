@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
+)
+from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
+    repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
 )
 
 
@@ -43,10 +49,21 @@ def test_repair_stale_nhwc_constant_back_to_broadcastable_spatial_shape() -> Non
         OperatorIR(op_type="SUB", inputs=["coordinate", "x"], outputs=["y"])
     ]
 
+    owner_model_ir = deepcopy(model_ir)
+    owner_stats = (
+        repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
+            owner_model_ir
+        )
+    )
     stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
         model_ir
     )
 
+    assert owner_stats == stats
+    assert (
+        ModelIRPassState(owner_model_ir).fingerprint()
+        == ModelIRPassState(model_ir).fingerprint()
+    )
     assert stats == {"repaired_rank4_channelwise_broadcast_constants": 1}
     assert model_ir.tensors["coordinate"].shape == [1, 1, 64, 1]
     np.testing.assert_array_equal(

@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty-two
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-three
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -10,6 +10,7 @@ lowerer and into focused pass modules:
 - LiteRT.js ExpandDims/Squeeze-to-Reshape conversion;
 - exact rank-four binary NHWC/NCHW adaptation;
 - singleton-broadcast rank-four binary NHWC/NCHW adaptation;
+- rank-three/four channelwise broadcast-constant runtime-layout repair;
 - final static runtime-shape/signature consistency;
 - dynamic boundary-signature map realignment;
 - Transpose/QDQ bridge and residual-closure optimization;
@@ -110,6 +111,23 @@ NumPy broadcast guard continues to leave an operator unchanged when its inputs
 already broadcast to the declared output. The exact and singleton policies
 remain separate public pass functions and separate statistics because merging
 them would obscure their different operand and output-layout semantics.
+
+### Channelwise broadcast-constant runtime-layout repair
+
+`passes/binary_layout_adapter.py` also owns the complete former central repair
+for rank-three and rank-four channelwise constants consumed by binary
+operators. The move is mechanical: after normalizing only the function name,
+the module owner AST is identical to the previous lowerer implementation. The
+lowerer retains its private wrapper, all three direct production calls, and the
+call inside the existing three-round indexed binary-layout convergence helper.
+
+The owner preserves reuse of a caller-provided `ModelIRGraphIndex`, indexed
+binary-op traversal, logical-layout/name/producer hints for ambiguous
+broadcasts, standard NCHW-to-NHWC rotation, exact inverse recovery for a stale
+NHWC constant, and the historical statistic. Exclusive constants are still
+updated in place. Shared constants retain snapshot-based copy-on-write,
+quantization cloning, deterministic names, and differential consumer updates
+through `_set_operator_inputs(..., graph_index=graph_index)`.
 
 ### Static shape-signature consistency
 
@@ -684,6 +702,11 @@ Latest checkpoint results:
 - focused opposite-direction elementwise fan-out owner and architecture gate:
   `2 passed`;
 - changed-file branch regression gate after fan-out extraction: `528 passed`;
+- focused channelwise broadcast-constant owner/wrapper, GraphIndex,
+  convergence, and architecture gates: `9 passed`;
+- historical direct-builder rank-three/rank-four broadcast cases: `4 passed`;
+- changed-file branch regression gate after broadcast-constant extraction:
+  `532 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1009,6 +1032,22 @@ generated-schema outputs. The preceding sequential accuracy checkpoint remains
 `max_abs=0.000102996826171875`; no duplicate inference was run because the
 executed TFLite is unchanged.
 
+The channelwise broadcast-constant extraction used `FastestDet.onnx` as its
+strictly sequential zero-owner artifact control. Its five runtime results are
+all zero before and after extraction. The post conversion completed in 0.815
+seconds and recorded process-tree SWAP zero. The pre/post float32, float16,
+tensor-correspondence, schema, and generated-schema artifacts are byte-
+identical. Their SHA-256 values remain respectively
+`3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`,
+`a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`,
+`2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`,
+`0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`,
+and `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+The preceding FastestDet accuracy baseline remains
+`max_abs=1.3113021850585938e-05`; no duplicate inference was run because the
+executed TFLite artifact is unchanged. Positive production ownership is not
+claimed; the focused synthetic cases are the semantic authority.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1026,10 +1065,10 @@ dedicated positive and rejection contract, but the structurally matching gaze
 model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
-implementation is the 199-line
-`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout` helper. It
-already has dedicated binary-layout and indexed-convergence fixtures. Resume
-by inventorying its GraphIndex contract, constant ownership/copy-on-write,
-statistics aggregation, all production positions, and the smallest sequential
-zero-SWAP real-model owner before a mechanical extraction. No broad conversion
-sweep is implied by this checkpoint.
+implementation is the 535-line
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains` helper. It has a
+historical direct fixture but no focused owner/wrapper module. Resume by first
+inventorying its match/guard/rewrite boundaries, passthrough closure, adapter
+retention, public and fan-out guards, metadata and constant handling,
+production positions, and the smallest sequential zero-SWAP real owner before
+changing source. No broad conversion sweep is implied by this checkpoint.

@@ -7688,6 +7688,31 @@ artifacts are byte-identical across extraction. This mechanical boundary must
 not be broadened into semantic inference without first recording a real owner
 and an independent regression contract.
 
+Rank-four channelwise broadcast-constant repair is now owned by
+`binary_layout_adapter.py` alongside the two related binary compatibility
+policies. The complete former lowerer implementation moved with an AST that is
+identical after normalizing only the function name. The lowerer retains the
+historical private wrapper, three direct `lower_onnx_to_ir` calls, and the one
+call inside three-round binary-layout convergence, so scheduling and statistics
+aggregation are unchanged.
+
+The owner reuses a caller-supplied `ModelIRGraphIndex` when it belongs to the
+same ModelIR and otherwise builds exactly one index. Candidate traversal is
+limited to indexed binary operators. Producer/layout hints still resolve
+ambiguous rank-three and rank-four constants; exclusive constants mutate in
+place, while shared constants use snapshot-based copy-on-write and update the
+index through `_set_operator_inputs`. Standard NCHW-to-NHWC rotation, exact
+inverse recovery for stale NHWC constants, dtype and quantization preservation,
+unique clone naming, and the historical counter are unchanged.
+
+The positive, no-op, shared-constant, GraphIndex-differential, and convergence
+contracts pass, including module-owner versus lowerer-wrapper full ModelIR
+fingerprint equality. FastestDet supplies the strictly sequential zero-owner
+artifact control: all five invocations remain zero, process-tree SWAP is zero,
+and float32, float16, tensor-correspondence, schema, and generated-schema
+artifacts are byte-identical across extraction. Positive production ownership
+is not claimed; the synthetic cases remain the semantic authority.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

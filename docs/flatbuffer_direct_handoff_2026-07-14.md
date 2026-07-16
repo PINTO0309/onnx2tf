@@ -9643,3 +9643,87 @@ production positions, and the smallest sequential zero-SWAP real-model owner
 before changing source. Keep the corrected 207-line opposite elementwise
 helper central until positive production ownership is observed or a later
 checkpoint explicitly accepts zero-owner evidence.
+
+## Channelwise broadcast-constant repair extraction: completed state
+
+The complete former 199-line
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout`
+implementation is now owned by `passes/binary_layout_adapter.py`. The lowerer
+retains one signature-compatible private wrapper. Its three direct
+`lower_onnx_to_ir` positions and the one position inside three-round indexed
+binary-layout convergence are unchanged. After normalizing only the function
+name, the prior lowerer implementation and new module owner have identical
+ASTs.
+
+The owner preserves the existing `ModelIRGraphIndex` contract. It reuses a
+valid caller index, otherwise creates one index, snapshots consumers once,
+iterates only indexed ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW operators, and uses
+the indexed producer lookup for ambiguous runtime-layout hints. Standard
+NCHW-to-NHWC constant rotation, exact inverse recovery for stale NHWC rank-four
+constants, rank-three `[C,1,1]` handling, dtype/shape/signature updates, and
+the historical statistic are unchanged. Exclusive constants mutate in place;
+shared constants retain deterministic copy-on-write, quantization cloning, and
+differential consumer updates through `_set_operator_inputs` with the shared
+index.
+
+The positive owner fixture now runs both the module owner and lowerer wrapper
+on deep copies and compares complete `ModelIRPassState` fingerprints. The
+existing no-op, shared-constant/clone-policy, no-rescan, differential-index,
+three-round convergence, and four historical rank-three/rank-four direct cases
+remain active. Architecture tests fix one implementation owner, one wrapper
+dispatch with GraphIndex forwarding, exactly three direct lowerer calls, and
+one convergence call.
+
+Validation completed as follows:
+
+- binary-layout plus indexed-convergence focused modules: `6 passed`;
+- ownership, GraphIndex, and convergence architecture selector: `3 passed`;
+- historical direct-builder broadcast cases: `4 passed, 745 deselected`;
+- changed-file branch regression collection: `532 passed in 25.64s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- old/new owner AST equivalence and whitespace checks: passed.
+
+FastestDet is the strictly sequential zero-owner artifact control. All five
+runtime results remain zero before and after extraction. The pre conversion
+completed in 0.790 seconds and the post conversion in 0.815 seconds; both
+recorded process-tree SWAP zero. The five core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential FastestDet accuracy checkpoint remains
+`max_abs=1.3113021850585938e-05`; duplicate inference was not run because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the focused synthetic cases remain the semantic authority. All model
+runs were strictly sequential, no dependency or TensorFlow boundary changed,
+and no broad Tier conversion sweep was performed.
+
+The current branch is `fb-refactor6`. Changed files in this checkpoint are the
+binary layout owner module, lowerer import/wrapper, focused binary-layout and
+architecture tests, and the architecture, branch-description, and handoff
+documents. No public API, CLI, artifact name, corpus profile, exclusion policy,
+or ONNX operation-tier policy changed. PR #952 remains closed; this Goal uses
+commit and push only and must not create a pull request.
+
+The known limitation is deliberate: this is an exact ownership move, not a
+new transactional or semantic rewrite. No measured root model exercised a
+non-zero production rewrite; positive behavior is therefore proven by the
+focused ModelIR contracts rather than claimed from the corpus. The corrected
+207-line opposite elementwise helper remains central under its earlier no-owner
+decision.
+
+At restart, first characterize the next raw source-order implementation, the
+535-line `_optimize_convpool_output_transpose_nhwc_passthrough_chains`. Inventory
+its match/guard/rewrite phases, passthrough closure, legacy adapter retention,
+fan-out and public-boundary guards, metadata/constant handling, all production
+positions, and the smallest sequential zero-SWAP owner before changing source.
+Do not mix characterization and extraction unless the evidence proves the
+boundary, and do not create a pull request.
