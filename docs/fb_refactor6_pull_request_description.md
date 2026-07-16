@@ -800,6 +800,9 @@ Latest checkpoint results:
   `606 passed, 3 xfailed`;
 - focused mixed-Concat transactional-plan correction: `13 passed`;
 - changed-file focused branch regression after the correction: `609 passed`;
+- focused mixed-Concat owner/wrapper and architecture gate: `14 passed`;
+- changed-file focused branch regression after the ownership extraction:
+  `610 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1273,6 +1276,16 @@ tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
 byte-identical; the three JSON differences contain output or temporary paths
 only.
 
+The corrected 223-line mixed-Concat owner is now in
+`mixed_concat_input_repair.py`. Its body is AST-identical to the corrected
+lowerer predecessor, while the lowerer retains a two-line private wrapper and
+both fallback/final production calls. Direct owner and wrapper execution on a
+multi-adapter ModelIR produces identical complete fingerprints and statistics.
+A second strictly sequential `sgscsh.onnx` control at corrected checkpoint
+`55f1a541` and after extraction passed with the same
+`max_abs=2.5331974029541016e-07`, zero SWAP, and durations of 15.582 and 14.434
+seconds. Pass metrics and all non-path artifact content are exact.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1312,6 +1325,7 @@ pre-existing defects as strict xfails: partial insertion before a later invalid
 source signature, mutation without a required Concat output tensor, and stale
 per-axis quantized dimension after NHWC-to-NCHW adaptation. A complete
 prevalidation plan now corrects all three paths with no remaining strict xfail.
-Perform any ownership extraction mechanically, preserving the corrected body,
-two production calls, statistics, and artifact control. No broad conversion
-sweep is implied by this checkpoint.
+The mechanical ownership extraction is complete with the corrected body, two
+production calls, statistics, and artifact control preserved. Resume by
+inventorying the next raw source-order owner before changing it. No broad
+conversion sweep is implied by this checkpoint.

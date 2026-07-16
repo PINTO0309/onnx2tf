@@ -10535,3 +10535,47 @@ module. Keep the lowerer private compatibility wrapper and both fallback/final
 production calls, prove normalized old/new body identity, and compare direct
 owner/wrapper complete ModelIR fingerprints and statistics. Do not create a
 pull request.
+
+## Mixed NHWC-input/NCHW-Concat ownership extraction: completed state
+
+The corrected mixed-Concat owner now resides in
+`onnx2tf/tflite_builder/passes/mixed_concat_input_repair.py`. The lowerer
+imports it under a private pass alias and retains a two-line private
+compatibility wrapper. Both fallback and final production calls still target
+the historical lowerer name in the same order.
+
+The old and new owner functions are each 223 lines and have identical ASTs.
+The focused suite executes the module owner and lowerer wrapper on deep copies
+of a multi-adapter ModelIR and confirms identical return statistics and complete
+fingerprints. Architecture tests keep the corrected prevalidation plan before
+the first mutation, require one wrapper dispatch, preserve both production
+calls, and prevent the owner module from importing the lowerer. The whole
+lowerer retains exactly its eight pre-existing Ruff findings.
+
+Validation completed as follows:
+
+- old/new owner AST comparison: exact, 223 lines each;
+- focused owner/wrapper and architecture selector:
+  `14 passed, 254 deselected in 0.69s`;
+- changed-file focused branch regression: `610 passed in 23.28s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Tier 3 `sgscsh.onnx` was run strictly sequentially at corrected checkpoint
+`55f1a541` and after extraction. Both runs passed `-cotof` with
+`max_abs=2.5331974029541016e-07`, zero process-tree SWAP, and durations of
+15.582 and 14.434 seconds. Pass metrics are exact. Float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical; the three JSON differences contain only output-directory or
+temporary-file paths.
+
+Changed files are the new owner module, lowerer import/wrapper, focused owner-
+wrapper comparison, architecture ownership checks, and three branch documents.
+Public API, CLI, behavior/statistics, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; work is commit/push only.
+
+At restart, inventory the next raw helper in actual production source order
+before editing it. Characterize positive, rejection, ownership, and call-
+boundary behavior first. Keep validation minimal and strictly sequential; do
+not create a pull request.

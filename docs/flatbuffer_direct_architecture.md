@@ -4274,14 +4274,17 @@ instead of raising `IndexError` after a partial edge mutation. Architecture
 tests keep the source-signature assignment before the first setter in both
 repairs. No strict xfail remains.
 
-The following 181-line `_repair_mixed_nhwc_inputs_for_nchw_concat` remains a
-raw lowerer owner with two production calls, on fallback and final ModelIR. Its
-focused contract covers canonical spatial selection from two agreeing inputs,
-the two-input output-shape fallback, local NHWC-to-NCHW adapter insertion,
-output channel/shape reconciliation, idempotence, wrong axis, missing input,
-invalid rank, and an already-NCHW no-op. A raw-owner architecture gate fixes
-quantization cloning, direct operator insertion, the compatibility input
-setter, and both production positions.
+The corrected 223-line `_repair_mixed_nhwc_inputs_for_nchw_concat` is now owned
+by `passes/mixed_concat_input_repair.py`, with a two-line private lowerer
+wrapper and two production calls on fallback and final ModelIR. Its body is
+AST-identical to the corrected lowerer predecessor. The focused contract covers
+canonical spatial selection from two agreeing inputs, the two-input output-
+shape fallback, local NHWC-to-NCHW adapter insertion, output channel/shape
+reconciliation, idempotence, wrong axis, missing input, invalid rank, and an
+already-NCHW no-op. Architecture tests fix module ownership, quantization
+cloning/remap, direct operator insertion, the compatibility input setter,
+wrapper dispatch, and both production positions. Direct owner and wrapper
+execution produce identical complete ModelIR fingerprints and statistics.
 
 The owner now resolves the required Concat output tensor and builds all
 prospective adapters into a complete plan before the first tensor or operator

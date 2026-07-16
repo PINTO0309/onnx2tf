@@ -2762,15 +2762,26 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
     assert direct_transpose_invocations[0].args[0].id == "model_ir"
 
 
-def test_mixed_nhwc_nchw_concat_repair_remains_a_raw_owner() -> None:
+def test_mixed_nhwc_nchw_concat_repair_has_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "mixed_concat_input_repair.py"
+    )
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    assert "lower_from_onnx2tf" not in owner_source
     owner_name = "_repair_mixed_nhwc_inputs_for_nchw_concat"
     owner = next(
         node
-        for node in lowering_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == owner_name
     )
     owner_calls = {
@@ -2845,6 +2856,20 @@ def test_mixed_nhwc_nchw_concat_repair_remains_a_raw_owner() -> None:
     assert output_assignment.lineno < first_mutation_line
     assert source_signature_assignment.lineno < first_mutation_line
     assert plan_append.lineno < first_mutation_line
+
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"{owner_name}_pass"
+    ]
+    assert len(wrapper_calls) == 1
 
     lowerer = next(
         node

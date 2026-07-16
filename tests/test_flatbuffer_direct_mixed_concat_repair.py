@@ -16,6 +16,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_mixed_nhwc_inputs_for_nchw_concat,
 )
+from onnx2tf.tflite_builder.passes.mixed_concat_input_repair import (
+    _repair_mixed_nhwc_inputs_for_nchw_concat as _repair_mixed_nhwc_inputs_for_nchw_concat_owner,
+)
 
 
 def _normalize(value: Any) -> Any:
@@ -115,6 +118,19 @@ def test_mixed_concat_repair_inserts_local_adapter_and_is_idempotent() -> None:
     second_stats = _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir)
     assert second_stats == {"repaired_mixed_nhwc_inputs_for_nchw_concat": 0}
     assert _normalize(model_ir) == after_first
+
+
+def test_mixed_concat_repair_owner_matches_compatibility_wrapper() -> None:
+    owner_model_ir = _make_mixed_concat_model_ir(include_second_nhwc=True)
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = _repair_mixed_nhwc_inputs_for_nchw_concat_owner(
+        owner_model_ir
+    )
+    wrapper_stats = _repair_mixed_nhwc_inputs_for_nchw_concat(wrapper_model_ir)
+
+    assert owner_stats == wrapper_stats
+    assert _normalize(owner_model_ir) == _normalize(wrapper_model_ir)
 
 
 def test_mixed_concat_repair_uses_two_input_output_contract() -> None:
