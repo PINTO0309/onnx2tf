@@ -1749,4 +1749,14 @@ both production calls are unchanged. Sixteen direct owner/wrapper families
 produce identical statistics and complete normalized ModelIR state. Resume by
 inventorying and characterizing the next substantive raw source-order owner,
 `_optimize_attention_gather_transpose_reshape_cleanup_chains` (293 lines),
-before semantic or ownership changes. Do not create a pull request.
+before semantic or ownership changes. Do not create a pull request. That
+characterization is now complete without production changes. Thirty-three
+positive, rejection, numerical-equivalence, fixed-point, and call-boundary
+cases pass, while 46 strict xfails isolate zero-match pruning, unsafe
+index/permutation/shape ownership and typing, public/shared permutation
+mutation or provenance loss, non-scalar zero indices, dynamic-signature and
+QDIM loss, incomplete Pattern-B equivalence checks, missing metadata, and
+invalid topology. Resume by building one indexed topology/metadata/constant/
+quantization/removal plan before mutation and turning all 46 xfails green
+without changing valid behavior or either production call. Do not create a
+pull request.

@@ -12269,3 +12269,57 @@ boundaries, pruning, fixed point, statistics, and every production-call
 boundary. Record unsafe behavior as strict xfails before correction. Keep
 validation minimal and strictly sequential, commit and push coherent
 checkpoints, and do not create a pull request.
+
+## Attention Gather cleanup characterization: completed state
+
+The 293-line raw
+`_optimize_attention_gather_transpose_reshape_cleanup_chains` owner and both
+production calls remain unchanged. It had no focused public fixture; the new
+`test_flatbuffer_direct_attention_gather_cleanup_layout.py` now owns the
+synthetic ModelIR contract.
+
+Thirty-three green cases freeze Pattern A and Pattern B, exact NumPy equality,
+negative-axis normalization, two matches of each pattern and fixed point,
+collision-safe shared-permutation naming, the supported public Pattern-A
+Reshape output, existing public-intermediate/fan-out/axis/shape/constant
+rejections, statistics, the current 293-line/two-While owner shape, and both
+production calls.
+
+Forty-six reproduced safety problems are strict xfails:
+
+- one zero-match case prunes an unrelated tensor;
+- thirty unsafe public-input, variable, TensorIR/buffer dtype, or quantized
+  index/permutation/shape constant cases;
+- two unsafe public-output/shared-clone permutation ownership/provenance cases;
+- two multi-element zero-index cases;
+- one dynamic-signature and one retained per-axis-QDIM case in Pattern A;
+- one inconsistent intermediate-shape and one quantization-bypass case in
+  Pattern B;
+- three incomplete-metadata and four invalid-topology cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `33 passed, 46 xfailed in 1.05s`;
+- focused characterization, the six adjacent extracted bridge/collapse
+  contracts, and ordered architecture suite:
+  `683 passed, 46 xfailed in 19.42s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.51s`;
+- focused-test Ruff/format checks, Python compilation, and whitespace checks:
+  passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. PR #952 remains
+closed; no pull request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Build
+one `ModelIRGraphIndex` and complete Pattern-A/Pattern-B plans proving unique
+ordered topology, exact private intermediates, scalar zero indices, complete
+shape/signature/dtype/layout/quantization compatibility, and public boundaries.
+Give all match constants an immutable unquantized INT32 ownership/type
+contract; clone changed shared/public permutation values deterministically with
+full provenance. Preserve dynamic signatures, remap Pattern-A QDIM, require
+exact Pattern-B metadata equivalence, and precompute every setter, removal, and
+prune decision before mutation. Turn all 46 strict xfails green while
+preserving valid behavior, statistics, fixed point, and both production calls.
+Validate sequentially, commit and push, and do not create a pull request.

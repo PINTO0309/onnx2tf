@@ -8587,6 +8587,55 @@ ModelIR state are identical in every case. The mechanical move does not alter
 public APIs, artifacts, dependencies, corpus policy, ordered runtime behavior,
 or TensorFlow isolation.
 
+## Raw attention Gather cleanup characterization
+
+The next substantive raw source-order owner is the 293-line
+`_optimize_attention_gather_transpose_reshape_cleanup_chains`. Production code
+and both historical calls remain unchanged. It previously had only ordered
+architecture references; the focused
+`test_flatbuffer_direct_attention_gather_cleanup_layout.py` now owns its
+synthetic ModelIR contract.
+
+Thirty-three green cases freeze both supported rewrites: the rank-four
+Gather/Transpose/Reshape attention tail, the double-Gather/Reshape identity,
+negative-axis normalization, exact NumPy equality, mixed multiple matches and
+fixed point, collision-safe shared-permutation naming, public Pattern-A
+Reshape outputs, existing public-intermediate/fan-out/shape/axis/constant
+rejections, statistics, the raw owner's current two-loop structure, and both
+production calls.
+
+Forty-six concrete safety gaps are strict xfails:
+
+- a zero-match invocation prunes an unrelated tensor;
+- thirty public-input, variable, wrong-TensorIR-dtype, wrong-buffer-dtype, or
+  quantized index/permutation/shape cases are accepted as compile-time
+  constants;
+- a changed public permutation output mutates rather than receiving a private
+  clone, while a shared permutation clone loses ONNX tensor provenance;
+- multi-element all-zero index tensors are treated as scalar Gather indices;
+- Pattern A collapses dynamic signatures and leaves a rank-shifted per-axis
+  QDIM unchanged;
+- Pattern B accepts inconsistent intermediate shapes and bypasses incompatible
+  output quantization metadata;
+- short or missing tensor metadata, duplicate producers, reverse graph order,
+  a public internal input alias, and a reverse source producer are accepted.
+
+Correction must build one `ModelIRGraphIndex` and complete immutable plans for
+both patterns before mutation. Each plan must prove unique producers, strict
+graph order, exact private intermediate consumers, scalar zero-index semantics,
+complete compatible shape/signature/dtype/layout/quantization metadata, and
+every public boundary. Index, permutation, and reshape-shape inputs need an
+explicit unquantized INT32 TensorIR/buffer/ownership contract. Runtime/public
+inputs, variables, producers, invalid metadata, and quantized constants must
+reject. A changed permutation with unrelated users or a public output needs a
+deterministic collision-safe clone preserving layout and ONNX provenance.
+Pattern A must preserve dynamic axes, remap retained per-axis QDIM, and update
+all permutation metadata consistently. Pattern B may bypass only metadata-
+equivalent tensors with exact Gather-derived shapes. Constant action, metadata,
+setters, removals, pruning, and statistics must be known before commit; a
+zero-match call must remain a complete no-op. The 293-line count is descriptive
+only; 2,000 remains the ONNX operation-count tier threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
