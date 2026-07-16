@@ -1652,4 +1652,12 @@ direct owner/wrapper families produce identical statistics and complete
 normalized ModelIR state. Resume by inventorying and characterizing the next
 raw source-order owner,
 `_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains` (461
-lines), before any semantic or ownership change.
+lines), before any semantic or ownership change. That characterization is now
+complete without production changes. Its public fixture moved out of the giant
+direct test, 21 positive/rejection/boundary cases pass, and 42 strict xfails
+isolate incomplete metadata, three affine-constant ownership paths, QDIM,
+Mean-axes and Reshape-shape ownership/type contracts, late partial mutation,
+malformed axis handling, invalid topology, and identity-axis handling. Resume
+by planning the complete indexed topology, metadata, constants, quantization,
+axes, shape, names, setters, and removals before mutation, then turn all 42
+xfails green without changing valid behavior or ordered boundaries.

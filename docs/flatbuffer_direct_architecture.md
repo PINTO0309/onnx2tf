@@ -8227,6 +8227,53 @@ normalized ModelIR state are identical in every case. The mechanical move
 does not alter public APIs, artifacts, dependencies, corpus policy, ordered
 runtime behavior, or TensorFlow isolation.
 
+## Raw Concat/Mul/Add/Add/Mean/Reshape characterization
+
+The next raw source-order owner is the 461-line
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains`. It remains
+unchanged at the fifth position of both terminal Concat recovery sequences.
+Its existing positive fixture moved from the giant direct test into
+`test_flatbuffer_direct_concat_mul_add_add_mean_reshape_layout.py`, reducing
+the central test by 94 lines while preserving the public behavior.
+
+The focused positive contract covers ordinary static and dynamic-batch
+signatures, two independent graph-order matches, fixed point, scalar affine
+constants, collision-safe shared cloning for all three affine constants,
+shared Mean-axes cloning, exact old-Mean-shape rewriting, zero-match no-prune
+behavior, Concat and Mean options/version/provenance, ten existing rejection
+guards, statistics, and both ordered production boundaries.
+
+Forty-two concrete safety gaps are strict xfails:
+
+- eleven missing, rank-three, or short-signature source/Concat/Mul/Add/Mean
+  metadata cases still rewrite;
+- six public-input or variable affine constants rotate in place and three
+  public affine outputs are not preserved through private clones;
+- per-axis QDIM is not remapped for the three constants or five NHWC tensors;
+- five unsafe Mean-axes ownership/dtype/buffer/quantization cases are accepted,
+  and a public axes output is mutated rather than cloned;
+- four unsafe Reshape-shape ownership/type cases are accepted, and shared or
+  public-output shapes are mutated rather than cloned;
+- invalid second/third affine constants, invalid axes, and malformed Mean
+  metadata are discovered only after earlier constants have changed;
+- a malformed Concat axis raises instead of producing a no-op;
+- duplicate Mean producers, reverse Mean/Reshape order, and a produced public
+  input alias are accepted;
+- an identity Mean-axis mapping is treated as rewrite failure after affine
+  constants have already changed.
+
+Production source is intentionally unchanged. Correction must build one
+indexed, strictly ordered candidate plan with complete rank-four effective
+metadata and immutable plans for all three affine constants, Mean axes, and
+the conditionally rewritten Reshape shape. Shared and public-output constants
+must clone, public inputs and variables must reject when mutation is required,
+INT32 shape/axes contracts must be explicit, QDIM must follow each permutation,
+and an unchanged axes mapping must count as a valid plan. Every name, tensor,
+setter, metadata update, removal, and pruning decision must be known before the
+first mutation. Existing match order, statistics, fixed point, scalar/shared
+handling, exact shape rewrite, provenance, and both runtime boundaries must
+remain unchanged.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

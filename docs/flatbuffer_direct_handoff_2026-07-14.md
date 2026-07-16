@@ -11627,3 +11627,56 @@ fixed-point, statistics, and ordered-boundary behavior, and record unsafe
 behavior as strict xfails before correction. Keep validation minimal and
 strictly sequential, commit and push coherent checkpoints, and do not create a
 pull request.
+
+## Concat/Mul/Add/Add/Mean/Reshape characterization: completed state
+
+The 461-line raw
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains` owner and
+its fifth position in both terminal Concat recovery sequences are unchanged.
+The existing positive fixture moved from `test_tflite_builder_direct.py` into
+the focused `test_flatbuffer_direct_concat_mul_add_add_mean_reshape_layout.py`,
+reducing the giant direct test by 94 lines.
+
+The focused contract freezes static and dynamic signatures, two independent
+matches, fixed point, scalar constants, collision-safe shared clones for Mul
+and both Adds, shared Mean-axes cloning, exact old-Mean-shape rewriting, no-
+match pruning behavior, Concat/Mean options/version/provenance, ten existing
+rejection guards, statistics, the 461-line/two-While owner shape, and both
+ordered production boundaries.
+
+Forty-two reproduced safety problems are strict xfails:
+
+- eleven incomplete source/Concat/Mul/Add/Mean metadata cases;
+- nine affine-constant public/variable/output ownership violations;
+- one complete per-axis QDIM case;
+- six unsafe or public-output Mean-axes cases;
+- six unsafe, shared, or public-output Reshape-shape cases;
+- four late partial-mutation cases;
+- one malformed Concat-axis exception;
+- three duplicate-producer, reverse-order, or public-alias cases;
+- one identity Mean-axis mapping false negative with partial mutation.
+
+Validation completed as follows:
+
+- focused characterization: `21 passed, 42 xfailed in 1.21s`;
+- focused characterization plus ordered architecture suite:
+  `269 passed, 42 xfailed in 20.55s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.49s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion was changed or run. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+and TensorFlow isolation are unchanged. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use
+one `ModelIRGraphIndex` to prove unique producers, strict pre-Transpose/Concat/
+Mul/Add/Add/Mean/Reshape order, private intermediates, exact consumers, and
+complete rank-four effective metadata. Precompute immutable update-or-clone
+plans for all three affine constants, an ownership/type-safe Mean-axes plan
+that accepts identity mappings, and a conditional ownership/type-safe Reshape-
+shape plan. Remap every affected per-axis QDIM and complete all names, tensors,
+setters, metadata changes, and removals before the first mutation. Turn all 42
+strict xfails green, preserve the 21 existing cases and both production
+boundaries, validate sequentially, commit and push, and do not create a pull
+request.
