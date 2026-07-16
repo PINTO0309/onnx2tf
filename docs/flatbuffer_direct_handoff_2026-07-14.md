@@ -10446,3 +10446,46 @@ At restart, characterize the next 181-line raw source-order owner,
 `_repair_mixed_nhwc_inputs_for_nchw_concat`, before editing it. Fix any unsafe
 path in a separate checkpoint before a mechanical extraction. Keep validation
 minimal and strictly sequential; do not create a pull request.
+
+## Mixed NHWC-input/NCHW-Concat characterization: completed state
+
+The next 181-line raw owner is
+`_repair_mixed_nhwc_inputs_for_nchw_concat` in `lower_from_onnx2tf.py`. It has
+two production calls: fallback ModelIR and final ModelIR. The new focused module
+fixes the three-input canonical-spatial success path, the two-input output-
+contract fallback, inserted adapter shape, output channel reconciliation,
+idempotence, and four complete no-op guards. The raw-owner architecture gate
+records direct operator insertion, quantization cloning, input replacement,
+and both production positions. Existing positive tests in the broader Conv
+layout module remain active.
+
+The audit exposes three pre-existing unsafe paths as strict xfails:
+
+- with multiple NHWC candidates, the owner inserts the first adapter before
+  reading the later source signature; a short later signature raises
+  `IndexError` and leaves a partial graph mutation;
+- when at least two NCHW inputs establish the canonical spatial contract, the
+  required Concat output tensor is not resolved until after adapters and input
+  rewiring, so a missing output tensor still reports one repair;
+- a per-axis source quantization on NHWC dimension `3` is cloned onto the NCHW
+  adapter without remapping its quantized dimension to `1`.
+
+Validation completed as follows:
+
+- focused mixed-Concat owner and architecture selector:
+  `10 passed, 254 deselected, 3 xfailed in 0.77s`;
+- changed-file focused branch regression, including the new untracked test in
+  discovery: `606 passed, 3 xfailed in 24.92s`;
+- targeted Ruff and Python compilation: passed.
+
+Production source is unchanged. Public API, CLI, successful behavior,
+TensorFlow boundary, dependencies, corpus profiles, exclusions, and ONNX
+operation tiers are unchanged. PR #952 remains closed; work is commit/push
+only.
+
+At restart, build a complete immutable adapter plan before mutation: resolve
+the required output tensor, materialize every source shape/signature, choose
+collision-free tensor names across the whole plan, clone and remap per-axis
+quantization, and compute the final output metadata. Then commit insertions and
+input/output updates in the existing order. Turn all three strict xfails green
+before extracting the owner. Do not create a pull request.

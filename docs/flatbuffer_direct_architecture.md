@@ -4274,6 +4274,25 @@ instead of raising `IndexError` after a partial edge mutation. Architecture
 tests keep the source-signature assignment before the first setter in both
 repairs. No strict xfail remains.
 
+The following 181-line `_repair_mixed_nhwc_inputs_for_nchw_concat` remains a
+raw lowerer owner with two production calls, on fallback and final ModelIR. Its
+focused contract covers canonical spatial selection from two agreeing inputs,
+the two-input output-shape fallback, local NHWC-to-NCHW adapter insertion,
+output channel/shape reconciliation, idempotence, wrong axis, missing input,
+invalid rank, and an already-NCHW no-op. A raw-owner architecture gate fixes
+quantization cloning, direct operator insertion, the compatibility input
+setter, and both production positions.
+
+Three unsafe paths are strict xfails. Adapter creation mutates the ModelIR one
+input at a time, so a malformed signature on a later NHWC input raises after an
+earlier adapter is already inserted. The required Concat output tensor is
+resolved only after adapter insertion and input rewiring, allowing a rewrite to
+succeed with an unresolved output. Finally, cloned per-axis quantization keeps
+the NHWC channel dimension `3` instead of remapping it to NCHW dimension `1`.
+All prospective adapters, the required output, and quantization metadata must
+be validated into an immutable plan before the first tensor or operator
+insertion.
+
 Wrong-way NCHW-to-NHWC Transpose-before-Conv sanitation is owned by the Torch/
 TensorFlow-free `passes/conv_input_layout.py` module. A graph containing a
 Transpose constructs or reuses one `ModelIRGraphIndex`; a Transpose-free graph

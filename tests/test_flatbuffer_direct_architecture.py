@@ -2762,6 +2762,45 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
     assert direct_transpose_invocations[0].args[0].id == "model_ir"
 
 
+def test_mixed_nhwc_nchw_concat_repair_remains_a_raw_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    owner_name = "_repair_mixed_nhwc_inputs_for_nchw_concat"
+    owner = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_clone_quantization" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "insert" in owner_calls
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert [
+        call.args[0].id
+        for call in sorted(invocations, key=lambda candidate: candidate.lineno)
+    ] == ["fallback_ir", "model_ir"]
+
+
 def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
     owner_path = (
         REPO_ROOT

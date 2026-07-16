@@ -794,6 +794,10 @@ Latest checkpoint results:
 - focused Conv-input adapter owner/wrapper and architecture gate: `8 passed`;
 - changed-file focused branch regression after the ownership extraction:
   `599 passed`;
+- focused mixed NHWC-input/NCHW-Concat characterization and raw-owner gate:
+  `10 passed, 3 xfailed`;
+- changed-file focused branch regression including that characterization:
+  `606 passed, 3 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1282,5 +1286,11 @@ zero statistic and complete ModelIR no-op. Their exact mechanical ownership
 move is complete with bodies, wrappers, sequence, shared-index behavior,
 statistics, and production boundaries preserved. Resume by characterizing the
 next raw source-order owner,
-`_repair_mixed_nhwc_inputs_for_nchw_concat`, before changing it. No broad
-conversion sweep is implied by this checkpoint.
+`_repair_mixed_nhwc_inputs_for_nchw_concat`, before changing it. That
+characterization now freezes its three-input and two-input output-contract
+success paths, idempotence, four no-op guards, two production calls, and three
+pre-existing defects as strict xfails: partial insertion before a later invalid
+source signature, mutation without a required Concat output tensor, and stale
+per-axis quantized dimension after NHWC-to-NCHW adaptation. Correct those three
+paths before any ownership extraction. No broad conversion sweep is implied by
+this checkpoint.
