@@ -5966,3 +5966,137 @@ anything. Record any ownership conflict, artifact change, accuracy failure, or
 SWAP before changing source. Keep conversion checks minimal, inference
 strictly sequential, and continue with coherent commit/push units only; do not
 create a pull request.
+
+## Pre-unary reshape suffix extraction: pre-change observation
+
+The next raw helper was instrumented at its unchanged production boundary
+before source modification. Seven conversion-only checks ran sequentially
+under `uv`. IAT-LLIE, Face Detection YuNet int8, FastestDet, HumanSeg, OSNet,
+and SiNet recorded 0, 0, and 0 rewrites. LINEA recorded one rewrite at the
+first invocation and zero at the next two. Its exact changed subgraph is:
+
+```text
+node_conv2d_98_output_nhwc
+  -> TRANSPOSE [0,3,1,2] -> conv2d_98
+  -> LOGISTIC -> val_855
+  -> MUL(conv2d_98, val_855) -> silu_49
+  -> RESHAPE(view_16_reshape_shape) -> view_16
+  -> TRANSPOSE [0,2,1] -> permute_7
+```
+
+The helper rewrites this generic Swish suffix to operate directly on
+`node_conv2d_98_output_nhwc`, changes the Reshape output to `permute_7`, and
+removes both Transposes. The first invocation changes the operator count from
+1,839 to 1,837. The current raw implementation rebuilds complete producer and
+consumer maps for each fixed-point iteration, scans every Reshape, searches
+operator identity to rediscover removal indices, mutates ModelIR directly,
+and does not update the Session `LayoutState`. The issue is architectural and
+performance-related; no LINEA accuracy regression is currently known.
+
+The exact pre-change artifacts are fixed as follows:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence report:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`.
+
+The fixed sequential LINEA follow-up baseline passes with maximum absolute
+error `0.002297189086675644` and zero process-tree SWAP. The safe extraction
+scope is only the non-zero generic Swish family. It must use one differential
+`ModelIRGraphIndex`, immutable plans with full revalidation before apply,
+typed constant and shape/layout guards, explicit `LayoutState` updates,
+bounded dispatch, and no internal prune. Plain unary cases and all strict
+rejects must remain on the raw compatibility fallback. No production fix has
+been applied at this point.
+
+### First indexed implementation report-contract finding
+
+The initial strict owner accepted exactly the intended LINEA Swish candidate
+at counts 1, 0, and 0. Both TFLite files remained byte-identical, but the
+correspondence report changed from
+`ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`
+to `20f9736c4118fcfad42e35fe786783d2d9dec587012a4b55ddd62747cc7ed6e5`.
+This problem was isolated and recorded before corrective source work.
+
+The report summaries, all 920 records, all 579 lineage-event positions, and
+578 lineage events are identical. Only event 269 differs. The historical raw
+helper records the Mul data-edge rewrite with source
+`replace_operator_input_at`; the first indexed implementation used
+`set_operator_inputs`. The semantic edge is identical in both reports:
+`conv2d_98 -> node_conv2d_98_output_nhwc`. This is a report-source-label
+compatibility regression, not a graph or accuracy difference. The bounded
+correction is to use the graph-index-aware single-slot mutation helper for
+that one Mul data edge, matching the historical lineage contract without
+altering any other mutation.
+
+## Pre-unary reshape suffix extraction: final checkpoint
+
+The bounded indexed owner is implemented in
+`pre_unary_reshape_suffix_layout.py` and connected at the unchanged wrapper
+boundary. It dispatches only indexed Mul candidates and reuses one
+`ModelIRGraphIndex` per invocation. Candidate resolution requires the generic
+Swish topology, typed `[0,3,1,2]` and `[0,2,1]` constants, exact positive
+rank-four NHWC/NCHW views, exact rank-three NCW/NWC reshape semantics,
+compatible dtype and per-tensor quantization, graph ordering and boundaries,
+exclusive data edges, and an exclusive typed reshape constant. Accepted
+candidates become immutable plans with complete tensor/operator contracts and
+are fully revalidated before apply. Mutation is differential, bounded, and
+updates the Session `LayoutState`; the raw wrapper remains the only prune and
+lineage cleanup boundary. Plain unary paths and every strict reject remain on
+the original fallback.
+
+The recorded lineage-source incompatibility was corrected with the
+graph-index-aware single-slot input helper. LINEA now records indexed owner
+counts 1, 0, and 0, while the compatibility fallback adds no rewrite for the
+accepted candidate. All fixed artifacts are restored exactly:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence report:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`.
+
+The single sequential managed LINEA `-cotof` gate passes in 23.336 seconds
+with maximum absolute error `0.002297189086675644`, converter exit code 0,
+and `peak_swap_kib=0`. The indexed owner, preceding suffix owner, active
+compatibility fixtures, and complete architecture suite pass 230 tests in
+45.57 seconds. The dedicated owner and wrapper cleanup suite passes 6 tests;
+TensorFlow-import-blocked explicit direct, default direct, and direct `-cotof`
+pass 3 tests in 4.53 seconds. Scoped Ruff, Python syntax compilation, and
+`git diff --check` pass. The same ten inherited lowerer F841 findings remain
+unchanged.
+
+### Changed files and restart instruction
+
+- `onnx2tf/tflite_builder/passes/pre_unary_reshape_suffix_layout.py` owns the
+  strict indexed Swish family, immutable plans, differential mutation, and
+  rank-aware layout reconciliation.
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py` invokes the owner before the
+  unchanged raw fallback, supplies Session layout state, and preserves one
+  cleanup/report boundary.
+- `tests/test_flatbuffer_direct_indexed_pre_unary_reshape_suffix_layout.py`
+  covers capability, atomic rejection, bounded candidate dispatch, stale
+  plans, determinism, graph-index/layout consistency, exact lineage source,
+  and wrapper cleanup.
+- `tests/test_flatbuffer_direct_architecture.py` fixes indexed-first ownership,
+  bounded dispatch, no internal prune/full-map build, and the production
+  layout-state boundary.
+- `docs/flatbuffer_direct_architecture.md` and this handoff record the design,
+  pre-change evidence, report-contract problem before correction, final
+  evidence, and remaining work.
+
+No public API, CLI behavior, dependency, managed profile/exclusion, timeout
+policy, ONNX corpus model, or optional TensorFlow exporter changed. No broad
+Tier run was performed because LINEA is the only established non-zero model
+for this bounded family and the preceding fixed 49-model checkpoint already
+confirmed zero new regressions.
+
+After confirming the branch is clean and synchronized, characterize the next
+raw `_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains` helper at
+its unchanged production boundary. Establish a real non-zero family before
+source work, record any problem before correction, and retain strict rejects
+on the compatibility path. Continue with minimal sequential zero-SWAP model
+checks and coherent commit/push units only; do not create a pull request.

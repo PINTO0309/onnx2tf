@@ -6834,6 +6834,30 @@ tests now forbid reintroducing either its private definition or call while the
 single ordered indexed/compatibility owner retains all fixtures and artifact
 behavior.
 
+The rank-four Swish to rank-three reshape suffix now has a bounded indexed
+owner in `pre_unary_reshape_suffix_layout.py`. It dispatches only indexed Mul
+operators and accepts the generic
+`Transpose -> Logistic/Mul -> Reshape -> Transpose` family when typed
+permutations, exact NHWC/NCHW and NCW/NWC views, dtype and per-tensor
+quantization, graph boundaries, exclusive mutable edges, operator order, and
+an exclusive typed reshape constant all agree. An immutable plan records the
+complete tensor/operator contract and is fully resolved again immediately
+before mutation. Apply uses differential graph-index updates, explicitly
+updates Session layout state, and has a deterministic rewrite bound. Plain
+unary cases, shared constants, dynamic or relaxed views, and every strict
+reject remain on the unchanged raw fallback. Pruning stays at the wrapper's
+single historical cleanup boundary, which removes corresponding stale layout
+entries after cleanup.
+
+LINEA is the non-zero production model: the first prefix invocation indexes
+one Swish suffix and the next two index zero. The first implementation exposed
+one correspondence-only incompatibility because a whole-input mutation
+reported `set_operator_inputs` instead of the historical
+`replace_operator_input_at`. Recording and correcting that single lineage
+source label restored all artifacts byte-for-byte. The sequential accuracy
+gate passes with maximum absolute error `0.002297189086675644` and zero
+process-tree SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
