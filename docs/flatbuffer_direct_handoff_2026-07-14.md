@@ -7577,3 +7577,91 @@ helper. It may join `binary_layout_adapter.py` only after its two operand
 directions, output-shape guard, insertion order, and real invocation counts are
 fixed independently. Continue with short sequential zero-SWAP validation,
 commit and push coherent units, and do not create a pull request.
+
+## Singleton-broadcast binary adapter integration: pre-change record
+
+The adjacent `_repair_rank4_binary_singleton_broadcast_layout_mismatch` helper
+is a separate 172-line compatibility policy for an NCHW singleton-channel
+tensor paired with an NHWC rank-four tensor. It supports the same six binary
+operator types but has four output-driven branches:
+
+- input 0 is singleton NCHW and input 1 is NHWC, with an NCHW output: insert
+  NHWC-to-NCHW Transpose on input 1;
+- input 1 is singleton NCHW and input 0 is NHWC, with an NCHW output: insert
+  NHWC-to-NCHW Transpose on input 0;
+- input 0 is singleton NCHW with an NHWC output: reshape input 0 to
+  `[N,H,W,1]`;
+- input 1 is singleton NCHW with an NHWC output: reshape input 1 to
+  `[N,H,W,1]`.
+
+Every branch first rejects a pair that already broadcasts to the declared
+output. Accepted branches clone quantization to the adapted tensor, insert the
+adapter immediately before the binary operator, rewire only the selected
+operand, restart fixed-point discovery, and prune only when at least one repair
+occurred. This contract is related to, but not interchangeable with, the exact
+full-rank permutation adapter already in `binary_layout_adapter.py`; the two
+belong in the same op-family module under separate public owners and stats.
+
+Temporary, uncommitted instrumentation measured both unconditional production
+invocations on `GRU.onnx`, `iat_llie_180x320.onnx`, `FastestDet.onnx`,
+`face_detection_yunet_2023mar.onnx`,
+`human_segmentation_pphumanseg_2021oct.onnx`, and
+`osnet025_Nx3x256x128.onnx`. All twelve results were zero; the fallback and
+placeholder-restoration paths were not entered. All six models passed in
+2.607-16.015 seconds, their maximum absolute errors remained below `2.2e-05`,
+and all process-tree SWAP peaks were zero. This is another production zero-
+owner control, so the complete four-branch synthetic contract is required
+before integration.
+
+The fixed `FastestDet.onnx` hashes remain:
+
+- float32:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`.
+
+The safe scope is an exact move into the existing binary adapter module. Keep
+all four branch predicates and their precedence, NumPy broadcast guard,
+operand selection, adapter type, permutation/shape constants, metadata and
+quantization, unique-name behavior, insertion/rewrite order, fixed-point
+restart, conditional prune, stats key, four production positions, and private
+wrapper. Differential indexing or semantic generalization remains separate.
+
+## Singleton-broadcast binary adapter integration: completed state
+
+`passes/binary_layout_adapter.py` now owns the singleton-broadcast policy under
+`repair_rank4_binary_singleton_broadcast_layout_mismatch`. The historical
+lowerer symbol remains a thin compatibility wrapper and its four production
+positions are unchanged. The exact full-rank and singleton-broadcast policies
+remain separate functions with separate stats, because the latter chooses an
+operand and either Transpose or Reshape from the declared output layout.
+
+Twenty-four positive synthetic cases cover all four output-driven branches for
+all six supported binary operators. They additionally prove selected-operand
+rewiring, exact permutation or target-shape constants, tensor shape/signature,
+independent quantization cloning, and idempotence. A dedicated NumPy-broadcast
+no-op and direct-owner/private-wrapper equivalence complete the new focused
+contract. Together with the previously extracted exact adapter and the two
+legacy singleton tests, the focused binary module run passes `45 passed in
+0.58s`. The complete flatbuffer-direct architecture suite passes `221 passed
+in 39.12s` and fixes one module owner plus four production calls for each
+binary policy. The final combined branch gate (all four extracted owner test
+modules, shape reconciliation, active legacy compatibility selectors, and the
+complete architecture suite) passes `280 passed in 39.86s`.
+
+Post-integration `FastestDet.onnx` passed sequential isolated conversion in
+3.739 seconds with maximum absolute error
+`1.3113021850585938e-05`, evaluation pass true, and process-tree SWAP zero.
+Its float32, float16, and tensor-correspondence artifacts are byte-identical to
+the three pre-change hashes. No dependency, public API, CLI, artifact format,
+TensorFlow boundary, corpus profile, exclusion, or ONNX model changed, and no
+regression is known.
+
+The next adjacent raw lowerer helper is
+`_sanitize_static_shape_signature_consistency`. At restart, first characterize
+its production call count, positive ownership, no-op guards, metadata and
+stats contract before considering a separate extraction. Keep validation
+small and sequential, reject any model that triggers SWAP, commit and push one
+coherent checkpoint at a time, and do not create a pull request.

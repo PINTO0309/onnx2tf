@@ -4092,6 +4092,20 @@ dynamic/equal/non-permutation no-ops, idempotence, and wrapper equality. The
 current corpus measurements are zero-owner evidence; differential indexing or
 broader inference is not combined with the mechanical ownership move.
 
+The same op-family module separately owns singleton-channel rank-four binary
+adaptation. This rule is intentionally not folded into the exact full-rank
+adapter: it uses the declared output shape to select one of four branches.
+For an NCHW output it transposes the NHWC operand to NCHW; for an NHWC output
+it reshapes the singleton NCHW operand to `[N,H,W,1]`. Either input position is
+supported for ADD/MUL/SUB/DIV/MAXIMUM/MINIMUM. A NumPy broadcast check rejects
+pairs that already produce the declared output without an adapter. The owner
+preserves quantization cloning, fixed-point restart, and conditional pruning,
+while the lowerer keeps only the historical wrapper at all four production
+positions. Focused tests cover all four branches for every supported operator,
+the broadcast no-op, idempotence, and wrapper equality. Architecture tests
+keep the two binary policies as distinct public module owners and prevent
+implementation from returning to the central lowerer.
+
 Rank-four channelwise broadcast-constant repair now builds one
 `ModelIRGraphIndex` instead of independently scanning the graph for producers,
 consumers, and binary candidates. Exact ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW
