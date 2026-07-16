@@ -9,6 +9,9 @@ import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.passes.hardswish_shape_sanitization import (
+    sanitize_hardswish_tensor_shapes,
+)
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_fuse_conv_activation_chains,
     _prune_dead_operators,
@@ -167,6 +170,24 @@ def _run_legacy_final_convergence(model_ir: ModelIR) -> dict[str, int]:
         ),
         **fusion_stats,
     }
+
+
+def test_hardswish_shape_sanitizer_module_matches_compatibility_wrapper() -> None:
+    direct_model_ir = _make_final_convergence_model_ir()
+    wrapper_model_ir = copy.deepcopy(direct_model_ir)
+
+    direct_stats = sanitize_hardswish_tensor_shapes(
+        direct_model_ir,
+        graph_index=ModelIRGraphIndex(direct_model_ir),
+    )
+    wrapper_stats = _sanitize_hardswish_tensor_shapes(
+        wrapper_model_ir,
+        graph_index=ModelIRGraphIndex(wrapper_model_ir),
+    )
+
+    assert direct_stats == {"sanitized_hardswish_tensor_shapes": 1}
+    assert wrapper_stats == direct_stats
+    assert _normalize(wrapper_model_ir) == _normalize(direct_model_ir)
 
 
 def test_indexed_final_convergence_matches_legacy_sequence(monkeypatch) -> None:

@@ -7227,3 +7227,78 @@ or regression is known. After this checkpoint is synchronized, continue with
 the next unmodularized production helper using the same evidence-first,
 short-model, sequential, zero-SWAP policy; commit and push only, and do not
 create a pull request.
+
+## HARD_SWISH shape sanitization extraction: pre-change record
+
+The next small metadata owner was `_sanitize_hardswish_tensor_shapes`. It
+occupied about 80 central-lowerer lines, accepted an optional shared
+`ModelIRGraphIndex`, and enforced the invariant that HARD_SWISH output shape
+and signature match its input. This was a mechanical ownership extraction;
+no conversion failure or semantic gap prompted the work.
+
+Before source changes, every root model that directly contains ONNX
+`HardSwish` was tested in ascending node-count order. The strictly sequential
+set was `text_detection_en_ppocrv3_2023may.onnx`, `inference_ops15.onnx`,
+`object_tracking_vittrack_2023sep.onnx`, `vttrack.onnx`, the INT8BQ tracking
+variant, and `ssdlite320_mobilenet_v3_large.onnx`. The six model files comprise
+twelve unchanged production invocations, two per conversion. All invocation
+counts were zero. Every conversion exited 0 in 1.757-3.775 seconds and every
+process-tree monitor recorded SWAP zero. The absence of a real non-zero owner
+is retained as a zero-owner control; the existing synthetic stale-metadata
+fixture remains the authoritative positive contract.
+
+The fixed `inference_ops15.onnx` pre-extraction artifacts were:
+
+- float32: `3ce4af63727dd927666f09bb51555ccfd60e1cf01b4ba7fc674170e8277b9a96`;
+- float16: `ee97304641e2b1330bbbe1f1472fc32a4a4d41d4bdb08a3e660da64b5204ce47`;
+- correspondence: `a50f21319df0380165e8fee2c47f679ccb1682eee965fbd3b0f05ad02cc3d276`.
+
+The safe scope was therefore an exact code move only. Preserve the indexed
+HARD_SWISH selection, malformed/missing-tensor no-ops, positive-static-shape
+signature canonicalization, dynamic signature fallback, direct metadata
+mutation, update count, production scheduling, and compatibility name. Do not
+add broader inference or topology changes without first establishing a real
+owner and a separate semantic contract.
+
+## HARD_SWISH shape sanitization extraction: completed state
+
+`passes/hardswish_shape_sanitization.py` now owns the implementation and
+`lower_from_onnx2tf.py` retains the historical private wrapper. The pass uses
+the supplied `ModelIRGraphIndex` only when it belongs to the current ModelIR;
+standalone callers retain the original single operator-list traversal. It
+performs no topology, layout-state, lineage, constant-buffer, cleanup, or pass-
+order mutation. The two production calls and their shared-index behavior are
+unchanged.
+
+A direct module/wrapper equivalence test fixes the non-zero stale-metadata
+behavior, including the input signature canonicalization that occurs for a
+fully static input. The architecture contract fixes the single module owner,
+indexed dispatch, absence of producer/consumer-map rebuilds, and absence of a
+lowerer import cycle.
+
+Post-extraction `inference_ops15.onnx` conversion exited 0 in 2.358 seconds,
+recorded counts `[0,0]`, and process-tree SWAP zero. Its float32, float16, and
+correspondence files are byte-identical to the fixed hashes above. Because the
+executable artifacts are identical and the helper has no production rewrite
+in the measured corpus, no redundant real-model inference was added.
+
+Verification completed as follows:
+
+- targeted owner/final-convergence selection: `3 passed, 218 deselected in
+  2.11s`;
+- complete final-convergence module: `3 passed in 0.49s`;
+- complete flatbuffer-direct architecture contract: `218 passed in 41.77s`;
+- TensorFlow-import-blocked explicit direct, default direct, and direct
+  `-cotof`: `3 passed, 8 deselected in 4.18s`;
+- scoped Ruff, syntax compilation, and `git diff --check`: pass. Whole-file
+  lowerer Ruff retains exactly the parent's one inherited F401 and ten F841
+  findings, with no new finding.
+
+This checkpoint changes the new sanitizer module, its lowerer wrapper, the
+final-convergence and architecture tests, the architecture document, and this
+handoff. It changes no public API, CLI, artifact, dependency, optional
+TensorFlow boundary, corpus profile, exclusion, or ONNX model. No failure or
+regression is known. After synchronization, inspect the next unmodularized
+production helper in actual source order. Establish real ownership before any
+semantic change, keep model checks short, sequential, and zero-SWAP, commit and
+push coherent units, and do not create a pull request.

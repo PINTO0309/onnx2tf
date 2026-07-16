@@ -7051,6 +7051,25 @@ invocations. Six are non-zero with update counts `141,16,16,138,16,6`, for
 correspondence artifact are identical across extraction, with zero monitored
 process-tree SWAP. IAT-LLIE provides a 29-invocation zero-owner control.
 
+HARD_SWISH metadata sanitation is isolated in
+`hardswish_shape_sanitization.py`. The lowerer retains the historical private
+wrapper, while the module owns the invariant that HARD_SWISH output shape and
+signature match the input and that a fully static input receives a fully
+static signature. A valid shared `ModelIRGraphIndex` limits traversal to
+HARD_SWISH operators; standalone callers retain the original single list
+traversal. The pass is metadata-only and performs no topology, cleanup,
+layout-state, lineage, or constant-buffer mutation.
+
+All root models that directly contain ONNX `HardSwish` were measured before
+the move. Their production invocations were zero-update controls and all
+strictly sequential conversions recorded process-tree SWAP zero. The existing
+synthetic stale-metadata fixture supplies the positive ownership contract.
+Tier 1 `inference_ops15.onnx` is the fixed artifact representative: both
+production invocations remain zero and its float32, float16, and correspondence
+artifacts are byte-identical across extraction. This mechanical boundary must
+not be broadened into semantic inference without first recording a real owner
+and an independent regression contract.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
