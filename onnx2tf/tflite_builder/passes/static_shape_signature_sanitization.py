@@ -9,7 +9,48 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _is_fully_known_positive_shape,
     _read_const_ints_from_tensor,
 )
+from onnx2tf.tflite_builder.core.onnx_analysis import (
+    _align_boundary_signature_to_current_shape,
+)
 from onnx2tf.tflite_builder.ir import ModelIR
+
+
+def realign_dynamic_boundary_shape_signature_map(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Realign ONNX boundary signatures after a ModelIR layout change."""
+
+    signature_map = model_ir.metadata.get(
+        "dynamic_boundary_shape_signature_map", {}
+    )
+    if not isinstance(signature_map, dict):
+        return {"realigned_dynamic_boundary_shape_signature_map": 0}
+
+    updated = 0
+    for tensor_name, boundary_signature in list(signature_map.items()):
+        if not isinstance(boundary_signature, list):
+            continue
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None or tensor.shape is None:
+            continue
+        aligned = _align_boundary_signature_to_current_shape(
+            boundary_signature=[
+                int(value) for value in list(boundary_signature)
+            ],
+            current_shape=[int(value) for value in list(tensor.shape)],
+        )
+        if aligned is None:
+            continue
+        if [int(value) for value in list(boundary_signature)] != [
+            int(value) for value in list(aligned)
+        ]:
+            signature_map[str(tensor_name)] = [
+                int(value) for value in list(aligned)
+            ]
+            updated += 1
+
+    model_ir.metadata["dynamic_boundary_shape_signature_map"] = signature_map
+    return {"realigned_dynamic_boundary_shape_signature_map": int(updated)}
 
 
 def sanitize_static_shape_signature_consistency(

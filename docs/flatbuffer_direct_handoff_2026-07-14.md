@@ -7711,6 +7711,50 @@ byte-identical to the pre-change controls. No regression is known.
 The next adjacent raw lowerer helper is
 `_realign_dynamic_boundary_shape_signature_map`. Before changing it, determine
 whether it belongs with this sanitizer or ONNX boundary analysis, fix the
-alignment-helper contract and two production positions, and measure whether it
+alignment-helper contract and three production positions, and measure whether it
 has a non-zero short real owner. Continue with sequential zero-SWAP validation,
 commit and push coherent checkpoints, and do not create a pull request.
+
+## Dynamic boundary-signature map realignment: completed state
+
+`passes/static_shape_signature_sanitization.py` now also owns
+`realign_dynamic_boundary_shape_signature_map`. The core axis-alignment
+primitive remains in `core/onnx_analysis.py` because lowerer boundary-map
+construction uses it independently. The old private lowerer symbol is a thin
+wrapper and all three late production positions are unchanged. The owner
+retains exact map object mutation, list/type/rank guards, deterministic static-
+extent placement, update counter, and final metadata assignment. It reads no
+operator and changes no tensor or topology.
+
+Temporary instrumentation measured all three calls on `FastestDet.onnx` and
+`osnet025_Nx3x256x128.onnx`; all six results were zero. Both models passed,
+their maximum absolute errors were `1.3113021850585938e-05` and
+`2.193450927734375e-05`, and process-tree SWAP was zero. These are explicit
+zero-owner controls, while the synthetic layout-change fixtures provide the
+positive contract.
+
+The expanded focused module plus the active legacy realignment fixture and
+ownership selector passes `21 passed in 1.88s`. It covers unchanged axes,
+layout movement, repeated static extents, insufficient matches, empty/rank-
+mismatched signatures, malformed maps and entries, missing tensors/shapes,
+idempotence, and private-wrapper equality. The complete architecture suite
+passes `223 passed in 39.80s`. A fixed-seed differential harness compared the
+old and new owners over 250 generated maps; stats and final metadata matched
+in every case. The final combined branch gate across all extracted owner test
+modules, active legacy selectors, shape reconciliation, and architecture
+passes `306 passed in 39.69s`.
+
+Post-extraction sequential validation passed `FastestDet.onnx` in 3.725
+seconds and `osnet025_Nx3x256x128.onnx` in 4.080 seconds with the same two
+maximum absolute errors and SWAP zero. Their six float32, float16, and tensor-
+correspondence artifacts are byte-identical to the pre-change controls. No
+regression is known.
+
+The intervening split, static-shape inference, indexed convergence, and
+placeholder-MatMul functions are already compatibility wrappers or established
+indexed owners. The next raw source-order implementation is the large
+`_optimize_transpose_quant_dequant_bridges` helper. Before modifying it, split
+its pattern families and stats contract, identify any existing QDQ pass owners,
+measure each production call, and select the smallest real positive models.
+Continue with sequential zero-SWAP validation, commit and push coherent
+checkpoints, and do not create a pull request.

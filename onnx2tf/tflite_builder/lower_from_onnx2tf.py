@@ -151,6 +151,7 @@ from onnx2tf.tflite_builder.passes.squeeze_shape_sanitization import (
     sanitize_squeeze_axes_with_static_input_shapes as _sanitize_squeeze_axes_with_static_input_shapes_pass,
 )
 from onnx2tf.tflite_builder.passes.static_shape_signature_sanitization import (
+    realign_dynamic_boundary_shape_signature_map as _realign_dynamic_boundary_shape_signature_map_pass,
     sanitize_static_shape_signature_consistency as _sanitize_static_shape_signature_consistency_pass,
 )
 from onnx2tf.tflite_builder.passes.expand_squeeze_reshape import (
@@ -918,29 +919,7 @@ def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str,
 
 
 def _realign_dynamic_boundary_shape_signature_map(model_ir: ModelIR) -> Dict[str, int]:
-    signature_map = model_ir.metadata.get("dynamic_boundary_shape_signature_map", {})
-    if not isinstance(signature_map, dict):
-        return {"realigned_dynamic_boundary_shape_signature_map": 0}
-
-    updated = 0
-    for tensor_name, boundary_signature in list(signature_map.items()):
-        if not isinstance(boundary_signature, list):
-            continue
-        tensor = model_ir.tensors.get(str(tensor_name), None)
-        if tensor is None or tensor.shape is None:
-            continue
-        aligned = _align_boundary_signature_to_current_shape(
-            boundary_signature=[int(v) for v in list(boundary_signature)],
-            current_shape=[int(v) for v in list(tensor.shape)],
-        )
-        if aligned is None:
-            continue
-        if [int(v) for v in list(boundary_signature)] != [int(v) for v in list(aligned)]:
-            signature_map[str(tensor_name)] = [int(v) for v in list(aligned)]
-            updated += 1
-
-    model_ir.metadata["dynamic_boundary_shape_signature_map"] = signature_map
-    return {"realigned_dynamic_boundary_shape_signature_map": int(updated)}
+    return _realign_dynamic_boundary_shape_signature_map_pass(model_ir)
 
 
 def _replace_unsupported_split_with_slice(

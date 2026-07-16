@@ -4082,6 +4082,18 @@ repairs, idempotence, and compatibility-wrapper equality. Architecture tests
 fix one module owner, one producer-map build, four stats keys, and two
 production calls.
 
+The companion dynamic-boundary map realigner is owned by the same module. It
+keeps `_align_boundary_signature_to_current_shape` in `core/onnx_analysis.py`,
+where the primitive is also used while constructing boundary metadata, and
+moves only the ModelIR map traversal/update policy out of the lowerer. All
+three late production positions call a thin compatibility wrapper. The owner
+skips malformed maps, non-list entries, missing tensors, missing shapes, empty
+signatures, and rank mismatches; unchanged aligned signatures are idempotent.
+Repeated static extents retain the core helper's deterministic first-axis
+assignment. Focused tests fix same-axis and layout-moved signatures, repeated
+and insufficient static extents, malformed inputs, idempotence, and wrapper
+equality. The rule changes metadata only and never visits operators.
+
 The terminal LiteRT.js compatibility rewrite for ExpandDims and Squeeze is
 owned by `passes/expand_squeeze_reshape.py`; the lowerer retains one private
 compatibility wrapper at the unchanged production boundary. The owner keeps

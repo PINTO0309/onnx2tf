@@ -1767,6 +1767,75 @@ def test_static_shape_signature_sanitizer_has_one_module_owner() -> None:
     assert "lower_from_onnx2tf" not in owner_source
 
 
+def test_boundary_signature_realigner_has_one_module_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    wrapper_name = "_realign_dynamic_boundary_shape_signature_map"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_realign_dynamic_boundary_shape_signature_map_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 3
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "static_shape_signature_sanitization.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "realign_dynamic_boundary_shape_signature_map"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert (
+        "_align_boundary_signature_to_current_shape("
+        in owner_function_source
+    )
+    assert (
+        '"dynamic_boundary_shape_signature_map"'
+        in owner_function_source
+    )
+    assert (
+        '"realigned_dynamic_boundary_shape_signature_map"'
+        in owner_function_source
+    )
+    assert "model_ir.operators" not in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
 def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

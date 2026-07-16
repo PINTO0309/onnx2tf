@@ -7,9 +7,11 @@ import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _realign_dynamic_boundary_shape_signature_map,
     _sanitize_static_shape_signature_consistency,
 )
 from onnx2tf.tflite_builder.passes.static_shape_signature_sanitization import (
+    realign_dynamic_boundary_shape_signature_map,
     sanitize_static_shape_signature_consistency,
 )
 
@@ -238,3 +240,117 @@ def test_compatibility_wrapper_matches_module_owner() -> None:
 
     assert wrapper_stats == direct_stats
     assert _signatures(wrapper_model) == _signatures(direct_model)
+
+
+@pytest.mark.parametrize(
+    ("boundary_signature", "current_shape", "expected", "updated"),
+    [
+        (
+            [-1, 21, -1, -1],
+            [1, 1, 1, 21],
+            [-1, -1, -1, 21],
+            1,
+        ),
+        (
+            [-1, 21, -1, -1],
+            [1, 21, 1, 1],
+            [-1, 21, -1, -1],
+            0,
+        ),
+        (
+            [-1, 8, 8, -1],
+            [1, 8, 1, 8],
+            [-1, 8, -1, 8],
+            1,
+        ),
+        (
+            [-1, 8, 8, -1],
+            [1, 8, 1, 1],
+            [-1, -1, -1, -1],
+            1,
+        ),
+        ([-1, 21], [1, 1, 1, 21], [-1, 21], 0),
+        ([], [], [], 0),
+    ],
+)
+def test_boundary_signature_map_realigns_static_axes(
+    boundary_signature: list[int],
+    current_shape: list[int],
+    expected: list[int],
+    updated: int,
+) -> None:
+    model_ir = ModelIR("boundary_signature_realign")
+    model_ir.tensors["output"] = _tensor(
+        "output", current_shape, list(current_shape)
+    )
+    model_ir.metadata["dynamic_boundary_shape_signature_map"] = {
+        "output": list(boundary_signature)
+    }
+
+    stats = realign_dynamic_boundary_shape_signature_map(model_ir)
+
+    assert stats == {
+        "realigned_dynamic_boundary_shape_signature_map": updated
+    }
+    assert model_ir.metadata["dynamic_boundary_shape_signature_map"] == {
+        "output": expected
+    }
+
+
+def test_boundary_signature_realign_skips_invalid_metadata_and_entries() -> None:
+    invalid_map_model = ModelIR("invalid_boundary_signature_map")
+    invalid_map_model.metadata["dynamic_boundary_shape_signature_map"] = [
+        "not-a-map"
+    ]
+    assert realign_dynamic_boundary_shape_signature_map(
+        invalid_map_model
+    ) == {"realigned_dynamic_boundary_shape_signature_map": 0}
+    assert invalid_map_model.metadata[
+        "dynamic_boundary_shape_signature_map"
+    ] == ["not-a-map"]
+
+    invalid_entries_model = ModelIR("invalid_boundary_signature_entries")
+    missing_shape = _tensor("missing_shape", [1, 4], [1, 4])
+    missing_shape.shape = None
+    invalid_entries_model.tensors["missing_shape"] = missing_shape
+    invalid_entries_model.metadata["dynamic_boundary_shape_signature_map"] = {
+        "non_list": "dynamic",
+        "missing_tensor": [-1, 4],
+        "missing_shape": [-1, 4],
+    }
+    before = copy.deepcopy(
+        invalid_entries_model.metadata[
+            "dynamic_boundary_shape_signature_map"
+        ]
+    )
+    assert realign_dynamic_boundary_shape_signature_map(
+        invalid_entries_model
+    ) == {"realigned_dynamic_boundary_shape_signature_map": 0}
+    assert (
+        invalid_entries_model.metadata[
+            "dynamic_boundary_shape_signature_map"
+        ]
+        == before
+    )
+
+
+def test_boundary_realign_compatibility_wrapper_and_idempotence() -> None:
+    direct_model = ModelIR("boundary_realign_wrapper")
+    direct_model.tensors["output"] = _tensor(
+        "output", [1, 1, 1, 21], [-1, -1, -1, -1]
+    )
+    direct_model.metadata["dynamic_boundary_shape_signature_map"] = {
+        "output": [-1, 21, -1, -1]
+    }
+    wrapper_model = copy.deepcopy(direct_model)
+
+    direct_stats = realign_dynamic_boundary_shape_signature_map(direct_model)
+    wrapper_stats = _realign_dynamic_boundary_shape_signature_map(
+        wrapper_model
+    )
+
+    assert wrapper_stats == direct_stats
+    assert wrapper_model.metadata == direct_model.metadata
+    assert realign_dynamic_boundary_shape_signature_map(direct_model) == {
+        "realigned_dynamic_boundary_shape_signature_map": 0
+    }

@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving five
+This branch continues the staged `flatbuffer_direct` refactor by moving six
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -10,7 +10,8 @@ lowerer and into focused pass modules:
 - LiteRT.js ExpandDims/Squeeze-to-Reshape conversion;
 - exact rank-four binary NHWC/NCHW adaptation;
 - singleton-broadcast rank-four binary NHWC/NCHW adaptation;
-- final static runtime-shape/signature consistency.
+- final static runtime-shape/signature consistency;
+- dynamic boundary-signature map realignment.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -95,6 +96,12 @@ constant payloads stop propagation. Missing, rank-mismatched, stale, or
 unjustified dynamic signatures on fully static internal tensors are repaired.
 Both historical production positions and all four statistics remain unchanged.
 
+The companion boundary-map realigner lives in the same module while reusing
+the core ONNX-analysis alignment primitive. It preserves malformed-entry and
+rank guards, deterministic repeated-extent placement, exact in-place map
+mutation, and all three historical production positions. It does not inspect
+or mutate graph topology.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -128,6 +135,8 @@ The new focused tests cover:
 - direct pass owner versus compatibility-wrapper equivalence;
 - boundary-map normalization, all dynamic-lineage root families, recursive and
   cyclic lineage, constant termination, and static signature completion;
+- boundary-map realignment for same-axis, layout-moved, repeated, insufficient,
+  malformed, missing, and rank-mismatched cases;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -135,12 +144,14 @@ Latest checkpoint results:
 
 - focused binary adapter and legacy singleton tests: `45 passed`;
 - focused static shape-signature owner, legacy fixtures, and ownership selector:
-  `16 passed`;
-- complete flatbuffer-direct architecture suite: `222 passed`;
+  `21 passed` after adding boundary realignment;
+- complete flatbuffer-direct architecture suite: `223 passed`;
 - final combined branch gate across all extracted owners, active legacy
-  selectors, shape reconciliation, and architecture: `296 passed`;
+  selectors, shape reconciliation, and architecture: `306 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
+- boundary realigner differential comparison: 250 generated maps matched in
+  both statistics and final metadata;
 - Ruff checks, Python compilation, and whitespace checks: passed.
 
 Earlier checkpoints on this branch also passed their complete focused plus
@@ -181,6 +192,6 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next candidate for characterization is the adjacent
-`_realign_dynamic_boundary_shape_signature_map` helper. It is outside this
-branch's completed checkpoint.
+The next raw source-order candidate is the large
+`_optimize_transpose_quant_dequant_bridges` helper. It requires independent
+pattern-family and ownership characterization before extraction.
