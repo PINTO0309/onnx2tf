@@ -7910,3 +7910,68 @@ first inventory its existing indexed owner, legacy family boundaries,
 fallback ownership, call positions, and focused fixtures. Do not split or
 semantically narrow the 2,452-line fallback without evidence; keep conversion
 validation minimal and sequential, then commit and push only.
+
+## Generic NHWC pre-Concat legacy ownership extraction: completed state
+
+The complete 2,452-line
+`_optimize_transpose_pre_concat_nhwc_chains_legacy` implementation is now owned
+by `passes/nhwc_concat_legacy_layout.py`. The lowerer retains the historical
+private symbol as a one-call compatibility wrapper. This was an exact
+mechanical ownership move, not a semantic split or a source-line-limit change:
+after normalizing only the function name, the old and new full ASTs are
+identical. All nested planners and appliers, float/quantized indexed-family
+exclusion contracts, action precedence, fixed-point restart, constant
+copy-on-write, shape/layout/quantization propagation, canonical output
+selection, operator removal, pruning, and the historical statistic are
+unchanged.
+
+The 61-line composite wrapper is unchanged. It still dispatches the eleven
+float indexed families, then the thirteen quantized indexed families, then the
+legacy compatibility owner, and aggregates them into the single public
+`optimized_transpose_pre_concat_nhwc_chains` counter. All four explicit
+production positions are preserved. The exact pseudo-LeakyRelu plus Pad-
+companion fixture establishes a positive legacy rewrite, idempotence, and
+direct-owner/private-wrapper ModelIR equality. The pre-change nine-file Concat
+corpus passed 284 tests; after adding wrapper ownership coverage it passes 285.
+The complete architecture suite passes `226 passed in 34.16s`, the Concat plus
+architecture gate passes `511 passed in 34.86s`, and the final branch-wide
+selection passes `616 passed in 34.88s`. The complete optional-TensorFlow
+import-blocked suite, including direct conversion and direct `-cotof`, passes
+`11 passed in 9.30s`. Scoped Ruff, syntax compilation, and whitespace checks
+pass.
+
+Temporary instrumentation measured seven wrapper invocations each on
+`FastestDet.onnx` and `osnet025_Nx3x256x128.onnx`. Every float indexed,
+quantized indexed, and legacy count was zero, so this checkpoint does not claim
+a non-zero production legacy owner. FastestDet passed before extraction in
+4.541 seconds and after extraction in 4.474 seconds with identical
+`max_abs=1.3113021850585938e-05` and process-tree SWAP zero. Its core artifacts
+are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+OSNet supplied the second seven zero-owner invocations and passed in 4.810
+seconds with `max_abs=2.193450927734375e-05` and SWAP zero. Instrumentation and
+all temporary conversion output are removed before commit. Changed files are
+the new legacy pass module, lowerer compatibility wrapper/import, one focused
+legacy-owner test, the architecture ownership test, and the three branch
+documents. No dependency, public API, CLI, artifact, TensorFlow boundary,
+corpus profile, exclusion, or 2,000-ONNX-operation tier policy changes. No pull
+request is created; work remains commit/push only.
+
+The next raw source-order implementation is the 148-line
+`_optimize_transpose_slice_prepost_nhwc_passthrough_chains`. At restart, first
+inventory its production positions, exact Slice parameter/permutation and
+fan-out/public-output guards, statistics, dependencies, existing fixtures, and
+short zero-SWAP model ownership before changing source. Keep inference
+strictly sequential and minimal, then commit and push one coherent unit without
+creating a pull request.

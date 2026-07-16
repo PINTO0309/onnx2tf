@@ -856,6 +856,29 @@ quantized family counters through explicit key tuples and two sums, then adds
 the legacy counter. This preserves the single historical return key while
 removing another net 110 repeated lowerer lines.
 
+The remaining generic NHWC pre-Concat compatibility matcher is now isolated in
+`passes/nhwc_concat_legacy_layout.py`. Its complete 2,452-line implementation
+moved as one semantic unit; this is not a source-line limit or a claim that the
+fallback is modernized. Function-name-normalized AST comparison with the prior
+lowerer owner is exact. The nested direct, unary, expanded-Swish,
+pseudo-LeakyRelu, Pad, Dequantize, PReLU, Softmax, Slice, Split, and recursive
+Add analysis/application helpers therefore retain their shared fixed-point
+loop, action precedence, indexed-family exclusion contracts, constant
+copy-on-write behavior, metadata propagation, mutation order, pruning, and
+single historical statistic. The central lowerer keeps the private legacy
+symbol as a one-call compatibility wrapper, while the indexed float,
+quantized-indexed, and legacy dispatch order and all four composite production
+positions remain unchanged.
+
+The exact pseudo-LeakyRelu plus Pad-companion fixture establishes positive
+legacy ownership, idempotence, and direct-owner/private-wrapper equality. The
+complete float and quantized Concat family corpus continues to cover every
+indexed/fallback ownership boundary. FastestDet and OSNet supplied fourteen
+measured zero-owner runtime invocations before extraction; no production
+legacy rewrite is claimed. FastestDet is the artifact control and retains its
+accuracy, zero process-tree SWAP, and byte-identical float32, float16,
+correspondence, schema, and generated-schema outputs across the move.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization
