@@ -114,7 +114,6 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_csp_attention_nhwc_chains,
     _optimize_transpose_conv_attention_nhwc_propagation_chains,
     _optimize_transpose_elementwise_concat_conv_nhwc_groups,
-    _optimize_convpool_output_transpose_nhwc_passthrough_chains,
     _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains,
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains,
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather,
@@ -17594,106 +17593,6 @@ def test_flatbuffer_direct_transpose_pad_mul_posttranspose_add_nhwc_chain_optimi
     assert list(model_ir.tensors["mul_scale"].shape) == [1, 1, 1, 18]
     assert list(model_ir.tensors["mul_out_nhwc"].shape) == [1, 24, 12, 18]
     assert _shape_signature(model_ir.tensors["mul_out_nhwc"]) == [1, 24, 12, 18]
-
-
-
-def test_flatbuffer_direct_conv_output_transpose_nhwc_passthrough_chain_optimized() -> None:
-    model_ir = ModelIR("conv_output_transpose_nhwc_passthrough_opt_test")
-    model_ir.inputs = ["x_nhwc"]
-    model_ir.outputs = ["z"]
-
-    model_ir.tensors["x_nhwc"] = TensorIR(
-        name="x_nhwc",
-        dtype="FLOAT32",
-        shape=[1, 6, 6, 8],
-        shape_signature=[1, 6, 6, 8],
-    )
-    model_ir.tensors["conv_filter"] = TensorIR(
-        name="conv_filter",
-        dtype="FLOAT32",
-        shape=[1, 1, 8, 8],
-        shape_signature=[1, 1, 8, 8],
-        data=np.ones((1, 1, 8, 8), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["conv_bias"] = TensorIR(
-        name="conv_bias",
-        dtype="FLOAT32",
-        shape=[8],
-        shape_signature=[8],
-        data=np.zeros((8,), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["conv_out_nhwc"] = TensorIR(
-        name="conv_out_nhwc",
-        dtype="FLOAT32",
-        shape=[1, 6, 6, 8],
-        shape_signature=[1, 6, 6, 8],
-    )
-    model_ir.tensors["pre_perm"] = TensorIR(
-        name="pre_perm",
-        dtype="INT32",
-        shape=[4],
-        shape_signature=[4],
-        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
-        is_variable=False,
-    )
-    model_ir.tensors["conv_out_nchw"] = TensorIR(
-        name="conv_out_nchw",
-        dtype="FLOAT32",
-        shape=[1, 8, 6, 6],
-        shape_signature=[1, 8, 6, 6],
-    )
-    model_ir.tensors["mul_scale"] = TensorIR(
-        name="mul_scale",
-        dtype="FLOAT32",
-        shape=[1, 8, 1, 1],
-        shape_signature=[1, 8, 1, 1],
-        data=np.ones((1, 8, 1, 1), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["mul_out_nchw"] = TensorIR(
-        name="mul_out_nchw",
-        dtype="FLOAT32",
-        shape=[1, 8, 6, 6],
-        shape_signature=[1, 8, 6, 6],
-    )
-    model_ir.tensors["add_bias"] = TensorIR(
-        name="add_bias",
-        dtype="FLOAT32",
-        shape=[1, 8, 1, 1],
-        shape_signature=[1, 8, 1, 1],
-        data=np.zeros((1, 8, 1, 1), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["add_out_nchw"] = TensorIR(
-        name="add_out_nchw",
-        dtype="FLOAT32",
-        shape=[1, 8, 6, 6],
-        shape_signature=[1, 8, 6, 6],
-    )
-    model_ir.tensors["z"] = TensorIR(
-        name="z",
-        dtype="FLOAT32",
-        shape=[1, 8, 6, 6],
-        shape_signature=[1, 8, 6, 6],
-    )
-    model_ir.operators = [
-        OperatorIR(op_type="CONV_2D", inputs=["x_nhwc", "conv_filter", "conv_bias"], outputs=["conv_out_nhwc"]),
-        OperatorIR(op_type="TRANSPOSE", inputs=["conv_out_nhwc", "pre_perm"], outputs=["conv_out_nchw"]),
-        OperatorIR(op_type="MUL", inputs=["conv_out_nchw", "mul_scale"], outputs=["mul_out_nchw"]),
-        OperatorIR(op_type="ADD", inputs=["mul_out_nchw", "add_bias"], outputs=["add_out_nchw"]),
-        OperatorIR(op_type="RELU", inputs=["add_out_nchw"], outputs=["z"]),
-    ]
-
-    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
-    assert stats["optimized_convpool_output_transpose_nhwc_passthrough_chains"] == 1
-
-    # Leading post-conv transpose is removed.
-    assert not any(str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["conv_out_nchw"] for op in model_ir.operators)
-
-    mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
-    assert [str(v) for v in list(mul_op.inputs)][0] == "conv_out_nhwc"
 
 
 def test_flatbuffer_direct_transpose_pre_add_mul_add_prelu_nhwc_chain_optimized() -> None:

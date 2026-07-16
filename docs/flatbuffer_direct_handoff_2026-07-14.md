@@ -9727,3 +9727,60 @@ fan-out and public-boundary guards, metadata/constant handling, all production
 positions, and the smallest sequential zero-SWAP owner before changing source.
 Do not mix characterization and extraction unless the evidence proves the
 boundary, and do not create a pull request.
+
+## Conv/Pool output passthrough characterization: completed state
+
+The 535-line
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains` remains unchanged
+in `lower_from_onnx2tf.py` at its single production position. This checkpoint
+does not extract or semantically generalize it. The former 99-line giant
+direct-builder success fixture and its private-helper import have moved to the
+new compact
+`tests/test_flatbuffer_direct_convpool_output_passthrough_layout.py` module.
+
+The focused contract fixes the leading Conv/Pool NHWC-to-NCHW adapter match,
+elementwise forward closure, root bypass, private NHWC metadata hints, retained
+NHWC-to-NCHW legacy boundary adapter, valid rank-four external-runtime
+NCHW-to-NHWC adapter, and keepdims Mean-axis absorption. Seven complete
+ModelIR no-op cases cover the wrong permutation, public leading output,
+non-Conv/Pool producer, absent elementwise region, non-elementwise root fanout,
+public elementwise output, and multi-output elementwise operator. The
+architecture selector records one raw owner/call and its current whole-graph
+producer/consumer scans, direct append/delete topology mutation, setter calls,
+and prune boundary.
+
+Characterization exposes one pre-existing unsafe rejection path. The helper
+rewires `pre_output` to `pre_input` before checking that every external runtime
+input is static rank four. A rank-three external input therefore returns
+`optimized_convpool_output_transpose_nhwc_passthrough_chains: 0` while leaving
+the root input changed. A strict xfail records the required atomic no-op; no
+production correction is mixed into this test-only checkpoint.
+
+Validation completed as follows:
+
+- focused characterization plus raw-owner selector:
+  `11 passed, 242 deselected, 1 xfailed in 0.64s`;
+- changed-file branch regression collection:
+  `543 passed, 1 xfailed in 26.27s`;
+- whitespace checks: passed.
+
+Four small real-model ownership traces ran strictly sequentially with no
+inference or broad corpus sweep. FastestDet, HumanSeg
+(`human_segmentation_pphumanseg_2021oct_org.onnx`), OSNet, and inference_ops15
+each produced one zero rewrite result, completed in 0.789, 0.513, 1.239, and
+0.764 seconds, and recorded process-tree SWAP zero. All conversions succeeded.
+Positive production ownership is not claimed; the focused synthetic success
+case is the current semantic authority.
+
+Changed files are the new focused characterization module, removal of the
+relocated giant fixture/import, one architecture selector, and the three
+branch documents. Production code, public API, CLI, artifacts, TensorFlow
+boundary, dependencies, corpus profiles, exclusion policy, and ONNX operation-
+tier policy are unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, make the smallest atomicity correction: validate every external
+runtime tensor and compute its NHWC shape before rewiring any operator or
+creating any adapter. Turn the strict xfail into an ordinary passing test, keep
+all positive fingerprints and statistics unchanged, and use one short zero-
+owner model for pre/post byte-equivalence and SWAP control. Do not extract the
+helper in the same commit, and do not create a pull request.

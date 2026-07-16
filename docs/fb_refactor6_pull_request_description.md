@@ -707,6 +707,10 @@ Latest checkpoint results:
 - historical direct-builder rank-three/rank-four broadcast cases: `4 passed`;
 - changed-file branch regression gate after broadcast-constant extraction:
   `532 passed`;
+- focused Conv/Pool output passthrough characterization and raw-owner gate:
+  `11 passed, 1 xfailed`;
+- changed-file branch regression gate after Conv/Pool characterization:
+  `543 passed, 1 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1048,6 +1052,21 @@ The preceding FastestDet accuracy baseline remains
 executed TFLite artifact is unchanged. Positive production ownership is not
 claimed; the focused synthetic cases are the semantic authority.
 
+The next Conv/Pool output passthrough helper remains central and is only
+characterized in this branch checkpoint. FastestDet, HumanSeg, OSNet, and
+inference_ops15 each reached its single production position with a zero rewrite
+result. Their sequential conversion-only runs completed in 0.789, 0.513,
+1.239, and 0.764 seconds respectively, and every process-tree SWAP monitor
+reported zero. The moved positive fixture and compact focused corpus are the
+current semantic authority; positive production ownership is not claimed.
+
+The characterization exposes one pre-existing atomicity defect as a strict
+xfail: the helper rewires its elementwise root before rejecting a non-rank-four
+external runtime input. It returns a zero rewrite statistic but leaves that
+input mutation behind. Production code is deliberately unchanged in this
+test-only checkpoint; the next separate change must validate every external
+runtime input before the first mutation and turn this contract green.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1066,9 +1085,11 @@ model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
 implementation is the 535-line
-`_optimize_convpool_output_transpose_nhwc_passthrough_chains` helper. It has a
-historical direct fixture but no focused owner/wrapper module. Resume by first
-inventorying its match/guard/rewrite boundaries, passthrough closure, adapter
-retention, public and fan-out guards, metadata and constant handling,
-production positions, and the smallest sequential zero-SWAP real owner before
-changing source. No broad conversion sweep is implied by this checkpoint.
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains` helper. Its
+focused match/guard/rewrite contract and four zero-owner model traces are now
+recorded. Resume with the narrow atomicity correction for invalid external
+runtime inputs, preserving all successful rewrite behavior and the single
+production position. Re-run the focused corpus and zero-owner artifact control
+before deciding whether the lack of positive production ownership permits an
+exact mechanical extraction. No broad conversion sweep is implied by this
+checkpoint.

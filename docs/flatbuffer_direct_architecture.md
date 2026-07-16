@@ -7713,6 +7713,25 @@ and float32, float16, tensor-correspondence, schema, and generated-schema
 artifacts are byte-identical across extraction. Positive production ownership
 is not claimed; the synthetic cases remain the semantic authority.
 
+The adjacent Conv/Pool output passthrough compatibility helper remains a raw
+owner in `lower_from_onnx2tf.py` at its single production position. Its former
+sole giant direct-builder fixture has moved to
+`test_flatbuffer_direct_convpool_output_passthrough_layout.py`, where a compact
+contract now covers the elementwise region, retained legacy NCHW adapter,
+rank-four external-runtime adapter, keepdims Mean-axis absorption, and seven
+unsafe-boundary no-ops. The architecture gate explicitly records the current
+whole-graph maps, direct append/delete mutation, cleanup boundary, and one raw
+call so a later extraction cannot silently change ownership or order.
+
+Characterization also records one strict xfail: the raw helper rewires the
+elementwise root before validating all external runtime inputs, so rejecting a
+non-rank-four external input returns a zero statistic but does not restore the
+ModelIR. The next semantic checkpoint must move this validation before any
+mutation and turn the xfail into a passing atomicity contract before considering
+mechanical extraction. FastestDet, HumanSeg, OSNet, and inference_ops15 each
+produce one zero result in strictly sequential, zero-SWAP traces; positive
+production ownership is not claimed.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
