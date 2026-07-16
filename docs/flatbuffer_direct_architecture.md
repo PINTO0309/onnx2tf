@@ -8456,6 +8456,35 @@ MirrorPad behavior, multiple Add users, fixed point, pruning, and all three call
 boundaries must remain unchanged. The 543-line count is descriptive only; 2,000
 remains the ONNX operation-count tier threshold.
 
+That correction is now implemented in the 1,100-line raw owner. One
+`ModelIRGraphIndex` replaces every repeated producer/consumer reconstruction
+and remains current through indexed input/output setters plus one batched
+adapter removal. Two independent matches construct and refresh it exactly once.
+
+Each candidate proves strict source/pre-Transpose/StridedSlice/Pad/Concat/Mul/
+post-Transpose/ordered-Add topology, unique producers, exact private internal
+consumers, valid normalized options, complete rank-four source and retained-
+output metadata, and the supported one-or-more Add tail. Slice, Pad, Concat,
+and renamed Mul-output shape/signature/QDIM results and every Add broadcast are
+complete before commit. Missing post-output tensors, malformed axes or masks,
+duplicate producers, reverse order, and public aliases now leave the complete
+ModelIR unchanged.
+
+Slice begin/end/stride vectors and Pad matrices use one grouped immutable
+constant transaction. Each tensor must be an unquantized, non-variable INT32
+buffer with exact shape/signature and no runtime producer or public-input
+ownership. Requirements are grouped by tensor identity and must agree on the
+target value. An unchanged valid constant remains shared; a changed private
+constant updates once; any unrelated consumer edge or public output receives
+one deterministic collision-safe clone reused by all planned sites. The Mul
+constant has the same update/clone/reject policy, including per-axis QDIM and
+provenance-preserving clones.
+
+All forty-two former strict xfails are green. Missing post-output rejection and
+explicit one-index reuse bring the focused contract to seventy cases without
+changing Pad/MirrorPad options, multiple Add users, statistics, fixed point,
+pruning, or any of the three production calls.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

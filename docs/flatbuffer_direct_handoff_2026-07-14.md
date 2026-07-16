@@ -12006,3 +12006,62 @@ rename, and batched removal before the first mutation. Turn all 42 strict
 xfails green while preserving the twenty-six existing cases, statistics,
 fixed point, pruning, Pad/MirrorPad behavior, and all three production calls.
 Validate sequentially, commit and push, and do not create a pull request.
+
+## StridedSlice/Pad/Concat transactional correction: completed state
+
+All forty-two former strict xfails are green. The corrected raw owner is 1,100
+lines and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite
+refreshes it exactly once. Indexed input/output setters and one batched removal
+replace repeated complete producer/consumer scans and direct operator deletion.
+
+Before mutation, each candidate proves unique producers, strict source/pre-
+Transpose/StridedSlice/Pad/Concat/Mul/post-Transpose/ordered-Add graph order,
+exact private internal consumers, complete rank-four source/Slice/Pad/Concat/
+Mul metadata, a present post-output tensor, valid normalized Concat and Slice
+options, and the supported one-or-more Add tail. Missing or short metadata,
+missing post output, malformed axes/masks, duplicate producers, reverse order,
+and public aliases now return zero with complete ModelIR equality.
+
+All Slice, Pad, Concat, and renamed Mul-output shapes/signatures and per-axis
+QDIM values are planned before commit. Add channel-last constants are checked
+against the planned Mul shape. The Mul output is renamed through the indexed
+producer setter before the post-Transpose is removed, so every existing valid
+Add user remains connected without a transient stale index.
+
+Slice begin/end/stride vectors and Pad matrices share one grouped immutable
+constant transaction. Every value must have exact unquantized INT32 TensorIR,
+buffer, shape, and signature metadata, no public-input or variable ownership,
+and no runtime producer. Requirements sharing a tensor identity must agree on
+one target. Unchanged values remain shared, private changed values update once,
+and changed public outputs or values with any unrelated consumer edge receive
+one deterministic collision-safe clone reused at all planned sites. Clone
+metadata preserves layout and ONNX provenance. The Mul constant uses the same
+ownership-aware update/clone policy and remaps its QDIM with its data.
+
+Validation completed sequentially as follows:
+
+- corrected focused safety, grouped-clone, missing-post, and one-index
+  contract: `70 passed in 0.62s`;
+- corrected focused contract, the four adjacent extracted Concat bridge
+  contracts, and ordered architecture suite: `580 passed in 19.32s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.38s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to fully proven candidates; incomplete evidence leaves the
+graph unchanged. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, Pad/MirrorPad behavior, multiple Add users, all
+three ordered runtime calls, and TensorFlow isolation are unchanged. The
+1,100-line count is descriptive only; 2,000 remains the ONNX operation-count
+tier threshold. PR #952 remains closed; no pull request was created, reopened,
+or updated.
+
+At restart, mechanically extract the corrected 1,100-line
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`
+owner into a focused pass module. Keep the historical lowerer private name as
+a one-return wrapper and preserve all three production calls. Prove corrected
+checkpoint/module AST identity and direct owner/wrapper equality for static/
+dynamic, multiple, multi-Add, Pad/MirrorPad, scalar, grouped shared/public
+constants, quantization, pruning, rejection, and atomicity cases. Validate
+sequentially, commit and push, and do not create a pull request.

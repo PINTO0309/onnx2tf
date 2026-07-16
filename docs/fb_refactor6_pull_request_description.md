@@ -1709,4 +1709,13 @@ QDIM remapping, public branch intermediates, duplicate or reverse topology,
 and malformed options. Resume by building one indexed topology/metadata/
 grouped-constant/quantization/rename/removal plan before mutation, then turn
 all 42 xfails green without changing valid multi-Add, Pad/MirrorPad, statistics,
-pruning, or the three production calls. Do not create a pull request.
+pruning, or the three production calls. Do not create a pull request. That
+transactional correction is now complete in the 1,100-line raw owner. One
+differential `ModelIRGraphIndex`, strict branch and multi-Add topology,
+complete rank-four metadata/QDIM preflight, grouped ownership/type-safe INT32
+Slice/Pad constant actions, an ownership-aware Mul action, indexed setters,
+atomic output rename, and batched removal turn all 42 former xfails green.
+Focused coverage now has 70 green cases, including missing post-output and
+single-index contracts, while all three production calls remain unchanged.
+Resume by mechanically extracting the corrected owner with exact AST and
+owner/wrapper equality; do not create a pull request.

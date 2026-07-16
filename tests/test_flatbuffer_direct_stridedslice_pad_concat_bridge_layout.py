@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -409,6 +410,32 @@ def test_slice_pad_concat_rewrites_multiple_and_fixed_point() -> None:
     assert _normalize(model_ir) == after_first
 
 
+def test_slice_pad_concat_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(branches=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = (
+        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {
+        "optimized_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains": 2,
+    }
+    assert refresh_count == 1
+
+
 def test_slice_pad_concat_preserves_multiple_add_users() -> None:
     model_ir = _model(extra_add=True)
 
@@ -506,12 +533,14 @@ def test_slice_pad_concat_clones_shared_constants_collision_safely() -> None:
         op for op in model_ir.operators if op.op_type == "STRIDED_SLICE"
     ]
     assert all(op.inputs[2] != "branch0_slice_end" for op in slice_ops)
+    assert len({op.inputs[2] for op in slice_ops}) == 1
     pad_ops = [
         op
         for op in model_ir.operators
         if op.op_type in {"PAD", "MIRROR_PAD"}
     ]
     assert all(op.inputs[1] != "branch0_pads" for op in pad_ops)
+    assert len({op.inputs[1] for op in pad_ops}) == 1
     mul = next(op for op in model_ir.operators if op.op_type == "MUL")
     assert "branch0_mul_const" not in mul.inputs
     for name in (
@@ -684,10 +713,6 @@ def _append_identity_consumer(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="required rank-four metadata is not prevalidated",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -696,6 +721,7 @@ def _append_identity_consumer(
         "missing-pad",
         "missing-concat",
         "missing-mul-output",
+        "missing-post-output",
         "rank-three-source",
         "short-slice-signature",
         "short-pad-signature",
@@ -711,6 +737,7 @@ def test_slice_pad_concat_rejects_incomplete_metadata(case: str) -> None:
         "missing-pad": "branch0_x0_pad",
         "missing-concat": "branch0_cat_nchw",
         "missing-mul-output": "branch0_mul_out",
+        "missing-post-output": "branch0_mul_out_nhwc",
     }
     if case in missing_names:
         del model_ir.tensors[missing_names[case]]
@@ -730,10 +757,6 @@ def test_slice_pad_concat_rejects_incomplete_metadata(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="slice and Pad constants lack an immutable ownership/type plan",
-)
 @pytest.mark.parametrize(
     "role",
     ["slice_begin", "slice_end", "slice_stride", "pads"],
@@ -765,10 +788,6 @@ def test_slice_pad_concat_rejects_unsafe_index_constant(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="changed public index constants are mutated instead of cloned",
-)
 @pytest.mark.parametrize("role", ["slice_end", "pads"])
 def test_slice_pad_concat_clones_public_index_constant_output(
     role: str,
@@ -792,6 +811,7 @@ def test_slice_pad_concat_clones_public_index_constant_output(
             if op.op_type == "STRIDED_SLICE"
         ]
         assert all(op.inputs[2] != tensor_name for op in users)
+        assert len({op.inputs[2] for op in users}) == 1
     else:
         users = [
             op
@@ -799,13 +819,10 @@ def test_slice_pad_concat_clones_public_index_constant_output(
             if op.op_type in {"PAD", "MIRROR_PAD"}
         ]
         assert all(op.inputs[1] != tensor_name for op in users)
+        assert len({op.inputs[1] for op in users}) == 1
     assert np.array_equal(model_ir.tensors[tensor_name].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mutable/public Mul constants are rotated without ownership plan",
-)
 @pytest.mark.parametrize("ownership", ["public-input", "variable"])
 def test_slice_pad_concat_preserves_mul_constant_ownership(
     ownership: str,
@@ -820,10 +837,6 @@ def test_slice_pad_concat_preserves_mul_constant_ownership(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="public Mul constant output is changed instead of cloned",
-)
 def test_slice_pad_concat_clones_public_mul_constant_output() -> None:
     model_ir = _model()
     tensor_name = "branch0_mul_const"
@@ -842,10 +855,6 @@ def test_slice_pad_concat_clones_public_mul_constant_output() -> None:
     assert np.array_equal(model_ir.tensors[tensor_name].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="per-axis quantized dimensions are not remapped",
-)
 def test_slice_pad_concat_remaps_per_axis_quantization() -> None:
     model_ir = _model()
     for name in (
@@ -884,10 +893,6 @@ def test_slice_pad_concat_remaps_per_axis_quantization() -> None:
         assert quantization.quantized_dimension == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="public Slice and Pad intermediates are rewritten without adapters",
-)
 @pytest.mark.parametrize("role", ["slice", "pad"])
 def test_slice_pad_concat_rejects_public_branch_intermediate(
     role: str,
@@ -901,10 +906,6 @@ def test_slice_pad_concat_rejects_public_branch_intermediate(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="duplicate producers, reverse order, and public aliases are accepted",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -966,10 +967,6 @@ def test_slice_pad_concat_rejects_invalid_topology(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="malformed options raise instead of producing an atomic no-op",
-)
 @pytest.mark.parametrize("case", ["concat-axis", "slice-mask"])
 def test_slice_pad_concat_rejects_malformed_options(case: str) -> None:
     model_ir = _model()
@@ -993,7 +990,7 @@ def test_slice_pad_concat_keeps_raw_owner_and_ordered_calls() -> None:
         and node.name
         == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 543
+    assert owner.end_lineno - owner.lineno + 1 == 1100
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
 
     lowerer = next(
