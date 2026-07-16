@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -248,6 +249,40 @@ def test_indexed_stale_binary_transpose_repair_preserves_fanout_adapter() -> Non
     assert graph_index.consumers == refreshed.consumers
     assert graph_index._operator_indices_by_id == refreshed._operator_indices_by_id
     assert graph_index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
+@pytest.mark.parametrize(
+    "invalid_metadata",
+    [
+        "short_shape",
+        pytest.param(
+            "short_signature",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="source signature validation follows the first rewrite",
+            ),
+        ),
+    ],
+)
+def test_stale_binary_transpose_repair_rejects_invalid_metadata_atomically(
+    invalid_metadata: str,
+) -> None:
+    model_ir = _make_binary_layout_convergence_model_ir()
+    model_ir.outputs.append("adapter1")
+    source_tensor = model_ir.tensors["source0"]
+    if invalid_metadata == "short_shape":
+        source_tensor.shape = [1, 4, 2]
+        source_tensor.shape_signature = [1, 4, 2]
+    else:
+        source_tensor.shape_signature = [1, 4]
+    before = _normalize(copy.deepcopy(model_ir))
+
+    stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+    }
+    assert _normalize(model_ir) == before
 
 
 def test_indexed_binary_layout_convergence_matches_legacy_sequence(

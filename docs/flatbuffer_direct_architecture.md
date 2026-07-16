@@ -4237,6 +4237,14 @@ rebuilt between matches. Fan-out adapters remain unchanged, and both data-
 input positions plus channelwise-constant and Conv-peer match families retain
 their former behavior.
 
+Its focused extraction audit confirms that a short source shape is already a
+complete no-op, but exposes one strict xfail for a malformed source
+`shape_signature`. The raw repair currently rewrites the binary input before
+materializing that signature, then assigns the short signature to a rank-four
+output and removes the adapter. The source signature must be rank-validated
+before the indexed setter so rejection retains a complete ModelIR fingerprint
+and zero statistic.
+
 The two terminal fixed three-round broadcast/Transpose/shape convergence loops
 are owned by `_run_indexed_binary_layout_convergence`. One index is built per
 complete loop and supplied to all three operations in all three rounds.

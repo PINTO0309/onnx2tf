@@ -10579,3 +10579,41 @@ At restart, inventory the next raw helper in actual production source order
 before editing it. Characterize positive, rejection, ownership, and call-
 boundary behavior first. Keep validation minimal and strictly sequential; do
 not create a pull request.
+
+## Stale channelwise-binary Transpose characterization: completed state
+
+The next raw source-order owner is the 129-line
+`_repair_stale_nchw_to_nhwc_channelwise_binary_transposes`. It already accepts
+an optional matching `ModelIRGraphIndex`, enumerates exact indexed binary
+candidates, handles both data-input positions and channelwise-constant/Conv-
+peer evidence, removes multiple adapters differentially, preserves fan-out and
+public adapters, and participates in the lowerer's three-round shared-index
+binary convergence runner. There are also two standalone production calls.
+
+The extraction audit adds two invalid-metadata cases. A short source shape is
+already a complete zero-statistic no-op. A rank-four source with a short
+`shape_signature` exposes one pre-existing unsafe path: the binary input is
+rewritten first, the short signature is then assigned to the output, and the
+adapter is removed. The strict xfail requires a zero statistic and complete
+unchanged ModelIR fingerprint.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `5 passed, 257 deselected, 1 xfailed in 0.65s`;
+- changed-file focused branch regression:
+  `614 passed, 1 xfailed in 23.43s`;
+- targeted Ruff: passed.
+
+Production source is unchanged. Public API, CLI, successful behavior,
+TensorFlow boundary, dependencies, corpus profiles, exclusions, and ONNX
+operation tiers are unchanged. PR #952 remains closed; work is commit/push
+only.
+
+At restart, materialize and require a rank-four source signature before
+`_set_operator_inputs`, turn the strict xfail green, and preserve all indexed
+candidate order, statistics, differential index updates, convergence-runner
+behavior, and direct production calls. Extract the repair owner only after the
+correction checkpoint; keep the convergence runner central because it also
+coordinates broadcast repair and shape reconciliation. Do not create a pull
+request.

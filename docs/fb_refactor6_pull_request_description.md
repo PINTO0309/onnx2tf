@@ -803,6 +803,10 @@ Latest checkpoint results:
 - focused mixed-Concat owner/wrapper and architecture gate: `14 passed`;
 - changed-file focused branch regression after the ownership extraction:
   `610 passed`;
+- focused stale binary-Transpose characterization:
+  `5 passed, 1 xfailed`;
+- changed-file focused branch regression including that characterization:
+  `614 passed, 1 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1327,5 +1331,11 @@ per-axis quantized dimension after NHWC-to-NCHW adaptation. A complete
 prevalidation plan now corrects all three paths with no remaining strict xfail.
 The mechanical ownership extraction is complete with the corrected body, two
 production calls, statistics, and artifact control preserved. Resume by
-inventorying the next raw source-order owner before changing it. No broad
-conversion sweep is implied by this checkpoint.
+inventorying the next raw source-order owner before changing it. That 129-line
+stale channelwise-binary Transpose repair already has indexed positive,
+multiple-match, fan-out, and convergence-runner coverage. A new malformed
+source-signature characterization is a strict xfail because the repair rewires
+the binary input before assigning a rank-two signature to a rank-four output.
+Prevalidate the signature before mutation, then extract only the repair owner;
+leave the three-round convergence runner in the lowerer. No broad conversion
+sweep is implied by this checkpoint.
