@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -362,6 +363,30 @@ def test_concat_mean_reshape_rewrites_multiple_and_fixed_point() -> None:
     assert _normalize(model_ir) == after_first
 
 
+def test_concat_mean_reshape_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(branches=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(
+        model_ir
+    )
+
+    assert stats == {
+        "optimized_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains": 2,
+    }
+    assert refresh_count == 1
+
+
 def test_concat_mean_reshape_accepts_scalar_affine_constants() -> None:
     model_ir = _model()
     for name, value in (
@@ -563,6 +588,20 @@ def test_concat_mean_reshape_does_not_prune_unmatched_graph() -> None:
         ),
         pytest.param(
             lambda model_ir: (
+                _tensor(model_ir, "concat_copy", [1, 4, 2, 2]),
+                model_ir.outputs.append("concat_copy"),
+                model_ir.operators.append(
+                    OperatorIR(
+                        "IDENTITY",
+                        ["branch0_cat_nchw"],
+                        ["concat_copy"],
+                    )
+                ),
+            ),
+            id="concat-fanout",
+        ),
+        pytest.param(
+            lambda model_ir: (
                 _tensor(model_ir, "pre_copy", [1, 3, 2, 2]),
                 model_ir.outputs.append("pre_copy"),
                 model_ir.operators.append(
@@ -590,10 +629,6 @@ def test_concat_mean_reshape_preserves_existing_rejections(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="required rank-four metadata is not prevalidated",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -637,10 +672,6 @@ def test_concat_mean_reshape_rejects_incomplete_metadata(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="public-input and variable affine constants rotate in place",
-)
 @pytest.mark.parametrize(
     "constant_name,ownership",
     [
@@ -665,10 +696,6 @@ def test_concat_mean_reshape_preserves_affine_constant_ownership(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="public affine constant outputs are not cloned",
-)
 @pytest.mark.parametrize(
     "constant_name,op_output,data_input",
     [
@@ -697,10 +724,6 @@ def test_concat_mean_reshape_clones_public_affine_constant_output(
     assert np.array_equal(model_ir.tensors[constant_name].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="per-axis quantized dimensions are not remapped",
-)
 def test_concat_mean_reshape_remaps_per_axis_quantization() -> None:
     model_ir = _model()
     rank4_names = (
@@ -740,10 +763,6 @@ def test_concat_mean_reshape_remaps_per_axis_quantization() -> None:
     assert add1_quantization.quantized_dimension == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Mean axes ownership and INT32 contract are not validated",
-)
 @pytest.mark.parametrize(
     "case",
     ["public-input", "variable", "wrong-dtype", "wrong-buffer", "quantized"],
@@ -769,10 +788,6 @@ def test_concat_mean_reshape_rejects_unsafe_mean_axes(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="public Mean axes output is mutated instead of cloned",
-)
 def test_concat_mean_reshape_clones_public_mean_axes_output() -> None:
     model_ir = _model()
     original = np.asarray(model_ir.tensors["branch0_mean_axes"].data).copy()
@@ -788,10 +803,6 @@ def test_concat_mean_reshape_clones_public_mean_axes_output() -> None:
     assert np.array_equal(model_ir.tensors["branch0_mean_axes"].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Reshape shape ownership and INT32 contract are not validated",
-)
 @pytest.mark.parametrize(
     "case",
     ["public-input", "variable", "wrong-dtype", "quantized"],
@@ -816,10 +827,6 @@ def test_concat_mean_reshape_rejects_unsafe_reshape_shape(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="shared/public Reshape shape is mutated instead of cloned",
-)
 @pytest.mark.parametrize("ownership", ["public-output", "shared"])
 def test_concat_mean_reshape_clones_owned_reshape_shape(
     ownership: str,
@@ -848,10 +855,6 @@ def test_concat_mean_reshape_clones_owned_reshape_shape(
     assert np.array_equal(model_ir.tensors[shape_name].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="affine and Mean constants mutate before later validation",
-)
 @pytest.mark.parametrize("case", ["add0", "add1", "axes"])
 def test_concat_mean_reshape_rejects_late_constant_error_atomically(
     case: str,
@@ -876,10 +879,6 @@ def test_concat_mean_reshape_rejects_late_constant_error_atomically(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Mean metadata is decoded after constants have changed",
-)
 def test_concat_mean_reshape_rejects_late_mean_metadata_atomically() -> None:
     model_ir = _model()
     model_ir.tensors["branch0_reshape_shape"].data = np.asarray(
@@ -891,10 +890,6 @@ def test_concat_mean_reshape_rejects_late_mean_metadata_atomically() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="malformed Concat axis is not a transactional no-op",
-)
 def test_concat_mean_reshape_rejects_malformed_concat_axis() -> None:
     model_ir = _model()
     model_ir.operators[2].options["axis"] = None
@@ -902,10 +897,6 @@ def test_concat_mean_reshape_rejects_malformed_concat_axis() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="duplicate producers, reverse order, and public aliases are accepted",
-)
 @pytest.mark.parametrize(
     "case",
     ["duplicate-mean-output", "reverse-mean-reshape", "public-pre-output"],
@@ -932,10 +923,6 @@ def test_concat_mean_reshape_rejects_invalid_topology(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="an identity Mean-axis remap is mistaken for rewrite failure",
-)
 def test_concat_mean_reshape_accepts_identity_axis_mapping() -> None:
     model_ir = _model()
     model_ir.tensors["branch0_mean_axes"].shape = [1]
@@ -967,7 +954,7 @@ def test_concat_mean_reshape_keeps_raw_owner_and_ordered_boundaries() -> None:
         and node.name
         == "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 461
+    assert owner.end_lineno - owner.lineno + 1 == 869
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
 
     lowerer = next(

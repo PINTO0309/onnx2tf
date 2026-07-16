@@ -1660,4 +1660,12 @@ Mean-axes and Reshape-shape ownership/type contracts, late partial mutation,
 malformed axis handling, invalid topology, and identity-axis handling. Resume
 by planning the complete indexed topology, metadata, constants, quantization,
 axes, shape, names, setters, and removals before mutation, then turn all 42
-xfails green without changing valid behavior or ordered boundaries.
+xfails green without changing valid behavior or ordered boundaries. That
+transactional correction is now complete in the 869-line raw owner. A single
+differential `ModelIRGraphIndex`, strict topology and rank-four metadata
+preflight, three immutable affine plans, full QDIM remapping, ownership/type-
+safe Mean-axes and conditional Reshape-shape plans, identity-axis acceptance,
+and batched indexed removal turn all 42 former xfails green. Focused coverage
+has 65 green cases and both ordered recovery positions remain unchanged.
+Resume by mechanically extracting the corrected owner with exact AST and
+owner/wrapper equality.

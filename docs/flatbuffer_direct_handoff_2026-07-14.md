@@ -11680,3 +11680,64 @@ setters, metadata changes, and removals before the first mutation. Turn all 42
 strict xfails green, preserve the 21 existing cases and both production
 boundaries, validate sequentially, commit and push, and do not create a pull
 request.
+
+## Concat/Mul/Add/Add/Mean/Reshape transactional correction: completed state
+
+All 42 former strict xfails are green. The corrected raw owner is 869 lines
+and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite proves
+the index is refreshed exactly once. Indexed setters and one batched removal
+replace repeated whole-graph producer/consumer reconstruction and direct
+operator deletion.
+
+Before mutation, each candidate proves unique producers, strict pre-Transpose/
+Concat/Mul/Add/Add/Mean/Reshape order, exact private internal consumers,
+complete rank-four source/Concat/Mul/Add/Mean effective metadata, valid Concat
+axis/options, Mean keep-dims semantics, and no unsupported Concat fan-out.
+Missing tensors, rank-three sources, short signatures, malformed axes,
+duplicate Mean producers, reverse order, and public internal aliases now leave
+the complete ModelIR unchanged.
+
+Mul and both Add constants share one immutable action planner. Scalars and
+already compatible NHWC broadcasts remain unchanged. Rotated rank-three/four
+constants require valid target broadcasting and non-public-input, non-variable
+ownership; shared and public-output values receive deterministic private
+clones. Rank-specific per-axis QDIM remaps apply to all three constants, while
+Concat, Mul, both Add outputs, and Mean output use the full rank-four remap.
+
+Mean axes now have an explicit immutable unquantized INT32 contract covering
+TensorIR dtype, backing-buffer dtype, shape/signature, ownership, range, and
+negative-axis normalization. Identity remaps are successful no-change plans;
+changed shared/public-output axes clone. The Reshape shape is rewritten only
+when it exactly equals the old Mean shape, and then uses the same ownership,
+type, metadata, and cloning policy. Both plans, every affine action, all QDIM
+results, names, tensors, setters, metadata writes, and removals are complete
+before commit, so late constant or Mean evidence cannot leave partial state.
+
+Validation completed as follows:
+
+- corrected focused contract, including all former xfails, one-index, and
+  Concat-fan-out checks: `65 passed in 0.64s`;
+- corrected focused contract, both adjacent extracted bridge contracts, and
+  ordered architecture suite: `428 passed in 20.13s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.39s`;
+- targeted Ruff for the focused test, Python compilation, and whitespace
+  checks: passed;
+- central lowerer Ruff findings decreased from six to five because the new
+  owner removed the obsolete `reshape_out_name` local.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is limited to fully proven candidates; incomplete evidence leaves the graph
+unchanged. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, both ordered runtime boundaries, and TensorFlow
+isolation are unchanged. PR #952 remains closed; no pull request was created,
+reopened, or updated.
+
+At restart, mechanically extract the corrected 869-line
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains` owner into
+a focused pass module. Keep the historical lowerer private name as a one-
+return wrapper and preserve its position in both terminal recovery sequences.
+Prove corrected checkpoint/module AST identity and direct owner/wrapper
+equality for static/dynamic, multiple, scalar, shared/public affine constants,
+Mean axes, Reshape shape, quantization, pruning, rejection, and atomicity
+cases. Validate sequentially, commit and push, and do not create a pull
+request.

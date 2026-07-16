@@ -8274,6 +8274,37 @@ first mutation. Existing match order, statistics, fixed point, scalar/shared
 handling, exact shape rewrite, provenance, and both runtime boundaries must
 remain unchanged.
 
+The correction is now implemented in the 869-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated complete producer/consumer scans and
+is maintained through indexed setters and batched pre-Transpose removal. Two
+independent matches construct it once.
+
+Each candidate proves strict pre-Transpose/Concat/Mul/Add/Add/Mean/Reshape
+order, unique retained producers, exact single-consumer internal edges,
+private intermediates, complete rank-four source and retained tensor shapes/
+effective signatures, valid Concat and Mean options, and Concat fan-out safety
+before mutation. Missing or short metadata, malformed axes, duplicate
+producers, reverse order, and public aliases return zero with complete ModelIR
+equality.
+
+All three affine constants use the same immutable plan: scalar and existing
+NHWC broadcasts remain unchanged; NCHW rank-three/four values rotate only
+after target-broadcast and ownership validation; shared and public-output
+values clone; public inputs and variables reject. Constant QDIM follows the
+rank-specific permutation, while Concat, Mul, both Add outputs, and Mean output
+receive the rank-four QDIM remap.
+
+Mean axes are normalized and remapped into a validated immutable unquantized
+INT32 plan. Identity mappings are valid no-change actions. Changed shared or
+public-output axes clone, while public inputs, variables, wrong TensorIR or
+buffer dtype, and quantized tensors reject. Reshape shape is planned only when
+its four values exactly equal the old Mean shape; that plan has the same INT32
+and ownership contract and clones shared/public outputs. Every constant,
+quantization, name, tensor, setter, metadata result, and removal is complete
+before the first mutation. All 42 former strict xfails are green, and an
+explicit Concat fan-out guard plus one-index test bring the focused contract to
+65 green cases.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
