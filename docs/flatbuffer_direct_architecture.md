@@ -4250,6 +4250,16 @@ source or adapter metadata therefore returns a complete zero-statistic no-op.
 Architecture tests keep the shared rank guard before both channelwise-constant
 and Conv-peer evidence assignments. No strict xfail remains.
 
+The corrected 132-line implementation is owned by
+`passes/stale_binary_adapter_repair.py`; its AST is identical to the corrected
+lowerer predecessor at checkpoint `c869c410`. The lowerer keeps only its
+private compatibility wrapper and forwards an optional caller-owned index to
+the module owner. Both standalone fallback/final production calls are
+unchanged. A direct owner-versus-wrapper characterization compares return
+statistics and the complete resulting ModelIR fingerprint on a multi-adapter
+graph. The owner module cannot import the lowerer, and architecture checks
+keep its rank/signature validation before mutation.
+
 The two terminal fixed three-round broadcast/Transpose/shape convergence loops
 are owned by `_run_indexed_binary_layout_convergence`. One index is built per
 complete loop and supplied to all three operations in all three rounds.

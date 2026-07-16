@@ -10725,3 +10725,48 @@ pass-family module. Keep the lowerer private wrapper, both standalone calls,
 and the three-round convergence runner call. Leave the runner central, prove
 exact old/new AST and direct owner/wrapper fingerprint equality, and do not
 create a pull request.
+
+## Stale channelwise-binary adapter ownership extraction: completed state
+
+The corrected stale NCHW-to-NHWC channelwise-binary Transpose repair now
+resides in
+`onnx2tf/tflite_builder/passes/stale_binary_adapter_repair.py`. The 132-line
+module owner is AST-identical to the corrected lowerer implementation at
+checkpoint `c869c410`. The lowerer retains the historical private function as
+a thin compatibility wrapper and forwards its optional `graph_index` to the
+module owner.
+
+The two standalone fallback/final production calls still target the private
+lowerer name in their original order. The three-round
+`_run_indexed_binary_layout_convergence` coordinator also still calls that
+wrapper with one shared index and intentionally remains in the lowerer because
+it coordinates three separate owners: broadcast-constant repair, stale
+Transpose repair, and static shape reconciliation. A focused deep-copy test
+confirms identical statistics and complete ModelIR fingerprints from direct
+owner and wrapper execution. Architecture checks keep the module independent
+of the lowerer, preserve pre-mutation rank/signature guards, require wrapper
+index forwarding, and freeze the runner and standalone call boundaries.
+
+Validation completed as follows:
+
+- old/new owner AST comparison: exact, 132 lines each;
+- focused stale-binary owner/wrapper and architecture selector:
+  `9 passed, 257 deselected in 2.11s`;
+- changed-file focused branch regression: `618 passed in 24.62s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+No additional real-model conversion was run. This checkpoint is an exact
+mechanical ownership move of the already corrected function, with direct
+owner/wrapper fingerprint coverage, and follows the requested minimal-
+conversion policy. Public API, CLI, successful behavior/statistics,
+TensorFlow boundary, dependencies, corpus profiles, exclusions, and ONNX
+operation tiers are unchanged. PR #952 remains closed; future work is
+commit/push only and must not create a pull request.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: `_optimize_nhwc_prefix_qlinear_silu_chains` (419 lines). Preserve
+its positive/rejection behavior, call boundaries, statistics, and artifact
+contract before considering ownership or semantic changes. Keep validation
+minimal and strictly sequential, and do not create a pull request.

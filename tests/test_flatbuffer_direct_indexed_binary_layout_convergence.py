@@ -16,6 +16,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_stale_nchw_to_nhwc_channelwise_binary_transposes,
     _run_indexed_binary_layout_convergence,
 )
+from onnx2tf.tflite_builder.passes.stale_binary_adapter_repair import (
+    _repair_stale_nchw_to_nhwc_channelwise_binary_transposes as _repair_stale_nchw_to_nhwc_channelwise_binary_transposes_owner,
+)
 
 
 def _normalize(value: Any) -> Any:
@@ -156,6 +159,21 @@ def _run_legacy_binary_layout_convergence(
         ),
         "reconciled_static_tensor_shapes": reconciled_shapes,
     }
+
+
+def test_stale_binary_transpose_repair_owner_matches_lowerer_wrapper() -> None:
+    owner_model_ir = _make_binary_layout_convergence_model_ir()
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes_owner(
+        owner_model_ir
+    )
+    wrapper_stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+        wrapper_model_ir
+    )
+
+    assert owner_stats == wrapper_stats
+    assert _normalize(owner_model_ir) == _normalize(wrapper_model_ir)
 
 
 def test_indexed_stale_binary_transpose_repair_handles_multiple_matches(

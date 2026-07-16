@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty-five
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-six
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -40,7 +40,8 @@ lowerer and into focused pass modules:
 - indexed-first Swish/plain-unary Squeeze-suffix compatibility recovery;
 - indexed-first factorized/singleton ExpandDims compatibility recovery;
 - indexed-first static/dynamic flatten-HW compatibility recovery;
-- indexed-first static/relaxed attention-QKV compatibility recovery.
+- indexed-first static/relaxed attention-QKV compatibility recovery;
+- stale NCHW-to-NHWC channelwise-binary Transpose repair.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -598,6 +599,25 @@ identical after function-name normalization; the indexed owner is unchanged.
 Whole-graph fallback scans and relaxed in-place constant updates remain a
 separate immutable-indexed migration task.
 
+### Stale channelwise-binary Transpose repair ownership
+
+`passes/stale_binary_adapter_repair.py` now owns the corrected 132-line stale
+NCHW-to-NHWC channelwise-binary Transpose repair. Its owner body is
+AST-identical to the corrected predecessor at checkpoint `c869c410`. The
+lowerer retains its historical private symbol as a compatibility wrapper and
+forwards an optional caller-owned `ModelIRGraphIndex` without rebuilding it.
+Both standalone fallback/final calls remain in their original positions.
+
+The fixed three-round `_run_indexed_binary_layout_convergence` coordinator
+intentionally remains in the lowerer: it owns the ordering boundary between
+the separate broadcast-constant repair, stale-Transpose repair, and static
+shape reconciliation. Direct owner and wrapper execution on deep-copied
+multi-match ModelIR graphs produces identical statistics and complete ModelIR
+fingerprints. Architecture tests prevent a lowerer import cycle, require the
+rank and signature guards to precede mutation in the module owner, preserve
+the wrapper's index forwarding, and freeze the runner plus both standalone
+production call boundaries.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -815,6 +835,10 @@ Latest checkpoint results:
   `615 passed, 2 xfailed`;
 - focused channelwise-constant binary rank correction: `8 passed`;
 - changed-file focused branch regression after the correction: `617 passed`;
+- focused stale binary owner/wrapper and architecture extraction gate:
+  `9 passed`;
+- changed-file focused branch regression after the ownership extraction:
+  `618 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1349,6 +1373,10 @@ setter, so the former strict xfail is green with a zero statistic and complete
 ModelIR no-op. A final branch-specific audit found that the channelwise-
 constant matcher still indexes short source/adapter shapes before its rank
 guard; both rank-four checks now precede channel evidence, so the two former
-strict xfails are green complete no-ops. Extract only the corrected repair owner
-and leave the three-round convergence runner in the lowerer. No broad conversion
-sweep is implied by this checkpoint.
+strict xfails are green complete no-ops. The corrected 132-line owner is now
+mechanically extracted to `passes/stale_binary_adapter_repair.py` with an
+AST-identical body, a lowerer compatibility wrapper, both standalone calls,
+and the central three-round convergence runner preserved. Resume by
+characterizing the next raw source-order owner,
+`_optimize_nhwc_prefix_qlinear_silu_chains` (419 lines), before changing it.
+No broad conversion sweep is implied by this checkpoint.
