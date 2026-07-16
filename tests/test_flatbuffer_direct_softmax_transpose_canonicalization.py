@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.validation import validate_model_ir_invariants
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -246,6 +247,17 @@ def test_softmax_transpose_canonicalization_preserves_operator_contract() -> Non
         3,
         4,
     ]
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+def test_softmax_transpose_canonicalization_accepts_negative_last_axis() -> None:
+    model_ir = _model()
+    model_ir.operators[2].options["axis"] = -1
+
+    stats = _canonicalize_softmax_transpose_chains(model_ir)
+
+    assert stats == {"canonicalized_softmax_transpose_chains": 1}
+    assert model_ir.operators[2].options["axis"] == -1
 
 
 def test_softmax_transpose_canonicalization_rewrites_terminal_output() -> None:
@@ -438,10 +450,6 @@ def test_softmax_transpose_canonicalization_rejects_existing_unsafe_contracts(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Softmax output metadata is not yet replanned with the new layout",
-)
 def test_softmax_transpose_canonicalization_updates_complete_metadata() -> None:
     model_ir = _model()
 
@@ -460,10 +468,6 @@ def test_softmax_transpose_canonicalization_updates_complete_metadata() -> None:
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Only a last-axis Softmax preserves meaning across this permutation rewrite",
-)
 @pytest.mark.parametrize("axis", [0, 1, 2, -2, 4, "invalid"])
 def test_softmax_transpose_canonicalization_rejects_unsafe_axis(
     axis: object,
@@ -474,10 +478,6 @@ def test_softmax_transpose_canonicalization_rejects_unsafe_axis(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Rank-four metadata must be complete before permutation mutation",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -512,10 +512,6 @@ def test_softmax_transpose_canonicalization_rejects_incomplete_metadata(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Permutation rewrites require immutable local INT32 constants",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -524,6 +520,7 @@ def test_softmax_transpose_canonicalization_rejects_incomplete_metadata(
         "tensor-dtype",
         "buffer-dtype",
         "quantized",
+        "post-variable",
     ],
 )
 def test_softmax_transpose_canonicalization_rejects_unsafe_permutation_owner(
@@ -541,14 +538,14 @@ def test_softmax_transpose_canonicalization_rejects_unsafe_permutation_owner(
         permutation.data = np.asarray([0, 3, 2, 1], dtype=np.int64)
     elif case == "quantized":
         permutation.quantization = QuantParamIR(scale=[1.0], zero_point=[0])
+    elif case == "post-variable":
+        model_ir.tensors[
+            "branch0_post_perm_nchw_to_nwhc"
+        ].is_variable = True
 
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Public constant outputs must be preserved through a private clone",
-)
 def test_softmax_transpose_canonicalization_clones_public_permutation_output() -> None:
     model_ir = _model()
     permutation_name = "branch0_perm_nchw_to_nwhc"
@@ -564,10 +561,6 @@ def test_softmax_transpose_canonicalization_clones_public_permutation_output() -
     assert np.array_equal(model_ir.tensors[permutation_name].data, original_data)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Duplicate producers and reverse topology must be rejected before mutation",
-)
 @pytest.mark.parametrize(
     "case",
     [

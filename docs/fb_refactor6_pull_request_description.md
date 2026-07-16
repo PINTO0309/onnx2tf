@@ -1584,4 +1584,13 @@ mutable or public permutation ownership, public constant-output mutation,
 duplicate producers, reverse topology, and public internal aliases. Resume by
 building the full topology/metadata/permutation plan before the first mutation
 and turning every strict xfail green while preserving valid statistics and
-both production boundaries.
+both production boundaries. That transactional correction is now complete.
+One shared `ModelIRGraphIndex` replaces repeated full producer/consumer scans;
+last-axis semantics, unique topological ownership, complete rank-four
+metadata, and immutable INT32 permutation ownership are prevalidated. Both
+permutation actions, clone names, Softmax input/output metadata, post-
+Transpose metadata, and marker options are planned before commit. All 24
+former strict xfails are green, including public-output cloning and post-plan
+atomicity, while normalized axis `-1`, valid statistics, pruning, fixed-point
+behavior, and both ordered boundaries remain intact. Resume by mechanically
+extracting the corrected 340-line owner into a focused pass module.

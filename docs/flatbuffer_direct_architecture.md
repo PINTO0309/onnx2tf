@@ -8010,6 +8010,28 @@ graph-order statistics, fixed-point behavior, marker sharing, pruning,
 terminal-output behavior, and both ordered runtime boundaries must remain
 unchanged.
 
+The correction is now implemented in the raw owner. A single
+`ModelIRGraphIndex` replaces consumer/producer-map reconstruction on every
+fixed-point round. The matcher rejects duplicate producers, reverse producer/
+consumer order, produced public inputs, non-last or malformed Softmax axes,
+per-axis activation quantization, and any missing or non-rank-four required
+shape/signature before planning mutations. Softmax input and output metadata
+are both replanned as NHWC, and the post-Transpose metadata is derived from
+that new output rather than from the stale NWHC shape.
+
+Both permutation actions are planned together. A candidate may update only an
+immutable local unquantized INT32 tensor with an INT32 backing buffer. Shared
+or public-output constants receive deterministic private clones; public
+inputs and variable constants reject. Candidate-local name reservations are
+published only when the complete plan commits, so a rejected candidate cannot
+change a later clone name. After both plans, all metadata, and marker options
+exist, the commit phase has no rejection branch. All 24 former strict xfails
+are green, including a post-permutation failure that proves the pre-
+permutation remains unchanged. Normalized axis `-1`, existing axis `3`, shared
+buffer cloning, public-output cloning, graph-order statistics, fixed-point
+behavior, terminal outputs, pruning, and both production boundaries remain
+covered.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

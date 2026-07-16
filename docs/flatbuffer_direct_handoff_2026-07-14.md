@@ -11185,3 +11185,57 @@ all 24 strict xfails green while preserving the successful graph-order count,
 fixed point, shared-buffer cloning, terminal-output behavior, marker contract,
 and both ordered boundaries. Validate sequentially, commit and push, and do not
 create a pull request.
+
+## Softmax/Transpose transactional correction: completed state
+
+All 24 strict xfails are green. The corrected raw owner is 340 lines and builds
+one `ModelIRGraphIndex` instead of rebuilding complete producer and consumer
+maps during each fixed-point round. It requires unique producers and strict
+`pre-previous < pre < Softmax < post` order, rejects produced tensors also
+declared as public inputs, and preserves the former private fan-out and
+terminal-output guards. Softmax options must describe normalized rank-four
+last axis (`3` or `-1`); a missing axis retains TFLite last-axis semantics.
+
+All four required activation tensors now supply complete rank-four shape and
+effective signature metadata before mutation. The new NHWC shape/signature is
+applied to both Softmax input and output, and the final NCHW metadata is derived
+from that planned Softmax output. This fixes the former H/W swap without
+depending on a later reconcile pass. Per-axis activation quantization remains
+conservatively ineligible.
+
+Both permutation changes are immutable plans. Each source must be a
+non-variable, unquantized INT32 TensorIR with an INT32 NumPy buffer. Public
+inputs reject because their runtime value is overridable. Shared and public-
+output constants receive deterministic private clones, while a uniquely owned
+local constant is updated in place. Clone names are reserved in a candidate-
+local set and become globally reserved only after both permutation plans,
+metadata, and marker options succeed. A dedicated post-permutation failure
+case proves that the pre-permutation, lineage, tensors, options, and metadata
+remain unchanged.
+
+Validation completed as follows:
+
+- focused corrected owner: `42 passed in 0.55s`;
+- corrected owner plus all focused Softmax/layout and architecture suites:
+  `443 passed in 20.90s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 10.06s`;
+- targeted Python compilation and whitespace checks: passed;
+- targeted Ruff reports the same seven pre-existing lowerer findings and no
+  new test finding.
+
+No real-model conversion was added. The correction rejects unsafe
+optimizations while retaining the original graph when evidence is incomplete;
+all known valid synthetic families and the broader Softmax pass set are green.
+Public API, CLI, artifacts, dependencies, corpus profiles, exclusions,
+operation tiers, and TensorFlow boundaries are unchanged. PR #952 remains
+closed; no pull request was created or reopened.
+
+At restart, mechanically extract the corrected 340-line
+`_canonicalize_softmax_transpose_chains` owner to a focused pass module. Retain
+the historical lowerer private name as a one-return wrapper, import the shared
+terminal marker from its existing owner, and preserve both nested recovery-
+sequence positions. Prove corrected old/new AST identity and direct owner/
+wrapper equality for static/dynamic metadata, multiple branches, shared and
+public-output clones, `axis=-1`, terminal output, pruning, rejection, and
+atomicity cases. Validate sequentially, commit and push, and do not create a
+pull request.
