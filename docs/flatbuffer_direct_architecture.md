@@ -4066,6 +4066,22 @@ does not query producers or consumers and does not change topology. Dedicated
 tests preserve wrapper equivalence, constant-payload authority, metadata
 repair, counters, idempotence, and the no-import-cycle boundary.
 
+Final static runtime-shape/signature consistency is owned by
+`passes/static_shape_signature_sanitization.py`. The lowerer retains the
+historical private wrapper at both late production positions. The owner builds
+one producer map, establishes dynamic-lineage roots from ONNX boundary
+metadata and runtime-dependent WHERE, RANGE, RESHAPE, and TOPK_V2 outputs, and
+uses a memoized cycle-safe ancestry walk to distinguish dynamic contracts from
+stale internal signatures. Fully static internal tensors are completed or
+repaired; boundary-map signatures, leading dynamic graph-output axes, and
+dynamic descendants remain dynamic. Constant payloads terminate lineage. The
+pass changes metadata only and deliberately does not mutate topology or
+LayoutState. Focused tests cover each root family, boundary normalization,
+recursive and cyclic lineage, constant termination, scalar/missing/rank/stale
+repairs, idempotence, and compatibility-wrapper equality. Architecture tests
+fix one module owner, one producer-map build, four stats keys, and two
+production calls.
+
 The terminal LiteRT.js compatibility rewrite for ExpandDims and Squeeze is
 owned by `passes/expand_squeeze_reshape.py`; the lowerer retains one private
 compatibility wrapper at the unchanged production boundary. The owner keeps

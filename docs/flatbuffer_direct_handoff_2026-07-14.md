@@ -7665,3 +7665,52 @@ its production call count, positive ownership, no-op guards, metadata and
 stats contract before considering a separate extraction. Keep validation
 small and sequential, reject any model that triggers SWAP, commit and push one
 coherent checkpoint at a time, and do not create a pull request.
+
+## Static shape-signature sanitizer extraction: completed state
+
+The former 206-line `_sanitize_static_shape_signature_consistency` lowerer
+implementation is now owned by
+`passes/static_shape_signature_sanitization.py`. The old private symbol is a
+thin compatibility wrapper and both production calls remain at their original
+late-pipeline positions. This checkpoint is a mechanical ownership move: it
+retains the single producer-map build, boundary metadata handling, special
+WHERE/RANGE/RESHAPE/TOPK_V2 roots, recursive memoization, cycle stop, constant
+lineage stop, graph-output leading-axis policy, mutation order, and all four
+stats keys. It changes tensor shape signatures only; topology and LayoutState
+are untouched.
+
+Temporary environment-gated instrumentation was removed before implementation.
+On six sequential short controls, all twelve calls made zero static repairs.
+The ownership counters were nevertheless non-zero: the final `FastestDet`
+call preserved 13 boundary signatures and 26 multi-axis lineage signatures;
+both `osnet025_Nx3x256x128` calls preserved three boundary signatures and 295
+leading-axis signatures. The other measured calls were zero. All six controls
+passed in 2.609-16.515 seconds, maximum absolute error stayed below `2.2e-05`,
+and process-tree SWAP was zero.
+
+Eleven focused owner tests cover scalar completion, missing/rank-mismatched/
+stale signatures, dynamic runtime no-op, boundary-map normalization, every
+runtime-dependent root family, options and constant-shape RESHAPE targets,
+recursive leading and multi-axis lineage, constant termination, graph-output
+preservation, cycle termination, idempotence, and wrapper equality. With the
+four active legacy fixtures and the ownership selector the focused gate passes
+`16 passed in 1.89s`; the complete architecture suite passes `222 passed in
+38.25s`. The final combined branch gate across all five extracted owner test
+modules, active legacy selectors, shape reconciliation, and architecture
+passes `296 passed in 39.30s`. A fixed-seed differential harness extracted the
+old helper from the pre-change commit and compared stats plus every tensor
+signature with the new owner across 250 generated ModelIR cases; all matched.
+
+Post-extraction sequential validation used the two real positive owners only.
+`FastestDet.onnx` passed in 3.755 seconds with maximum absolute error
+`1.3113021850585938e-05`; `osnet025_Nx3x256x128.onnx` passed in 4.053 seconds
+with maximum absolute error `2.193450927734375e-05`. Both had process-tree
+SWAP zero. Their six float32, float16, and tensor-correspondence artifacts are
+byte-identical to the pre-change controls. No regression is known.
+
+The next adjacent raw lowerer helper is
+`_realign_dynamic_boundary_shape_signature_map`. Before changing it, determine
+whether it belongs with this sanitizer or ONNX boundary analysis, fix the
+alignment-helper contract and two production positions, and measure whether it
+has a non-zero short real owner. Continue with sequential zero-SWAP validation,
+commit and push coherent checkpoints, and do not create a pull request.

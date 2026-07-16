@@ -2,14 +2,15 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving four
+This branch continues the staged `flatbuffer_direct` refactor by moving five
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
 - static Squeeze shape sanitization;
 - LiteRT.js ExpandDims/Squeeze-to-Reshape conversion;
 - exact rank-four binary NHWC/NCHW adaptation;
-- singleton-broadcast rank-four binary NHWC/NCHW adaptation.
+- singleton-broadcast rank-four binary NHWC/NCHW adaptation;
+- final static runtime-shape/signature consistency.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -83,6 +84,17 @@ already broadcast to the declared output. The exact and singleton policies
 remain separate public pass functions and separate statistics because merging
 them would obscure their different operand and output-layout semantics.
 
+### Static shape-signature consistency
+
+`passes/static_shape_signature_sanitization.py` owns the final metadata-only
+consistency pass. It builds one producer map and preserves dynamic signatures
+only when they belong to an ONNX boundary contract, a runtime-dependent
+WHERE/RANGE/RESHAPE/TOPK_V2 root, a graph-output leading axis, or a recursively
+reachable dynamic lineage. The ancestry walk is memoized and cycle-safe, and
+constant payloads stop propagation. Missing, rank-mismatched, stale, or
+unjustified dynamic signatures on fully static internal tensors are repaired.
+Both historical production positions and all four statistics remain unchanged.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -114,15 +126,21 @@ The new focused tests cover:
   independent quantization cloning;
 - existing NumPy-broadcast no-op behavior;
 - direct pass owner versus compatibility-wrapper equivalence;
+- boundary-map normalization, all dynamic-lineage root families, recursive and
+  cyclic lineage, constant termination, and static signature completion;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
 Latest checkpoint results:
 
 - focused binary adapter and legacy singleton tests: `45 passed`;
-- complete flatbuffer-direct architecture suite: `221 passed`;
+- focused static shape-signature owner, legacy fixtures, and ownership selector:
+  `16 passed`;
+- complete flatbuffer-direct architecture suite: `222 passed`;
 - final combined branch gate across all extracted owners, active legacy
-  selectors, shape reconciliation, and architecture: `280 passed`;
+  selectors, shape reconciliation, and architecture: `296 passed`;
+- old helper versus new owner differential comparison: 250 generated ModelIR
+  cases matched in both statistics and every tensor shape signature;
 - Ruff checks, Python compilation, and whitespace checks: passed.
 
 Earlier checkpoints on this branch also passed their complete focused plus
@@ -150,6 +168,11 @@ passed in 3.739 seconds with:
 - process-tree peak SWAP = 0 KiB;
 - byte-identical float32, float16, and tensor-correspondence artifacts.
 
+The shape-signature extraction additionally used `osnet025_Nx3x256x128.onnx`
+because it is a positive real owner of dynamic leading-axis preservation. It
+passed in 4.053 seconds with `max_abs = 2.193450927734375e-05`, zero SWAP, and
+byte-identical float32, float16, and tensor-correspondence artifacts.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -159,5 +182,5 @@ must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
 The next candidate for characterization is the adjacent
-`_sanitize_static_shape_signature_consistency` helper. It is outside this
+`_realign_dynamic_boundary_shape_signature_map` helper. It is outside this
 branch's completed checkpoint.
