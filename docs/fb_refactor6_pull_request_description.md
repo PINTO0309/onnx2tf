@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-one
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -27,6 +27,7 @@ lowerer and into focused pass modules:
 - dual affine-input BatchMatMul compatibility recovery;
 - BatchMatMul-to-SE layout compatibility recovery;
 - rank-three BatchMatMul input-adapter to adjoint-flag recovery;
+- probable-NHWC axis-sensitive metadata and output sanitization;
 - residual Add/Mul/Add/PReLU compatibility recovery;
 - residual Add/Mul/Add/post-Transpose fan-out compatibility recovery;
 - pre-unary Mul/Add/post-Transpose fan-out compatibility recovery;
@@ -354,6 +355,24 @@ producer/consumer maps after every accepted adapter and directly mutates or
 deletes operators without an invariant transaction. Indexed transactional
 migration is kept separate from this exact ownership move.
 
+### Probable-NHWC axis-sensitive sanitization
+
+`passes/probable_nhwc_axis_sanitizer.py` owns the former 245-line helper. It
+preserves the probable-NHWC shape heuristic, SPLIT axis repair and shared-axis
+copy-on-write, CONCATENATION axis repair, SLICE begin/size rotation, unary and
+binary output-metadata propagation, explicit/public NCHW guards, conditional
+terminal NHWC-to-NCHW graph-output adapters, fixed-point restart, both
+statistics, and both ordered production positions. The lowerer retains a one-
+call private wrapper, and the complete old/new owner ASTs are identical after
+function-name normalization.
+
+The four-case focused fixture runs the module owner and compatibility wrapper
+on deep copies and compares the complete ModelIR for every positive and no-op
+contract. The mechanical owner still rebuilds full graph maps, mutates SLICE
+constants without copy-on-write, and inserts terminal operators directly
+without an invariant transaction. Semantic hardening and indexed migration are
+kept separate from this exact ownership move.
+
 ### Residual Add/Mul/Add/PReLU compatibility recovery
 
 `passes/residual_affine_prelu_layout.py` owns the former 415-line compatibility
@@ -622,6 +641,8 @@ Latest checkpoint results:
 - focused probable-NHWC axis sanitizer characterization: `4 passed`;
 - changed-file branch regression gate after sanitizer characterization:
   `522 passed`;
+- focused probable-NHWC owner/wrapper and production-boundary gate: `5 passed`;
+- changed-file branch regression gate after sanitizer extraction: `523 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -830,6 +851,16 @@ pre-move accuracy evaluation passed with
 no duplicate post-move inference was run because the executed TFLite artifact
 is byte-identical.
 
+The probable-NHWC sanitizer extraction used FastestDet as its fixed zero-owner
+artifact control. Its four runtime results remain zero before and after
+extraction. The pre/post conversion-only runs completed in 0.802 and 0.783
+seconds, recorded process-tree SWAP zero, and produced byte-identical float32,
+float16, tensor-correspondence, schema, and generated-schema outputs. The
+preceding FastestDet accuracy baseline remains
+`max_abs=1.3113021850585938e-05`; no duplicate inference was run because the
+executed TFLite artifact is unchanged. Positive production ownership is not
+claimed; all positive branches are fixed by the four-case focused contract.
+
 The residual affine/PReLU extraction used `sinet_320_op.onnx` as its positive
 artifact control. Its fourteen runtime results remain
 `0,0,0,1,1,0,0,0,0,0,0,0,0,0` across extraction. The pre/post conversion-only
@@ -927,14 +958,11 @@ and non-zero ownership before replacing the current insertion logic.
 The adjacent 218-line rank-3-to-NHWC reshape helper, 293-line attention
 Gather/Transpose/Reshape cleanup, and 190-line attention pre-projection rank-
 lift remain intentionally unchanged under their recorded no-owner decisions.
-The next raw source-order implementation is the 245-line
-`_sanitize_probable_nhwc_axis_sensitive_ops` helper. Its dedicated four-case
-characterization now fixes positive SPLIT/CONCATENATION/SLICE repair, shared-
-axis copy-on-write, unary/binary metadata propagation, terminal output-adapter
-insertion, and the explicit-NCHW no-op. FastestDet, SiNet, inference_ops15, and
-LINEA provide sequential zero-owner controls with process-tree SWAP zero, but
-positive production ownership has not been observed. Resume by checking the
-complete old/new AST, both production positions, the four-case owner/wrapper
-equivalence contract, and one of these fixed zero-owner artifacts before a
-mechanical extraction; no broad conversion sweep is implied by this
-checkpoint.
+The next raw source-order implementation is the 207-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` helper. It has no
+dedicated direct fixture. Resume by inventorying multi-input pre-Transpose
+ownership, the allowed elementwise closure, constant rotation, fan-out and
+public-boundary guards, post-Transpose alias handling, its single production
+position, and the smallest sequential zero-SWAP real-model owner before
+deciding whether it has enough evidence for mechanical extraction; no broad
+conversion sweep is implied by this checkpoint.

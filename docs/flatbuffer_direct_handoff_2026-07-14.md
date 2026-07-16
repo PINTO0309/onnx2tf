@@ -9433,3 +9433,70 @@ the owner and compatibility wrapper on deep copies. Use one of the fixed short
 zero-owner models for sequential pre/post byte-equivalence and SWAP control.
 Do not claim positive production ownership, and do not mix a semantic or
 indexed rewrite into the exact mechanical ownership move.
+
+## Probable-NHWC axis sanitizer extraction: completed state
+
+The complete 245-line `_sanitize_probable_nhwc_axis_sensitive_ops` helper is
+now owned by `passes/probable_nhwc_axis_sanitizer.py`. The lowerer retains one
+private one-call wrapper at both unchanged ordered production positions. After
+normalizing only the function name, the prior lowerer owner and new pass owner
+ASTs are identical.
+
+The owner preserves the probable-NHWC shape heuristic, SPLIT axis repair and
+shared-axis copy-on-write, CONCATENATION axis repair, SLICE begin/size
+rotation, unary and binary output-metadata propagation, explicit/public NCHW
+guards, conditional terminal NHWC-to-NCHW graph-output adapters, fixed-point
+restart, exact mutation/insertion order, and both historical statistics.
+
+All four characterization cases now run the module owner and lowerer wrapper
+on deep copies and compare the complete ModelIR. Together with the architecture
+owner/production selector the focused gate passes `5 passed in 1.99s`. The
+changed-file branch regression collection passes `523 passed in 28.09s`; the
+optional-TensorFlow import-blocked suite passes `11 passed in 9.42s`. Ruff,
+Python compilation, full old/new AST equivalence, and whitespace checks pass.
+
+FastestDet is the strictly sequential zero-owner artifact control. Its four
+runtime results remain zero before and after extraction. The conversion-only
+pre run completed in 0.802 seconds and the post run in 0.783 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential FastestDet accuracy checkpoint remains
+`max_abs=1.3113021850585938e-05`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; all positive semantic branches are fixed by the dedicated four-case
+contract. All actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risks are unchanged. It rebuilds complete
+producer/consumer maps in its fixed-point loop, mutates SLICE constants without
+copy-on-write, treats metadata-only unary/binary changes outside the rewrite
+statistic, and inserts terminal operators directly without a transaction or
+shared GraphIndex/LayoutState. Semantic hardening and indexed migration require
+independent fixtures and are not mixed into this exact ownership move.
+
+Changed files are the new probable-NHWC sanitizer pass, lowerer import and
+wrapper, owner/wrapper-focused fixture, architecture ownership test, and three
+branch documents. No public API, CLI, artifact name, TensorFlow boundary,
+dependency, corpus profile, exclusion policy, or ONNX operation-tier policy
+changed. Temporary tracing and conversion outputs are removed before commit.
+PR #952 remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 207-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`. It has no
+dedicated direct fixture. At restart, inventory multi-input pre-Transpose
+ownership, the allowed elementwise closure, constant rotation, fan-out and
+public-boundary guards, post-Transpose alias handling, its single production
+position, and the smallest sequential zero-SWAP real-model owner before
+changing source. Do not introduce a synthetic-only extraction merely to
+advance source order; commit and push only a coherent verified unit and do not
+create a pull request.

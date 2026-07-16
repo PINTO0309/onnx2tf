@@ -1,11 +1,70 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _sanitize_probable_nhwc_axis_sensitive_ops,
 )
+from onnx2tf.tflite_builder.passes.probable_nhwc_axis_sanitizer import (
+    sanitize_probable_nhwc_axis_sensitive_ops,
+)
+
+
+def _fingerprint(model_ir: ModelIR) -> tuple[object, ...]:
+    return (
+        tuple(model_ir.inputs),
+        tuple(model_ir.outputs),
+        tuple(
+            (
+                operator.op_type,
+                tuple(operator.inputs),
+                tuple(operator.outputs),
+                repr(operator.options),
+            )
+            for operator in model_ir.operators
+        ),
+        tuple(
+            (
+                name,
+                tensor.dtype,
+                tuple(tensor.shape),
+                (
+                    None
+                    if tensor.shape_signature is None
+                    else tuple(tensor.shape_signature)
+                ),
+                tensor.logical_layout,
+                tensor.physical_layout,
+                repr(tensor.quantization),
+                (
+                    None
+                    if tensor.data is None
+                    else (
+                        str(np.asarray(tensor.data).dtype),
+                        tuple(np.asarray(tensor.data).shape),
+                        tuple(np.asarray(tensor.data).reshape(-1).tolist()),
+                    )
+                ),
+            )
+            for name, tensor in sorted(model_ir.tensors.items())
+        ),
+        repr(model_ir.metadata),
+    )
+
+
+def _run_owner_and_wrapper(
+    model_ir: ModelIR,
+) -> tuple[ModelIR, dict[str, int]]:
+    owner_model_ir = deepcopy(model_ir)
+    wrapper_model_ir = deepcopy(model_ir)
+    owner_stats = sanitize_probable_nhwc_axis_sensitive_ops(owner_model_ir)
+    wrapper_stats = _sanitize_probable_nhwc_axis_sensitive_ops(wrapper_model_ir)
+    assert owner_stats == wrapper_stats
+    assert _fingerprint(owner_model_ir) == _fingerprint(wrapper_model_ir)
+    return owner_model_ir, owner_stats
 
 
 def _add_tensor(
@@ -65,7 +124,7 @@ def test_probable_nhwc_sanitizer_clones_split_axis_and_restores_output() -> None
         ),
     ]
 
-    stats = _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     assert stats == {
         "sanitized_probable_nhwc_axis_sensitive_ops": 1,
@@ -134,7 +193,7 @@ def test_probable_nhwc_sanitizer_repairs_concat_and_slice_metadata() -> None:
         ),
     ]
 
-    stats = _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     assert stats == {
         "sanitized_probable_nhwc_axis_sensitive_ops": 2,
@@ -176,7 +235,7 @@ def test_probable_nhwc_sanitizer_propagates_unary_and_binary_metadata() -> None:
         ),
     ]
 
-    stats = _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     assert stats == {
         "sanitized_probable_nhwc_axis_sensitive_ops": 0,
@@ -224,7 +283,7 @@ def test_probable_nhwc_sanitizer_preserves_explicit_nchw_concat_axis() -> None:
         )
     )
 
-    stats = _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     concat = model_ir.operators[-1]
     assert stats["sanitized_probable_nhwc_axis_sensitive_ops"] == 0

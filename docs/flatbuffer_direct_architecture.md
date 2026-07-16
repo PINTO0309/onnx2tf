@@ -7171,6 +7171,25 @@ producer/consumer maps after every accepted adapter and directly mutates or
 deletes operators without a transaction; indexed transactional migration
 remains separate from this exact ownership checkpoint.
 
+The probable-NHWC axis-sensitive sanitizer is now isolated in
+`passes/probable_nhwc_axis_sanitizer.py`. Its complete 245-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves the historical probable-NHWC shape heuristic, SPLIT axis copy-on-
+write, CONCATENATION and SLICE axis/constant repair, unary and binary metadata
+propagation, public-layout and explicit-NCHW guards, conditional terminal
+NHWC-to-NCHW output adapters, fixed-point restart, both statistics, and both
+ordered production positions. The lowerer retains a one-call private wrapper.
+
+The dedicated four-case fixture runs the module owner and private wrapper on
+deep copies and compares the complete ModelIR for every positive and no-op
+contract. FastestDet supplies four measured zero-owner invocations before and
+after the move, records zero process-tree SWAP, and reproduces all five core
+artifacts byte for byte. Positive production ownership is therefore not
+claimed. The raw owner still rebuilds complete maps, mutates shared SLICE
+constants without copy-on-write, and inserts terminal operators directly
+without an invariant transaction; semantic hardening and indexed migration
+remain separate from this exact ownership checkpoint.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.
