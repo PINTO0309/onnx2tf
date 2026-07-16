@@ -7072,6 +7072,27 @@ production ownership is not claimed. Alpha and RHS tensors still lack complete
 producer, variable-state, and graph-visibility ownership validation; that
 semantic hardening remains separate from the exact ownership move.
 
+The terminal Transpose/Mul/Add/PReLU/post-Transpose compatibility rule is now
+isolated in `passes/terminal_affine_prelu_layout.py`. Its complete 295-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves commutative affine inputs, NCHW-to-NHWC
+channel-constant rotation, shared-constant copy-on-write, multiple post-
+Transpose aliases, retained legacy NCHW consumers through one reverse adapter,
+metadata and quantization propagation, fixed-point restart, pruning,
+statistics, and the single ordered production statement reached through four
+runtime recovery invocations. The lowerer retains a one-call private wrapper.
+
+The former giant direct-builder fixture is now a focused module and runs the
+pass owner and private wrapper on deep copies, comparing the complete ModelIR.
+It fixes the positive terminal rewrite together with the legacy-consumer
+adapter. SiNet supplies four measured zero-owner invocations before and after
+the move, records zero process-tree SWAP, and reproduces all five core artifacts
+byte for byte. Positive production ownership is therefore not claimed. The raw
+owner still builds complete maps in an unbounded fixed-point loop, and its
+sequential constant rotation can leave a partial mutation when a later
+constant rejects; transactional hardening remains separate from this exact
+ownership checkpoint.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.

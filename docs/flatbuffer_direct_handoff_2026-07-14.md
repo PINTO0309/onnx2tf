@@ -9030,3 +9030,75 @@ the next raw source-order implementation with an existing public fixture,
 changing source. Confirm real ownership, mutation dependencies, production
 position, and a short zero-SWAP artifact control first. Then commit and push one
 coherent unit without creating a pull request.
+
+## Terminal Transpose/Mul/Add/PReLU compatibility extraction: completed state
+
+The complete 295-line
+`_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains` helper is
+now owned by `passes/terminal_affine_prelu_layout.py`. The lowerer retains one
+private one-call wrapper at the unchanged ordered production statement, which
+is reached through four runtime recovery invocations. After normalizing only
+the function name, the prior lowerer owner and new pass owner ASTs are
+identical. The moved inherited unused producer-map snapshot is explicitly
+marked `noqa` without changing the AST or runtime behavior.
+
+The owner preserves commutative affine inputs, NCHW-to-NHWC channel-constant
+rotation, shared-constant copy-on-write, multiple post-Transpose aliases,
+retained legacy NCHW consumers through one reverse adapter, tensor metadata and
+quantization propagation, exact mutation/removal order, fixed-point restart,
+sole prune/report boundary, and the historical statistic.
+
+The former direct-builder fixture is removed from the giant test module and
+now lives in `test_flatbuffer_direct_terminal_affine_prelu_layout.py`. It runs
+the module owner and lowerer wrapper on deep copies, compares the complete
+ModelIR, and fixes the positive terminal rewrite plus retained legacy adapter.
+Together with the architecture owner and ordered-production selectors it passes
+`3 passed, 754 deselected in 4.45s`. The changed-file branch regression
+collection passes `510 passed in 28.41s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.28s`.
+
+Tier 2 `sinet_320_op.onnx` is the strictly sequential zero-owner artifact
+control. Its four runtime counts remain `0,0,0,0` before and after extraction.
+Both conversions completed in 2.413 seconds and recorded process-tree SWAP
+zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential SiNet accuracy checkpoint remains
+`max_abs=2.572051016613841e-09`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the module contract is fixed by the relocated public fixture. All
+actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps in an unbounded fixed-point loop, and sequentially
+rotates three constants before the whole candidate is known to be valid. A
+later constant rejection can therefore leave an earlier exclusive constant
+mutated despite a zero statistic. Correcting that requires an immutable
+transaction and independent semantic fixtures and is not mixed into this exact
+mechanical move.
+
+Changed files are the new terminal affine/PReLU pass, lowerer import and
+wrapper, relocated focused fixture, giant-test import/removal, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary tracing and conversion
+outputs are removed before commit. PR #952 remains closed; work is commit/push
+only and no pull request is created.
+
+The next raw source-order implementation with an existing public fixture is the
+359-line `_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains`. At
+restart, inventory its axis remapping, constant ownership, partial-mutation
+risks, statistics, five production invocations, the existing direct fixture,
+and the earlier measured zero-owner decision before changing source. Use the
+smallest sequential zero-SWAP artifact control, then commit and push one
+coherent unit without creating a pull request.

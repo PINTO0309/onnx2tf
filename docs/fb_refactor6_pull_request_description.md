@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving twenty-five
+This branch continues the staged `flatbuffer_direct` refactor by moving twenty-six
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -22,6 +22,7 @@ lowerer and into focused pass modules:
 - late dual-pre-Add to single-post adapter recovery;
 - terminal affine/Reshape/FullyConnected layout recovery;
 - terminal PReLU/Reshape/BatchMatMul layout recovery;
+- terminal Transpose/Mul/Add/PReLU compatibility recovery;
 - residual Add/Mul/Add/PReLU compatibility recovery;
 - residual Add/Mul/Add/post-Transpose fan-out compatibility recovery;
 - pre-unary Mul/Add/post-Transpose fan-out compatibility recovery;
@@ -273,6 +274,21 @@ variable state, or graph visibility. Those ownership guards require a separate
 semantic hardening checkpoint and are not silently added by this mechanical
 move.
 
+### Terminal Transpose/Mul/Add/PReLU compatibility recovery
+
+`passes/terminal_affine_prelu_layout.py` owns the former 295-line terminal
+helper. It preserves commutative affine inputs, NCHW-to-NHWC channel-constant
+rotation, shared-constant copy-on-write, multiple post-Transpose aliases,
+retained legacy NCHW consumers through one reverse adapter, metadata and
+quantization propagation, fixed-point restart, pruning, statistics, and its
+single ordered production statement reached through four runtime recovery
+invocations. The lowerer retains a one-call private wrapper, and the old/new
+complete owner ASTs are identical after function-name normalization.
+
+The raw owner still rebuilds complete maps in an unbounded loop and can rotate
+an earlier constant before a later constant rejects. Transactional hardening is
+kept separate from this exact ownership move.
+
 ### Residual Add/Mul/Add/PReLU compatibility recovery
 
 `passes/residual_affine_prelu_layout.py` owns the former 415-line compatibility
@@ -521,6 +537,10 @@ Latest checkpoint results:
 - final branch gate after terminal affine/FC extraction: `692 passed`;
 - focused terminal PReLU/BMM owner plus architecture suite: `249 passed`;
 - final branch gate after terminal PReLU/BMM extraction: `711 passed`;
+- focused terminal affine/PReLU owner, wrapper, and production-order gate:
+  `3 passed`;
+- changed-file branch regression gate after terminal affine/PReLU extraction:
+  `510 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -678,6 +698,16 @@ immediately preceding accuracy baseline remains
 executed TFLite is unchanged. A read-only scan of root ONNX files up to 50 MiB
 found no complete raw source chain, so positive behavior remains synthetic.
 
+The terminal affine/PReLU extraction used `sinet_320_op.onnx` as its fixed
+zero-owner artifact control. Its four runtime results remain `0,0,0,0` before
+and after extraction. The pre/post conversion-only runs both completed in
+2.413 seconds, recorded process-tree SWAP zero, and produced byte-identical
+float32, float16, tensor-correspondence, schema, and generated-schema outputs.
+The immediately preceding SiNet accuracy baseline remains
+`max_abs=2.572051016613841e-09`; no duplicate inference was run because the
+executed TFLite is unchanged. The positive owner contract is fixed by the
+relocated direct fixture.
+
 The residual affine/PReLU extraction used `sinet_320_op.onnx` as its positive
 artifact control. Its fourteen runtime results remain
 `0,0,0,1,1,0,0,0,0,0,0,0,0,0` across extraction. The pre/post conversion-only
@@ -772,10 +802,10 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The adjacent 218-line rank-3-to-NHWC reshape helper and 293-line attention
-Gather/Transpose/Reshape cleanup remain intentionally unchanged: prior scans
-of all active Tier 0-4 models found zero complete production owners and no
-public compatibility fixture exists. Synthetic-only replacement would not
-establish production behavior. Resume by inventorying the next raw helper with
-established non-zero ownership, while preserving the recorded no-change
-decisions; no broad conversion sweep is implied by this mechanical checkpoint.
+The adjacent 218-line rank-3-to-NHWC reshape helper, 293-line attention
+Gather/Transpose/Reshape cleanup, and 190-line attention pre-projection rank-
+lift remain intentionally unchanged under their recorded no-owner decisions.
+Resume by inventorying the 359-line
+`_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains` compatibility
+helper and its existing axis-remap fixture before choosing the next mechanical
+ownership boundary; no broad conversion sweep is implied by this checkpoint.
