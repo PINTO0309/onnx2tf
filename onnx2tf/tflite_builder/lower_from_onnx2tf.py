@@ -3892,6 +3892,8 @@ def _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir: ModelIR
             for op_idx in list(subgraph_indices):
                 op = model_ir.operators[int(op_idx)]
                 for output_name_raw in list(op.outputs):
+                    if str(output_name_raw) == root_nhwc_name:
+                        continue
                     _permute_tensor_metadata_if_rank_matches(
                         model_ir.tensors.get(str(output_name_raw), None),
                         perm_nhwc_to_nchw,

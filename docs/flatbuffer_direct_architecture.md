@@ -7190,6 +7190,17 @@ constants without copy-on-write, and inserts terminal operators directly
 without an invariant transaction; semantic hardening and indexed migration
 remain separate from this exact ownership checkpoint.
 
+The adjacent raw NCHW→NHWC elementwise roundtrip compatibility owner now has a
+focused closed-subgraph and rejection contract. Characterization exposed that
+the root output metadata was permuted once with the intermediate tensors and a
+second time after copying it to the canonical post-Transpose output. The owner
+now excludes the private root tensor from the intermediate metadata loop, so
+the canonical tensor receives exactly one NHWC-to-NCHW permutation. Multi-
+input rewiring, embedded constants, fan-out rejection, public-output rejection,
+pruning, and idempotence are fixed by the focused tests. The implementation
+remains in the lowerer pending positive production ownership evidence; this
+semantic correction is not combined with an ownership extraction.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.

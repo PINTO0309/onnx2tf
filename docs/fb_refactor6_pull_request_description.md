@@ -373,6 +373,22 @@ constants without copy-on-write, and inserts terminal operators directly
 without an invariant transaction. Semantic hardening and indexed migration are
 kept separate from this exact ownership move.
 
+### NCHW/NHWC elementwise roundtrip root-metadata correction
+
+The still-central
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` helper now skips
+its private root output during the intermediate-tensor metadata permutation.
+Previously it permuted that tensor once with the elementwise subgraph, copied
+the already-permuted metadata to the canonical post-Transpose output, and
+permuted it a second time. A `[1,8,8,3]` NHWC root therefore became the invalid
+`[1,8,3,8]` shape instead of `[1,3,8,8]`.
+
+The focused contract fixes a positive multi-input elementwise closure,
+embedded constant retention, canonical alias rewiring, pruning and idempotence,
+plus fan-out and public-output rejection. The implementation remains in the
+lowerer because positive production ownership has not been observed; this safe
+semantic correction is not mixed with an ownership extraction.
+
 ### Residual Add/Mul/Add/PReLU compatibility recovery
 
 `passes/residual_affine_prelu_layout.py` owns the former 415-line compatibility
@@ -643,6 +659,9 @@ Latest checkpoint results:
   `522 passed`;
 - focused probable-NHWC owner/wrapper and production-boundary gate: `5 passed`;
 - changed-file branch regression gate after sanitizer extraction: `523 passed`;
+- focused NCHW/NHWC elementwise roundtrip correction and guards: `3 passed`;
+- changed-file branch regression gate after root-metadata correction:
+  `526 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -861,6 +880,16 @@ preceding FastestDet accuracy baseline remains
 executed TFLite artifact is unchanged. Positive production ownership is not
 claimed; all positive branches are fixed by the four-case focused contract.
 
+The elementwise roundtrip root-metadata correction used Tier 1
+`gaze_estimation_adas_0002.onnx` as its fixed zero-owner artifact control. Its
+four runtime results remain zero before and after the correction. The pre/post
+conversion-only runs completed in 0.398 and 0.395 seconds, recorded process-
+tree SWAP zero, and produced byte-identical float32, float16, tensor-
+correspondence, schema, and generated-schema outputs. The active Tier 0-4
+baseline remains `max_abs=1.2665987014770508e-07`; no duplicate inference was
+run because the executed TFLite artifact is unchanged. Positive semantics are
+fixed by the focused synthetic closure and guard corpus.
+
 The residual affine/PReLU extraction used `sinet_320_op.onnx` as its positive
 artifact control. Its fourteen runtime results remain
 `0,0,0,1,1,0,0,0,0,0,0,0,0,0` across extraction. The pre/post conversion-only
@@ -958,11 +987,13 @@ and non-zero ownership before replacing the current insertion logic.
 The adjacent 218-line rank-3-to-NHWC reshape helper, 293-line attention
 Gather/Transpose/Reshape cleanup, and 190-line attention pre-projection rank-
 lift remain intentionally unchanged under their recorded no-owner decisions.
-The next raw source-order implementation is the 207-line
-`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` helper. It has no
-dedicated direct fixture. Resume by inventorying multi-input pre-Transpose
-ownership, the allowed elementwise closure, constant rotation, fan-out and
-public-boundary guards, post-Transpose alias handling, its single production
-position, and the smallest sequential zero-SWAP real-model owner before
-deciding whether it has enough evidence for mechanical extraction; no broad
-conversion sweep is implied by this checkpoint.
+The corrected 207-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` helper now has a
+dedicated positive and rejection contract, but the structurally matching gaze
+model still records zero production rewrites. Do not mechanically extract it
+until positive production ownership is observed or a later checkpoint
+explicitly accepts zero-owner evidence. The next raw source-order
+implementation is the 555-line opposite-direction elementwise fan-out helper;
+inventory its existing indirect coverage and real ownership before deciding
+whether it is a safer evidence-backed unit. No broad conversion sweep is
+implied by this checkpoint.

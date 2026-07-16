@@ -9500,3 +9500,70 @@ position, and the smallest sequential zero-SWAP real-model owner before
 changing source. Do not introduce a synthetic-only extraction merely to
 advance source order; commit and push only a coherent verified unit and do not
 create a pull request.
+
+## NCHW/NHWC elementwise roundtrip root-metadata correction: completed state
+
+The 207-line `_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`
+implementation remains in `lower_from_onnx2tf.py`; this checkpoint deliberately
+does not extract it. A new focused module first characterized one positive
+multi-input elementwise closure plus pre-Transpose fan-out and public post-
+output rejection.
+
+The positive characterization exposed a pre-existing metadata defect before
+any correction was applied. The owner permuted every elementwise subgraph
+output from NHWC to NCHW, including the private root, then copied that already-
+permuted root metadata to the canonical post-Transpose output and permuted it a
+second time. For a `[1,8,8,3]` root this produced `[1,8,3,8]` rather than the
+required `[1,3,8,8]`. The issue was recorded as a strict xfail before the
+implementation changed.
+
+The safe correction excludes only `root_nhwc_name` from the intermediate-
+output metadata loop. Existing guards prove that this private root is consumed
+only by the matched post-Transpose and is not public. Intermediate tensors are
+still permuted once; the root metadata is copied to the canonical output and
+permuted exactly once. Rewiring, constants, alias replacement, removal order,
+fixed-point behavior, pruning, and the historical statistic are unchanged.
+
+The focused positive, fan-out rejection, public-output rejection, pruning, and
+idempotence suite passes `3 passed in 0.53s`. The changed-file branch regression
+collection passes `526 passed in 26.93s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.34s`. Ruff and whitespace checks pass. There are no
+remaining xfails in this focused module.
+
+Tier 1 `gaze_estimation_adas_0002.onnx` is the strictly sequential zero-owner
+artifact control. A read-only ONNX topology scan found seven structurally
+similar Transpose/elementwise/inverse-Transpose regions, but earlier lowering
+passes eliminate or alter them before this helper. Its four runtime results
+remain zero before and after the correction. The pre conversion completed in
+0.398 seconds and the post conversion in 0.395 seconds; both recorded process-
+tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fe026fa4d996ab526e2c65506c83c0f3b709f381fc9247a5453c8731abdf70c5`;
+- float16 TFLite:
+  `392c1312bde822bd4f824d9fdca19612cf07018ac8cdbac3303407530d4a2b55`;
+- tensor correspondence:
+  `002b47c50efda861d76b941f97992a7dae1a6d8758d627f182340bf954dca272`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The active Tier 0-4 accuracy baseline remains
+`max_abs=1.2665987014770508e-07`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed. All model runs remained strictly sequential.
+
+Changed files are the one-line guarded lowerer correction, the new focused
+elementwise-roundtrip characterization module, and three branch documents. No
+public API, CLI, artifact name, TensorFlow boundary, dependency, corpus
+profile, exclusion policy, or ONNX operation-tier policy changed. Temporary
+tracing and conversion outputs are removed before commit. PR #952 remains
+closed; work is commit/push only and no pull request is created.
+
+Do not mechanically extract this corrected helper until positive production
+ownership is observed or a later checkpoint explicitly accepts the fixed
+zero-owner evidence. At restart, inventory the adjacent 555-line
+`_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains` helper's
+existing fixtures, fan-out/constant contracts, production positions, and short
+zero-SWAP real ownership before choosing the next evidence-backed unit.
