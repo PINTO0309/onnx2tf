@@ -7006,6 +7006,29 @@ Div behavior. Every float32, float16, and correspondence artifact for all four
 models is byte-identical across extraction, and every monitored conversion
 records zero process-tree SWAP.
 
+Dynamic Reshape metadata resolution is isolated in
+`dynamic_reshape_resolution.py`. The implementation owns both the static
+element-count resolver and the ModelIR pass that reconciles `newShape`,
+`onnxRawNewShape`, optional `allowZero`, constant shape inputs, and output
+shape/signature metadata. It preserves runtime-driven empty templates,
+dynamic `-1`, final high-rank runtime-inference preference, zero-copy axes,
+stale static constants, layout-transpose-as-Reshape markers, and malformed or
+unresolvable no-op behavior.
+
+The lowerer retains thin compatibility wrappers for both historical private
+names. Callers that already share a `ModelIRGraphIndex` still dispatch only
+indexed Reshape operators; legacy standalone callers retain their original
+single operator-list traversal. This metadata-only extraction does not alter
+topology, pass order, counters, or public API, but removes the complete
+shape-family decision tree from unrelated central lowering context.
+
+Tier 3 `rf-detr-nano.onnx` establishes real production ownership: its first
+four ordered resolver invocations report zero and the absolute-final
+runtime-inference invocation resolves three Reshapes. Its float32, float16,
+and correspondence artifacts remain byte-identical across extraction, and
+both monitored conversions record zero process-tree SWAP. IAT-LLIE and OSNet
+provide measured zero-owner controls at all five boundaries.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

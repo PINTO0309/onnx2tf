@@ -7078,3 +7078,82 @@ at the actual production boundary. Continue to freeze real ownership and exact
 artifacts before source changes, use only short sequential zero-SWAP models,
 record any problem before correction, commit and push coherent units, and do
 not create a pull request.
+
+## Dynamic Reshape resolution extraction: pre-change record
+
+The next central shape-family helper was `_resolve_dynamic_reshape_shapes`
+together with `_resolve_reshape_new_shape_from_static_input`. The implementation
+occupied roughly 430 lowerer lines and combined selection, ONNX template
+precedence, zero-copy semantics, static element-count inference, final-stage
+runtime `-1` preference, shape-constant mutation, and output metadata updates.
+It already supported optional indexed Reshape dispatch and made no topology
+changes, so the safe checkpoint scope was a mechanical module extraction with
+no semantic rewrite.
+
+IAT-LLIE and OSNet were first instrumented at all five production invocations.
+Both exited 0 in 2.187 and 2.771 seconds with SWAP zero, but all ten counts were
+zero. A shortest-likely-owner search then started with Tier 3
+`rf-detr-nano.onnx` and stopped immediately: the model exited 0 in 11.573
+seconds with SWAP zero and recorded resolver counts `0, 0, 0, 0, 3`. Thus only
+the absolute-final call with runtime-inferable ONNX raw-shape preference owns
+three current production rewrites.
+
+The fixed RF-DETR pre-extraction artifacts are:
+
+- float32:
+  `fda7d97eaad2b19ee2ac31411099067e78b747515952b7c65ba52a0f1454f1fb`;
+- float16:
+  `a80051b2d6bb871ee871f0d1528e1ea7c8d4e7f6ecbfc16daec4fa78d696fd1f`;
+- correspondence:
+  `262235cec5a8df73ff2afd7f1eb28678cc7312f4a19dd09d278fd8db77cbdec4`.
+
+No conversion problem prompted this extraction. The recorded maintenance
+problem was that the entire decision tree remained central lowerer context,
+including its nested sanitizer and static helper, despite being a cohesive
+metadata-only pass. Mutation is intentionally direct and non-transactional,
+but each Reshape is independent, the traversal is single-pass, and existing
+fixtures already cover malformed and unresolvable no-ops. Preserve every
+branch, mutation order, counter, optional-index behavior, and private wrapper
+while moving the owner; do not narrow or reinterpret shape semantics in this
+checkpoint.
+
+## Dynamic Reshape resolution extraction: completed state
+
+`passes/dynamic_reshape_resolution.py` now owns the complete static helper and
+resolver. `lower_from_onnx2tf.py` keeps thin wrappers for both historical
+private names, so existing imports, positional arguments, optional
+`graph_index`, and all four call sites remain compatible. Shared convergence
+paths still reuse their existing index; standalone early and absolute-final
+calls retain the original operator-list traversal. No graph, layout, lineage,
+cleanup, counter, or artifact ordering was changed.
+
+The focused gate covers runtime high-rank `-1`, indexed traversal without a
+full operator iteration, zero-copy dimensions, empty `newShape`, static and
+dynamic ONNX raw templates, `allowZero`, stale shape constants, window
+partition/reverse interactions, shape convergence, final convergence, and
+direct module/wrapper equivalence. It passes:
+
+- dynamic Reshape, window, convergence, existing direct, and architecture
+  selection: `130 passed, 951 deselected in 3.00s`;
+- complete flatbuffer-direct architecture contract:
+  `216 passed in 41.98s`;
+- TensorFlow-import-blocked explicit direct, default direct, and direct
+  `-cotof`: `3 passed in 4.37s`;
+- scoped Ruff, syntax compilation, and `git diff --check`: pass. Whole-file
+  lowerer Ruff retains the same ten inherited F841 findings as the parent and
+  introduces no new finding.
+
+The post-extraction RF-DETR conversion exited 0 in 11.034 seconds with SWAP
+zero, reproduced counts `0, 0, 0, 0, 3`, and reproduced all three fixed
+artifacts byte-for-byte. Because the executable TFLite files are identical,
+no duplicate real-model inference run was added. IAT-LLIE and OSNet were not
+repeated after establishing zero ownership; their wrapper behavior is covered
+by the direct equivalence and existing fixtures.
+
+This checkpoint changes the new resolver module, the lowerer wrappers, dynamic
+Reshape and architecture tests, the architecture document, and this handoff.
+It changes no public API, CLI, dependency, artifact, optional TensorFlow
+boundary, managed profile, exclusion, or ONNX model. No failure or regression
+is known. After synchronization, inspect the next unmodularized production
+helper and repeat the evidence-first process; commit and push only, with no
+pull request.

@@ -17,6 +17,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _run_indexed_shape_convergence_cleanup,
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
 )
+from onnx2tf.tflite_builder.passes.dynamic_reshape_resolution import (
+    resolve_dynamic_reshape_shapes,
+)
 
 
 def test_final_reshape_preserves_raw_minus_one_when_static_metadata_is_stale() -> None:
@@ -55,6 +58,12 @@ def test_final_reshape_preserves_raw_minus_one_when_static_metadata_is_stale() -
         )
     ]
 
+    module_ir = copy.deepcopy(model_ir)
+    module_stats = resolve_dynamic_reshape_shapes(
+        module_ir,
+        prefer_runtime_inferable_from_onnx_raw=True,
+        graph_index=ModelIRGraphIndex(module_ir),
+    )
     graph_index = ModelIRGraphIndex(model_ir)
 
     class _NoFullOperatorIteration(list):
@@ -69,6 +78,17 @@ def test_final_reshape_preserves_raw_minus_one_when_static_metadata_is_stale() -
     )
 
     assert stats == {"resolved_dynamic_reshape_shapes": 1}
+    assert module_stats == stats
+    assert module_ir.operators[0].options == model_ir.operators[0].options
+    np.testing.assert_array_equal(
+        module_ir.tensors["shape"].data,
+        model_ir.tensors["shape"].data,
+    )
+    assert module_ir.tensors["y"].shape == model_ir.tensors["y"].shape
+    assert (
+        module_ir.tensors["y"].shape_signature
+        == model_ir.tensors["y"].shape_signature
+    )
     assert model_ir.operators[0].options["newShape"] == [1, -1, 64, 64, 2]
     assert np.asarray(model_ir.tensors["shape"].data).tolist() == [1, -1, 64, 64, 2]
     assert model_ir.tensors["y"].shape == [1, 1, 64, 64, 2]

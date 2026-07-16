@@ -1464,6 +1464,71 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     assert following.value.func.id == "_run_sinet_terminal_layout_recovery_sequence"
 
 
+def test_dynamic_reshape_resolution_has_one_module_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_resolve_dynamic_reshape_shapes"
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_resolve_dynamic_reshape_shapes_pass"
+    ]
+    assert len(wrapper_calls) == 1
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "graph_index"
+    }
+
+    static_wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_resolve_reshape_new_shape_from_static_input"
+    )
+    static_calls = [
+        node
+        for node in ast.walk(static_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_resolve_reshape_new_shape_from_static_input_pass"
+    ]
+    assert len(static_calls) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "dynamic_reshape_resolution.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "resolve_dynamic_reshape_shapes"
+    )
+    owner_call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "operator_indices" in owner_call_names
+    assert "_build_tensor_consumer_map" not in owner_call_names
+    assert "_build_tensor_producer_map" not in owner_call_names
+    assert "lower_from_onnx2tf" not in owner_source
+
+
 def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
