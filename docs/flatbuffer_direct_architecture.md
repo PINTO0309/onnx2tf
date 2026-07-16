@@ -230,6 +230,22 @@ inside this helper because raw ModelIR mutators separate them. Consolidation
 reduces the lowerer's registered-runner AST characterization from 134 to 125
 without crossing an index-validity boundary or changing runtime pass count.
 
+The first Q/DQ transpose-bridge step in that prefix is owned by
+`passes/transpose_qdq_bridge_layout.py`. It remains separate from terminal
+exact-grid, Concat-input, Mean, activation, PReLU, Reshape, and TransposeConv
+quantization cleanup owners. Its one lowerer compatibility wrapper is called
+once by the ordered prefix, which expands at four unchanged runtime positions.
+The owner keeps one fixed-point loop and the historical A→B→C→D priority:
+complete Transpose/Q/DQ round trips, single Q-or-DQ bridges with fan-out,
+two-branch QDQ/Add residual closure, and mixed float/QDQ Add residual closure.
+All branch/public-output/per-tensor-grid/permutation/fan-out guards, metadata
+and quantization cloning, direct mutation order, prune boundary, and three
+stats keys remain unchanged. Direct tests cover A and B rewrites, guard no-ops,
+idempotence, and wrapper equality; existing end-to-end fixtures retain positive
+A/B/C/D and legacy-fan-out coverage. The extraction is mechanical and does not
+claim differential-index performance; indexed mutation requires a later
+family-by-family equivalence checkpoint.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

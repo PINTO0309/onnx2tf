@@ -290,6 +290,79 @@ def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
     assert len(helper_invocations) == 2
 
 
+def test_transpose_qdq_bridge_optimizer_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_optimize_transpose_quant_dequant_bridges"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_transpose_quant_dequant_bridges_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    recovery_prefix = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_layout_recovery_prefix_pass_sequence"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(recovery_prefix)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "transpose_qdq_bridge_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "optimize_transpose_quant_dequant_bridges"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    for pattern_name in ("Pattern A:", "Pattern B:", "Pattern C:", "Pattern D:"):
+        assert pattern_name in owner_function_source
+    assert "while True:" in owner_function_source
+    assert "_build_tensor_consumer_map(model_ir)" in owner_function_source
+    assert "_build_tensor_producer_map(model_ir)" in owner_function_source
+    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    for stat_key in (
+        "removed_transpose_quantize_dequantize_bridges",
+        "rewritten_add_qdq_residual_transpose_bridges",
+        "rewritten_mixed_add_qdq_residual_transpose_bridges",
+    ):
+        assert f'"{stat_key}"' in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
 def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

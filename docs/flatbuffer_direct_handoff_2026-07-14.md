@@ -7758,3 +7758,51 @@ its pattern families and stats contract, identify any existing QDQ pass owners,
 measure each production call, and select the smallest real positive models.
 Continue with sequential zero-SWAP validation, commit and push coherent
 checkpoints, and do not create a pull request.
+
+## Transpose QDQ bridge ownership extraction: completed state
+
+The former 929-line `_optimize_transpose_quant_dequant_bridges` implementation
+is now owned by `passes/transpose_qdq_bridge_layout.py`; the lowerer retains a
+two-line private compatibility wrapper. This owner is distinct from the
+registered terminal Q/DQ, Concat-input, Mean, activation, PReLU, Reshape, and
+TransposeConv quantization cleanup modules. Partial family extraction was
+rejected because the existing behavior depends on a shared fixed-point loop
+with strict A→B→C→D precedence and restart after every accepted rewrite.
+
+The four retained families are the complete Transpose/Q/DQ/Transpose round
+trip, a single Q-or-DQ bridge with single/multiple post fan-out, the two-branch
+QDQ/Add/QDQ residual closure, and the mixed float/QDQ Add residual closure.
+Branch linearity, public outputs, exact inverse permutations, per-tensor grids,
+legacy fan-out, representative output selection, metadata permutation,
+quantization cloning, mutation order, pruning, and all three stats keys are
+unchanged. The ordered layout-recovery prefix contains one wrapper call and is
+expanded at the same four runtime positions.
+
+Temporary instrumentation was removed before extraction. Five existing
+positive fixtures showed first-sweep stats of one removed bridge for Pattern B,
+one for Pattern A, two removals plus one residual rewrite for Pattern C, and
+one removal plus one mixed-residual rewrite for both Pattern D variants. Their
+following three sweeps were no-ops. Six direct owner tests add exact Pattern A
+and B topology/metadata assertions, independent quantization cloning, per-
+channel/public/non-inverse no-ops, idempotence, and wrapper equality. The
+focused owner, five end-to-end families, and architecture selector pass `12
+passed in 2.18s`; the complete architecture suite passes `224 passed in
+36.96s`. The final combined branch gate across all extracted owner modules,
+active legacy selectors, shape reconciliation, and architecture passes `318
+passed in 38.66s`. The entire old and new owner ASTs are identical after
+normalizing the public function name.
+
+`face_detection_yunet_2023mar_int8.onnx` is a short positive real owner: its
+first sweep removes nine bridges and the next three sweeps are no-ops. Before
+extraction it passed in 5.049 seconds with `max_abs=0` and SWAP zero. After
+extraction it passed in 5.204 seconds with the same error and SWAP result. Its
+float32, float16, and tensor-correspondence artifacts are byte-identical to the
+pre-change controls. No regression is known.
+
+The next raw source-order orchestration is
+`_optimize_transpose_swish_qdq_nhwc_islands` and its residual-Concat closure.
+Before moving it into the existing `quantized_swish_layout.py` family, fix the
+primary/late/safety-valve ownership boundaries, both option combinations,
+stats aggregation, production call expansion, and a short positive real model.
+Continue with sequential zero-SWAP validation, commit and push coherent
+checkpoints, and do not create a pull request.

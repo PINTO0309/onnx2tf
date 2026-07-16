@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving six
+This branch continues the staged `flatbuffer_direct` refactor by moving seven
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -11,7 +11,8 @@ lowerer and into focused pass modules:
 - exact rank-four binary NHWC/NCHW adaptation;
 - singleton-broadcast rank-four binary NHWC/NCHW adaptation;
 - final static runtime-shape/signature consistency;
-- dynamic boundary-signature map realignment.
+- dynamic boundary-signature map realignment;
+- Transpose/QDQ bridge and residual-closure optimization.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -102,6 +103,25 @@ rank guards, deterministic repeated-extent placement, exact in-place map
 mutation, and all three historical production positions. It does not inspect
 or mutate graph topology.
 
+### Transpose/QDQ bridge optimization
+
+`passes/transpose_qdq_bridge_layout.py` owns the former central QDQ bridge
+optimizer. It is deliberately separate from terminal exact-grid, Concat-input,
+Mean, activation, PReLU, Reshape, and TransposeConv quantization cleanup. The
+complete owner moves as one unit because behavior depends on a shared
+fixed-point loop with A→B→C→D priority and restart after every rewrite:
+
+- complete Transpose/Quantize/Dequantize/Transpose round trips;
+- single Quantize or Dequantize bridges with guarded post fan-out;
+- two-QDQ-branch Add residual closure;
+- mixed float/QDQ Add residual closure, including legacy fan-out.
+
+The existing private wrapper, four runtime sweep positions, inverse-permutation
+and per-tensor-grid guards, public-boundary protection, metadata permutation,
+quantization cloning, mutation order, pruning, and statistics are unchanged.
+The owner remains a mechanical compatibility implementation; differential
+GraphIndex mutation is a separate follow-up requiring family-level evidence.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -137,6 +157,8 @@ The new focused tests cover:
   cyclic lineage, constant termination, and static signature completion;
 - boundary-map realignment for same-axis, layout-moved, repeated, insufficient,
   malformed, missing, and rank-mismatched cases;
+- direct QDQ Pattern A/B rewrites and guards plus end-to-end A/B/C/D and legacy-
+  fan-out closure fixtures;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -145,13 +167,17 @@ Latest checkpoint results:
 - focused binary adapter and legacy singleton tests: `45 passed`;
 - focused static shape-signature owner, legacy fixtures, and ownership selector:
   `21 passed` after adding boundary realignment;
-- complete flatbuffer-direct architecture suite: `223 passed`;
+- focused Transpose-QDQ owner, A/B/C/D integrations, and ownership selector:
+  `12 passed`;
+- complete flatbuffer-direct architecture suite: `224 passed`;
 - final combined branch gate across all extracted owners, active legacy
-  selectors, shape reconciliation, and architecture: `306 passed`;
+  selectors, shape reconciliation, and architecture: `318 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
   both statistics and final metadata;
+- full old/new Transpose-QDQ owner AST comparison: identical after function-
+  name normalization;
 - Ruff checks, Python compilation, and whitespace checks: passed.
 
 Earlier checkpoints on this branch also passed their complete focused plus
@@ -184,6 +210,11 @@ because it is a positive real owner of dynamic leading-axis preservation. It
 passed in 4.053 seconds with `max_abs = 2.193450927734375e-05`, zero SWAP, and
 byte-identical float32, float16, and tensor-correspondence artifacts.
 
+The QDQ extraction used `face_detection_yunet_2023mar_int8.onnx`, whose first
+sweep removes nine bridge pairs. It passed after extraction in 5.204 seconds
+with `max_abs = 0`, zero SWAP, and byte-identical float32, float16, and tensor-
+correspondence artifacts.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -192,6 +223,6 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order candidate is the large
-`_optimize_transpose_quant_dequant_bridges` helper. It requires independent
-pattern-family and ownership characterization before extraction.
+The next raw source-order candidate is the Swish-QDQ NHWC-island orchestration
+and residual-Concat closure, which should move only after its primary, late,
+and safety-valve ownership boundaries are characterized.
