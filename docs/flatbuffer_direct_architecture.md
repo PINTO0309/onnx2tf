@@ -7338,6 +7338,26 @@ byte-identical to the pre-extraction baseline. Sequential `-cotof` passes with
 maximum absolute error `1.9073486328125e-06`, and both conversion checks record
 zero process-tree SWAP.
 
+The indexed-first static-Swish/plain-unary Squeeze composite and raw fallback
+are now isolated in `pre_unary_squeeze_suffix_compat_layout.py`. The former
+297-line lowerer implementation moved with a function-name-normalized AST
+identical to the module owner. It still creates one `ModelIRGraphIndex` for the
+indexed dispatch, forwards caller `LayoutState`, accumulates the combined
+statistic, then runs the unchanged plain-unary, axis-3, dynamic-signature, and
+relaxed Swish fallback to fixed point. Squeeze axis option remapping, tensor
+metadata propagation, the sole prune/report boundary, and removal of pruned
+names from LayoutState remain in the compatibility owner. The lowerer retains
+one private wrapper at the unchanged production position.
+
+All eight focused cases now compare compatibility-owner and lowerer-wrapper
+results for indexed Swish, plain unary, axis-3 Swish, and dynamic-signature
+fallbacks, in addition to indexed atomicity, determinism, and bounded dispatch.
+`inference_ops15` keeps combined and indexed counts `1,0,0` with fallback counts
+`0,0,0`; its two strictly sequential conversions report zero process-tree SWAP
+and reproduce all five core artifacts byte for byte. The indexed immutable plan
+is unchanged. The raw fallback's whole-graph scans and relaxed in-place axis
+updates remain future semantic work.
+
 The production-proven static Conv/Mul affine fold now has a bounded indexed
 owner in `conv_mul_affine_fold.py`. It accepts only
 `CONV_2D(fused=NONE) -> MUL(fused=NONE)` with an exclusive FLOAT32
