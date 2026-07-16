@@ -7093,6 +7093,25 @@ sequential constant rotation can leave a partial mutation when a later
 constant rejects; transactional hardening remains separate from this exact
 ownership checkpoint.
 
+The Transpose/Mean/Mul/Add/post-Transpose compatibility rule is now isolated in
+`passes/mean_affine_prepost_layout.py`. Its complete 359-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves NCHW-to-NHWC reduction-axis remapping, commutative affine inputs,
+static broadcast validation, channel-constant rotation and copy-on-write,
+post-Transpose alias collapse, tensor metadata and quantization propagation,
+fixed-point restart, pruning, statistics, and all three ordered source call
+positions reached through five runtime invocations. The lowerer retains a one-
+call private wrapper.
+
+The former giant direct-builder axis-remap fixture is now a focused module and
+runs the pass owner and private wrapper on deep copies, comparing the complete
+ModelIR. LINEA supplies five measured zero-owner invocations before and after
+the move, records zero process-tree SWAP, and reproduces all five core artifacts
+byte for byte. Positive production ownership is therefore not claimed. The raw
+owner retains an unbounded complete-map scan and in-place axes/constant updates
+without an immutable all-or-nothing plan; transactional hardening remains
+separate from this exact ownership checkpoint.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.

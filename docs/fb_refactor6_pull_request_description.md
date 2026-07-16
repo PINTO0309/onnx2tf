@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving twenty-six
+This branch continues the staged `flatbuffer_direct` refactor by moving twenty-seven
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -23,6 +23,7 @@ lowerer and into focused pass modules:
 - terminal affine/Reshape/FullyConnected layout recovery;
 - terminal PReLU/Reshape/BatchMatMul layout recovery;
 - terminal Transpose/Mul/Add/PReLU compatibility recovery;
+- Transpose/Mean/Mul/Add compatibility recovery;
 - residual Add/Mul/Add/PReLU compatibility recovery;
 - residual Add/Mul/Add/post-Transpose fan-out compatibility recovery;
 - pre-unary Mul/Add/post-Transpose fan-out compatibility recovery;
@@ -289,6 +290,21 @@ The raw owner still rebuilds complete maps in an unbounded loop and can rotate
 an earlier constant before a later constant rejects. Transactional hardening is
 kept separate from this exact ownership move.
 
+### Transpose/Mean/Mul/Add compatibility recovery
+
+`passes/mean_affine_prepost_layout.py` owns the former 359-line helper. It
+preserves NCHW-to-NHWC reduction-axis remapping, commutative affine inputs,
+static broadcast validation, channel-constant rotation and copy-on-write,
+post-Transpose alias collapse, tensor metadata and quantization propagation,
+fixed-point restart, pruning, statistics, and all three ordered source call
+positions reached through five runtime invocations. The lowerer retains a one-
+call private wrapper, and the old/new complete owner ASTs are identical after
+function-name normalization.
+
+The raw owner still rebuilds the complete consumer map in an unbounded loop and
+performs in-place axes/constant updates without an immutable all-or-nothing
+plan. Transactional hardening is kept separate from this exact ownership move.
+
 ### Residual Add/Mul/Add/PReLU compatibility recovery
 
 `passes/residual_affine_prelu_layout.py` owns the former 415-line compatibility
@@ -541,6 +557,9 @@ Latest checkpoint results:
   `3 passed`;
 - changed-file branch regression gate after terminal affine/PReLU extraction:
   `510 passed`;
+- focused Mean/Mul/Add owner and production-boundary gate: `2 passed`;
+- changed-file branch regression gate after Mean/Mul/Add extraction:
+  `512 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -708,6 +727,16 @@ The immediately preceding SiNet accuracy baseline remains
 executed TFLite is unchanged. The positive owner contract is fixed by the
 relocated direct fixture.
 
+The Mean/Mul/Add extraction used `LINEA.onnx` as its fixed zero-owner artifact
+control. Its five runtime results remain `0,0,0,0,0` before and after
+extraction. The pre/post conversion-only runs completed in 7.869 and 7.868
+seconds, recorded process-tree SWAP zero, and produced byte-identical float32,
+float16, tensor-correspondence, schema, and generated-schema outputs. The
+immediately preceding LINEA accuracy baseline remains
+`max_abs=0.002297189086675644`; no duplicate inference was run because the
+executed TFLite is unchanged. The positive axis-remap contract is fixed by the
+relocated direct fixture.
+
 The residual affine/PReLU extraction used `sinet_320_op.onnx` as its positive
 artifact control. Its fourteen runtime results remain
 `0,0,0,1,1,0,0,0,0,0,0,0,0,0` across extraction. The pre/post conversion-only
@@ -805,7 +834,8 @@ and non-zero ownership before replacing the current insertion logic.
 The adjacent 218-line rank-3-to-NHWC reshape helper, 293-line attention
 Gather/Transpose/Reshape cleanup, and 190-line attention pre-projection rank-
 lift remain intentionally unchanged under their recorded no-owner decisions.
-Resume by inventorying the 359-line
-`_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains` compatibility
-helper and its existing axis-remap fixture before choosing the next mechanical
-ownership boundary; no broad conversion sweep is implied by this checkpoint.
+Resume by inventorying the 317-line
+`_optimize_batchmatmul_affine_transpose_input_chains` compatibility helper, its
+existing direct fixture, production positions, and short zero-SWAP model
+ownership before choosing the next mechanical boundary; no broad conversion
+sweep is implied by this checkpoint.
