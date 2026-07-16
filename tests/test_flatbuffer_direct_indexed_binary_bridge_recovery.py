@@ -369,6 +369,40 @@ def test_indexed_safe_single_post_phase_marks_retained_boundary() -> None:
     assert adapter.options == {"__preserve_layout_boundary__": True}
 
 
+def test_indexed_safe_single_post_repairs_late_post_producer_order() -> None:
+    model_ir = _make_multi_post(mode="mixed", op_type="ADD")
+    model_ir.operators = [
+        operator
+        for operator in model_ir.operators
+        if operator.outputs not in (["z1"], ["o1"])
+    ]
+    model_ir.outputs = ["legacy", "o0"]
+    final_consumer = next(
+        operator for operator in model_ir.operators if operator.outputs == ["o0"]
+    )
+    model_ir.operators.remove(final_consumer)
+    post_index = next(
+        index
+        for index, operator in enumerate(model_ir.operators)
+        if operator.outputs == ["z0"]
+    )
+    model_ir.operators.insert(post_index, final_consumer)
+
+    stats = optimize_transpose_binary_single_post_bridges_safe(model_ir)
+
+    assert stats == {
+        "rewritten_transpose_binary_single_post_bridges_safe": 1,
+    }
+    index = ModelIRGraphIndex(model_ir)
+    producer_index = index.producers["z0"]
+    assert model_ir.operators[producer_index].op_type == "ADD"
+    assert all(
+        producer_index < consumer_index
+        for consumer_index in index.consumer_indices("z0")
+    )
+    assert validate_model_ir_invariants(model_ir, graph_index=index) == []
+
+
 def test_indexed_mixed_fanout_does_not_mutate_shared_inverse_permutation() -> None:
     model_ir = _make_multi_post(mode="mixed", op_type="ADD")
     model_ir.tensors["external"] = _tensor("external", _TRANSPOSED_SHAPE)

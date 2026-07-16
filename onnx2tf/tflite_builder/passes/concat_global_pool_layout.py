@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -62,6 +62,70 @@ def _normalized_global_axes(tensor: Optional[TensorIR]) -> Optional[set[int]]:
     return normalized if normalized == {2, 3} else None
 
 
+def _tensor_depends_on(
+    model_ir: ModelIR,
+    index: ModelIRGraphIndex,
+    *,
+    tensor_name: str,
+    ancestor_name: str,
+) -> bool:
+    """Return whether one tensor is downstream of another in the indexed graph."""
+
+    target = str(ancestor_name)
+    pending = [str(tensor_name)]
+    visited: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current == target:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        producer_index = index.producers.get(current)
+        if producer_index is None or current in index.duplicate_producers:
+            continue
+        producer = model_ir.operators[int(producer_index)]
+        pending.extend(str(name) for name in producer.inputs)
+    return False
+
+
+def _is_guarded_concat_fanout(
+    model_ir: ModelIR,
+    index: ModelIRGraphIndex,
+    *,
+    concat_name: str,
+    pool_index: int,
+    gate_name: str,
+) -> bool:
+    """Accept only self-gating MUL fanout in addition to the global pool."""
+
+    consumers = index.consumer_indices(str(concat_name))
+    if int(pool_index) not in consumers:
+        return False
+    for consumer_index in consumers:
+        if int(consumer_index) == int(pool_index):
+            continue
+        consumer = model_ir.operators[int(consumer_index)]
+        if str(consumer.op_type) != "MUL" or str(concat_name) not in {
+            str(name) for name in consumer.inputs
+        }:
+            return False
+        gate_inputs = [
+            str(name) for name in consumer.inputs if str(name) != str(concat_name)
+        ]
+        if not gate_inputs or not any(
+            _tensor_depends_on(
+                model_ir,
+                index,
+                tensor_name=gate_input,
+                ancestor_name=gate_name,
+            )
+            for gate_input in gate_inputs
+        ):
+            return False
+    return True
+
+
 def _candidate_plan(
     model_ir: ModelIR,
     index: ModelIRGraphIndex,
@@ -112,7 +176,13 @@ def _candidate_plan(
     pool_name = str(pool.outputs[0])
     reshape_name = str(reshape.outputs[0])
     if (
-        index.consumer_indices(concat_name) != [int(pool_index)]
+        not _is_guarded_concat_fanout(
+            model_ir,
+            index,
+            concat_name=concat_name,
+            pool_index=int(pool_index),
+            gate_name=str(conv.outputs[0]),
+        )
         or index.consumer_indices(pool_name) != [int(reshape_index)]
         or index.consumer_indices(reshape_name) != [int(conv_index)]
         or any(

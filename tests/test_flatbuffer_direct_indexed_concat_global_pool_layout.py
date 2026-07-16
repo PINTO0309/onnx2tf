@@ -192,6 +192,39 @@ def test_concat_global_pool_keeps_supplied_index_and_layout_current() -> None:
     assert layout_state.validate_against_model_ir(model_ir) == []
 
 
+def test_concat_global_pool_accepts_indexed_self_gating_mul_fanout() -> None:
+    model_ir = ModelIR("gated_concat_global_pool")
+    names = _add_branch(model_ir, "branch")
+    model_ir.tensors[names["filter"]].shape = [5, 1, 1, 5]
+    model_ir.tensors[names["filter"]].shape_signature = [5, 1, 1, 5]
+    model_ir.tensors[names["filter"]].data = np.ones(
+        [5, 1, 1, 5],
+        dtype=np.float32,
+    )
+    model_ir.tensors[names["bias"]].shape = [5]
+    model_ir.tensors[names["bias"]].shape_signature = [5]
+    model_ir.tensors[names["bias"]].data = np.zeros([5], dtype=np.float32)
+    model_ir.tensors[names["output"]].shape = [1, 1, 1, 5]
+    model_ir.tensors[names["output"]].shape_signature = [1, 1, 1, 5]
+    model_ir.tensors["gated"] = _tensor("gated", [1, 5, 4, 5])
+    model_ir.operators.append(
+        OperatorIR(
+            "MUL",
+            [names["concat"], names["output"]],
+            ["gated"],
+            {"fusedActivationFunction": "NONE"},
+        )
+    )
+    model_ir.outputs.append("gated")
+
+    stats = _repair_nchw_concat_global_pool_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_global_pool_conv_axes": 1}
+    assert model_ir.operators[0].options["axis"] == 1
+    assert model_ir.tensors[names["concat"]].shape == [1, 5, 4, 5]
+    assert model_ir.tensors[names["reshape"]].shape == [1, 1, 1, 5]
+
+
 @pytest.mark.parametrize(
     "case",
     [

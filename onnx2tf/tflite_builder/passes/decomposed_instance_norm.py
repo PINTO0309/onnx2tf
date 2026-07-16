@@ -159,9 +159,12 @@ def float_constant(
         )
     except Exception:
         return None
+    scalar_backing_for_vector = bool(
+        data.ndim == 0 and data.size == 1 and tensor_shape == (1,)
+    )
     if (
         data.dtype != expected_dtype
-        or data.shape != tensor_shape
+        or (data.shape != tensor_shape and not scalar_backing_for_vector)
         or signature != tensor_shape
         or not np.all(np.isfinite(data))
         or (shape is not None and tensor_shape != tuple(shape))
@@ -173,7 +176,7 @@ def float_constant(
         return None
     if nonnegative and (data.size != 1 or float(data.reshape(-1)[0]) < 0.0):
         return None
-    return data
+    return data.reshape(tensor_shape) if scalar_backing_for_vector else data
 
 
 def binary_other_input(
@@ -394,19 +397,13 @@ def plan_nhwc_instance_norm_constant_updates(
     bias_input_index: int,
     channel_count: int,
     public_names: AbstractSet[str],
-    additional_coefficient_uses: Sequence[
-        Tuple[str, OperatorIR, int]
-    ] = (),
+    additional_coefficient_uses: Sequence[Tuple[str, OperatorIR, int]] = (),
 ) -> Optional[Tuple[ConstantUpdate, ...]]:
     """Plan all Mean-axis and affine updates for one NHWC rewrite."""
 
     axes_uses: dict[str, list[ConstantUse]] = {}
-    axes_uses.setdefault(core.mean1_axes_name, []).append(
-        ConstantUse(core.mean1, 1)
-    )
-    axes_uses.setdefault(core.mean2_axes_name, []).append(
-        ConstantUse(core.mean2, 1)
-    )
+    axes_uses.setdefault(core.mean1_axes_name, []).append(ConstantUse(core.mean1, 1))
+    axes_uses.setdefault(core.mean2_axes_name, []).append(ConstantUse(core.mean2, 1))
     updates = []
     for axes_name, uses in axes_uses.items():
         if not constant_is_private_and_unquantized(

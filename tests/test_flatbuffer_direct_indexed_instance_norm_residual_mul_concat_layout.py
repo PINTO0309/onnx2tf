@@ -22,9 +22,7 @@ from tests.test_flatbuffer_direct_indexed_instance_norm_post_bias_layout import 
 )
 
 
-_STATS = (
-    "optimized_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
-)
+_STATS = "optimized_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
 
 
 def _build_tail_model(
@@ -366,9 +364,27 @@ def test_residual_mul_concat_instance_norm_is_indexed_and_equivalent(
     assert validate_model_ir_invariants(model_ir) == []
     _assert_index_current(model_ir, graph_index)
     assert layout_state.validate_against_model_ir(model_ir) == []
-    assert names["tail_post_output"] in model_ir.metadata[
-        "assume_channel_last_layout_tensor_names"
-    ]
+    assert (
+        names["tail_post_output"]
+        in model_ir.metadata["assume_channel_last_layout_tensor_names"]
+    )
+
+
+def test_residual_mul_concat_accepts_scalar_backing_for_shape_one_constants() -> None:
+    model_ir, names = _build_tail_model()
+    for name in (names["epsilon"], names["one"]):
+        tensor = model_ir.tensors[name]
+        assert tensor.shape == [1]
+        tensor.data = np.asarray(tensor.data).reshape(())
+
+    stats = optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
+        model_ir,
+        graph_index=ModelIRGraphIndex(model_ir),
+        layout_state=LayoutState.from_model_ir(model_ir),
+    )
+
+    assert stats == {_STATS: 1}
+    assert not any(op.op_type == "TRANSPOSE" for op in model_ir.operators)
 
 
 def _set_dynamic_signature(
@@ -378,9 +394,7 @@ def _set_dynamic_signature(
 ) -> None:
     source_signature = [1, 2, 4, 3]
     source_signature[dynamic_axis] = -1
-    nchw_signature = [
-        source_signature[index] for index in (0, 3, 1, 2)
-    ]
+    nchw_signature = [source_signature[index] for index in (0, 3, 1, 2)]
     reduced_signature = [nchw_signature[0], nchw_signature[1], 1, 1]
     for key in ("source", "residual", "post_output", "add_output"):
         model_ir.tensors[names[key]].shape_signature = list(source_signature)
@@ -417,7 +431,9 @@ def test_residual_mul_concat_preserves_dynamic_signatures(dynamic_axis: int) -> 
 
     assert stats == {_STATS: 1}
     source_signature = list(model_ir.tensors[names["source"]].shape_signature)
-    assert list(model_ir.tensors[names["inst_output"]].shape_signature) == source_signature
+    assert (
+        list(model_ir.tensors[names["inst_output"]].shape_signature) == source_signature
+    )
     assert list(model_ir.tensors[names["mul0"]].shape_signature) == source_signature
     expected_output_signature = list(source_signature)
     expected_output_signature[3] = -1 if source_signature[3] == -1 else 6
@@ -451,9 +467,7 @@ def test_residual_mul_concat_preserves_downstream_fanout(
     assert stats == {_STATS: 1}
     concat = _operator(model_ir, names["tail_post_output"])
     assert concat.op_type == "CONCATENATION"
-    assert all(
-        name == names["tail_post_output"] for name in downstream.inputs
-    )
+    assert all(name == names["tail_post_output"] for name in downstream.inputs)
     assert _operator(model_ir, side_name).inputs == [names["tail_post_output"]]
     assert validate_model_ir_invariants(model_ir) == []
 
@@ -477,9 +491,7 @@ def test_residual_mul_concat_clones_shared_changed_tail_constant() -> None:
     model_ir, names = _build_tail_model()
     side_name = "tail_constant_side"
     model_ir.tensors[side_name] = _tensor(side_name, [1, 3, 1, 1])
-    model_ir.operators.append(
-        OperatorIR("IDENTITY", [names["tail0"]], [side_name])
-    )
+    model_ir.operators.append(OperatorIR("IDENTITY", [names["tail0"]], [side_name]))
     model_ir.outputs.append(side_name)
 
     stats = optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
@@ -501,7 +513,11 @@ def test_residual_mul_concat_updates_one_coefficient_shared_by_all_uses() -> Non
     shared_name = names["scale"]
     for output_name in (names["inst_output"], names["mul0"], names["mul1"]):
         operator = _operator(model_ir, output_name)
-        data_input = names["scaled"] if output_name == names["inst_output"] else names["add_output"]
+        data_input = (
+            names["scaled"]
+            if output_name == names["inst_output"]
+            else names["add_output"]
+        )
         operator.inputs = [
             data_input if name == data_input else shared_name
             for name in operator.inputs
@@ -639,7 +655,9 @@ def test_residual_mul_concat_rejects_unsafe_contracts_transactionally(
     elif case == "pre_shape":
         model_ir.tensors[names["x"]].shape[2] = 3
     elif case == "duplicate_pre":
-        model_ir.operators.append(OperatorIR("IDENTITY", [names["source"]], [names["x"]]))
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["source"]], [names["x"]])
+        )
     elif case == "mean_axes":
         model_ir.tensors[names["axes1"]].data[:] = [1, 2]
     elif case == "negative_epsilon":
@@ -651,7 +669,9 @@ def test_residual_mul_concat_rejects_unsafe_contracts_transactionally(
     elif case == "bias_shape":
         model_ir.tensors[names["bias"]].shape = [3]
         model_ir.tensors[names["bias"]].shape_signature = [3]
-        model_ir.tensors[names["bias"]].data = np.asarray([0.1, 0.2, 0.3], dtype=np.float32)
+        model_ir.tensors[names["bias"]].data = np.asarray(
+            [0.1, 0.2, 0.3], dtype=np.float32
+        )
     elif case == "bias_dtype":
         model_ir.tensors[names["bias"]].dtype = "FLOAT16"
         model_ir.tensors[names["bias"]].data = np.asarray(
@@ -660,12 +680,16 @@ def test_residual_mul_concat_rejects_unsafe_contracts_transactionally(
     elif case == "bias_public":
         model_ir.inputs.append(names["bias"])
     elif case == "bias_produced":
-        model_ir.operators.append(OperatorIR("IDENTITY", [names["source"]], [names["bias"]]))
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["source"]], [names["bias"]])
+        )
     elif case == "inst_public":
         model_ir.outputs.append(names["inst_output"])
     elif case == "inst_fanout":
         model_ir.tensors["inst_side"] = _tensor("inst_side", [1, 3, 2, 4])
-        model_ir.operators.append(OperatorIR("IDENTITY", [names["inst_output"]], ["inst_side"]))
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["inst_output"]], ["inst_side"])
+        )
     elif case == "inst_shape":
         model_ir.tensors[names["inst_output"]].shape[2] = 3
     elif case == "post_perm":
@@ -676,7 +700,9 @@ def test_residual_mul_concat_rejects_unsafe_contracts_transactionally(
         model_ir.outputs.append(names["post_output"])
     elif case == "post_fanout":
         model_ir.tensors["post_side"] = _tensor("post_side", [1, 2, 4, 3])
-        model_ir.operators.append(OperatorIR("IDENTITY", [names["post_output"]], ["post_side"]))
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["post_output"]], ["post_side"])
+        )
     elif case == "post_shape":
         model_ir.tensors[names["post_output"]].shape[1] = 3
     elif case == "tail_add_op":
@@ -709,7 +735,9 @@ def test_residual_mul_concat_rejects_unsafe_contracts_transactionally(
     elif case == "tail0_shape":
         model_ir.tensors[names["tail0"]].shape = [3]
         model_ir.tensors[names["tail0"]].shape_signature = [3]
-        model_ir.tensors[names["tail0"]].data = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+        model_ir.tensors[names["tail0"]].data = np.asarray(
+            [1.0, 2.0, 3.0], dtype=np.float32
+        )
     elif case == "tail0_dtype":
         model_ir.tensors[names["tail0"]].dtype = "FLOAT16"
         model_ir.tensors[names["tail0"]].data = np.asarray(
@@ -720,7 +748,9 @@ def test_residual_mul_concat_rejects_unsafe_contracts_transactionally(
     elif case == "tail0_public":
         model_ir.inputs.append(names["tail0"])
     elif case == "tail0_produced":
-        model_ir.operators.append(OperatorIR("IDENTITY", [names["source"]], [names["tail0"]]))
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["source"]], [names["tail0"]])
+        )
     elif case == "tail1_nonfinite":
         model_ir.tensors[names["tail1"]].data.reshape(-1)[0] = np.nan
     elif case == "concat_inputs":
@@ -772,9 +802,7 @@ def test_residual_mul_concat_rejects_unsafe_contracts_transactionally(
 def test_residual_mul_concat_clone_collision_is_transactional(monkeypatch) -> None:
     model_ir, names = _build_tail_model()
     model_ir.tensors["scale_side"] = _tensor("scale_side", [1, 3, 1, 1])
-    model_ir.operators.append(
-        OperatorIR("IDENTITY", [names["scale"]], ["scale_side"])
-    )
+    model_ir.operators.append(OperatorIR("IDENTITY", [names["scale"]], ["scale_side"]))
     model_ir.outputs.append("scale_side")
     original_resolve = tail_module._resolve_candidate
     injected = False

@@ -385,8 +385,12 @@ def _resolve_symmetric(
             return None
         if graph_index.producers.get(final_output) != post_index:
             return None
+        # The rewrite moves final_output's producer from the post-transpose to
+        # the binary operator. Consumers may therefore precede the old post as
+        # long as they follow the binary, which also repairs a historically
+        # supported non-topological intermediate ordering.
         if any(
-            index <= post_index
+            index <= binary_index
             for index in set(graph_index.consumer_indices(final_output))
         ):
             return None
