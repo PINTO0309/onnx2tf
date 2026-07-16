@@ -10086,3 +10086,48 @@ lowerer wrapper and its single syntactic call/two runtime boundaries, prove the
 old/new body AST after function-name normalization, and repeat the existing
 focused, branch, optional-boundary, and one sequential zero-SWAP artifact
 control. Do not create a pull request.
+
+## Mean/HardSigmoid/MulAdd ownership extraction: completed state
+
+The corrected 496-line owner is now in
+`passes/mean_hardsigmoid_muladd_layout.py`. The lowerer imports it under the
+historical private pass alias and retains a two-line private wrapper. Its single
+syntactic call inside the QLinear/Mean/Concat recovery sequence and the two
+ordered runtime boundaries are unchanged. No dispatch, match, mutation,
+statistic, cleanup, or retry logic was generalized.
+
+After normalizing only the function name, the complete old lowerer owner and
+new module owner have identical ASTs; both function bodies are 496 lines. The
+focused contract now also executes the owner and lowerer wrapper on deep copies
+and compares complete ModelIR fingerprints and statistics. Architecture tests
+fix the module owner, wrapper dispatch, producer/consumer scans, constant read/
+write, public-output and Mean-axis source order, direct insertion/deletion,
+prune, and one production call. Whole-lowerer Ruff retains exactly the same
+eight pre-existing findings and gained no unused import from the move.
+
+Validation completed as follows:
+
+- normalized old/new owner AST: exact;
+- focused owner/wrapper and architecture selector:
+  `14 passed, 243 deselected in 0.63s`;
+- changed-file branch regression: `569 passed in 23.93s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.29s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+YuNet INT8 was executed strictly sequentially at commit `7ce7c658` and after
+the ownership move. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.290 and 5.215 seconds. Internal pass metrics are
+identical. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema,
+and generated-schema artifacts are byte-identical; the three JSON files differ
+only in output-directory and temporary-file paths.
+
+Changed files are the new owner module, lowerer import/wrapper, focused owner-
+wrapper fixture, architecture ownership gate, and three branch documents.
+Public API, CLI, artifacts, successful rewrite order/statistic, TensorFlow
+boundary, dependencies, corpus profiles, exclusions, and ONNX operation tiers
+are unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, inventory the next raw source-order helper before editing it. Fix
+its match/guard/rewrite contract, mutation order, all production positions, and
+the shortest sequential non-SWAP control first. Do not assume positive owner
+evidence, do not start a broad corpus sweep, and do not create a pull request.

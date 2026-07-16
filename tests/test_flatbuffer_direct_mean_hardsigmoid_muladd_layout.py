@@ -15,6 +15,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_mean_hardsigmoid_muladd_chains,
 )
+from onnx2tf.tflite_builder.passes.mean_hardsigmoid_muladd_layout import (
+    optimize_transpose_mean_hardsigmoid_muladd_chains,
+)
 
 
 def _tensor(
@@ -137,6 +140,21 @@ def _build_chain() -> ModelIR:
 
 def _fingerprint(model_ir: ModelIR) -> bytes:
     return ModelIRPassState(model_ir).fingerprint()
+
+
+def test_mean_hardsigmoid_muladd_owner_matches_lowerer_wrapper() -> None:
+    owner_model_ir = _build_chain()
+    wrapper_model_ir = deepcopy(owner_model_ir)
+
+    owner_stats = optimize_transpose_mean_hardsigmoid_muladd_chains(
+        owner_model_ir
+    )
+    wrapper_stats = _optimize_transpose_mean_hardsigmoid_muladd_chains(
+        wrapper_model_ir
+    )
+
+    assert owner_stats == wrapper_stats
+    assert _fingerprint(owner_model_ir) == _fingerprint(wrapper_model_ir)
 
 
 def test_mean_hardsigmoid_muladd_chain_is_rewritten() -> None:

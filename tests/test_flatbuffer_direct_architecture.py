@@ -9412,20 +9412,45 @@ def test_convpool_output_passthrough_has_one_module_owner() -> None:
     assert wrapper_name not in giant_source
 
 
-def test_mean_hardsigmoid_muladd_has_one_characterized_raw_owner() -> None:
+def test_mean_hardsigmoid_muladd_has_one_module_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
-    helper_name = "_optimize_transpose_mean_hardsigmoid_muladd_chains"
-    owner = next(
+    wrapper_name = "_optimize_transpose_mean_hardsigmoid_muladd_chains"
+    wrapper = next(
         node
         for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
     )
-    owner_source = ast.get_source_segment(lowering_source, owner)
-    assert owner_source is not None
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_optimize_transpose_mean_hardsigmoid_muladd_chains_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "mean_hardsigmoid_muladd_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "optimize_transpose_mean_hardsigmoid_muladd_chains"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
     call_names = {
         node.func.id
         for node in ast.walk(owner)
@@ -9437,23 +9462,26 @@ def test_mean_hardsigmoid_muladd_has_one_characterized_raw_owner() -> None:
     assert "_write_const_ints_to_tensor" in call_names
     assert "_replace_operator_input_at" in call_names
     assert "_prune_unused_tensors" in call_names
-    assert "model_ir.operators.insert(" in owner_source
-    assert "del model_ir.operators[int(remove_idx)]" in owner_source
-    axes_validation = owner_source.index(
+    assert "model_ir.operators.insert(" in owner_function_source
+    assert "del model_ir.operators[int(remove_idx)]" in owner_function_source
+    axes_validation = owner_function_source.index(
         "rank = len(list(q0_raw_tensor.shape))"
     )
-    public_output_guard = owner_source.index(
+    public_output_guard = owner_function_source.index(
         "if add0_out_name in model_ir.outputs:"
     )
-    axes_write = owner_source.index(
+    axes_write = owner_function_source.index(
         "_write_const_ints_to_tensor(\n"
         "                mean_axes_tensor,"
     )
-    first_input_mutation = owner_source.index("_set_operator_inputs(")
-    first_metadata_mutation = owner_source.index("dq0_out_tensor.shape =")
+    first_input_mutation = owner_function_source.index("_set_operator_inputs(")
+    first_metadata_mutation = owner_function_source.index(
+        "dq0_out_tensor.shape ="
+    )
     assert public_output_guard < axes_validation
     assert axes_validation < axes_write < first_input_mutation
     assert axes_write < first_metadata_mutation
+    assert "lower_from_onnx2tf" not in owner_source
 
     lowerer = next(
         node
@@ -9465,7 +9493,7 @@ def test_mean_hardsigmoid_muladd_has_one_characterized_raw_owner() -> None:
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == helper_name
+        and node.func.id == wrapper_name
     ]
     assert len(production_calls) == 1
 
@@ -9478,7 +9506,7 @@ def test_mean_hardsigmoid_muladd_has_one_characterized_raw_owner() -> None:
     giant_source = (
         REPO_ROOT / "tests" / "test_tflite_builder_direct.py"
     ).read_text(encoding="utf-8")
-    assert helper_name not in giant_source
+    assert wrapper_name not in giant_source
 
 
 def test_dynamic_range_quantization_uses_differential_graph_index() -> None:

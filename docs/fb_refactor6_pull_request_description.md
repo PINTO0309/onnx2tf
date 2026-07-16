@@ -766,6 +766,10 @@ Latest checkpoint results:
 - focused public residual-output guard and raw-owner gate: `13 passed`;
 - changed-file branch regression gate after the public-output correction:
   `568 passed`;
+- focused Mean/HardSigmoid/MulAdd owner/wrapper and architecture gate:
+  `14 passed`;
+- changed-file branch regression gate after the ownership extraction:
+  `569 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1134,15 +1138,15 @@ generated-schema artifacts. The preceding accuracy checkpoint remains
 `max_abs=4.470348358154297e-07`; duplicate inference was not run because the
 executed TFLite artifact is identical.
 
-The next quantized Mean/HardSigmoid/MulAdd helper remains central and is only
-characterized in this checkpoint. The full synthetic graph fixes both
+The quantized Mean/HardSigmoid/MulAdd helper is now owned by the focused
+`mean_hardsigmoid_muladd_layout.py` module. The full synthetic graph fixes both
 quantized branches, Mean-axis remap, decomposed HardSigmoid clamp, residual
 Mul/Add rewiring, bridge removal, legacy adapter insertion, idempotence, and
-eight rejection boundaries. Both pre-existing defects are now fixed. Mean
-axes, including a rejected no-change constant update, are validated before any
-graph rewiring or dependent metadata mutation. A declared public residual
-output now rejects the candidate before the axes write, preserving its NCHW
-boundary and the complete ModelIR fingerprint.
+eight rejection boundaries. Both pre-existing defects are fixed. Mean axes,
+including a rejected no-change constant update, are validated before any graph
+rewiring or dependent metadata mutation. A declared public residual output
+rejects the candidate before the axes write, preserving its NCHW boundary and
+the complete ModelIR fingerprint.
 
 YuNet INT8, PPHumanSeg INT8, and SSD MobileNet INT8 each reached both ordered
 runtime boundaries with zero rewrites. Their strictly sequential conversions
@@ -1164,6 +1168,13 @@ and durations of 6.323 and 5.148 seconds. Internal pass metrics and all
 non-path artifact content remain identical, including byte-identical float32
 and float16 TFLite files.
 
+The final ownership move is mechanical. The old 496-line lowerer function and
+new owner have identical ASTs after normalizing only the function name. The
+lowerer retains a two-line private wrapper, its single syntactic call, and both
+ordered runtime boundaries. A third strictly sequential YuNet INT8 before/
+after control passed with `max_abs=0`, zero SWAP, and durations of 6.290 and
+5.215 seconds. Pass metrics and all non-path artifact content remain identical.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -1180,11 +1191,10 @@ The corrected 207-line
 dedicated positive and rejection contract, but the structurally matching gaze
 model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
-explicitly accepts zero-owner evidence. The next raw source-order
-implementation is now the 496-line
-`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper. Its focused
-contract, zero-owner evidence, atomic Mean-axis rejection, and public-output
-guard are now recorded with no remaining strict xfail. A later mechanical
-ownership extraction may proceed only if it preserves the exact helper body,
-wrapper signature, production call order, statistics, and zero-owner artifact
-control. No broad conversion sweep is implied by this checkpoint.
+explicitly accepts zero-owner evidence. The 496-line
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper has now completed
+that separately approved zero-owner mechanical extraction with its exact body,
+wrapper signature, production call order, statistics, and artifact control
+preserved. Resume by inventorying and characterizing the next raw source-order
+owner before changing it. No broad conversion sweep is implied by this
+checkpoint.

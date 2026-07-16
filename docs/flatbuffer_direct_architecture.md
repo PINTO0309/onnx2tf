@@ -7741,14 +7741,17 @@ FastestDet, HumanSeg, OSNet, and inference_ops15 each produce one zero result in
 strictly sequential, zero-SWAP traces; positive production ownership is not
 claimed.
 
-The adjacent quantized Mean/HardSigmoid/MulAdd recovery remains a raw 496-line
-lowerer owner with one syntactic call inside the recovery sequence, executed at
-two ordered production boundaries. Its first dedicated ModelIR contract fixes
-the full two-branch graph, Mean axis remap, decomposed HardSigmoid clamp,
-residual Mul/Add rewiring, three bridge removals, legacy-output adapter,
-idempotence, and eight complete no-op guards. Architecture tests record the
-current full-map scans, constant writes, direct insertion/deletion, prune, and
-single raw call.
+The adjacent quantized Mean/HardSigmoid/MulAdd recovery is now owned by
+`mean_hardsigmoid_muladd_layout.py`. Its 496-line function body is AST-identical
+to the corrected lowerer predecessor after function-name normalization. The
+lowerer retains a two-line private wrapper and one syntactic call inside the
+recovery sequence, executed at two ordered production boundaries. Its dedicated
+ModelIR contract fixes the full two-branch graph, Mean axis remap, decomposed
+HardSigmoid clamp, residual Mul/Add rewiring, three bridge removals, legacy-
+output adapter, idempotence, and eight complete no-op guards. Architecture
+tests record module ownership, wrapper dispatch, current full-map scans,
+constant writes, direct insertion/deletion, prune, and the single production
+call.
 
 The Mean-axis rejection path is now atomic: rank normalization and the constant
 update occur after all candidate guards but before the first graph rewiring or
@@ -7759,7 +7762,8 @@ declared NCHW output contract and full ModelIR fingerprint remain unchanged.
 The focused contract has no remaining strict xfail. YuNet INT8, PPHumanSeg
 INT8, and SSD MobileNet INT8 each produce two zero results in current strictly
 sequential, zero-SWAP traces, matching the earlier broader zero-owner survey.
-Any later ownership move must be mechanical and retain those boundaries.
+The completed ownership move retains those boundaries and adds a direct owner/
+wrapper ModelIR fingerprint comparison.
 
 ## Managed-corpus SWAP exclusion policy
 
