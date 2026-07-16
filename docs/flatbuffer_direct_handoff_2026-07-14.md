@@ -7866,3 +7866,47 @@ boundaries, statistics, and short zero-SWAP model ownership before changing
 source. Keep inference sequential and minimal, preserve any compatibility
 fallback that lacks a real owner, commit and push one coherent unit, and do not
 create a pull request.
+
+## HardSwish SE gating layout extraction: completed state
+
+The former 463-line
+`_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains`
+implementation is now owned by `passes/hardswish_se_layout.py`. The lowerer
+retains a thin private wrapper at both unchanged production positions. This is
+an exact mechanical move: after normalizing the function name, the complete
+old and new ASTs are identical. The shared consumer-map rebuild, ordered
+restart, direct/decomposed root matching, expanded/fused gate matching,
+Mean-axis rewrite, four-Transpose removal, metadata/quantization propagation,
+pruning, and statistic all remain unchanged.
+
+Eight focused owner tests cover all four direct/decomposed root and
+expanded/fused gate combinations, idempotence, public pre-output, invalid
+reduction axes, activation fan-out, and direct-owner/private-wrapper equality.
+Together with the architecture selector they pass `9 passed in 1.77s`. The
+complete architecture suite passes `225 passed in 37.10s`; the expanded branch
+gate passes `330 passed in 38.57s`; and TensorFlow-import-blocked import,
+direct, and direct `-cotof` pass `3 passed in 4.82s`.
+
+Three sequential short models were sufficient to characterize all six
+production invocations. SSDLite MobileNetV3, `inference_ops15`, and MobileNetV3
+PyTorch each recorded `[0,0]`, so no production rewrite is claimed. SSDLite is
+the fixed artifact control because it contains HardSwish, HardSigmoid, global
+pooling, Conv, Mul, Add, and Transpose families in one 384-node graph. Its
+post-extraction run passed in 7.892 seconds with
+`max_abs=3.0517578125e-05` and process-tree SWAP zero. Float32, float16,
+correspondence, `schema.fbs`, and `schema_generated.py` hashes are identical to
+the 8.338-second pre-extraction control.
+
+Changed source is limited to the new pass module, the lowerer wrapper, its
+focused tests, architecture ownership coverage, and branch documentation. No
+dependency, public API, CLI, artifact, TensorFlow boundary, corpus profile, or
+exclusion changes. Temporary instrumentation and conversion outputs are
+removed before commit. No new pull request is created.
+
+The next raw source-order boundary is
+`_optimize_transpose_pre_concat_nhwc_chains_legacy` behind the 61-line
+indexed-first `_optimize_transpose_pre_concat_nhwc_chains` wrapper. At restart,
+first inventory its existing indexed owner, legacy family boundaries,
+fallback ownership, call positions, and focused fixtures. Do not split or
+semantically narrow the 2,452-line fallback without evidence; keep conversion
+validation minimal and sequential, then commit and push only.

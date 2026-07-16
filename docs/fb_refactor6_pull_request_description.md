@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving eight
+This branch continues the staged `flatbuffer_direct` refactor by moving nine
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -13,7 +13,8 @@ lowerer and into focused pass modules:
 - final static runtime-shape/signature consistency;
 - dynamic boundary-signature map realignment;
 - Transpose/QDQ bridge and residual-closure optimization;
-- quantized Swish NHWC-island and residual-Concat orchestration.
+- quantized Swish NHWC-island and residual-Concat orchestration;
+- HardSwish/SE/HardSigmoid gating-block layout recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -142,6 +143,18 @@ compatibility wrappers, and their two production call positions are
 unchanged. After normalizing only function and safety-owner names, both moved
 function ASTs are identical to their pre-extraction implementations.
 
+### HardSwish SE gating layout
+
+`passes/hardswish_se_layout.py` owns the former 463-line central compatibility
+implementation for HardSwish plus squeeze/excitation Conv and HardSigmoid
+gating blocks. Its direct and decomposed activation roots, expanded and fused
+gate forms, keepdims Mean axis rotation, Conv bridge removal, residual output
+renaming, tensor metadata and quantization propagation, graph-order restart,
+pruning, and statistic remain one cohesive contract. The lowerer retains one
+thin private wrapper and both production calls remain unchanged. The moved
+owner AST is identical to its pre-extraction implementation after normalizing
+only the function name.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -181,6 +194,8 @@ The new focused tests cover:
   fan-out closure fixtures;
 - quantized Swish primary/post/late/safety/prune phase order, option forwarding,
   statistics aggregation, closure remapping, and wrapper equality;
+- all four HardSwish root/gate combinations, public/axis/fan-out guards,
+  idempotence, and owner/wrapper equivalence;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -193,9 +208,10 @@ Latest checkpoint results:
   `12 passed`;
 - focused indexed Swish owners, legacy variants, safety delegation, and
   ownership selectors: `26 passed`;
-- complete flatbuffer-direct architecture suite: `224 passed`;
+- focused HardSwish SE owner and architecture selector: `9 passed`;
+- complete flatbuffer-direct architecture suite: `225 passed`;
 - final combined branch gate across all extracted owners, active legacy
-  selectors, shape reconciliation, and architecture: `321 passed`;
+  selectors, shape reconciliation, and architecture: `330 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -204,6 +220,7 @@ Latest checkpoint results:
   name normalization;
 - both old/new Swish-QDQ orchestration ASTs: identical after normalizing the
   public function and safety-owner names;
+- old/new HardSwish SE owner ASTs: identical after function-name normalization;
 - TensorFlow-import-blocked import, direct conversion, and direct `-cotof`:
   `3 passed`;
 - Ruff checks, Python compilation, and whitespace checks: passed.
@@ -253,6 +270,15 @@ recorded zero process-tree SWAP, retained its established
 byte-identical float32, float16, tensor-correspondence, schema, and generated-
 schema artifacts.
 
+The HardSwish SE extraction used
+`ssdlite320_mobilenet_v3_large.onnx` as its closest production control. Both
+unchanged production invocations were zero-owner calls. Before and after the
+move it passed with `max_abs=3.0517578125e-05` and zero process-tree SWAP. Its
+float32, float16, tensor-correspondence, schema, and generated-schema files are
+byte-identical. `inference_ops15.onnx` and
+`mobilenetv3_large_pytorch.onnx` supplied four additional sequential zero-owner
+invocations without widening the conversion set further.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -261,7 +287,7 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order candidate is the HardSwish SE/Conv/HardSigmoid/Mul
-pre/post NHWC-chain helper. It should be characterized at every production
-position before any extraction because it still combines several strict
-subgraph families in one compatibility implementation.
+The next raw source-order boundary is the large pre-Concat NHWC compatibility
+owner and its indexed-first wrapper. Its legacy families must be inventoried
+before any split; no semantic narrowing or broad conversion sweep is implied
+by this mechanical checkpoint.

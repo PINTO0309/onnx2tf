@@ -4459,6 +4459,27 @@ fix phase order, option forwarding, statistics aggregation, closure remapping,
 wrapper equality, direct safety-owner dispatch, final pruning, and the absence
 of a lowerer import cycle.
 
+HardSwish/SE/HardSigmoid gating-block layout recovery is isolated in
+`passes/hardswish_se_layout.py`. The complete compatibility implementation
+moves as one unit because its direct or decomposed activation root, keepdims
+Mean, two Conv stages, expanded or fused HardSigmoid gate, residual Mul, and
+four boundary Transposes are validated and committed as one ordered contract.
+The lowerer retains the historical private wrapper at both production
+positions. Function-name-normalized AST comparison is exact, so consumer-map
+rebuilds, graph-order restart, constant-axis remapping, input/output rewrites,
+metadata and quantization propagation, removal order, pruning, and the existing
+statistic are unchanged.
+
+Four positive synthetic combinations fix direct HARD_SWISH versus decomposed
+ADD/MUL/MUL roots against expanded MUL/ADD/RELU_0_TO_1 versus fused
+ADD(RELU6)/MUL gates. Public pre-Transpose output, invalid reduction axes, and
+activation fan-out remain complete no-ops; a direct-owner/private-wrapper
+comparison fixes the compatibility boundary. SSDLite MobileNetV3,
+`inference_ops15`, and MobileNetV3 PyTorch provide six measured zero-owner
+production invocations. SSDLite is the artifact control: it remains accurate
+with zero process-tree SWAP and byte-identical direct artifacts across the
+mechanical move.
+
 Concat-input exact-grid Q/DQ bypass is owned by
 `passes/quantization_cleanup.py`. The owner recognizes only
 `DEQUANTIZE(source_q)->float->QUANTIZE->q->DEQUANTIZE->concat_input` and
