@@ -4409,6 +4409,8 @@ def _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir: ModelIR) -> Dic
             sig_q_tensor = model_ir.tensors.get(sig_q_name, None)
             mul0_out_tensor = model_ir.tensors.get(mul0_out_name, None)
             add0_out_name = str(add0_op.outputs[0])
+            if add0_out_name in model_ir.outputs:
+                continue
             add0_out_tensor = model_ir.tensors.get(add0_out_name, None)
             if any(
                 t is None

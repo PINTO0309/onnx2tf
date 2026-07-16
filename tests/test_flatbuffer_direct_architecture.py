@@ -9442,12 +9442,16 @@ def test_mean_hardsigmoid_muladd_has_one_characterized_raw_owner() -> None:
     axes_validation = owner_source.index(
         "rank = len(list(q0_raw_tensor.shape))"
     )
+    public_output_guard = owner_source.index(
+        "if add0_out_name in model_ir.outputs:"
+    )
     axes_write = owner_source.index(
         "_write_const_ints_to_tensor(\n"
         "                mean_axes_tensor,"
     )
     first_input_mutation = owner_source.index("_set_operator_inputs(")
     first_metadata_mutation = owner_source.index("dq0_out_tensor.shape =")
+    assert public_output_guard < axes_validation
     assert axes_validation < axes_write < first_input_mutation
     assert axes_write < first_metadata_mutation
 

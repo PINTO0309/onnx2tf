@@ -260,10 +260,6 @@ def test_mean_hardsigmoid_muladd_axes_rejection_is_atomic(
     assert _fingerprint(model_ir) == _fingerprint(before)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the public residual output is changed from NCHW to NHWC",
-)
 def test_mean_hardsigmoid_muladd_preserves_public_residual_output() -> None:
     model_ir = _build_chain()
     model_ir.outputs.append("add0_out")

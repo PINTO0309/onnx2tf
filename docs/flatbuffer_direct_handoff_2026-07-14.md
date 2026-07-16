@@ -10048,3 +10048,41 @@ output; place that guard before the first axes write or other mutation, turn the
 remaining strict xfail green, retain the positive rewrite fingerprint and
 statistics, and repeat one strictly sequential zero-SWAP artifact control. Do
 not create a pull request.
+
+## Mean/HardSigmoid/MulAdd public-output safety: completed state
+
+The second semantic correction is complete. Once the residual Add output name
+is known, the helper rejects a candidate whose `add0_out` is a declared ModelIR
+output. The guard runs before Mean-axis normalization/write, graph rewiring, or
+dependent metadata changes. The public NCHW boundary therefore remains a
+complete zero-statistic no-op instead of silently becoming NHWC. Successful
+private-output rewrites, legacy-consumer adapters, statistics, and idempotence
+are unchanged.
+
+The focused graph and raw-owner selector pass `13 passed, 243 deselected in
+0.61s`; no strict xfail remains. The changed-file branch regression passes `568
+passed in 25.10s`. The TensorFlow-import-blocked optional-boundary suite passes
+`11 passed in 9.35s`. Targeted test Ruff, Python compilation, and whitespace
+checks pass.
+
+YuNet INT8 was again executed strictly sequentially through the process-tree
+SWAP monitor at commit `0eced940` and with the public-output correction. Both
+runs passed `-cotof` with `max_abs=0`, zero SWAP, and durations of 6.323 and
+5.148 seconds. Internal pass metrics are identical. Float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical; the three JSON files differ only in output-directory and
+temporary-file paths.
+
+Changed files are the central helper, focused fixture, architecture source-
+order gate, and three branch documents. Public API, CLI, artifacts, successful
+rewrite order/statistic, TensorFlow boundary, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, the 496-line helper has a complete positive/rejection contract and
+both known unsafe rejection paths are fixed. If it is moved, perform an exact
+mechanical extraction into a focused pass-family module, retain a thin private
+lowerer wrapper and its single syntactic call/two runtime boundaries, prove the
+old/new body AST after function-name normalization, and repeat the existing
+focused, branch, optional-boundary, and one sequential zero-SWAP artifact
+control. Do not create a pull request.

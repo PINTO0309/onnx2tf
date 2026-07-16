@@ -7741,7 +7741,7 @@ FastestDet, HumanSeg, OSNet, and inference_ops15 each produce one zero result in
 strictly sequential, zero-SWAP traces; positive production ownership is not
 claimed.
 
-The adjacent quantized Mean/HardSigmoid/MulAdd recovery remains a raw 494-line
+The adjacent quantized Mean/HardSigmoid/MulAdd recovery remains a raw 496-line
 lowerer owner with one syntactic call inside the recovery sequence, executed at
 two ordered production boundaries. Its first dedicated ModelIR contract fixes
 the full two-branch graph, Mean axis remap, decomposed HardSigmoid clamp,
@@ -7754,12 +7754,12 @@ The Mean-axis rejection path is now atomic: rank normalization and the constant
 update occur after all candidate guards but before the first graph rewiring or
 dependent metadata mutation. Out-of-range axes and a rejected no-change
 constant update both retain a complete ModelIR fingerprint and zero statistic.
-One strict xfail still blocks extraction because a public residual `add0_out`
-is rewritten from NCHW to NHWC without preserving its declared output contract.
-YuNet INT8, PPHumanSeg INT8, and SSD MobileNet INT8 each produce two zero
-results in current strictly sequential, zero-SWAP traces, matching the earlier
-broader zero-owner survey. The public boundary must be corrected as its own
-semantic checkpoint before any ownership move.
+A public residual `add0_out` is now rejected before the axes write, so its
+declared NCHW output contract and full ModelIR fingerprint remain unchanged.
+The focused contract has no remaining strict xfail. YuNet INT8, PPHumanSeg
+INT8, and SSD MobileNet INT8 each produce two zero results in current strictly
+sequential, zero-SWAP traces, matching the earlier broader zero-owner survey.
+Any later ownership move must be mechanical and retain those boundaries.
 
 ## Managed-corpus SWAP exclusion policy
 
