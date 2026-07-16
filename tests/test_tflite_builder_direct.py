@@ -77,7 +77,6 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_channel_slice_dual_add_bridges_strict,
     _optimize_transpose_slice_muladd_conv_mergeadd_strict,
     _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict,
-    _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains,
     _optimize_concat_pre_quantize_dequantize,
     _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains,
     _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains,
@@ -11209,107 +11208,6 @@ def test_flatbuffer_direct_fold_mul_add_mul_affine_chain() -> None:
     )
 
 
-def test_flatbuffer_direct_concat_mul_add_transpose_add_nhwc_bridge_chain_with_legacy_consumer() -> None:
-    model_ir = ModelIR("concat_mul_add_transpose_add_nhwc_bridge_chain_with_legacy_consumer_test")
-    model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
-    model_ir.outputs = ["y", "legacy_out"]
-
-    model_ir.tensors["x0_nhwc"] = TensorIR(name="x0_nhwc", dtype="FLOAT32", shape=[1, 3, 2, 2], shape_signature=[1, 3, 2, 2])
-    model_ir.tensors["x1_nhwc"] = TensorIR(name="x1_nhwc", dtype="FLOAT32", shape=[1, 3, 2, 2], shape_signature=[1, 3, 2, 2])
-    model_ir.tensors["to_nchw_perm"] = TensorIR(
-        name="to_nchw_perm",
-        dtype="INT32",
-        shape=[4],
-        shape_signature=[4],
-        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
-        is_variable=False,
-    )
-    model_ir.tensors["to_nhwc_perm"] = TensorIR(
-        name="to_nhwc_perm",
-        dtype="INT32",
-        shape=[4],
-        shape_signature=[4],
-        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
-        is_variable=False,
-    )
-    model_ir.tensors["x0_nchw"] = TensorIR(name="x0_nchw", dtype="FLOAT32", shape=[1, 2, 3, 2], shape_signature=[1, 2, 3, 2])
-    model_ir.tensors["x1_nchw"] = TensorIR(name="x1_nchw", dtype="FLOAT32", shape=[1, 2, 3, 2], shape_signature=[1, 2, 3, 2])
-    model_ir.tensors["cat_nchw"] = TensorIR(name="cat_nchw", dtype="FLOAT32", shape=[1, 4, 3, 2], shape_signature=[1, 4, 3, 2])
-    model_ir.tensors["mul0_const"] = TensorIR(
-        name="mul0_const",
-        dtype="FLOAT32",
-        shape=[1, 4, 1, 1],
-        shape_signature=[1, 4, 1, 1],
-        data=np.ones((1, 4, 1, 1), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["mul0_out"] = TensorIR(name="mul0_out", dtype="FLOAT32", shape=[1, 4, 3, 2], shape_signature=[1, 4, 3, 2])
-    model_ir.tensors["add0_const"] = TensorIR(
-        name="add0_const",
-        dtype="FLOAT32",
-        shape=[1, 4, 1, 1],
-        shape_signature=[1, 4, 1, 1],
-        data=np.zeros((1, 4, 1, 1), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["add0_out"] = TensorIR(name="add0_out", dtype="FLOAT32", shape=[1, 4, 3, 2], shape_signature=[1, 4, 3, 2])
-    model_ir.tensors["add0_out_nhwc"] = TensorIR(name="add0_out_nhwc", dtype="FLOAT32", shape=[1, 3, 2, 4], shape_signature=[1, 3, 2, 4])
-    model_ir.tensors["add1_const"] = TensorIR(
-        name="add1_const",
-        dtype="FLOAT32",
-        shape=[1, 1, 1, 4],
-        shape_signature=[1, 1, 1, 4],
-        data=np.zeros((1, 1, 1, 4), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 3, 2, 4], shape_signature=[1, 3, 2, 4])
-    model_ir.tensors["legacy_const"] = TensorIR(
-        name="legacy_const",
-        dtype="FLOAT32",
-        shape=[1, 4, 1, 1],
-        shape_signature=[1, 4, 1, 1],
-        data=np.ones((1, 4, 1, 1), dtype=np.float32),
-        is_variable=False,
-    )
-    model_ir.tensors["legacy_out"] = TensorIR(name="legacy_out", dtype="FLOAT32", shape=[1, 4, 3, 2], shape_signature=[1, 4, 3, 2])
-
-    model_ir.operators = [
-        OperatorIR(op_type="TRANSPOSE", inputs=["x0_nhwc", "to_nchw_perm"], outputs=["x0_nchw"]),
-        OperatorIR(op_type="TRANSPOSE", inputs=["x1_nhwc", "to_nchw_perm"], outputs=["x1_nchw"]),
-        OperatorIR(op_type="CONCATENATION", inputs=["x0_nchw", "x1_nchw"], outputs=["cat_nchw"], options={"axis": 1}),
-        OperatorIR(op_type="MUL", inputs=["cat_nchw", "mul0_const"], outputs=["mul0_out"]),
-        OperatorIR(op_type="ADD", inputs=["mul0_out", "add0_const"], outputs=["add0_out"]),
-        OperatorIR(op_type="TRANSPOSE", inputs=["add0_out", "to_nhwc_perm"], outputs=["add0_out_nhwc"]),
-        OperatorIR(op_type="ADD", inputs=["add0_out_nhwc", "add1_const"], outputs=["y"]),
-        OperatorIR(op_type="MUL", inputs=["cat_nchw", "legacy_const"], outputs=["legacy_out"]),
-    ]
-
-    stats = _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
-    assert stats["optimized_concat_mul_add_transpose_add_nhwc_bridge_chains"] == 1
-
-    assert not any(
-        str(op.op_type) == "TRANSPOSE"
-        and len(op.outputs) == 1
-        and str(op.outputs[0]) in {"x0_nchw", "x1_nchw", "add0_out_nhwc"}
-        for op in model_ir.operators
-    )
-
-    concat_ops = [op for op in model_ir.operators if str(op.op_type) == "CONCATENATION"]
-    assert len(concat_ops) == 1
-    concat_op = concat_ops[0]
-    assert int(concat_op.options.get("axis", -1)) == 3
-    assert [str(v) for v in list(concat_op.inputs)] == ["x0_nhwc", "x1_nhwc"]
-
-    # Legacy NCHW consumer should be preserved by a localized adapter.
-    assert any(
-        str(op.op_type) == "TRANSPOSE"
-        and len(op.outputs) == 1
-        and str(op.outputs[0]) == "cat_nchw"
-        for op in model_ir.operators
-    )
-
-    add1_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD" and list(op.outputs) == ["y"])
-    assert "add0_out" in [str(v) for v in list(add1_op.inputs)]
 
 
 def test_flatbuffer_direct_concat_tree_mul_add_transpose_nhwc_bridge_mixed_axes() -> None:

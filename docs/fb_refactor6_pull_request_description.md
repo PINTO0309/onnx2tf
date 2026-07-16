@@ -1626,4 +1626,13 @@ rewrites, constant and adapter ownership, per-axis quantization, pruning, and
 transactional rejection; complete normalized ModelIR state and statistics are
 identical. Resume by inventorying and characterizing the next raw source-order
 owner, `_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains` (452 lines),
-before any semantic or ownership change.
+before any semantic or ownership change. That characterization is now
+complete without production changes. Its legacy fixture moved out of the
+giant direct test, 18 positive/rejection/boundary cases pass, and 27 strict
+xfails isolate adapter order, incomplete metadata, affine-constant ownership,
+per-axis QDIM, unsafe reserved adapter constants, late partial mutation,
+malformed axis handling, duplicate producers, reverse topology, and a public
+internal alias. Resume by building a complete indexed topology, metadata,
+constant, quantization, name, adapter, removal, and insertion plan before the
+first mutation, then turn all 27 xfails green while preserving valid behavior
+and both ordered recovery boundaries.

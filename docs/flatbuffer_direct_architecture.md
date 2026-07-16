@@ -8130,6 +8130,50 @@ topology, and diagnostics—are identical in every case. The extraction adds no
 semantic change and does not alter public APIs, artifacts, dependencies,
 corpus policy, or TensorFlow isolation.
 
+## Raw Concat/Mul/Add/Transpose/Add bridge characterization
+
+The next raw source-order owner is the 452-line
+`_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains`. It remains
+unchanged at the fourth position of both terminal Concat recovery sequences.
+Its existing legacy-consumer fixture has moved from the giant direct test into
+`test_flatbuffer_direct_concat_mul_add_transpose_add_bridge_layout.py`,
+reducing the central test by 102 lines while preserving the same observable
+contract.
+
+The focused positive contract covers ordinary static and dynamic-batch
+signatures, legacy compatibility output, two independent graph-order matches,
+second-call fixed point, scalar Mul/Add constants, collision-safe cloning of
+each shared affine constant, zero-match no-prune behavior, Concat options,
+axis semantics, version and ONNX provenance, nine existing rejection guards,
+statistics, and both ordered production boundaries.
+
+Twenty-seven concrete safety gaps are strict xfails:
+
+- the legacy adapter is appended after its existing consumer;
+- seven missing, rank-three, or short-signature source/Concat/Mul/Add metadata
+  cases still rewrite;
+- public-input, variable, and public-output ownership is ignored for each of
+  the Mul and pre-Transpose Add constants;
+- ordinary and legacy per-axis tensors keep NCHW QDIM 1 after moving to NHWC;
+- a public, variable, wrong-dtype, quantized, or wrong-value reserved adapter
+  constant is reused or overwritten instead of preserving it and allocating a
+  private INT32 permutation;
+- invalid Add-constant or legacy-signature evidence discovered after Mul-
+  constant rotation leaves partial mutation;
+- a malformed Concat axis raises instead of producing a transactional no-op;
+- duplicate post output producers, reverse post/tail-Add order, and a produced
+  pre-Transpose tensor declared as a public input are accepted.
+
+Production source is intentionally unchanged at this checkpoint. Correction
+must build one indexed graph-order candidate plan that validates unique
+producers, strict operator order, private internal edges, complete rank-four
+shape/signature metadata, both affine-constant ownership and broadcasts,
+per-axis QDIM remaps, adapter ownership/naming, and every setter, removal, and
+insertion before the first mutation. Compatibility adapters must be inserted
+before their earliest legacy consumer. Existing match order, statistics,
+fixed point, scalar/shared constants, pruning, options/provenance, and both
+runtime boundaries must remain unchanged.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

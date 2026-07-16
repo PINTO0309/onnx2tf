@@ -11462,3 +11462,57 @@ topology, public-boundary, pruning, fixed-point, statistics, and ordered-
 boundary behavior, and record unsafe behavior as strict xfails before any
 correction. Keep conversion validation minimal and strictly sequential,
 commit and push coherent checkpoints, and do not create a pull request.
+
+## Concat/Mul/Add/Transpose/Add characterization: completed state
+
+The 452-line raw
+`_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains` owner and its
+fourth position in both terminal Concat recovery sequences are unchanged. The
+existing legacy-consumer fixture moved from `test_tflite_builder_direct.py`
+into the focused
+`test_flatbuffer_direct_concat_mul_add_transpose_add_bridge_layout.py`,
+reducing the giant direct test by 102 lines.
+
+The focused contract freezes ordinary static and dynamic signatures, legacy
+compatibility output, two independent matches, fixed point, scalar constants,
+collision-safe shared Mul/Add constant clones, no-match pruning behavior,
+Concat options/axis semantics/version/provenance, nine existing rejection
+guards, statistics, the 452-line/two-While raw-owner shape, and both ordered
+production boundaries.
+
+Twenty-seven reproduced safety problems are strict xfails:
+
+- one non-topological legacy adapter placement;
+- seven incomplete source/Concat/Mul/Add metadata cases;
+- six public-input, variable, or public-output affine-constant ownership
+  violations;
+- two ordinary/legacy per-axis QDIM failures;
+- five unsafe reserved adapter-permutation ownership/value cases;
+- two late partial-mutation cases for the second affine constant and legacy
+  metadata;
+- one malformed Concat-axis exception;
+- three duplicate-producer, reverse-order, or public-internal-alias cases.
+
+Validation completed as follows:
+
+- focused characterization: `18 passed, 27 xfailed in 0.96s`;
+- focused characterization plus ordered architecture suite:
+  `266 passed, 27 xfailed in 21.04s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.60s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion was changed or run. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+and TensorFlow isolation are unchanged. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use
+one `ModelIRGraphIndex` to enumerate candidates and prove unique producers,
+strict pre-Transpose/Concat/Mul/Add/post-Transpose/tail-Add order, private
+internal edges, complete rank-four effective metadata, immutable affine-
+constant ownership, valid broadcasts, per-axis QDIM remaps, and safe adapter
+ownership/names. Precompute both constant update-or-clone actions, canonical
+Concat metadata/name, every setter/removal, and the producer-before-consumer
+adapter insertion index before mutation. Turn all 27 strict xfails green,
+preserve the 18 existing cases and both production boundaries, validate
+sequentially, commit and push, and do not create a pull request.
