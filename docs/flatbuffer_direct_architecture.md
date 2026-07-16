@@ -899,6 +899,26 @@ two measured zero-owner production calls, so no non-zero real-model ownership
 is claimed. UM Best Model remains accurate with zero process-tree SWAP and
 byte-identical direct artifacts across the mechanical move.
 
+The following NHWC-to-NCHW Shape-extraction compatibility rule is isolated in
+`passes/shape_extract_layout.py`. Its complete 285-line implementation moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+remaps Gather indices from logical NCHW axes to the physical NHWC Shape vector,
+remaps contiguous Slice selections, and converts non-contiguous Slice
+selections to Gather. Shared constants use clone-on-write while retaining dtype
+and quantization metadata. All Shape consumers must belong to the supported
+families, public boundary and fan-out guards remain strict, and fixed-point
+restart, conditional pruning, and the historical statistic are unchanged.
+The lowerer retains one one-call private compatibility wrapper at all three
+unchanged production positions.
+
+Focused fixtures cover exclusive and shared Gather indices, contiguous Slice
+remapping, non-contiguous Slice-to-Gather conversion, idempotence, every public,
+fan-out, axis, constant, index, and empty-selection guard, and direct-owner/
+private-wrapper equality. RetinaFace Dynamic establishes non-zero production
+ownership with counts `1, 0, 0`; its accuracy, zero process-tree SWAP, and all
+five core artifacts are unchanged across extraction. ALike supplies the
+`0, 0, 0` zero-owner control and remains accurate with zero SWAP.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization

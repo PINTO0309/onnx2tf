@@ -8040,3 +8040,63 @@ non-contiguous Slice-to-Gather conversion, production positions, statistic,
 existing fixtures, and short zero-SWAP model ownership before changing source.
 Keep inference strictly sequential and minimal, then commit and push one
 coherent unit without creating a pull request.
+
+## Shape-extraction layout ownership extraction: completed state
+
+The complete 285-line
+`_optimize_transpose_shape_extract_nhwc_to_nchw_chains` implementation is now
+owned by `passes/shape_extract_layout.py`; the lowerer retains a one-call
+private compatibility wrapper at all three unchanged production positions.
+This is an exact mechanical move: after normalizing only the function name,
+the prior lowerer function and the new owner ASTs are identical.
+
+The owner preserves Gather-index remapping from logical NCHW to physical NHWC,
+contiguous Slice remapping, and non-contiguous Slice-to-Gather conversion.
+Shared constants remain clone-on-write, with dtype and quantization metadata
+retained. All Shape consumers must be supported before mutation; public
+Transpose or Shape outputs, adapter fan-out, unsupported users or axes,
+non-constant and invalid indices, and empty selections remain strict no-ops.
+Fixed-point restart, conditional pruning, and the historical statistic are
+unchanged.
+
+The focused owner corpus plus architecture selector passes `14 passed in
+1.79s`. The complete architecture suite passes `228 passed in 34.70s`; the
+branch-wide selection passes `640 passed in 35.35s`; and the complete optional-
+TensorFlow import-blocked suite, including direct conversion and direct
+`-cotof`, passes `11 passed in 9.75s`.
+
+Tier 2 `retinaface_onnx_dynamic.onnx` establishes positive real ownership with
+production counts `1,0,0`. Before extraction it passed in 3.996 seconds and
+after extraction in 4.030 seconds with identical
+`max_abs=4.4405460357666016e-06` and process-tree SWAP zero. Its core artifacts
+are byte-identical:
+
+- float32 TFLite:
+  `ff0cbf4697ab2f7f0304d49eff912babaf2b3c31060374023b175ad01342a8ff`;
+- float16 TFLite:
+  `91b40c03d9c9628d0acb5d3c87c7a2e8cd23f8df089be6d00e52ee4db87d1c42`;
+- tensor correspondence:
+  `6edbb4f0d8436d9c064c1415840807a00e004c96b8a1f7df40954cb35d5bdc43`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+Tier 2 `alike_t_opset11_192x320.onnx` supplies three zero-owner production
+calls. It passes in 6.658 seconds with
+`max_abs=2.345442771911621e-05` and zero process-tree SWAP.
+
+Changed files are the new Shape-extraction pass, lowerer import and wrapper,
+the focused owner corpus, architecture ownership checks, and the three branch
+documents. No package, public API, CLI, artifact name, TensorFlow boundary,
+corpus profile, exclusion policy, or ONNX tier policy changes. Temporary
+instrumentation and conversion outputs are removed before commit. PR #952
+remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 1,593-line
+`_optimize_transpose_pre_add_nhwc_chains` composite. At restart, first
+inventory its indexed owner, compatibility fallback, production positions,
+statistics, and focused fixtures. Do not split or semantically narrow this
+boundary without characterized ownership and artifact evidence. Keep inference
+strictly sequential and minimal, then commit and push one coherent unit without
+creating a pull request.

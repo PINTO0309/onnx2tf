@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving eleven
+This branch continues the staged `flatbuffer_direct` refactor by moving twelve
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -16,7 +16,8 @@ lowerer and into focused pass modules:
 - quantized Swish NHWC-island and residual-Concat orchestration;
 - HardSwish/SE/HardSigmoid gating-block layout recovery;
 - the remaining generic NHWC pre-Concat compatibility matcher;
-- strict rank-four Transpose/Slice/inverse-Transpose passthrough.
+- strict rank-four Transpose/Slice/inverse-Transpose passthrough;
+- Shape-extraction layout recovery for Gather and Slice consumers.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -182,6 +183,20 @@ It reuses the existing static-shape Slice inference owner directly. The lowerer
 retains a one-call private wrapper at the unchanged single production position,
 and the moved AST is identical after function-name normalization.
 
+### Shape-extraction layout recovery
+
+`passes/shape_extract_layout.py` owns the former 285-line central matcher for
+Shape consumers behind an NHWC-to-NCHW Transpose. It preserves all three
+historical families: Gather-index remapping, contiguous Slice remapping, and
+non-contiguous Slice-to-Gather conversion. Shared constants remain
+clone-on-write with dtype and quantization metadata preserved. The complete
+all-users-supported rule, public-boundary and fan-out guards, fixed-point
+restart, conditional pruning, and historical statistic are unchanged.
+
+The lowerer retains a one-call private wrapper at all three unchanged
+production positions. After normalizing only the function name, the old and
+new complete owner ASTs are identical.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -227,6 +242,9 @@ The new focused tests cover:
   direct-owner/private-wrapper equality;
 - remap-required and already-NHWC Slice constants, idempotence, public/fan-out/
   shape/permutation guards, and direct-owner/private-wrapper equality;
+- exclusive and shared Gather indices, contiguous Slice remapping,
+  non-contiguous Slice-to-Gather conversion, idempotence, public/fan-out/axis/
+  constant/index guards, and Shape-owner/private-wrapper equality;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -250,6 +268,10 @@ Latest checkpoint results:
 - complete flatbuffer-direct architecture suite after Slice extraction:
   `227 passed`;
 - final branch gate after Slice extraction: `626 passed`;
+- focused Shape-extraction owner plus architecture selector: `14 passed`;
+- complete flatbuffer-direct architecture suite after Shape extraction:
+  `228 passed`;
+- final branch gate after Shape extraction: `640 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -337,6 +359,14 @@ owner call and passed with `max_abs=2.345442771911621e-05` and zero SWAP. No
 non-zero production owner is claimed; the focused synthetic corpus fixes the
 positive behavior.
 
+The Shape-extraction move used Tier 2 `retinaface_onnx_dynamic.onnx` as its
+positive artifact control. Its three production calls reported `1,0,0` before
+and after extraction. Both sequential runs passed with identical
+`max_abs=4.4405460357666016e-06`, zero process-tree SWAP, and byte-identical
+float32, float16, tensor-correspondence, schema, and generated-schema outputs.
+Tier 2 `alike_t_opset11_192x320.onnx` supplied three zero-owner calls and
+passed with `max_abs=2.345442771911621e-05` and zero SWAP.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -345,7 +375,9 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 285-line Shape-extraction NHWC→NCHW
-helper. Its Gather/Slice remapping families, constant materialization,
-production positions, and real-model ownership must be characterized before
-extraction; no broad conversion sweep is implied by this mechanical checkpoint.
+The next raw source-order boundary is the 1,593-line
+`_optimize_transpose_pre_add_nhwc_chains` composite behind its indexed-first
+compatibility boundary. Its indexed owner, fallback families, production call
+positions, statistics, and focused fixtures must be inventoried before any
+split or semantic narrowing; no broad conversion sweep is implied by this
+mechanical checkpoint.
