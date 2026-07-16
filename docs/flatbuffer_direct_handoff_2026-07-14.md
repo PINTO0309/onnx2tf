@@ -8810,3 +8810,75 @@ permutation constant ownership, combined statistic, single prune/report
 boundary, production position, existing positive YOLO ownership, and fallback
 fixtures before changing source. Keep inference strictly sequential and
 minimal, then commit and push one coherent unit without creating a pull request.
+
+## Factorized/singleton ExpandDims compatibility composite extraction: completed state
+
+The complete 271-line indexed-first
+`_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains` composite is
+now owned by `passes/expanddims_reshape_compat_layout.py`. The lowerer retains
+one private compatibility wrapper at both unchanged production call positions
+and forwards Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the strict indexed factorized rank-four to
+rank-five Case B semantic owner, one per-call `ModelIRGraphIndex`, caller
+LayoutState, combined statistic, singleton Case A and relaxed raw fallback,
+Reshape shape and post-permutation constant/option updates, fixed-point restart,
+exact mutation/removal order, sole prune/report boundary, and removal of pruned
+names from LayoutState. The indexed immutable plan and module are unchanged.
+
+The focused indexed/compatibility suite plus both historical direct singleton
+fixtures and the architecture ownership selector passes `10 passed in 1.91s`.
+It covers indexed Case B, singleton Case A fallback, shared-constant atomic
+rejection, bounded dispatch, stale-plan rejection, determinism, complete
+compatibility-owner/lowerer-wrapper equality, and LayoutState cleanup. The
+changed-file branch regression collection including both historical direct
+fixtures passes `494 passed in 29.63s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.36s`.
+
+`yolo_test.onnx` is the strictly sequential positive artifact control. The
+previously established indexed invocation counts remain `3,0,0,0`, with zero
+raw-fallback rewrites for those accepted candidates. The pre conversion
+completed in 3.347 seconds and the post conversion in 3.378 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `439d9a8b893bf6bfbd92aa0155bd15a4185b5fcdb6e65ddb48f718a41b75bdfc`;
+- float16 TFLite:
+  `7b1ef8b13de65068b3fe8166d5481553e2e41194c0cfe9ee48f4be5ad3417eff`;
+- tensor correspondence:
+  `36d728e9294f1d4f1319c45306a088bced6b54ad393f71f4925f3178f0d9c1ca`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential accuracy checkpoint remains
+`max_abs=2.4437904357910156e-06`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds a
+complete consumer map in a fixed-point loop and uses relaxed in-place Reshape
+and post-permutation constant updates instead of the indexed owner's immutable
+differential transaction. The existing shared-constant guard remains intact;
+broader hardening requires separate semantic fixtures and is not mixed into
+this exact mechanical move.
+
+Changed files are the new factorized/singleton ExpandDims compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary conversion outputs
+are removed before commit. PR #952 remains closed; work is commit/push only and
+no pull request is created.
+
+The next raw source-order implementation is the 175-line indexed-first
+compatibility composite
+`_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains`. At restart,
+inventory its indexed static flatten-HW owner, dynamic and relaxed raw fallback,
+GraphIndex construction and LayoutState forwarding, Reshape constant ownership,
+combined statistic, single prune/report boundary, both production positions,
+existing positive LINEA ownership, and fallback fixtures before changing
+source. Keep inference strictly sequential and minimal, then commit and push
+one coherent unit without creating a pull request.

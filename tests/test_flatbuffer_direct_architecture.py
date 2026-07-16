@@ -15083,6 +15083,15 @@ def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
         / "expanddims_reshape_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "expanddims_reshape_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -15106,14 +15115,21 @@ def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
         "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains"
     )
     dispatch_name = "_optimize_transpose_factorized_expanddims_nhwc_chains_pass"
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -15125,12 +15141,25 @@ def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state",
+    }
 
     lowerer = next(
         node

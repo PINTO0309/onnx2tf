@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving twenty-two
+This branch continues the staged `flatbuffer_direct` refactor by moving twenty-three
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -27,7 +27,8 @@ lowerer and into focused pass modules:
 - pre-unary Mul/Add/post-Transpose fan-out compatibility recovery;
 - indexed-first pre-Add/Mul/Reshape-suffix compatibility recovery;
 - indexed-first Swish/plain-unary Reshape-suffix compatibility recovery;
-- indexed-first Swish/plain-unary Squeeze-suffix compatibility recovery.
+- indexed-first Swish/plain-unary Squeeze-suffix compatibility recovery;
+- indexed-first factorized/singleton ExpandDims compatibility recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -364,6 +365,20 @@ identical after function-name normalization; the indexed owner is unchanged.
 Whole-graph fallback scans and relaxed in-place Squeeze axis updates remain a
 separate immutable-indexed migration task.
 
+### Indexed-first factorized/singleton ExpandDims compatibility recovery
+
+`passes/expanddims_reshape_compat_layout.py` owns the former 271-line
+composite. It preserves the strict indexed factorized Case B owner as the first
+dispatch, one per-call `ModelIRGraphIndex`, caller `LayoutState`, singleton Case
+A and relaxed raw fallback behavior, Reshape/permutation constant and option
+updates, combined statistic, fixed-point restart, one prune/report boundary,
+and LayoutState cleanup. The lowerer retains one private wrapper at both
+unchanged production call positions. The complete old/new composite ASTs are
+identical after function-name normalization; the indexed owner is unchanged.
+
+Whole-graph fallback scans and relaxed in-place constant updates remain a
+separate immutable-indexed migration task.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -492,6 +507,9 @@ Latest checkpoint results:
 - final branch gate after pre-unary Reshape-suffix extraction: `748 passed`;
 - focused indexed/compatibility pre-unary Squeeze-suffix gate: `9 passed`;
 - final branch gate after pre-unary Squeeze-suffix extraction: `756 passed`;
+- focused indexed/compatibility ExpandDims gate: `10 passed`;
+- changed-file branch regression gate including both historical Case A direct
+  fixtures after ExpandDims compatibility extraction: `494 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -680,6 +698,15 @@ The preceding sequential accuracy checkpoint remains
 `max_abs=1.9073486328125e-06`; no duplicate inference was run because the
 executed TFLite is unchanged.
 
+The factorized/singleton ExpandDims composite extraction used `yolo_test.onnx`
+as its positive fixed artifact control. Its established indexed counts remain
+`3,0,0,0`, with no residual raw-fallback rewrites. The pre/post conversion-only
+runs completed in 3.347 and 3.378 seconds, recorded process-tree SWAP zero, and
+produced byte-identical float32, float16, tensor-correspondence, schema, and
+generated-schema outputs. The preceding sequential accuracy checkpoint remains
+`max_abs=2.4437904357910156e-06`; no duplicate inference was run because the
+executed TFLite is unchanged.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -688,10 +715,10 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 271-line indexed-first compatibility
-composite `_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains`.
-Its indexed factorized rank-five owner, singleton and relaxed raw fallback,
-GraphIndex and LayoutState handoff, reshape/permutation constants, single
-prune/report boundary, production positions, positive YOLO ownership, and
+The next raw source-order boundary is the 175-line indexed-first compatibility
+composite `_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains`.
+Its indexed static flatten-HW owner, dynamic and relaxed raw fallback,
+GraphIndex and LayoutState handoff, reshape constant ownership, single
+prune/report boundary, production positions, positive LINEA ownership, and
 fallback fixtures must be inventoried before choosing the next ownership
 boundary; no broad conversion sweep is implied by this mechanical checkpoint.

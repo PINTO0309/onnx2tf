@@ -7267,6 +7267,25 @@ reader. Both models then retained byte-identical float32, float16, and
 correspondence artifacts. The sequential yolo_test accuracy gate passes with
 maximum absolute error `2.4437904357910156e-06` and zero process-tree SWAP.
 
+The indexed-first factorized/singleton compatibility composite is now isolated
+in `expanddims_reshape_compat_layout.py`. The former 271-line lowerer
+implementation moved with a function-name-normalized AST identical to the
+module owner. It still builds one `ModelIRGraphIndex` per invocation, dispatches
+the strict factorized Case B owner first, forwards caller `LayoutState`, then
+runs the unchanged singleton Case A and relaxed compatibility fallback to fixed
+point. Reshape and permutation constant updates, the combined statistic, the
+sole prune/report boundary, and removal of pruned tensor names from LayoutState
+remain in the compatibility owner. The lowerer retains one private adapter at
+both unchanged production call positions.
+
+The focused corpus compares the compatibility owner and lowerer adapter for
+indexed Case B, singleton Case A, shared-constant rejection, and LayoutState
+cleanup while retaining the two historical direct Case A fixtures. A strictly
+sequential pre/post `yolo_test.onnx` conversion records zero process-tree SWAP
+and reproduces all five core artifacts byte for byte. The indexed immutable
+plan is unchanged. Whole-graph fallback scans and relaxed in-place constant
+mutation remain explicit future semantic work.
+
 The static rank-four to rank-three flatten-HW suffix now has a bounded indexed
 owner in `flatten_hw_reshape_layout.py`. It accepts only the exact semantic
 family `NHWC -> NCHW -> [N,C,H*W] -> [N,H*W,C]`. Candidate resolution checks
