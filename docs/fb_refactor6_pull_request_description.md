@@ -642,6 +642,28 @@ unchanged at this characterization checkpoint. The existing sequential real-
 model audit already established zero rewrites and zero SWAP for every measured
 candidate, so no redundant conversion was run.
 
+### QLinear SiLU prefix transactional correction
+
+The four characterized defects are corrected without changing valid topology
+matching or statistics. All rank-four metadata targets and effective
+signatures are now resolved before the first ModelIR mutation. Legacy adapters,
+their collision-free tensor names, cumulative consumer input updates, and the
+permutation dependency are fully planned before commit. The reserved
+permutation is reused only when dtype, shape, signature, constant payload,
+variable state, and quantization state are exact; otherwise a new validated
+constant receives a collision-safe name. No permutation is created for a
+candidate without legacy consumers, and unused tensors are pruned only after a
+successful rewrite. Rejected and repeated zero-rewrite calls are therefore
+complete metadata-preserving no-ops.
+
+All four former strict xfails now pass, including four separate malformed
+target-signature cases and exact valid-permutation reuse. A new strict xfail
+records a separate pre-existing duplicate-consumer issue: when one downstream
+operator consumes the Mul output in two slots, the legacy consumer map returns
+that operator index twice and the helper plans both slots twice, leaving four
+adapters instead of two. That behavior is documented before a separate fix;
+it is not silently combined with this transactional correction.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -867,6 +889,10 @@ Latest checkpoint results:
   `14 passed, 4 xfailed`;
 - changed-file focused branch regression including the characterization:
   `631 passed, 4 xfailed`;
+- focused QLinear SiLU transactional correction and architecture gate:
+  `22 passed, 1 xfailed`;
+- changed-file focused branch regression after the correction:
+  `639 passed, 1 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1409,8 +1435,10 @@ source-order owner, `_optimize_nhwc_prefix_qlinear_silu_chains` (419 lines),
 now has positive, multiple-match, legacy-adapter, rejection, idempotence,
 collision, malformed-signature, and architecture characterization. Resume by
 correcting its four strict xfails without changing valid candidate order,
-statistics, production call boundaries, or artifacts. Create the internal
-permutation only for a committed legacy-adapter plan, choose a collision-safe
-validated constant, and validate rank-four output metadata before the first
-edge mutation. Do not extract the owner until those corrections are green. No
-broad conversion sweep is implied by this checkpoint.
+statistics, production call boundaries, or artifacts. That correction is now
+complete: metadata and adapter planning precede mutation, permutation creation
+is lazy and collision-safe, and all four xfails are green. One newly isolated
+strict xfail remains for duplicate planning when the same legacy consumer uses
+the Mul output in two input slots. Deduplicate consumer operator indices while
+preserving first-observed order, turn that fixture green, and only then extract
+the corrected owner. No broad conversion sweep is implied by this checkpoint.

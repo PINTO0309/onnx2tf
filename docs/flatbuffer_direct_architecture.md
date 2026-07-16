@@ -4126,6 +4126,23 @@ metadata mutation. A permutation constant is allocated only when that plan
 needs one, and an occupied name is reused only when its type, shape, and
 payload are exact; otherwise a collision-safe name is required.
 
+The corrected 509-line raw owner now resolves every rank-four metadata target
+and effective signature before mutation, plans all adapter tensors/operators
+and cumulative input updates, and commits only a valid plan. The internal
+permutation is allocated lazily and an existing reserved name is reused only
+for an exact immutable INT32 `[0,3,1,2]` constant. Pruning is conditional on a
+non-zero rewrite, so rejected and repeated zero-rewrite calls preserve both
+the graph and lineage metadata. The four characterization xfails are green.
+Architecture checks keep metadata/signature/adapter planning before the first
+tensor or edge mutation and keep the prune guard tied to the rewrite count.
+
+One strict xfail now isolates a different legacy-consumer duplication. The
+consumer map emits one operator index per matching input slot; iterating that
+list and then enumerating all matching slots plans the same slots twice. A
+two-slot ADD therefore receives four Transpose adapters. The next correction
+must deduplicate consumer operator indices in first-observed order without
+changing distinct-consumer order, adapter naming, or single-slot behavior.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner

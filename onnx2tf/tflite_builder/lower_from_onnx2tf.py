@@ -4284,23 +4284,40 @@ def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, in
         "MEAN",
     }
 
-    def _unique_tensor_name(base: str) -> str:
+    def _unique_tensor_name(
+        base: str,
+        *,
+        reserved_names: Optional[set[str]] = None,
+    ) -> str:
         name = str(base)
         suffix = 1
-        while name in model_ir.tensors:
+        while name in model_ir.tensors or (
+            reserved_names is not None and name in reserved_names
+        ):
             name = f"{base}_{suffix}"
             suffix += 1
         return name
 
-    if perm_nhwc_to_nchw_const_name not in model_ir.tensors:
-        model_ir.tensors[perm_nhwc_to_nchw_const_name] = TensorIR(
-            name=perm_nhwc_to_nchw_const_name,
-            dtype="INT32",
-            shape=[4],
-            shape_signature=[4],
-            data=np.asarray(perm_nhwc_to_nchw, dtype=np.int32),
-            is_variable=False,
-            quantization=None,
+    def _is_exact_nhwc_to_nchw_perm_tensor(tensor_name: str) -> bool:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None or tensor.data is None:
+            return False
+        try:
+            data = np.asarray(tensor.data)
+        except Exception:
+            return False
+        return (
+            str(tensor.dtype).upper() == "INT32"
+            and list(tensor.shape) == [4]
+            and list(tensor.shape_signature or []) == [4]
+            and data.dtype == np.dtype(np.int32)
+            and list(data.shape) == [4]
+            and np.array_equal(
+                data,
+                np.asarray(perm_nhwc_to_nchw, dtype=np.int32),
+            )
+            and not bool(tensor.is_variable)
+            and tensor.quantization is None
         )
 
     while True:
@@ -4556,7 +4573,110 @@ def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, in
             if not users_supported:
                 continue
 
-            # Rewire SiLU branch to consume NHWC source directly.
+            metadata_target_names = (
+                [dq_out_name]
+                + list(sig_intermediate_names)
+                + [sig_q_name, mul_out_name]
+            )
+            metadata_targets: List[TensorIR] = []
+            metadata_is_rank4 = True
+            for tensor_name in metadata_target_names:
+                tensor = model_ir.tensors.get(str(tensor_name), None)
+                if tensor is None:
+                    metadata_is_rank4 = False
+                    break
+                tensor_shape = [int(v) for v in list(tensor.shape)]
+                tensor_signature = (
+                    [int(v) for v in list(tensor.shape_signature)]
+                    if tensor.shape_signature is not None
+                    else list(tensor_shape)
+                )
+                if len(tensor_shape) != 4 or len(tensor_signature) != 4:
+                    metadata_is_rank4 = False
+                    break
+                metadata_targets.append(tensor)
+            if not metadata_is_rank4:
+                continue
+
+            legacy_mul_shape = [int(v) for v in list(mul_out_tensor.shape)]
+            legacy_mul_signature = (
+                [int(v) for v in list(mul_out_tensor.shape_signature)]
+                if mul_out_tensor.shape_signature is not None
+                else [int(v) for v in list(mul_out_tensor.shape)]
+            )
+            if len(legacy_mul_shape) != 4 or len(legacy_mul_signature) != 4:
+                continue
+
+            reserved_tensor_names = set(str(v) for v in model_ir.tensors)
+            legacy_perm_name: Optional[str] = None
+            legacy_perm_tensor: Optional[TensorIR] = None
+            if len(legacy_user_input_slots) > 0:
+                if _is_exact_nhwc_to_nchw_perm_tensor(
+                    perm_nhwc_to_nchw_const_name
+                ):
+                    legacy_perm_name = str(perm_nhwc_to_nchw_const_name)
+                else:
+                    legacy_perm_name = _unique_tensor_name(
+                        perm_nhwc_to_nchw_const_name,
+                        reserved_names=reserved_tensor_names,
+                    )
+                    reserved_tensor_names.add(str(legacy_perm_name))
+                    legacy_perm_tensor = TensorIR(
+                        name=str(legacy_perm_name),
+                        dtype="INT32",
+                        shape=[4],
+                        shape_signature=[4],
+                        data=np.asarray(perm_nhwc_to_nchw, dtype=np.int32),
+                        is_variable=False,
+                        quantization=None,
+                    )
+            if (
+                len(legacy_user_input_slots) > 0
+                and legacy_perm_name is None
+            ):
+                continue
+
+            adapter_tensors: List[TensorIR] = []
+            adapter_insertions: List[Tuple[int, OperatorIR]] = []
+            legacy_user_inputs: Dict[int, List[str]] = {}
+            for legacy_user_idx, legacy_input_index in legacy_user_input_slots:
+                legacy_user_op = model_ir.operators[int(legacy_user_idx)]
+                adapter_name = _unique_tensor_name(
+                    f"{mul_out_name}_nchw_adapter",
+                    reserved_names=reserved_tensor_names,
+                )
+                reserved_tensor_names.add(str(adapter_name))
+                adapter_tensors.append(
+                    TensorIR(
+                        name=adapter_name,
+                        dtype=str(mul_out_tensor.dtype),
+                        shape=list(legacy_mul_shape),
+                        shape_signature=list(legacy_mul_signature),
+                        data=None,
+                        is_variable=False,
+                        quantization=_clone_quantization(
+                            mul_out_tensor.quantization
+                        ),
+                    )
+                )
+                adapter_op = OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[mul_out_name, str(legacy_perm_name)],
+                    outputs=[adapter_name],
+                )
+                adapter_insertions.append((int(legacy_user_idx), adapter_op))
+                updated_inputs = legacy_user_inputs.setdefault(
+                    int(legacy_user_idx),
+                    [str(v) for v in list(legacy_user_op.inputs)],
+                )
+                updated_inputs[int(legacy_input_index)] = str(adapter_name)
+
+            # Commit only after every tensor, signature, and adapter is valid.
+            if legacy_perm_tensor is not None:
+                model_ir.tensors[str(legacy_perm_tensor.name)] = legacy_perm_tensor
+            for adapter_tensor in adapter_tensors:
+                model_ir.tensors[str(adapter_tensor.name)] = adapter_tensor
+
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=dq_op,
@@ -4570,42 +4690,12 @@ def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, in
                     for input_name in mul_inputs
                 ],
             )
-
-            # For DEQUANTIZE users that should keep NCHW semantics downstream,
-            # insert NHWC->NCHW adapters and redirect those DEQUANTIZE inputs.
-            legacy_mul_shape = [int(v) for v in list(mul_out_tensor.shape)]
-            legacy_mul_signature = (
-                [int(v) for v in list(mul_out_tensor.shape_signature)]
-                if mul_out_tensor.shape_signature is not None
-                else [int(v) for v in list(mul_out_tensor.shape)]
-            )
-            adapter_insertions: List[Tuple[int, OperatorIR]] = []
-            for legacy_user_idx, legacy_input_index in legacy_user_input_slots:
-                legacy_user_op = model_ir.operators[int(legacy_user_idx)]
-                adapter_name = _unique_tensor_name(f"{mul_out_name}_nchw_adapter")
-                model_ir.tensors[adapter_name] = TensorIR(
-                    name=adapter_name,
-                    dtype=str(mul_out_tensor.dtype),
-                    shape=list(legacy_mul_shape),
-                    shape_signature=list(legacy_mul_signature),
-                    data=None,
-                    is_variable=False,
-                    quantization=_clone_quantization(mul_out_tensor.quantization),
+            for legacy_user_idx, updated_inputs in legacy_user_inputs.items():
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=model_ir.operators[int(legacy_user_idx)],
+                    new_inputs=list(updated_inputs),
                 )
-                adapter_op = OperatorIR(
-                    op_type="TRANSPOSE",
-                    inputs=[mul_out_name, perm_nhwc_to_nchw_const_name],
-                    outputs=[adapter_name],
-                )
-                adapter_insertions.append((int(legacy_user_idx), adapter_op))
-                updated_inputs = [str(v) for v in list(legacy_user_op.inputs)]
-                if 0 <= int(legacy_input_index) < len(updated_inputs):
-                    updated_inputs[int(legacy_input_index)] = str(adapter_name)
-                    _set_operator_inputs(
-                        model_ir=model_ir,
-                        op=legacy_user_op,
-                        new_inputs=updated_inputs,
-                    )
 
             if len(adapter_insertions) > 0:
                 inserted = 0
@@ -4614,10 +4704,9 @@ def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, in
                     inserted += 1
 
             # Metadata now follows NHWC for the rewritten chain.
-            metadata_targets = [dq_out_name] + list(sig_intermediate_names) + [sig_q_name, mul_out_name]
-            for tensor_name in metadata_targets:
+            for tensor in metadata_targets:
                 _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(tensor_name, None),
+                    tensor,
                     perm_nchw_to_nhwc,
                 )
 
@@ -4646,7 +4735,8 @@ def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, in
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    if optimized > 0:
+        _prune_unused_tensors(model_ir)
     return {
         "optimized_nhwc_prefix_qlinear_silu_chains": int(optimized),
     }

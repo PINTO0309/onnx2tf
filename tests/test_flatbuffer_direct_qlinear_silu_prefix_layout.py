@@ -332,6 +332,53 @@ def test_qlinear_silu_prefix_inserts_adapter_for_legacy_consumer() -> None:
     )
 
 
+def test_qlinear_silu_prefix_reuses_exact_internal_perm_tensor() -> None:
+    model_ir = _build_qlinear_silu_prefix_chain(legacy_consumer=True)
+    _tensor(
+        model_ir,
+        _INTERNAL_PERM_NAME,
+        [4],
+        dtype="INT32",
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+    )
+
+    stats = _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)
+
+    assert stats == {"optimized_nhwc_prefix_qlinear_silu_chains": 1}
+    adapter = next(op for op in model_ir.operators if op.op_type == "TRANSPOSE")
+    assert adapter.inputs[1] == _INTERNAL_PERM_NAME
+    assert f"{_INTERNAL_PERM_NAME}_1" not in model_ir.tensors
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the consumer map repeats one operator per matching input slot, so "
+        "the raw helper plans both slots twice and leaves four adapters"
+    ),
+)
+def test_qlinear_silu_prefix_plans_each_legacy_consumer_slot_once() -> None:
+    model_ir = _build_qlinear_silu_prefix_chain(legacy_consumer=True)
+    legacy_op = next(
+        op for op in model_ir.operators if op.outputs == ["legacy_relu_out"]
+    )
+    legacy_op.op_type = "ADD"
+    legacy_op.inputs = ["mul_out_nchw", "mul_out_nchw"]
+
+    stats = _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)
+
+    assert stats == {"optimized_nhwc_prefix_qlinear_silu_chains": 1}
+    adapter_ops = [op for op in model_ir.operators if op.op_type == "TRANSPOSE"]
+    assert [op.outputs for op in adapter_ops] == [
+        ["mul_out_nchw_nchw_adapter"],
+        ["mul_out_nchw_nchw_adapter_1"],
+    ]
+    assert legacy_op.inputs == [
+        "mul_out_nchw_nchw_adapter",
+        "mul_out_nchw_nchw_adapter_1",
+    ]
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -404,13 +451,6 @@ def test_qlinear_silu_prefix_rejects_unsafe_boundaries(case: str) -> None:
     } == before_shapes
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the raw helper eagerly creates and prunes its legacy-adapter perm, "
-        "leaving a lineage event on an otherwise rejected graph"
-    ),
-)
 def test_qlinear_silu_prefix_rejection_is_complete_model_ir_noop() -> None:
     model_ir = _build_qlinear_silu_prefix_chain()
     model_ir.tensors["perm_nhwc_to_nchw"].data = np.asarray(
@@ -427,13 +467,6 @@ def test_qlinear_silu_prefix_rejection_is_complete_model_ir_noop() -> None:
     assert model_ir.metadata == before_metadata
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "a zero-rewrite second call still creates and prunes the internal "
-        "legacy-adapter permutation tensor"
-    ),
-)
 def test_qlinear_silu_prefix_is_idempotent_after_rewrite() -> None:
     model_ir = _build_qlinear_silu_prefix_chain()
     assert _optimize_nhwc_prefix_qlinear_silu_chains(model_ir) == {
@@ -449,13 +482,6 @@ def test_qlinear_silu_prefix_is_idempotent_after_rewrite() -> None:
     assert model_ir.metadata == metadata_after_first
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "a colliding public tensor with the reserved perm name is reused "
-        "without validating its constant payload"
-    ),
-)
 def test_qlinear_silu_prefix_does_not_reuse_colliding_internal_perm_name() -> None:
     model_ir = _build_qlinear_silu_prefix_chain(legacy_consumer=True)
     _tensor(
@@ -483,16 +509,15 @@ def test_qlinear_silu_prefix_does_not_reuse_colliding_internal_perm_name() -> No
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the raw helper rewires the graph and creates a rank-four adapter "
-        "without rejecting a malformed Mul output signature"
-    ),
+@pytest.mark.parametrize(
+    "tensor_name",
+    ["dq_nchw", "sig_f_nchw", "sig_q_nchw", "mul_out_nchw"],
 )
-def test_qlinear_silu_prefix_rejects_short_mul_signature_atomically() -> None:
+def test_qlinear_silu_prefix_rejects_short_target_signature_atomically(
+    tensor_name: str,
+) -> None:
     model_ir = _build_qlinear_silu_prefix_chain(legacy_consumer=True)
-    model_ir.tensors["mul_out_nchw"].shape_signature = [1, 4]
+    model_ir.tensors[tensor_name].shape_signature = [1, 4]
     before = _fingerprint(model_ir)
 
     stats = _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)

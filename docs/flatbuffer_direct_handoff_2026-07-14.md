@@ -10829,3 +10829,57 @@ tensor. Preserve valid candidate order, fixed-point count, statistics, both
 production sequence boundaries, and all ordinary characterization. Keep tests
 and any necessary model validation strictly sequential, then commit and push;
 do not create a pull request.
+
+## QLinear SiLU prefix transactional correction: completed state
+
+The four strict xfails from the preceding characterization are now green. The
+509-line raw lowerer owner prevalidates every metadata target shape and
+effective signature as rank four before changing any tensor or operator. It
+builds adapter tensors, Transpose operators, collision-free names, and
+cumulative legacy-consumer input updates as an immutable local plan before
+commit. A malformed DEQUANTIZE, activation, Quantize, or final Mul signature
+therefore returns zero with an unchanged graph and metadata.
+
+`__nhwc_to_nchw_perm_rank4__` is no longer created at function entry. A
+candidate with no legacy consumer never allocates it. A legacy-adapter plan
+reuses an existing tensor only when its INT32 dtype, `[4]` shape/signature,
+exact `[0,3,1,2]` payload, non-variable state, and absent quantization all
+match. Any other occupied name remains unchanged and a collision-safe name is
+planned. Tensor pruning now runs only after at least one successful rewrite,
+so rejected and second zero-rewrite calls preserve tensor-lineage metadata and
+are fully idempotent.
+
+An additional same-consumer/two-input-slot fixture exposed a separate existing
+issue while validating cumulative plans. `_build_tensor_consumer_map` returns
+the same operator index once per matching input. The raw owner then enumerates
+both matching slots for each repeated index, plans four adapters, and leaves
+two redundant adapters. This is recorded as the sole strict xfail and was not
+fixed in the transactional checkpoint, satisfying the record-before-fix
+boundary.
+
+Validation completed as follows:
+
+- focused QLinear SiLU correction plus ordered-owner architecture selector:
+  `22 passed, 245 deselected, 1 xfailed in 2.04s`;
+- changed-file focused branch regression:
+  `639 passed, 1 xfailed in 23.83s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.25s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+No real-model conversion was added because the prior sequential QLinear group
+audit already established zero production rewrites and zero process-tree SWAP
+for every measured candidate. Public API, CLI, production call order and
+statistics, TensorFlow boundary, dependencies, corpus profiles, exclusions,
+and ONNX operation tiers are unchanged. PR #952 remains closed; future work is
+commit/push only and must not create a pull request.
+
+At restart, deduplicate `mul_users` by operator index in first-observed order
+before classifying Transpose and legacy consumers. Turn the two-slot strict
+xfail green and prove that distinct consumer order, one adapter per input slot,
+unique naming, exact permutation reuse/collision behavior, fixed-point count,
+and all ordinary rejections remain unchanged. Only after that correction
+should the 509-line owner be mechanically extracted into a focused pass module
+with an exact corrected AST and a lowerer compatibility wrapper. Keep tests
+strictly sequential, commit and push coherent units, and do not create a pull
+request.

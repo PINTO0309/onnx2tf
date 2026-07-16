@@ -931,7 +931,7 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
     ]
 
 
-def test_qlinear_silu_prefix_raw_owner_contract_is_explicit() -> None:
+def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -942,7 +942,7 @@ def test_qlinear_silu_prefix_raw_owner_contract_is_explicit() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == owner_name
     )
-    assert owner.end_lineno - owner.lineno + 1 == 419
+    assert owner.end_lineno - owner.lineno + 1 == 509
     call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
         for node in ast.walk(owner)
@@ -957,10 +957,77 @@ def test_qlinear_silu_prefix_raw_owner_contract_is_explicit() -> None:
     assert "_replace_tensor_inputs" in call_names
     assert "_permute_tensor_metadata_if_rank_matches" in call_names
     assert "_prune_unused_tensors" in call_names
+    assert "_is_exact_nhwc_to_nchw_perm_tensor" in call_names
+    assert "_unique_tensor_name" in call_names
     outer_loops = [node for node in owner.body if isinstance(node, ast.While)]
     assert len(outer_loops) == 1
     assert isinstance(outer_loops[0].test, ast.Constant)
     assert outer_loops[0].test.value is True
+
+    metadata_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "metadata_target_names"
+            for target in node.targets
+        )
+    )
+    signature_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "legacy_mul_signature"
+            for target in node.targets
+        )
+    )
+    adapter_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "adapter_insertions"
+    )
+    tensor_mutations = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Subscript)
+            and "model_ir.tensors" in ast.unparse(target)
+            for target in node.targets
+        )
+    ]
+    setter_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_set_operator_inputs"
+    ]
+    first_mutation_line = min(
+        [node.lineno for node in tensor_mutations]
+        + [node.lineno for node in setter_calls]
+    )
+    assert metadata_plan.lineno < first_mutation_line
+    assert signature_plan.lineno < first_mutation_line
+    assert adapter_plan.lineno < first_mutation_line
+
+    prune_guard = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Name)
+            and candidate.func.id == "_prune_unused_tensors"
+            for candidate in ast.walk(node)
+        )
+    )
+    assert ast.unparse(prune_guard.test) == "optimized > 0"
 
 
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
