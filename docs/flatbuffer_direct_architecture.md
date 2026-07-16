@@ -7201,6 +7201,29 @@ pruning, and idempotence are fixed by the focused tests. The implementation
 remains in the lowerer pending positive production ownership evidence; this
 semantic correction is not combined with an ownership extraction.
 
+The opposite-direction NHWC→NCHW elementwise fan-out compatibility rule is
+now isolated in `passes/elementwise_fanout_layout.py`. Its complete 555-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves forward elementwise-DAG discovery, external-
+runtime-input rejection, local/shared per-channel constant rotation, inverse
+boundary-Transpose collapse, legacy NCHW adapters, canonical aliases, metadata
+and quantization propagation, candidate snapshots, unbound-input rollback,
+fixed-point restart, pruning, statistics, and all three ordered production
+positions. The lowerer retains a one-call private wrapper and the independent
+unbound-input pass is imported through a compatibility alias without a reverse
+lowerer dependency.
+
+The former giant direct-builder fan-out fixture is now focused and runs the
+module owner and private wrapper on deep copies, comparing the complete
+ModelIR. Tier 0 `shadowformer_istd_160x240_split.onnx` supplies six measured
+zero-owner invocations before and after the move, records zero process-tree
+SWAP, and reproduces all five core artifacts byte for byte. Positive production
+ownership is therefore not claimed. The raw owner still rebuilds complete maps
+and deep-copies the whole ModelIR for each accepted candidate while retaining a
+dormant external-input adapter branch behind a conservative rejection guard;
+indexed transactional redesign remains separate from this exact ownership
+checkpoint.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.

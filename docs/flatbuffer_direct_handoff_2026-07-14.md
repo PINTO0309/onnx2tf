@@ -9567,3 +9567,79 @@ zero-owner evidence. At restart, inventory the adjacent 555-line
 `_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains` helper's
 existing fixtures, fan-out/constant contracts, production positions, and short
 zero-SWAP real ownership before choosing the next evidence-backed unit.
+
+## Opposite-direction elementwise fan-out extraction: completed state
+
+The complete 555-line
+`_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains` helper is
+now owned by `passes/elementwise_fanout_layout.py`. The lowerer retains one
+private one-call wrapper at all three unchanged ordered production positions.
+After normalizing only the function name, the prior lowerer owner and new pass
+owner ASTs are identical.
+
+The owner preserves forward elementwise-DAG discovery, the conservative
+external-runtime-input rejection, local/shared NCHW per-channel constant
+rotation, inverse boundary-Transpose collapse, canonical aliases, legacy NCHW
+adapter retention, metadata and quantization propagation, candidate deep-copy
+snapshots, unbound-input rollback, exact mutation/removal order, fixed-point
+restart, pruning, and the historical statistic. The public unbound-input
+validator is imported through a same-name compatibility alias, so the pass has
+no reverse dependency on `lower_from_onnx2tf.py`.
+
+The former giant direct-builder fan-out fixture now lives in
+`test_flatbuffer_direct_elementwise_fanout_layout.py`. It runs the module owner
+and lowerer wrapper on deep copies, compares the complete ModelIR, and fixes
+the ERF/SIGN fan-out, three per-channel constants, two inverse boundaries,
+canonical aliases, and removed Transposes. Together with the architecture
+owner/production selector it passes `2 passed in 1.96s`. The changed-file
+branch regression collection passes `528 passed in 26.01s`; the optional-
+TensorFlow import-blocked suite passes `11 passed in 9.46s`. Ruff, Python
+compilation, full old/new AST equivalence, and whitespace checks pass.
+
+Tier 0 `shadowformer_istd_160x240_split.onnx` is the strictly sequential zero-
+owner artifact control. Its six runtime results remain zero before and after
+extraction. The pre conversion completed in 0.259 seconds and the post
+conversion in 0.261 seconds; both recorded process-tree SWAP zero. The core
+artifacts are byte-identical:
+
+- float32 TFLite:
+  `b9e9f67c5cd06f9c0bc74f3227257662f5aa4c310d2be4f51d2bb2f7f62e4e94`;
+- float16 TFLite:
+  `108d88c2ee1cb1af4a6426f545a40aa511f2a9b79405f79498384a6433ba5992`;
+- tensor correspondence:
+  `0fc970b0eeb31cbc0a62055e1313db32931e91c9792cf19eb795e362915e8114`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The active Tier 0-4 accuracy baseline remains
+`max_abs=4.0531158447265625e-06`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the positive contract is the relocated focused fixture. A second
+sequential structural candidate, `convnext-det.onnx`, also converted with six
+zero results in 1.006 seconds and process-tree SWAP zero.
+
+The raw owner's known compatibility and efficiency risks are unchanged. It
+rebuilds complete producer/consumer maps and deep-copies the whole ModelIR for
+each candidate, directly mutates operators/tensors, and retains an external-
+runtime-input adapter implementation behind an earlier conservative rejection
+guard. Replacing these behaviors requires an independently proven indexed
+transaction and is not mixed into this exact ownership move.
+
+Changed files are the new elementwise fan-out pass, lowerer import and wrapper,
+relocated owner/wrapper-focused fixture, giant-test import/removal, architecture
+ownership test, and three branch documents. No public API, CLI, artifact name,
+TensorFlow boundary, dependency, corpus profile, exclusion policy, or ONNX
+operation-tier policy changed. Temporary tracing and conversion outputs are
+removed before commit. PR #952 remains closed; work is commit/push only and no
+pull request is created.
+
+The next raw source-order implementation is the 199-line
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout`. At restart,
+inventory its GraphIndex contract, constant ownership/copy-on-write, statistic
+aggregation, dedicated binary-layout and indexed-convergence fixtures, all
+production positions, and the smallest sequential zero-SWAP real-model owner
+before changing source. Keep the corrected 207-line opposite elementwise
+helper central until positive production ownership is observed or a later
+checkpoint explicitly accepts zero-owner evidence.

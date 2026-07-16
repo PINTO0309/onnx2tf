@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty-one
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-two
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -28,6 +28,7 @@ lowerer and into focused pass modules:
 - BatchMatMul-to-SE layout compatibility recovery;
 - rank-three BatchMatMul input-adapter to adjoint-flag recovery;
 - probable-NHWC axis-sensitive metadata and output sanitization;
+- NHWC/NCHW elementwise fan-out compatibility recovery;
 - residual Add/Mul/Add/PReLU compatibility recovery;
 - residual Add/Mul/Add/post-Transpose fan-out compatibility recovery;
 - pre-unary Mul/Add/post-Transpose fan-out compatibility recovery;
@@ -389,6 +390,24 @@ plus fan-out and public-output rejection. The implementation remains in the
 lowerer because positive production ownership has not been observed; this safe
 semantic correction is not mixed with an ownership extraction.
 
+### NHWC/NCHW elementwise fan-out compatibility recovery
+
+`passes/elementwise_fanout_layout.py` owns the former 555-line helper. It
+preserves forward elementwise-DAG discovery, the conservative external-runtime-
+input rejection, local and shared per-channel constant rotation, inverse
+boundary-Transpose collapse, legacy NCHW adapter insertion, canonical aliases,
+metadata and quantization propagation, candidate snapshots, unbound-input
+rollback, fixed-point restart, pruning, statistics, and all three ordered
+production positions. The lowerer retains a one-call private wrapper, and the
+complete old/new owner ASTs are identical after function-name normalization.
+
+The independent unbound-input validator is imported through a same-name
+compatibility alias, so the pass does not depend on the central lowerer. The
+focused fan-out fixture runs the module owner and compatibility wrapper on deep
+copies and compares the complete ModelIR. The mechanical owner still rebuilds
+full graph maps and deep-copies the complete ModelIR per candidate; indexed
+transactional redesign is kept separate from this exact ownership move.
+
 ### Residual Add/Mul/Add/PReLU compatibility recovery
 
 `passes/residual_affine_prelu_layout.py` owns the former 415-line compatibility
@@ -662,6 +681,9 @@ Latest checkpoint results:
 - focused NCHW/NHWC elementwise roundtrip correction and guards: `3 passed`;
 - changed-file branch regression gate after root-metadata correction:
   `526 passed`;
+- focused opposite-direction elementwise fan-out owner and architecture gate:
+  `2 passed`;
+- changed-file branch regression gate after fan-out extraction: `528 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -890,6 +912,17 @@ baseline remains `max_abs=1.2665987014770508e-07`; no duplicate inference was
 run because the executed TFLite artifact is unchanged. Positive semantics are
 fixed by the focused synthetic closure and guard corpus.
 
+The opposite-direction elementwise fan-out extraction used Tier 0
+`shadowformer_istd_160x240_split.onnx` as its fixed zero-owner artifact
+control. Its six runtime results remain zero before and after extraction. The
+pre/post conversion-only runs completed in 0.259 and 0.261 seconds, recorded
+process-tree SWAP zero, and produced byte-identical float32, float16, tensor-
+correspondence, schema, and generated-schema outputs. The active Tier 0-4
+baseline remains `max_abs=4.0531158447265625e-06`; no duplicate inference was
+run because the executed TFLite artifact is unchanged. Positive production
+ownership is not claimed; the full fan-out rewrite is fixed by the relocated
+focused contract.
+
 The residual affine/PReLU extraction used `sinet_320_op.onnx` as its positive
 artifact control. Its fourteen runtime results remain
 `0,0,0,1,1,0,0,0,0,0,0,0,0,0` across extraction. The pre/post conversion-only
@@ -993,7 +1026,10 @@ dedicated positive and rejection contract, but the structurally matching gaze
 model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
-implementation is the 555-line opposite-direction elementwise fan-out helper;
-inventory its existing indirect coverage and real ownership before deciding
-whether it is a safer evidence-backed unit. No broad conversion sweep is
-implied by this checkpoint.
+implementation is the 199-line
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout` helper. It
+already has dedicated binary-layout and indexed-convergence fixtures. Resume
+by inventorying its GraphIndex contract, constant ownership/copy-on-write,
+statistics aggregation, all production positions, and the smallest sequential
+zero-SWAP real-model owner before a mechanical extraction. No broad conversion
+sweep is implied by this checkpoint.
