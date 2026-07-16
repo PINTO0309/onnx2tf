@@ -6522,3 +6522,172 @@ source, timeout, artifact, or accuracy policy changed, and no additional model
 conversion was run. The fixed active quick set therefore has zero newly
 confirmed semantic regressions: 42 passes and six preserved known non-passes,
 all with zero SWAP.
+
+## Attention Gather/Transpose/Reshape cleanup: measured no-change decision
+
+The raw `_optimize_attention_gather_transpose_reshape_cleanup_chains` helper
+was instrumented at every unchanged production invocation before any source
+change. The same fourteen short Tier 0-4 representatives used by the adjacent
+reshape checkpoints all converted sequentially, exited 0 in 1.870-8.709
+seconds, and recorded `peak_swap_kib=0`. Every Pattern A and Pattern B rewrite
+count was zero.
+
+A read-only ONNX scan then inspected all 381 active managed Tier 0-4 models.
+It found eleven graphs with the loose `Gather -> Transpose/Gather -> Reshape`
+topology, but zero candidates satisfying the helper's complete axis, zero
+index, permutation, static shape, and reshape-target contract at the ONNX
+boundary. The scan itself used no SWAP. The already bounded RF-DETR
+representative was converted because preceding layout passes could still have
+created the target contract; it exited 0 in 11.473 seconds with zero rewrites
+and SWAP 0. The closest attention-specific topology candidate,
+`mod_dn_dab_detr.onnx`, likewise exited 0 in 20.116 seconds with zero rewrites
+and SWAP 0. The known approximately 267-second `new_encoder.onnx` path was not
+run, consistent with the timeout/short-validation policy.
+
+The raw helper still contains an unbounded rewrite loop, repeated whole-graph
+consumer-map construction, raw constant mutation/copy-on-write, direct list
+deletion, and no shared graph-index or Session layout-state contract. Those
+are real architectural liabilities, but the current corpus provides no real
+owner from which artifact, lineage, and accuracy behavior can be frozen.
+Removing the helper would discard an existing compatibility feature, while a
+synthetic-only indexed replacement would not establish production ownership.
+Accordingly no source or test behavior is changed. Revisit it only when a
+non-zero production model or public compatibility fixture exists. The next
+evidence-first raw helper is
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains`; the
+intervening axis-0 singleton Gather rewrite is already delegated to its pass
+module.
+
+## Attention pre-projection rank lift: measured no-change decision
+
+The raw
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains` helper was
+then instrumented at every unchanged production invocation. All fourteen short
+Tier 0-4 representatives again exited 0 sequentially in 1.916-8.677 seconds,
+with zero rewrites and `peak_swap_kib=0`. Several models retained loose
+Reshape-to-BatchMatMul candidates, confirming that the instrumentation observed
+the intended boundary rather than an empty operator class, but none satisfied
+the complete fan-out, binary, and tail-reshape contract.
+
+A read-only scan of all 381 active Tier 0-4 ONNX graphs found 69 models with a
+loose Reshape-to-MatMul fan-out and zero exact static contracts. It recorded no
+SWAP. Two attention-specific DAB-DETR candidates were nevertheless converted
+because preceding layout passes could create the ModelIR-only rank contract.
+`mod_dn_dab_detr.onnx` exited 0 in 26.006 seconds and
+`dn_dab_detr_480x480_div.onnx` exited 0 in 11.822 seconds; both recorded zero
+rewrites at all four invocations and zero SWAP. The larger Tier 4 sibling was
+not run because no smaller variant established ownership.
+
+This helper also retains an unbounded rewrite loop, repeated whole-graph map
+construction, direct list deletion, in-place metadata changes across all
+fan-out branches, and no GraphIndex/LayoutState transaction. With no real
+non-zero owner, there is no defensible production digest or accuracy baseline
+for an indexed extraction. The compatibility implementation therefore remains
+unchanged and is not replaced by synthetic-only logic. The next raw helper in
+the ordered recovery prefix is
+`_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains`; the two
+window transforms between them are already indexed pass-module delegates.
+
+## Pre-unary Squeeze suffix checkpoint: pre-change record
+
+Before changing source, the raw
+`_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains` helper was
+instrumented at every unchanged production invocation. The fourteen short
+Tier 0-4 representatives all exited 0 sequentially in 1.946-8.866 seconds,
+with zero rewrites, no timeout, and SWAP 0. A read-only scan of all 381 active
+Tier 0-4 graphs found ten loose
+`Transpose -> unary/Swish -> Squeeze -> Transpose` topologies and zero exact
+contracts at the ONNX boundary; the scan used no SWAP.
+
+The smallest loose candidate, Tier 1 `inference_ops15.onnx` (191 ONNX nodes),
+was then converted because preceding layout passes can establish the physical
+shape contract. It exited 0 in 2.526 seconds with invocation counts `1, 0, 0`
+and `peak_swap_kib=0`. The sole rewrite is the exact Swish family:
+
+`[1,1,40,64] -> Transpose[0,3,1,2] -> [1,64,1,40] ->
+Logistic/Mul -> Squeeze(axis=2) -> [1,64,40] ->
+Transpose[0,2,1] -> [1,40,64]`.
+
+Both permutation constants are typed INT32 vectors, all data tensors are
+FLOAT32 with fixed equal signatures, per-tensor quantization is absent, every
+observed layout is UNKNOWN, and the data edges have the expected exclusive
+Swish/Squeeze/post consumers. The fixed pre-extraction artifacts are:
+
+- float32: `3ce4af63727dd927666f09bb51555ccfd60e1cf01b4ba7fc674170e8277b9a96`;
+- float16: `ee97304641e2b1330bbbe1f1472fc32a4a4d41d4bdb08a3e660da64b5204ce47`;
+- correspondence: `a50f21319df0380165e8fee2c47f679ccb1682eee965fbd3b0f05ad02cc3d276`.
+
+The managed baseline maximum absolute error is
+`3.0994415283203125e-06`. No regression prompted this extraction. The proven
+raw owner nevertheless uses an unbounded full-Squeeze scan, rebuilds both
+producer and consumer maps after each rewrite, mutates operator inputs,
+options, outputs, and tensor metadata without an immutable revalidation
+transaction, deletes operators directly, and does not reconcile the shared
+GraphIndex or Session `LayoutState`. The safe extraction scope is only the
+exact static Swish/axis-2 family above with typed permutations, complete
+shape/signature/dtype/quantization/layout contracts, graph boundaries,
+exclusive slots, deterministic bounds, and stale-plan rejection. Plain unary,
+axis-3, dynamic, shared/relaxed constants, and every strict reject must remain
+on the existing compatibility fallback.
+
+## Pre-unary Squeeze suffix checkpoint: completed extraction
+
+The strict production family above is now owned by the bounded indexed pass
+`pre_unary_squeeze_suffix_layout.py`. It dispatches indexed Mul candidates and
+requires the exact typed permutations, static views and signatures,
+dtype/per-tensor quantization, graph boundaries, operator order, exclusive
+consumer slots, and Session layout contract measured before the change. Each
+candidate is captured as an immutable tensor/operator plan and fully resolved
+again immediately before apply. Input/output mutations and pre/post Transpose
+removal update one `ModelIRGraphIndex` differentially, and layout metadata is
+updated together with `LayoutState`. Malformed Squeeze axes are a strict no-op
+rather than an exception. The pass has an explicit rewrite bound and contains
+no pruning, whole-graph producer/consumer-map rebuild, or unbounded loop.
+
+The existing wrapper still runs the unchanged raw compatibility fallback and
+performs the sole historical prune. Plain unary, axis-3 Squeeze, dynamic
+signature, and every relaxed candidate therefore retain the old behavior.
+The production call now passes the Session layout state, and stale layout
+entries removed by the one prune are reconciled at that boundary.
+
+Post-change `inference_ops15.onnx` conversion exited 0 in 2.510 seconds. The
+indexed counts were `1, 0, 0`, the combined wrapper counts remained `1, 0, 0`,
+and process-tree SWAP remained zero. All three artifacts are byte-identical to
+the pre-change baseline and retain the hashes recorded above. A separate
+strictly sequential `-cotof` run exited 0 in 5.147 seconds with
+`evaluation_pass=true`, maximum absolute error
+`1.9073486328125e-06`, and process-tree SWAP zero.
+
+Focused and related verification completed as follows:
+
+- the new indexed/fallback test module plus the adjacent indexed reshape
+  module and the complete architecture suite: 228 passed;
+- TensorFlow-blocked direct, default-direct, and direct `-cotof`: 3 passed;
+- scoped Ruff for the new owner and both touched test modules: passed;
+- full lowerer Ruff: the same ten inherited F841 findings remain and no new
+  finding was introduced.
+
+No new runtime, artifact, accuracy, timeout, or SWAP failure was found in this
+checkpoint. The broader Goal remains incomplete: many raw layout helpers,
+op-family extraction, quantization/split/exporter coverage, and final Tier
+performance work remain. The first implementation task after resume is to
+inspect and characterize the next raw helper in production order,
+`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`. The two
+helpers immediately before it in the first layout pass-set are already indexed
+delegates. As always, record a real non-zero owner and the pre-change problem
+before editing source, use only short sequential zero-SWAP conversions, and do
+not issue a pull request.
+
+Checkpoint branch and tracked change inventory before commit:
+
+- branch: `fb-refactor5`;
+- `onnx2tf/tflite_builder/passes/pre_unary_squeeze_suffix_layout.py` (new
+  indexed semantic owner);
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py` (owner dispatch, Session
+  layout propagation, compatibility/prune boundary);
+- `tests/test_flatbuffer_direct_indexed_pre_unary_squeeze_suffix_layout.py`
+  (strict-owner, atomicity, determinism, fallback, and layout tests);
+- `tests/test_flatbuffer_direct_architecture.py` (bounded owner and production
+  wiring constraints);
+- `docs/flatbuffer_direct_architecture.md` and this handoff (design, evidence,
+  test results, known issues, and resume point).

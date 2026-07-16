@@ -13410,6 +13410,90 @@ def test_indexed_pre_swish_reshape_suffix_owner_precedes_fallback() -> None:
     assert layout_keyword.value.attr == "layout_state"
 
 
+def test_indexed_pre_swish_squeeze_suffix_owner_precedes_fallback() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_unary_squeeze_suffix_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    assert "def _resolve_candidate(" in owner_source
+    assert "def _apply_plan(" in owner_source
+    assert "def _plan_signature(" in owner_source
+    assert "graph_index.remove_operators(" in owner_source
+    assert "operator_indices_for_normalized_types(" in owner_source
+    assert "max_rewrites" in owner_source
+    assert "candidate" in owner_source
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "_prune_unused_tensors" not in owner_source
+    assert "while True" not in owner_source
+    for model_name in ("linea", "iat", "yunet", "humanseg", "osnet", "sinet"):
+        assert model_name not in owner_source.lower()
+
+    wrapper_name = (
+        "_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains"
+    )
+    dispatch_name = (
+        "_optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains_pass"
+    )
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatch_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == dispatch_name
+    ]
+    assert len(dispatch_calls) == 1
+    assert {keyword.arg for keyword in dispatch_calls[0].keywords} == {
+        "graph_index",
+        "layout_state",
+    }
+    prune_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_prune_unused_tensors"
+    ]
+    assert len(prune_calls) == 1
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+    layout_keyword = next(
+        keyword
+        for keyword in production_calls[0].keywords
+        if keyword.arg == "layout_state"
+    )
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+
 def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
     owner_path = (
         REPO_ROOT

@@ -198,6 +198,9 @@ from onnx2tf.tflite_builder.passes.pre_add_mulconst_reshape_suffix_layout import
 from onnx2tf.tflite_builder.passes.pre_unary_reshape_suffix_layout import (
     optimize_transpose_pre_swish_reshape_transpose_suffix_nhwc_chains as _optimize_transpose_pre_swish_reshape_transpose_suffix_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.pre_unary_squeeze_suffix_layout import (
+    optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains as _optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.expanddims_reshape_layout import (
     optimize_transpose_factorized_expanddims_nhwc_chains as _optimize_transpose_factorized_expanddims_nhwc_chains_pass,
 )
@@ -13491,7 +13494,11 @@ def _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(
     return {"optimized_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains": int(rewritten)}
 
 
-def _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate NHWC->NCHW unary/Swish wrappers that feed SQUEEZE + [0,2,1] transpose suffix.
 
@@ -13505,7 +13512,24 @@ def _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir:
       x_nhwc --(same UNARY/Swish)-> y_nhwc
       y_nhwc --SQUEEZE(mapped axis)-> z
     """
-    rewritten = 0
+    indexed_stats = (
+        _optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains_pass(
+            model_ir,
+            graph_index=ModelIRGraphIndex(model_ir),
+            layout_state=layout_state,
+        )
+    )
+    rewritten = int(
+        indexed_stats.get(
+            "optimized_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains",
+            0,
+        )
+    )
+    tensors_before_fallback_prune = (
+        set(str(name) for name in model_ir.tensors)
+        if layout_state is not None
+        else set()
+    )
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     perm_3d_nchw_to_nhwc = [0, 2, 1]
@@ -13761,6 +13785,11 @@ def _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir:
             break
 
     _prune_unused_tensors(model_ir)
+    if layout_state is not None:
+        layout_state.remove(
+            tensors_before_fallback_prune
+            - set(str(name) for name in model_ir.tensors)
+        )
     return {"optimized_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains": int(rewritten)}
 
 
@@ -26217,7 +26246,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
+        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             include_unary_passthrough=True,

@@ -6925,6 +6925,31 @@ Its float32, float16, and correspondence outputs remain byte-identical to the
 pre-extraction baseline. The sequential `-cotof` gate passes with maximum
 absolute error `0.000102996826171875` and zero process-tree SWAP.
 
+The static Swish-to-Squeeze rank adapter now has a bounded indexed owner in
+`pre_unary_squeeze_suffix_layout.py`. It accepts only the production-proven
+`NHWC -> NCHW -> Logistic/Mul -> Squeeze(axis=2) -> Transpose([0,2,1])`
+family. Resolution requires typed rank-four and rank-three permutations,
+positive and identical static shape signatures, exact NHWC/NCHW and NCW/NWC
+views, matching dtype and per-tensor quantization, resolved source ownership,
+exclusive mutable data edges, graph order and public-boundary safety, and
+compatible Session layout state. Malformed Squeeze options are a strict
+no-op. Each accepted candidate is captured as an immutable tensor/operator
+contract and fully resolved again before mutation, so stale plans are rejected
+atomically. Apply updates inputs and outputs through the shared graph index,
+removes only the pre/post Transposes, explicitly reconciles layout state, and
+has a deterministic candidate/rewrite bound without internal pruning or
+whole-graph producer/consumer-map reconstruction.
+
+The wrapper preserves the original raw implementation after the indexed
+dispatch and remains the single historical prune/report boundary. Plain unary
+operators, NCHW axis-3 Squeeze, dynamic signatures, relaxed or shared edges,
+and every other strict rejection therefore retain compatibility behavior.
+Tier 1 `inference_ops15.onnx` establishes the real owner with indexed counts
+`1, 0, 0`. Its float32, float16, and correspondence outputs remain
+byte-identical to the pre-extraction baseline. Sequential `-cotof` passes with
+maximum absolute error `1.9073486328125e-06`, and both conversion checks record
+zero process-tree SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
