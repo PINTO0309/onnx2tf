@@ -6691,3 +6691,44 @@ Checkpoint branch and tracked change inventory before commit:
   wiring constraints);
 - `docs/flatbuffer_direct_architecture.md` and this handoff (design, evidence,
   test results, known issues, and resume point).
+
+## Pre-unary Mul/Add fanout: measured no-change decision
+
+After the preceding checkpoint was committed and synchronized, the raw
+`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains` helper
+was instrumented at every unchanged production invocation. The same fourteen
+short Tier 0-4 representatives used by the adjacent layout checkpoints were
+converted strictly sequentially: IAT-LLIE, LINEA, YuNet INT8, FastestDet,
+PPHumanSeg, OSNet, SiNet, Tiny-YOLOv2, YOLOv7-tiny, DAMO-YOLO, NanoDet,
+YOLOX INT8, YOLO-Free, and yolo_test. All exited 0 in 1.867-8.504 seconds,
+none timed out, and every process-tree monitor recorded `peak_swap_kib=0`.
+The helper was invoked five times per model and every rewrite count was zero.
+
+A read-only shape-independent ONNX topology scan then inspected all 381
+active managed Tier 0-4 models sequentially. All graphs loaded successfully
+in 8.663 seconds, with no SWAP. It found zero loose
+`Transpose[0,3,1,2] -> unary -> Mul` starts and therefore zero complete
+`Mul(const) -> Add(const) -> Transpose[0,2,3,1]` fanout contracts at the ONNX
+boundary. No larger or excluded model was converted merely to search for an
+owner.
+
+The raw compatibility helper still has an unbounded whole-graph loop and
+rebuilds complete producer and consumer maps after every accepted rewrite. It
+mutates or clones constants without typed producer/variable/boundary
+ownership contracts, changes tensor shapes and operator outputs without a
+shared `GraphIndex` or Session `LayoutState`, and has no immutable full-plan
+revalidation immediately before its multi-branch mutation. These remain real
+interaction and maintenance risks. However, neither the measured production
+boundaries nor the complete active-corpus ONNX scan establishes a real
+non-zero owner from which artifact, lineage, layout, or accuracy behavior can
+be frozen. Removing the helper would discard an existing compatibility
+feature, while a synthetic-only indexed replacement would not prove current
+production ownership. No converter source or test behavior is therefore
+changed in this checkpoint.
+
+The next evidence-first raw helper in the same ordered sequence is
+`_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains`. Characterize its
+unchanged production invocations and scan the active corpus before source
+work. Continue to use only short sequential zero-SWAP conversion gates,
+record problems before fixes, commit and push coherent units, and do not
+create a pull request.
