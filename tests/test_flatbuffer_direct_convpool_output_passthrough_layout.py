@@ -240,20 +240,17 @@ def test_convpool_output_passthrough_absorbs_keepdims_mean_boundary() -> None:
     ] == ["axes"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the raw helper rewires its root before rejecting a non-rank-four "
-        "external runtime input"
-    ),
-)
 def test_convpool_output_passthrough_invalid_external_input_is_atomic() -> None:
     model_ir = _build_chain()
+    add_bias = model_ir.tensors["add_bias"]
+    add_bias.data = None
+    add_bias.shape = [1, 8, 6, 6]
+    add_bias.shape_signature = [1, 8, 6, 6]
     scale = model_ir.tensors["scale"]
     scale.data = None
     scale.shape = [8, 1, 1]
     scale.shape_signature = [8, 1, 1]
-    model_ir.inputs.append("scale")
+    model_ir.inputs.extend(["add_bias", "scale"])
     before = deepcopy(model_ir)
 
     stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(

@@ -4131,6 +4131,35 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
             if not valid:
                 continue
 
+            # Validate every external runtime input before the first graph
+            # mutation so a rejected candidate remains an atomic no-op.
+            external_runtime_input_nhwc_shapes: Dict[str, List[int]] = {}
+            for external_input_name in sorted(list(external_runtime_inputs)):
+                ext_tensor = model_ir.tensors.get(
+                    str(external_input_name),
+                    None,
+                )
+                if (
+                    ext_tensor is None
+                    or ext_tensor.shape is None
+                    or len(list(ext_tensor.shape)) != 4
+                ):
+                    valid = False
+                    break
+                ext_shape = [int(v) for v in list(ext_tensor.shape)]
+                ext_nhwc_shape = _permute_shape(
+                    ext_shape,
+                    perm_nchw_to_nhwc,
+                )
+                if ext_nhwc_shape is None:
+                    valid = False
+                    break
+                external_runtime_input_nhwc_shapes[
+                    str(external_input_name)
+                ] = [int(v) for v in list(ext_nhwc_shape)]
+            if not valid:
+                continue
+
             channel_last_hint_names.add(str(pre_input_name))
             boundary_name_set = set(str(v) for v in boundary_legacy_users)
             for op_idx in sorted(list(subgraph_indices)):
@@ -4152,15 +4181,10 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
 
             # Adapt external runtime NCHW inputs used by subgraph.
             for external_input_name in sorted(list(external_runtime_inputs)):
-                ext_tensor = model_ir.tensors.get(str(external_input_name), None)
-                if ext_tensor is None or ext_tensor.shape is None or len(list(ext_tensor.shape)) != 4:
-                    valid = False
-                    break
-                ext_shape = [int(v) for v in list(ext_tensor.shape)]
-                ext_nhwc_shape = _permute_shape(ext_shape, perm_nchw_to_nhwc)
-                if ext_nhwc_shape is None:
-                    valid = False
-                    break
+                ext_tensor = model_ir.tensors[str(external_input_name)]
+                ext_nhwc_shape = external_runtime_input_nhwc_shapes[
+                    str(external_input_name)
+                ]
                 adapter_perm_name = _unique_tensor_name(f"{external_input_name}__to_nhwc_perm")
                 adapter_output_name = _unique_tensor_name(f"{external_input_name}__to_nhwc")
                 model_ir.tensors[str(adapter_perm_name)] = TensorIR(
@@ -4199,9 +4223,6 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
                             for v in list(op.inputs)
                         ],
                     )
-            if not valid:
-                continue
-
             # Metadata update: subgraph tensors are now NHWC.
             for op_idx in sorted(list(subgraph_indices)):
                 op = model_ir.operators[int(op_idx)]

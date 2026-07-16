@@ -711,6 +711,9 @@ Latest checkpoint results:
   `11 passed, 1 xfailed`;
 - changed-file branch regression gate after Conv/Pool characterization:
   `543 passed, 1 xfailed`;
+- focused Conv/Pool atomicity correction and raw-owner gate: `12 passed`;
+- changed-file branch regression gate after the atomicity correction:
+  `544 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1060,12 +1063,12 @@ result. Their sequential conversion-only runs completed in 0.789, 0.513,
 reported zero. The moved positive fixture and compact focused corpus are the
 current semantic authority; positive production ownership is not claimed.
 
-The characterization exposes one pre-existing atomicity defect as a strict
-xfail: the helper rewires its elementwise root before rejecting a non-rank-four
-external runtime input. It returns a zero rewrite statistic but leaves that
-input mutation behind. Production code is deliberately unchanged in this
-test-only checkpoint; the next separate change must validate every external
-runtime input before the first mutation and turn this contract green.
+The characterization exposed one pre-existing atomicity defect: the helper
+rewired its elementwise root before rejecting a non-rank-four external runtime
+input. The following narrow correction now validates every external runtime
+tensor and computes its NHWC shape before the first graph or metadata mutation.
+The former strict xfail is a passing multi-input atomicity contract; successful
+rewrite order, statistics, and serialized artifacts are unchanged.
 
 ## Scope and follow-up
 
@@ -1086,10 +1089,10 @@ until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
 implementation is the 535-line
 `_optimize_convpool_output_transpose_nhwc_passthrough_chains` helper. Its
-focused match/guard/rewrite contract and four zero-owner model traces are now
-recorded. Resume with the narrow atomicity correction for invalid external
-runtime inputs, preserving all successful rewrite behavior and the single
-production position. Re-run the focused corpus and zero-owner artifact control
-before deciding whether the lack of positive production ownership permits an
-exact mechanical extraction. No broad conversion sweep is implied by this
+focused match/guard/rewrite contract, atomic rejection boundary, and four zero-
+owner model traces are now recorded. Resume by comparing the complete corrected
+owner AST with a proposed focused pass module and deciding explicitly whether
+the strong synthetic contract plus zero-owner artifact evidence is sufficient
+for a mechanical extraction. Do not mix an indexed/transactional redesign into
+that ownership decision. No broad conversion sweep is implied by this
 checkpoint.

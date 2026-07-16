@@ -9349,6 +9349,13 @@ def test_convpool_output_passthrough_has_one_characterized_raw_owner() -> None:
     assert "_replace_tensor_inputs" in call_names
     assert "_prune_unused_tensors" in call_names
     assert "del model_ir.operators[int(pre_idx)]" in owner_source
+    prevalidation_offset = owner_source.index(
+        "external_runtime_input_nhwc_shapes"
+    )
+    assert prevalidation_offset < owner_source.index(
+        "channel_last_hint_names.add(str(pre_input_name))"
+    )
+    assert prevalidation_offset < owner_source.index("_set_operator_inputs(")
 
     lowerer = next(
         node

@@ -9784,3 +9784,53 @@ creating any adapter. Turn the strict xfail into an ordinary passing test, keep
 all positive fingerprints and statistics unchanged, and use one short zero-
 owner model for pre/post byte-equivalence and SWAP control. Do not extract the
 helper in the same commit, and do not create a pull request.
+
+## Conv/Pool external-runtime atomicity correction: completed state
+
+The recorded unsafe rejection path is corrected without extracting or
+otherwise generalizing the raw helper. Before the first metadata or graph
+mutation, `_optimize_convpool_output_transpose_nhwc_passthrough_chains` now
+validates every discovered external runtime tensor, requires a rank-four shape,
+computes its NCHW-to-NHWC projected shape, and stores those shapes in a local
+plan. Any invalid tensor rejects the candidate before channel-last hints,
+rewiring, adapter creation, output renaming, or topology mutation.
+
+The former strict xfail is now an ordinary passing test. It supplies two
+external runtime inputs in deterministic name order: the first is valid rank
+four and the second is invalid rank three. The complete ModelIR fingerprint and
+zero statistic remain unchanged, proving that partial plan construction cannot
+leak a mutation. The valid external-input success case consumes the precomputed
+shape and retains the same adapter names, tensor metadata, permutation, and
+operator order. Architecture assertions fix prevalidation before both the first
+channel-last hint and first `_set_operator_inputs` call.
+
+Validation completed as follows:
+
+- focused Conv/Pool contract plus architecture selector:
+  `12 passed, 242 deselected in 1.87s`;
+- changed-file branch regression collection: `544 passed in 25.66s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+FastestDet is the strictly sequential zero-owner artifact control. Its single
+runtime result remains zero. The pre/post conversion-only runs completed in
+0.783 and 0.791 seconds, both with process-tree SWAP zero. Float32, float16,
+tensor-correspondence, schema, and generated-schema artifacts remain byte-
+identical with the same five hashes recorded in the preceding channelwise
+broadcast checkpoint. Its established accuracy remains
+`max_abs=1.3113021850585938e-05`; duplicate inference was not run because the
+executed TFLite artifact is identical.
+
+Changed files are the central helper, focused atomicity fixture, architecture
+ordering assertion, and three branch documents. No public API, CLI, artifact
+name, pass position, statistic, TensorFlow boundary, dependency, corpus profile,
+exclusion policy, or ONNX operation-tier policy changed. PR #952 remains
+closed; work is commit/push only.
+
+At restart, compare the complete corrected helper AST with a focused pass owner
+and explicitly decide whether four measured zero-owner models plus the positive
+synthetic contract justify an exact mechanical extraction. If extracted,
+preserve the single production call and private compatibility wrapper and do
+not mix in GraphIndex, LayoutState, or transactional redesign. Otherwise leave
+the helper central and move to the next evidence-backed family. Do not create a
+pull request.

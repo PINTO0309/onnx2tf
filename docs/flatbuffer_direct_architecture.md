@@ -7723,14 +7723,16 @@ unsafe-boundary no-ops. The architecture gate explicitly records the current
 whole-graph maps, direct append/delete mutation, cleanup boundary, and one raw
 call so a later extraction cannot silently change ownership or order.
 
-Characterization also records one strict xfail: the raw helper rewires the
-elementwise root before validating all external runtime inputs, so rejecting a
-non-rank-four external input returns a zero statistic but does not restore the
-ModelIR. The next semantic checkpoint must move this validation before any
-mutation and turn the xfail into a passing atomicity contract before considering
-mechanical extraction. FastestDet, HumanSeg, OSNet, and inference_ops15 each
-produce one zero result in strictly sequential, zero-SWAP traces; positive
-production ownership is not claimed.
+Characterization exposed and the following checkpoint corrected one unsafe
+rejection path. Every external runtime tensor and its projected NHWC shape are
+now validated into an immutable local plan before channel-last hints, rewiring,
+adapter creation, metadata mutation, or topology mutation. A candidate with a
+valid first external input and invalid later rank-three input is therefore a
+complete ModelIR no-op, and the former strict xfail is an ordinary passing
+atomicity contract. Successful rewrite order and artifacts are unchanged.
+FastestDet, HumanSeg, OSNet, and inference_ops15 each produce one zero result in
+strictly sequential, zero-SWAP traces; positive production ownership is not
+claimed.
 
 ## Managed-corpus SWAP exclusion policy
 
