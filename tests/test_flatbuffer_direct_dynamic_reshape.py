@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -7,11 +9,16 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _infer_batch_matmul_output_shape_and_signature,
+    _prune_dead_operators,
     _reconcile_static_tensor_shapes,
     _replace_expand_dims_and_squeeze_with_reshape,
     _restore_placeholder_matmul_flattened_inputs,
     _resolve_dynamic_reshape_shapes,
+    _run_indexed_shape_convergence_cleanup,
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
+)
+from onnx2tf.tflite_builder.passes.dynamic_reshape_resolution import (
+    resolve_dynamic_reshape_shapes,
 )
 
 
@@ -51,16 +58,148 @@ def test_final_reshape_preserves_raw_minus_one_when_static_metadata_is_stale() -
         )
     ]
 
+    module_ir = copy.deepcopy(model_ir)
+    module_stats = resolve_dynamic_reshape_shapes(
+        module_ir,
+        prefer_runtime_inferable_from_onnx_raw=True,
+        graph_index=ModelIRGraphIndex(module_ir),
+    )
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    class _NoFullOperatorIteration(list):
+        def __iter__(self):
+            raise AssertionError("unexpected full operator scan")
+
+    model_ir.operators = _NoFullOperatorIteration(model_ir.operators)
     stats = _resolve_dynamic_reshape_shapes(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
+        graph_index=graph_index,
     )
 
     assert stats == {"resolved_dynamic_reshape_shapes": 1}
+    assert module_stats == stats
+    assert module_ir.operators[0].options == model_ir.operators[0].options
+    np.testing.assert_array_equal(
+        module_ir.tensors["shape"].data,
+        model_ir.tensors["shape"].data,
+    )
+    assert module_ir.tensors["y"].shape == model_ir.tensors["y"].shape
+    assert (
+        module_ir.tensors["y"].shape_signature
+        == model_ir.tensors["y"].shape_signature
+    )
     assert model_ir.operators[0].options["newShape"] == [1, -1, 64, 64, 2]
     assert np.asarray(model_ir.tensors["shape"].data).tolist() == [1, -1, 64, 64, 2]
     assert model_ir.tensors["y"].shape == [1, 1, 64, 64, 2]
     assert model_ir.tensors["y"].shape_signature == [1, -1, 64, 64, 2]
+
+
+def test_indexed_shape_convergence_matches_legacy_sequence(monkeypatch) -> None:
+    model_ir = ModelIR("indexed_shape_convergence")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 10, 4096, 1],
+        shape_signature=[1, 10, 4096, 1],
+    )
+    model_ir.tensors["dead"] = TensorIR(
+        name="dead",
+        dtype="FLOAT32",
+        shape=[1, 10, 4096, 1],
+        shape_signature=[1, 10, 4096, 1],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[5],
+        shape_signature=[5],
+        data=np.asarray([1, 5, 64, 64, 2], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 5, 64, 64, 2],
+        shape_signature=[1, 5, 64, 64, 2],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RELU",
+            inputs=["x"],
+            outputs=["dead"],
+        ),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "shape"],
+            outputs=["y"],
+            options={
+                "newShape": [1, 5, 64, 64, 2],
+                "onnxRawNewShape": [1, -1, 64, 64, 2],
+                "allowZero": False,
+            },
+        ),
+    ]
+    legacy_model_ir = copy.deepcopy(model_ir)
+
+    legacy_prune_stats = _prune_dead_operators(legacy_model_ir)
+    legacy_first_reconcile_stats = _reconcile_static_tensor_shapes(
+        legacy_model_ir
+    )
+    legacy_reshape_stats = _resolve_dynamic_reshape_shapes(legacy_model_ir)
+    legacy_final_reconcile_stats = _reconcile_static_tensor_shapes(
+        legacy_model_ir
+    )
+    legacy_stats = {
+        "removed_dead_operators": legacy_prune_stats[
+            "removed_dead_operators"
+        ],
+        "resolved_dynamic_reshape_shapes": legacy_reshape_stats[
+            "resolved_dynamic_reshape_shapes"
+        ],
+        "reconciled_static_tensor_shapes": (
+            legacy_first_reconcile_stats["reconciled_static_tensor_shapes"]
+            + legacy_final_reconcile_stats["reconciled_static_tensor_shapes"]
+        ),
+    }
+
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    indexed_stats = _run_indexed_shape_convergence_cleanup(model_ir)
+
+    assert refresh_count == 1
+    assert indexed_stats == legacy_stats
+    assert [str(op.op_type) for op in model_ir.operators] == [
+        str(op.op_type) for op in legacy_model_ir.operators
+    ]
+    for indexed_op, legacy_op in zip(
+        model_ir.operators,
+        legacy_model_ir.operators,
+    ):
+        assert indexed_op.inputs == legacy_op.inputs
+        assert indexed_op.outputs == legacy_op.outputs
+        assert indexed_op.options == legacy_op.options
+    assert set(model_ir.tensors) == set(legacy_model_ir.tensors)
+    for tensor_name, indexed_tensor in model_ir.tensors.items():
+        legacy_tensor = legacy_model_ir.tensors[tensor_name]
+        assert indexed_tensor.dtype == legacy_tensor.dtype
+        assert indexed_tensor.shape == legacy_tensor.shape
+        assert indexed_tensor.shape_signature == legacy_tensor.shape_signature
+        if indexed_tensor.data is None or legacy_tensor.data is None:
+            assert indexed_tensor.data is legacy_tensor.data
+        else:
+            np.testing.assert_array_equal(
+                indexed_tensor.data,
+                legacy_tensor.data,
+            )
 
 
 def test_shape_reconciliation_repairs_stale_flatten_shape_constant() -> None:

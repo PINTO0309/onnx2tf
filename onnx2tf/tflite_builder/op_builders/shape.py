@@ -5229,8 +5229,11 @@ def _add_edge_pad_ops(
         source_tensor = ctx.model_ir.tensors[source_name]
         tensor = ctx.model_ir.tensors[name]
         tensor.shape_signature = [int(value) for value in shape_signature]
-        tensor.logical_layout = str(source_tensor.logical_layout)
-        tensor.physical_layout = str(source_tensor.physical_layout)
+        ctx.set_tensor_layout(
+            name,
+            logical=str(source_tensor.logical_layout),
+            physical=str(source_tensor.physical_layout),
+        )
         if source_tensor.quantization is not None:
             tensor.quantization = _clone_quantization(source_tensor.quantization)
         return name
@@ -7365,7 +7368,10 @@ def _add_resize_builtin_with_integer_linear_compatibility(
         if input_tensor.shape_signature is not None
         else [int(v) for v in list(input_tensor.shape)]
     )
-    input_float_tensor.logical_layout = input_tensor.logical_layout
+    ctx.set_tensor_layout(
+        input_float_name,
+        logical=input_tensor.logical_layout,
+    )
     ctx.add_operator(
         OperatorIR(
             op_type="CAST",
@@ -7389,7 +7395,10 @@ def _add_resize_builtin_with_integer_linear_compatibility(
         if output_tensor.shape_signature is not None
         else [int(v) for v in list(output_tensor.shape)]
     )
-    output_float_tensor.logical_layout = output_tensor.logical_layout
+    ctx.set_tensor_layout(
+        output_float_name,
+        logical=output_tensor.logical_layout,
+    )
     ctx.add_operator(
         OperatorIR(
             op_type=tflite_op,
@@ -10041,7 +10050,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
             x_quant = ctx.model_ir.tensors[input_name].quantization
             if x_quant is not None:
                 x_nwc_tensor.quantization = _clone_quantization(x_quant)
-            x_nwc_tensor.logical_layout = "NWC"
+            ctx.set_tensor_layout(x_nwc_name, logical="NWC")
             rank3_work_name = make_transpose(
                 ctx,
                 input_name,
@@ -10072,7 +10081,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         )
         x_nhwc_tensor = ctx.model_ir.tensors[x_nhwc]
         x_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_input_signature)]
-        x_nhwc_tensor.logical_layout = "NHWC"
+        ctx.set_tensor_layout(x_nhwc, logical="NHWC")
         x_quant = ctx.model_ir.tensors[input_name].quantization
         if x_quant is not None:
             x_nhwc_tensor.quantization = _clone_quantization(x_quant)
@@ -10090,7 +10099,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         )
         y_nhwc_tensor = ctx.model_ir.tensors[y_nhwc]
         y_nhwc_tensor.shape_signature = [int(v) for v in list(nhwc_output_signature)]
-        y_nhwc_tensor.logical_layout = "NHWC"
+        ctx.set_tensor_layout(y_nhwc, logical="NHWC")
         y_quant = ctx.model_ir.tensors[output_name].quantization
         if y_quant is not None:
             y_nhwc_tensor.quantization = _clone_quantization(y_quant)
@@ -10178,7 +10187,7 @@ def build_resize_op(node: Any, ctx: Any) -> None:
             )
             y_nwc_tensor = ctx.model_ir.tensors[y_nwc_name]
             y_nwc_tensor.shape_signature = [int(v) for v in list(output_rank3_signature_nwc)]
-            y_nwc_tensor.logical_layout = "NWC"
+            ctx.set_tensor_layout(y_nwc_name, logical="NWC")
             y_quant = ctx.model_ir.tensors[output_name].quantization
             if y_quant is not None:
                 y_nwc_tensor.quantization = _clone_quantization(y_quant)

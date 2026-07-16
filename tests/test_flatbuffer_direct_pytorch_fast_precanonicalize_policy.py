@@ -14,11 +14,14 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _has_immediate_rank4_permute_source,
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
+    _repair_binary_alignment_from_downstream_evidence,
+    _repair_aligned_bn_constant_layout,
     _repair_aligned_scalar_binary_shape_at,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
     _repair_cf_gather_slice_at,
     _repair_cf_reduce_max_axis,
+    _repair_cf_resize_from_input_and_bn_evidence,
     _repair_cf_resize_target_shape,
     _repair_cf_softmax_axis,
     _repair_concat_axis_from_input_layouts,
@@ -32,7 +35,9 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
+    _propagate_cf_local_response_norm_output,
     _propagate_cf_prelu_output,
+    _record_rewritten_static_shape,
 )
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_pool2d_assign_with_shape,
@@ -103,6 +108,34 @@ def test_fast_precanonicalize_context_collects_module_and_alias_evidence() -> No
     )
 
 
+def test_rewritten_static_shape_records_target_or_trailing_literal_only() -> None:
+    context = _build_fast_precanonicalize_repair_context([])
+    assert _record_rewritten_static_shape(
+        "        resized = _apply_resize(source, [5, 7], method='nearest', "
+        "target_shape=[1, 8, 5, 7], align_corners=False, "
+        "half_pixel_centers=False, channel_last=False)",
+        "resized",
+        context,
+    )
+    assert context.static_shapes["resized"] == [1, 8, 5, 7]
+
+    assert _record_rewritten_static_shape(
+        "        aligned = _align_tensor_to_target_shape("
+        "torch.add(left, right), [1, 16, 3, 4])",
+        "aligned",
+        context,
+    )
+    assert context.static_shapes["aligned"] == [1, 16, 3, 4]
+
+    context.static_shapes["unchanged"] = [1, 2, 3, 4]
+    assert not _record_rewritten_static_shape(
+        "        unchanged = _apply_pool2d(source, target_shape=dynamic_shape)",
+        "unchanged",
+        context,
+    )
+    assert context.static_shapes["unchanged"] == [1, 2, 3, 4]
+
+
 def test_channel_last_spatial_consumer_detects_direct_rank4_slice() -> None:
     lines = ["        output = input[:, :, :, :]"]
     context = _build_fast_precanonicalize_repair_context(lines)
@@ -164,6 +197,180 @@ def test_resize_and_pool_repairs_normalize_channel_first_targets() -> None:
     )
     assert pooled_name == "pooled"
     assert pooled is not None and "target_shape=[1, 3, 20, 30]" in pooled
+
+
+def test_resize_input_evidence_preserves_bn_and_noop_decisions() -> None:
+    positive_cases = [
+        (
+            [
+                "        self.register_buffer('scale', torch.zeros("
+                "[1, 8, 1, 1], dtype=torch.float32), persistent=True)",
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 8], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        normalized = _align_tensor_to_target_shape("
+                "torch.mul(resized, self.scale), [1, 5, 7, 8])",
+            ],
+            1,
+            "target_shape=[1, 8, 5, 7]",
+        ),
+        (
+            [
+                "        self.register_buffer('scale', torch.zeros("
+                "[8], dtype=torch.float32), persistent=True)",
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 8], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        normalized = _align_tensor_to_target_shape("
+                "torch.add(resized, torch.reshape("
+                "self.scale, [1, 8, 1, 1])), [1, 8, 5, 7])",
+            ],
+            1,
+            "target_shape=[1, 8, 5, 7]",
+        ),
+        (
+            [
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 16], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        return resized",
+            ],
+            0,
+            "target_shape=[1, 16, 5, 7]",
+        ),
+    ]
+    for lines, resize_index, expected_shape in positive_cases:
+        rewritten, lhs_name = _repair_cf_resize_from_input_and_bn_evidence(
+            lines[resize_index],
+            resize_index,
+            lines,
+            {"source_cf"},
+            set(),
+            _build_fast_precanonicalize_repair_context(lines),
+        )
+        assert rewritten is not None and expected_shape in rewritten
+        assert "channel_last=False" in rewritten
+        assert lhs_name == "resized"
+
+    negative_cases = [
+        (
+            [
+                "        resized = _apply_resize("
+                "source_nhwc, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 16], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        return resized",
+            ],
+            set(),
+            {"source_nhwc"},
+        ),
+        (
+            [
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 1, 5, 7], align_corners=False, "
+                "half_pixel_centers=False, channel_last=False)",
+                "        return resized",
+            ],
+            {"source_cf"},
+            set(),
+        ),
+    ]
+    for lines, cf_names, nhwc_names in negative_cases:
+        assert _repair_cf_resize_from_input_and_bn_evidence(
+            lines[0],
+            0,
+            lines,
+            cf_names,
+            nhwc_names,
+            _build_fast_precanonicalize_repair_context(lines),
+        ) == (None, None)
+
+
+def test_aligned_bn_constant_layout_preserves_direct_and_reshaped_guards() -> None:
+    direct_positive_lines = [
+        "        self.register_buffer('BatchNormalization_scale', torch.zeros("
+        "[8], dtype=torch.float32), persistent=True)",
+        "        out = _align_tensor_to_target_shape(torch.mul("
+        "source_cf, self.BatchNormalization_scale), [1, 5, 7, 8])",
+    ]
+    direct_rewrite, direct_lhs = _repair_aligned_bn_constant_layout(
+        direct_positive_lines[1],
+        {"source_cf"},
+        _build_fast_precanonicalize_repair_context(direct_positive_lines),
+    )
+    assert direct_rewrite == (
+        "        out = _align_tensor_to_target_shape(torch.mul(source_cf, "
+        "torch.reshape(self.BatchNormalization_scale, [1, 8, 1, 1])), "
+        "[1, 8, 5, 7])"
+    )
+    assert direct_lhs == "out"
+
+    reshaped_line = (
+        "        out = _align_tensor_to_target_shape(torch.add(source_cf, "
+        "torch.reshape(self.batch_normalization_bias, [1, 8, 1, 1])), "
+        "[1, 5, 7, 8])"
+    )
+    reshaped_rewrite, reshaped_lhs = _repair_aligned_bn_constant_layout(
+        reshaped_line,
+        {"source_cf"},
+        _build_fast_precanonicalize_repair_context([reshaped_line]),
+    )
+    assert reshaped_rewrite == (
+        "        out = _align_tensor_to_target_shape(torch.add(source_cf, "
+        "torch.reshape(self.batch_normalization_bias, [1, 8, 1, 1])), "
+        "[1, 8, 5, 7])"
+    )
+    assert reshaped_lhs == "out"
+
+    direct_negative_cases = [
+        (
+            [
+                "        self.register_buffer('scale', torch.zeros("
+                "[8], dtype=torch.float32), persistent=True)",
+                "        out = _align_tensor_to_target_shape(torch.mul("
+                "source_cf, self.scale), [1, 5, 7, 8])",
+            ],
+            {"source_cf"},
+        ),
+        (
+            [
+                "        self.register_buffer('BatchNormalization_scale', "
+                "torch.zeros([4], dtype=torch.float32), persistent=True)",
+                "        out = _align_tensor_to_target_shape(torch.add("
+                "source_cf, self.BatchNormalization_scale), [1, 5, 7, 8])",
+            ],
+            {"source_cf"},
+        ),
+        (
+            [
+                "        self.register_buffer('BatchNormalization_scale', "
+                "torch.zeros([8], dtype=torch.float32), persistent=True)",
+                "        out = _align_tensor_to_target_shape(torch.add("
+                "source_nhwc, self.BatchNormalization_scale), [1, 5, 7, 8])",
+            ],
+            set(),
+        ),
+    ]
+    for case_lines, cf_names in direct_negative_cases:
+        assert _repair_aligned_bn_constant_layout(
+            case_lines[1],
+            cf_names,
+            _build_fast_precanonicalize_repair_context(case_lines),
+        ) == (None, None)
+
+    reshaped_non_bn = (
+        "        out = _align_tensor_to_target_shape(torch.add(source_cf, "
+        "torch.reshape(self.scale, [1, 8, 1, 1])), [1, 5, 7, 8])"
+    )
+    assert _repair_aligned_bn_constant_layout(
+        reshaped_non_bn,
+        {"source_cf"},
+        _build_fast_precanonicalize_repair_context([reshaped_non_bn]),
+    ) == (None, None)
 
 
 def test_nhwc_pool_layout_uses_consumer_and_immediate_bridge_evidence() -> None:
@@ -382,6 +589,95 @@ def test_aligned_scalar_binary_shape_uses_neighbor_consensus() -> None:
     )
 
 
+def test_binary_alignment_uses_only_exact_downstream_cf_evidence() -> None:
+    positive_cases = [
+        (
+            [
+                "        fused = _align_tensor_to_target_shape("
+                "torch.add(left_in, right_in), [1, 5, 7, 16])",
+                "        normalized = _align_tensor_to_target_shape("
+                "torch.mul(fused, self.scale), [1, 5, 7, 16])",
+                "        return normalized",
+            ],
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_in), [1, 16, 5, 7])",
+        ),
+        (
+            [
+                "        fused = _align_tensor_to_target_shape("
+                "torch.maximum(left_in, right_in), [1, 5, 7, 16])",
+                "        return fused",
+            ],
+            "        fused = _align_tensor_to_target_shape("
+            "torch.maximum(left_in, right_in), [1, 16, 5, 7])",
+        ),
+        (
+            [
+                "        fused = _align_tensor_to_target_shape("
+                "torch.sub(left_in, right_in), [1, 5, 7, 16])",
+                "        resized = _apply_resize("
+                "fused, [10, 14], method='nearest', "
+                "target_shape=[1, 5, 7, 16], align_corners=False, "
+                "half_pixel_centers=False, channel_last=False)",
+                "        return resized",
+            ],
+            "        fused = _align_tensor_to_target_shape("
+            "torch.sub(left_in, right_in), [1, 16, 5, 7])",
+        ),
+    ]
+    for lines, expected in positive_cases:
+        context = _build_fast_precanonicalize_repair_context(lines)
+        rewritten, lhs_name = _repair_binary_alignment_from_downstream_evidence(
+            lines[0],
+            0,
+            lines,
+            set(),
+            set(),
+            context,
+        )
+        assert rewritten == expected
+        assert lhs_name == "fused"
+
+    negative_cases = [
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_in), [1, 5, 7, 16])",
+            "        normalized = _align_tensor_to_target_shape("
+            "torch.mul(fused, self.scale), [1, 5, 7, 8])",
+            "        return normalized",
+        ],
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.sub(left_in, right_in), [1, 5, 7, 16])",
+            "        resized = _apply_resize("
+            "fused, [10, 14], method='nearest', "
+            "target_shape=[1, 5, 7, 16], align_corners=False, "
+            "half_pixel_centers=False, channel_last=True)",
+            "        return resized",
+        ],
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_nhwc), [1, 5, 7, 16])",
+            "        return fused",
+        ],
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_in), [1, 1, 5, 7])",
+            "        return fused",
+        ],
+    ]
+    for lines in negative_cases:
+        context = _build_fast_precanonicalize_repair_context(lines)
+        assert _repair_binary_alignment_from_downstream_evidence(
+            lines[0],
+            0,
+            lines,
+            set(),
+            set(),
+            context,
+        ) == (None, None)
+
+
 def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:
     lines = [
         "        bridge = source.permute(0, 2, 3, 1).contiguous()",
@@ -404,12 +700,14 @@ def test_nhwc_average_pool_binary_bridge_normalizes_the_whole_chain() -> None:
         "        concat_out = _apply_concat([mul_out, peer], axis=3, target_shape=[1, 4, 1, 16], fused='NONE')",
     ]
     context = _build_fast_precanonicalize_repair_context(lines)
+    cf_names = {"pool_out_nhwc", "lhs", "rhs", "mul_out"}
+    nhwc_names = {"input_nhwc"}
 
     changed, updated_names = _repair_nhwc_average_pool_binary_bridge(
         0,
         lines,
-        set(),
-        {"input_nhwc"},
+        cf_names,
+        nhwc_names,
         context,
     )
 
@@ -419,6 +717,35 @@ def test_nhwc_average_pool_binary_bridge_normalizes_the_whole_chain() -> None:
     assert "channel_last=True" in lines[0]
     assert "scale.permute(0, 2, 3, 1).contiguous()" in lines[1]
     assert "target_shape(torch.mul(lhs, rhs), [1, 4, 1, 8])" in lines[2]
+    assert updated_names <= nhwc_names
+    assert updated_names.isdisjoint(cf_names)
+    assert all(
+        context.static_shapes[name] == [1, 8, 4, 1]
+        for name in updated_names
+    )
+
+    no_op_lines = [
+        "        pool_out_nhwc = _apply_pool2d("
+        "input_nhwc, filter_height=2, filter_width=2, stride_h=2, "
+        "stride_w=2, padding='VALID', target_shape=[1, 8, 4, 1], "
+        "is_max_pool=True, channel_last=False)",
+        "        return pool_out_nhwc",
+        "        unused = pool_out_nhwc",
+    ]
+    no_op_context = _build_fast_precanonicalize_repair_context(no_op_lines)
+    no_op_context.static_shapes["sentinel"] = [1, 2, 3, 4]
+    no_op_cf_names = {"sentinel"}
+    no_op_nhwc_names = {"input_nhwc"}
+    assert _repair_nhwc_average_pool_binary_bridge(
+        0,
+        no_op_lines,
+        no_op_cf_names,
+        no_op_nhwc_names,
+        no_op_context,
+    ) == (False, set())
+    assert no_op_cf_names == {"sentinel"}
+    assert no_op_nhwc_names == {"input_nhwc"}
+    assert no_op_context.static_shapes["sentinel"] == [1, 2, 3, 4]
 
 
 def test_binary_alignment_repair_normalizes_channel_first_target() -> None:
@@ -555,6 +882,60 @@ def test_prelu_and_gather_slice_propagate_channel_first_layout() -> None:
 
     assert {"prelu_out", "gathered"} <= cf_like_names
     assert lines == ["        gathered = prelu_out[:, [0, 2], :, :]"]
+
+
+def test_local_response_norm_propagates_only_channel_first_layout_and_shape() -> None:
+    cf_line = (
+        "        normalized_nhwc = F.local_response_norm("
+        "input_cf, size=5, alpha=0.0001, beta=0.75, k=1.0)"
+    )
+    cf_context = _build_fast_precanonicalize_repair_context([cf_line])
+    cf_context.static_shapes["input_cf"] = [1, 8, 5, 7]
+    cf_names = {"input_cf"}
+    nhwc_names = {"normalized_nhwc"}
+
+    assert _propagate_cf_local_response_norm_output(
+        cf_line,
+        cf_names,
+        nhwc_names,
+        cf_context,
+    )
+    assert "normalized_nhwc" in cf_names
+    assert "normalized_nhwc" not in nhwc_names
+    assert cf_context.static_shapes["normalized_nhwc"] == [1, 8, 5, 7]
+
+    suffix_line = (
+        "        suffix_out = F.local_response_norm("
+        "source_out_cf, size=3, alpha=0.1, beta=0.5, k=2.0)"
+    )
+    suffix_context = _build_fast_precanonicalize_repair_context([suffix_line])
+    suffix_names: set[str] = set()
+    assert _propagate_cf_local_response_norm_output(
+        suffix_line,
+        suffix_names,
+        set(),
+        suffix_context,
+    )
+    assert "suffix_out" in suffix_names
+    assert "suffix_out" not in suffix_context.static_shapes
+
+    nhwc_line = (
+        "        unchanged = F.local_response_norm("
+        "input_nhwc, size=5, alpha=0.0001, beta=0.75, k=1.0)"
+    )
+    nhwc_context = _build_fast_precanonicalize_repair_context([nhwc_line])
+    nhwc_context.static_shapes["input_nhwc"] = [1, 5, 7, 8]
+    negative_cf_names: set[str] = set()
+    negative_nhwc_names = {"input_nhwc", "unchanged"}
+    assert not _propagate_cf_local_response_norm_output(
+        nhwc_line,
+        negative_cf_names,
+        negative_nhwc_names,
+        nhwc_context,
+    )
+    assert negative_cf_names == set()
+    assert negative_nhwc_names == {"input_nhwc", "unchanged"}
+    assert "unchanged" not in nhwc_context.static_shapes
 
 
 def test_depth_to_space_gather_uses_indexed_layout_evidence() -> None:

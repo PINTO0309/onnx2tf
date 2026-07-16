@@ -1,0 +1,478 @@
+{
+  "schema_version": 1,
+  "branch": "fb-refactor5",
+  "commit": "5b387bc6f457754e733040ab585f4a224e423df1",
+  "generated_at": "2026-07-16T01:44:54Z",
+  "evidence_state": "pre_investigation_no_source_fix",
+  "execution": {
+    "profile": "docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-16.json",
+    "inference_concurrency": 1,
+    "timeout_sec": 45,
+    "swap_monitor": "converter subprocess tree VmSwap"
+  },
+  "summary": {
+    "total_entries": 49,
+    "counts": {
+      "pass": 42,
+      "skipped_model": 0,
+      "missing_model": 0,
+      "conversion_error": 0,
+      "timeout": 1,
+      "tflite_fail": 4,
+      "pytorch_fail": 0,
+      "both_fail": 0,
+      "missing_tflite_report": 2,
+      "missing_pytorch_report": 0,
+      "missing_both_reports": 0
+    },
+    "timing": {
+      "total_duration_sec": 452.1137480735779,
+      "median_duration_sec": 5.342332601547241,
+      "max_duration_sec": 45.10805058479309
+    },
+    "strict_fail_count": 7,
+    "models_sha256": "8112f34d988a55448ee394d002e45dfc2c32b8bb8b15a4f1978d8be851c708e8",
+    "pass_metrics": {
+      "models_with_metrics": 48,
+      "event_count": 24978,
+      "totals": {
+        "preflight_operators_visited": 3371865,
+        "state_build_count": 2738,
+        "snapshot_count": 645,
+        "fingerprint_count": 0
+      }
+    }
+  },
+  "model_result_fields": [
+    "tier",
+    "model",
+    "classification",
+    "tflite_max_abs",
+    "duration_sec",
+    "peak_swap_kib"
+  ],
+  "model_results": [
+    [
+      0,
+      "Acos_11.onnx",
+      "pass",
+      7.972121238708496e-07,
+      3.174391746520996,
+      0
+    ],
+    [
+      0,
+      "DepthToSpace.onnx",
+      "pass",
+      0,
+      2.968345880508423,
+      0
+    ],
+    [
+      0,
+      "GridSample_16.onnx",
+      "pass",
+      8.13603401184082e-06,
+      3.097133159637451,
+      0
+    ],
+    [
+      0,
+      "MatMul_11.onnx",
+      "pass",
+      5.340576171875e-05,
+      3.1168627738952637,
+      0
+    ],
+    [
+      0,
+      "trilu_14.onnx",
+      "pass",
+      0,
+      3.040540933609009,
+      0
+    ],
+    [
+      0,
+      "topk_test_model.onnx",
+      "pass",
+      0,
+      3.0701184272766113,
+      0
+    ],
+    [
+      0,
+      "optional.onnx",
+      "pass",
+      0,
+      2.626952648162842,
+      0
+    ],
+    [
+      0,
+      "gather_nd_normal.onnx",
+      "pass",
+      0,
+      3.1472322940826416,
+      0
+    ],
+    [
+      0,
+      "avgpool1d_dynamic.onnx",
+      "pass",
+      1.1920928955078125e-07,
+      3.0739223957061768,
+      0
+    ],
+    [
+      0,
+      "big_slice_11.onnx",
+      "pass",
+      0,
+      3.8713743686676025,
+      0
+    ],
+    [
+      0,
+      "silero_vad.onnx",
+      "missing_tflite_report",
+      null,
+      5.505018472671509,
+      0
+    ],
+    [
+      0,
+      "string_normalizer_11.onnx",
+      "missing_tflite_report",
+      null,
+      1.4440414905548096,
+      0
+    ],
+    [
+      1,
+      "GridSample_11.onnx",
+      "pass",
+      0,
+      3.442591905593872,
+      0
+    ],
+    [
+      1,
+      "face_detection_yunet_2023mar_int8.onnx",
+      "pass",
+      0,
+      5.46563196182251,
+      0
+    ],
+    [
+      1,
+      "dynamic_roi_align_yolo_1class.onnx",
+      "pass",
+      4.553794860839844e-05,
+      4.175786733627319,
+      0
+    ],
+    [
+      1,
+      "shadowformer_istd_160x240_split.onnx",
+      "pass",
+      4.5299530029296875e-06,
+      7.6500773429870605,
+      0
+    ],
+    [
+      1,
+      "face_detection_yunet_2023mar.onnx",
+      "pass",
+      5.245208740234375e-06,
+      4.569961786270142,
+      0
+    ],
+    [
+      1,
+      "version-RFB-320-int8.onnx",
+      "tflite_fail",
+      0.14972957409918308,
+      5.342332601547241,
+      0
+    ],
+    [
+      1,
+      "exp28_lstm_binary_final.onnx",
+      "pass",
+      5.960464477539062e-07,
+      3.785966396331787,
+      0
+    ],
+    [
+      1,
+      "license_plate_detection_lpd_yunet_2023mar_int8.onnx",
+      "pass",
+      0,
+      4.897979736328125,
+      0
+    ],
+    [
+      1,
+      "handpose_estimation_mediapipe_2023feb_int8.onnx",
+      "pass",
+      0,
+      4.277584075927734,
+      0
+    ],
+    [
+      1,
+      "squeezenet1.0-12-int8.onnx",
+      "pass",
+      3.725290298461914e-09,
+      4.2786407470703125,
+      0
+    ],
+    [
+      1,
+      "retinaface_onnx_dynamic.onnx",
+      "pass",
+      4.4405460357666016e-06,
+      3.967832088470459,
+      0
+    ],
+    [
+      1,
+      "rfdn_64x64.onnx",
+      "pass",
+      3.719329833984375e-05,
+      5.246216297149658,
+      0
+    ],
+    [
+      2,
+      "object_tracking_vittrack_2023sep_int8bq.onnx",
+      "pass",
+      1.996755599975586e-06,
+      4.68971061706543,
+      0
+    ],
+    [
+      2,
+      "sinet_320_op.onnx",
+      "pass",
+      2.572051016613841e-09,
+      6.004705905914307,
+      0
+    ],
+    [
+      2,
+      "iat_llie_180x320.onnx",
+      "pass",
+      4.470348358154297e-07,
+      17.40433931350708,
+      0
+    ],
+    [
+      2,
+      "text_detection_en_ppocrv3_2023may_int8.onnx",
+      "tflite_fail",
+      0.7411765307188034,
+      15.071458101272583,
+      0
+    ],
+    [
+      2,
+      "alike_t_opset11_192x320.onnx",
+      "pass",
+      2.345442771911621e-05,
+      6.715781211853027,
+      0
+    ],
+    [
+      2,
+      "tmp_alike_debug3.onnx",
+      "tflite_fail",
+      1,
+      8.01598072052002,
+      0
+    ],
+    [
+      2,
+      "monodepth_op15.onnx",
+      "pass",
+      1.430511474609375e-06,
+      6.551267385482788,
+      0
+    ],
+    [
+      2,
+      "osnet025_Nx3x256x128.onnx",
+      "pass",
+      2.193450927734375e-05,
+      4.9719297885894775,
+      0
+    ],
+    [
+      2,
+      "FastestDet.onnx",
+      "pass",
+      1.3113021850585938e-05,
+      5.249118328094482,
+      0
+    ],
+    [
+      2,
+      "object_detection_nanodet_2022nov_int8.onnx",
+      "pass",
+      0,
+      7.923678398132324,
+      0
+    ],
+    [
+      2,
+      "pose_estimation_mediapipe_2023mar_int8bq.onnx",
+      "pass",
+      0.0443115234375,
+      7.310778379440308,
+      0
+    ],
+    [
+      2,
+      "yolox_nano_with_post.onnx",
+      "pass",
+      0,
+      7.472399711608887,
+      0
+    ],
+    [
+      3,
+      "yolov9_n_wholebody_with_wheelchair_post_0100_1x3x384x672.onnx",
+      "pass",
+      3.0517578125e-05,
+      8.553940773010254,
+      0
+    ],
+    [
+      3,
+      "sgscsh.onnx",
+      "pass",
+      2.5331974029541016e-07,
+      22.736929178237915,
+      0
+    ],
+    [
+      3,
+      "best.onnx",
+      "tflite_fail",
+      58.7506103515625,
+      13.93058729171753,
+      0
+    ],
+    [
+      3,
+      "human_segmentation_pphumanseg_2021oct_org.onnx",
+      "pass",
+      2.384185791015625e-07,
+      4.129712820053101,
+      0
+    ],
+    [
+      3,
+      "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx",
+      "pass",
+      27,
+      37.00610017776489,
+      0
+    ],
+    [
+      3,
+      "htnet_1x17x2_without_norm.onnx",
+      "pass",
+      1.4156103134155273e-07,
+      7.640528917312622,
+      0
+    ],
+    [
+      3,
+      "latest.opset17.head2.onnx",
+      "pass",
+      0.0005331039428710938,
+      22.441779375076294,
+      0
+    ],
+    [
+      3,
+      "LINEA.onnx",
+      "timeout",
+      null,
+      45.10805058479309,
+      0
+    ],
+    [
+      3,
+      "imageclassifier.onnx",
+      "pass",
+      6.67572021484375e-06,
+      11.060041189193726,
+      0
+    ],
+    [
+      4,
+      "mobileformer.onnx",
+      "pass",
+      0.00011217594146728516,
+      14.113295555114746,
+      0
+    ],
+    [
+      4,
+      "parseq-tiny.onnx",
+      "pass",
+      1.52587890625e-05,
+      16.791560649871826,
+      0
+    ],
+    [
+      4,
+      "campp_vin.onnx",
+      "pass",
+      3.3020973205566406e-05,
+      24.023290634155273,
+      0
+    ],
+    [
+      4,
+      "hybridnets_384x640_sim.onnx",
+      "pass",
+      0.0002593994140625,
+      31.960246801376343,
+      0
+    ]
+  ],
+  "differences_from_f5a40947": [
+    {
+      "model": "LINEA.onnx",
+      "prior": {
+        "classification": "pass",
+        "max_abs": 0.002297189086675644,
+        "duration_sec": 23.331296,
+        "peak_swap_kib": 0
+      },
+      "current": {
+        "classification": "timeout",
+        "tflite_max_abs": null,
+        "duration_sec": 45.10805058479309,
+        "peak_swap_kib": 0
+      }
+    }
+  ],
+  "linea_pre_investigation": {
+    "prior_classification": "pass",
+    "prior_tflite_max_abs": 0.002297189086675644,
+    "prior_duration_sec": 23.331296,
+    "current_classification": "timeout",
+    "current_duration_sec": 45.10805058479309,
+    "current_peak_swap_kib": 0,
+    "float32_sha256": "fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611",
+    "float16_sha256": "c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8",
+    "correspondence_sha256": "ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd",
+    "source_fix_applied": false,
+    "profile_changed": false
+  }
+}

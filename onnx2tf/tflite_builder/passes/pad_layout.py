@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -1048,6 +1049,7 @@ def run_pad_mul_layout_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run the strict Pad/Mul/PostTranspose/Add rewrite as an ordered pass."""
 
@@ -1251,6 +1253,7 @@ def run_pad_mul_layout_cleanup(
             "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -2057,6 +2060,7 @@ def run_pad_layout_cleanup(
     include_norm: bool = True,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run the contiguous Pad layout propagation family in fixed order."""
 
@@ -2253,6 +2257,7 @@ def run_pad_layout_cleanup(
             "optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -3428,6 +3433,7 @@ def run_normalization_pad_layout_cleanup(
     include_flatten: bool = True,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run decomposed InstanceNorm and flattened global-norm Pad propagation."""
 
@@ -3570,6 +3576,7 @@ def run_normalization_pad_layout_cleanup(
             "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

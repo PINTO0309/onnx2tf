@@ -9,11 +9,10 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _permute_shape,
     _prune_unused_tensors,
@@ -49,7 +48,6 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(
     rewritten = 0
     graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
     binary_ops = {
         "EQUAL",
         "NOT_EQUAL",
@@ -1083,6 +1081,7 @@ def run_singleton_maxpool_layout_cleanup(
     include_nms: bool = True,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run adjacent singleton MaxPool layout rewrites in legacy order."""
 
@@ -1277,6 +1276,7 @@ def run_singleton_maxpool_layout_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

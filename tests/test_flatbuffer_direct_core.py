@@ -5,8 +5,9 @@ import copy
 import numpy as np
 import onnx
 import pytest
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 import onnx2tf.tflite_builder.core.validation as validation_module
+import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 
 from onnx2tf.tflite_builder.core import (
     ConversionRequest,
@@ -14,6 +15,7 @@ from onnx2tf.tflite_builder.core import (
     ConversionSession,
     GraphIndex,
     LayoutState,
+    LoweringContext,
     ModelIRGraphIndex,
     ModelIRPassState,
     OrderedPassManager,
@@ -27,6 +29,7 @@ from onnx2tf.tflite_builder.core import (
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
 def _add_onnx_model() -> onnx.ModelProto:
@@ -52,6 +55,36 @@ def _add_model_ir() -> ModelIR:
         operators=[OperatorIR(op_type="ADD", inputs=["x", "y"], outputs=["z"])],
         inputs=["x", "y"],
         outputs=["z"],
+    )
+
+
+def _rank3_resize_onnx_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 8])
+    roi = numpy_helper.from_array(np.asarray([], dtype=np.float32), name="roi")
+    scales = numpy_helper.from_array(
+        np.asarray([1.0, 1.0, 2.0], dtype=np.float32),
+        name="scales",
+    )
+    resize = helper.make_node(
+        "Resize",
+        ["x", "roi", "scales"],
+        ["y"],
+        name="rank3_resize",
+        mode="nearest",
+        coordinate_transformation_mode="asymmetric",
+        nearest_mode="floor",
+    )
+    graph = helper.make_graph(
+        [resize],
+        "rank3_resize_graph",
+        [x],
+        [y],
+        initializer=[roi, scales],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 13)],
     )
 
 
@@ -134,6 +167,180 @@ def test_lowerer_private_sink_collects_internal_pass_diagnostics() -> None:
     assert all(event["stage"] == "model_ir_pass" for event in diagnostics)
     summary = summarize_model_ir_pass_diagnostics(diagnostics)
     assert summary["event_count"] == len(diagnostics)
+
+
+def test_lowerer_context_reuses_session_consumer_counts(monkeypatch) -> None:
+    captured_counts: dict[str, int] = {}
+    original_context = lowering_module.LoweringContext
+    model = _add_onnx_model()
+    model.graph.node.append(
+        helper.make_node("Identity", ["x"], ["side"], name="side")
+    )
+    model.graph.output.append(
+        helper.make_tensor_value_info("side", TensorProto.FLOAT, [1, 3])
+    )
+
+    class _TrackingLoweringContext(original_context):
+        def __init__(self, *args, **kwargs):
+            captured_counts.update(kwargs["tensor_consumer_count"])
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(
+        lowering_module,
+        "LoweringContext",
+        _TrackingLoweringContext,
+    )
+
+    lower_onnx_to_ir(model, "session_consumer_counts")
+
+    assert captured_counts == {"x": 2, "y": 1}
+
+
+def test_lowerer_keeps_session_layout_current_before_first_post_pass(
+    monkeypatch,
+) -> None:
+    observed_problems: list[list[str]] = []
+    observed_layouts: dict[str, str] = {}
+    original_cleanup = lowering_module.run_layout_transpose_cleanup
+
+    def _tracking_cleanup(
+        model_ir,
+        *,
+        layout_state=None,
+        diagnostics=None,
+        state_scope=None,
+    ):
+        assert layout_state is not None
+        if not observed_problems:
+            observed_problems.append(layout_state.validate_against_model_ir(model_ir))
+            observed_layouts.update(
+                {
+                    name: layout_state.logical_of(name)
+                    for name in (
+                        "rank3_resize_input_nwc",
+                        "rank3_resize_input_nhwc",
+                        "rank3_resize_output_nhwc",
+                        "rank3_resize_output_nwc",
+                    )
+                }
+            )
+        return original_cleanup(
+            model_ir,
+            layout_state=layout_state,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    monkeypatch.setattr(
+        lowering_module,
+        "run_layout_transpose_cleanup",
+        _tracking_cleanup,
+    )
+
+    lower_onnx_to_ir(_rank3_resize_onnx_model(), "session_layout_handoff")
+
+    assert observed_problems == [[]]
+    assert observed_layouts == {
+        "rank3_resize_input_nwc": "NWC",
+        "rank3_resize_input_nhwc": "NHWC",
+        "rank3_resize_output_nhwc": "NHWC",
+        "rank3_resize_output_nwc": "NWC",
+    }
+
+
+def _inverse_transpose_lowering_context() -> LoweringContext:
+    model_ir = ModelIR(
+        name="inverse_transpose_context",
+        tensors={
+            "source": TensorIR(
+                "source",
+                "FLOAT32",
+                [1, 3, 2, 2],
+                [1, 3, 2, 2],
+            ),
+            "bridge": TensorIR(
+                "bridge",
+                "FLOAT32",
+                [1, 2, 2, 3],
+                [1, 2, 2, 3],
+            ),
+            "side": TensorIR(
+                "side",
+                "FLOAT32",
+                [1, 2, 2, 3],
+                [1, 2, 2, 3],
+            ),
+            "restored": TensorIR(
+                "restored",
+                "FLOAT32",
+                [1, 3, 2, 2],
+                [1, 3, 2, 2],
+            ),
+        },
+    )
+    context = LoweringContext(
+        model_ir=model_ir,
+        shape_map={},
+        dtype_map={},
+        constants={},
+        tensor_consumer_count={},
+    )
+    perm_name = context.add_const_tensor(
+        "to_nhwc_perm",
+        np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    context.add_operator(
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["source", perm_name],
+            outputs=["bridge"],
+        )
+    )
+    return context
+
+
+def test_inverse_transpose_elision_removes_lowering_indexes() -> None:
+    context = _inverse_transpose_lowering_context()
+
+    result = make_transpose(
+        context,
+        "bridge",
+        "restored",
+        [0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
+    )
+
+    assert result == "source"
+    assert context.model_ir.operators == []
+    assert "bridge" not in context.ir_tensor_producers
+    assert context.ir_tensor_consumer_count == {}
+
+
+def test_inverse_transpose_elision_preserves_synthetic_fanout() -> None:
+    context = _inverse_transpose_lowering_context()
+    context.add_operator(
+        OperatorIR(
+            op_type="IDENTITY",
+            inputs=["bridge"],
+            outputs=["side"],
+        )
+    )
+
+    result = make_transpose(
+        context,
+        "bridge",
+        "restored",
+        [0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
+    )
+
+    assert result == "source"
+    assert [str(op.op_type) for op in context.model_ir.operators] == [
+        "TRANSPOSE",
+        "IDENTITY",
+    ]
+    assert context.ir_tensor_producers["bridge"] is context.model_ir.operators[0]
+    assert context.ir_tensor_consumer_count["bridge"] == 1
 
 
 def test_layout_state_sync_rename_remove_and_validation() -> None:
@@ -219,6 +426,7 @@ def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> N
     assert index.operator_indices("ADD") == [0]
     assert index.operator_indices("MUL") == []
     assert index.operator_indices_for_types(["MUL", "ADD", "ADD"]) == [0]
+    assert index.operator_indices_for_normalized_types(["mul", "add"]) == [0]
     assert index.consumer_indices("x") == [0, 0]
     assert index.consumer_indices("y") == []
     assert index.producer("z") is None
@@ -227,6 +435,7 @@ def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> N
     assert index.operator_indices("ADD") == []
     assert index.operator_indices("DIV") == [0]
     assert index.operator_indices_for_types({"ADD", "DIV"}) == [0]
+    assert index.operator_indices_for_normalized_types({"add", "div"}) == [0]
     refreshed = ModelIRGraphIndex(model_ir)
     assert index.producers == refreshed.producers
     assert index.consumers == refreshed.consumers

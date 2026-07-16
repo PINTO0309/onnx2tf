@@ -22822,38 +22822,38 @@ def test_flatbuffer_direct_transpose_relu_split_all_outputs_to_nhwc_chains_optim
     model_ir.tensors["split0_nchw"] = TensorIR(
         name="split0_nchw",
         dtype="FLOAT32",
-        shape=[1, 2, 5, 7],
-        shape_signature=[1, 2, 5, 7],
+        shape=[1, 3, 5, 7],
+        shape_signature=[1, 3, 5, 7],
     )
     model_ir.tensors["split1_nchw"] = TensorIR(
         name="split1_nchw",
         dtype="FLOAT32",
-        shape=[1, 4, 5, 7],
-        shape_signature=[1, 4, 5, 7],
+        shape=[1, 3, 5, 7],
+        shape_signature=[1, 3, 5, 7],
     )
     model_ir.tensors["split0_nhwc"] = TensorIR(
         name="split0_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 2],
-        shape_signature=[1, 5, 7, 2],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.tensors["split1_nhwc"] = TensorIR(
         name="split1_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 4],
-        shape_signature=[1, 5, 7, 4],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.tensors["out0"] = TensorIR(
         name="out0",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 2],
-        shape_signature=[1, 5, 7, 2],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.tensors["out1"] = TensorIR(
         name="out1",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 4],
-        shape_signature=[1, 5, 7, 4],
+        shape=[1, 5, 7, 3],
+        shape_signature=[1, 5, 7, 3],
     )
     model_ir.operators = [
         OperatorIR(op_type="TRANSPOSE", inputs=["src_nhwc", "to_nchw_perm"], outputs=["src_nchw"]),
@@ -22887,8 +22887,8 @@ def test_flatbuffer_direct_transpose_relu_split_all_outputs_to_nhwc_chains_optim
     assert ["split0_nchw"] in consumer_inputs
     assert ["split1_nchw"] in consumer_inputs
     assert list(model_ir.tensors["relu_out"].shape) == [1, 5, 7, 6]
-    assert list(model_ir.tensors["split0_nchw"].shape) == [1, 5, 7, 2]
-    assert list(model_ir.tensors["split1_nchw"].shape) == [1, 5, 7, 4]
+    assert list(model_ir.tensors["split0_nchw"].shape) == [1, 5, 7, 3]
+    assert list(model_ir.tensors["split1_nchw"].shape) == [1, 5, 7, 3]
 
 
 def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_optimized() -> None:
@@ -22922,26 +22922,26 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
     model_ir.tensors["src_nhwc"] = TensorIR(
         name="src_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 6],
-        shape_signature=[1, 5, 7, 6],
+        shape=[1, 5, 7, 8],
+        shape_signature=[1, 5, 7, 8],
     )
     model_ir.tensors["src_nchw"] = TensorIR(
         name="src_nchw",
         dtype="FLOAT32",
-        shape=[1, 6, 5, 7],
-        shape_signature=[1, 6, 5, 7],
+        shape=[1, 8, 5, 7],
+        shape_signature=[1, 8, 5, 7],
     )
     model_ir.tensors["relu0_nchw"] = TensorIR(
         name="relu0_nchw",
         dtype="FLOAT32",
-        shape=[1, 6, 5, 7],
-        shape_signature=[1, 6, 5, 7],
+        shape=[1, 8, 5, 7],
+        shape_signature=[1, 8, 5, 7],
     )
     model_ir.tensors["keep_nchw"] = TensorIR(
         name="keep_nchw",
         dtype="FLOAT32",
-        shape=[1, 2, 5, 7],
-        shape_signature=[1, 2, 5, 7],
+        shape=[1, 4, 5, 7],
+        shape_signature=[1, 4, 5, 7],
     )
     model_ir.tensors["branch_nchw"] = TensorIR(
         name="branch_nchw",
@@ -22976,20 +22976,20 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
     model_ir.tensors["cat_nchw"] = TensorIR(
         name="cat_nchw",
         dtype="FLOAT32",
-        shape=[1, 6, 5, 7],
-        shape_signature=[1, 6, 5, 7],
+        shape=[1, 8, 5, 7],
+        shape_signature=[1, 8, 5, 7],
     )
     model_ir.tensors["out_nhwc"] = TensorIR(
         name="out_nhwc",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 6],
-        shape_signature=[1, 5, 7, 6],
+        shape=[1, 5, 7, 8],
+        shape_signature=[1, 5, 7, 8],
     )
     model_ir.tensors["sink"] = TensorIR(
         name="sink",
         dtype="FLOAT32",
-        shape=[1, 5, 7, 6],
-        shape_signature=[1, 5, 7, 6],
+        shape=[1, 5, 7, 8],
+        shape_signature=[1, 5, 7, 8],
     )
     model_ir.tensors["conv_filter"] = TensorIR(
         name="conv_filter",
@@ -23046,11 +23046,11 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
     assert int(concat_op.options.get("axis", -1)) == 3
     assert concat_op.inputs == ["relu1_nchw", "keep_nchw"]
 
-    assert list(model_ir.tensors["relu0_nchw"].shape) == [1, 5, 7, 6]
+    assert list(model_ir.tensors["relu0_nchw"].shape) == [1, 5, 7, 8]
     assert list(model_ir.tensors["branch_nchw"].shape) == [1, 5, 7, 4]
-    assert list(model_ir.tensors["keep_nchw"].shape) == [1, 5, 7, 2]
+    assert list(model_ir.tensors["keep_nchw"].shape) == [1, 5, 7, 4]
     assert list(model_ir.tensors["relu1_nchw"].shape) == [1, 5, 7, 4]
-    assert list(model_ir.tensors["cat_nchw"].shape) == [1, 5, 7, 6]
+    assert list(model_ir.tensors["cat_nchw"].shape) == [1, 5, 7, 8]
 
 
 def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized(
@@ -34804,11 +34804,11 @@ def test_flatbuffer_direct_transpose_squeeze_gelu_expanddims_transpose_nhwc_fano
     assert stats["optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains"] == 1
 
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types == ["TRANSPOSE", "SQUEEZE", "GELU", "ADD", "RELU"]
+    assert op_types == ["GELU", "TRANSPOSE", "SQUEEZE", "ADD", "RELU"]
 
-    pre_op = model_ir.operators[0]
-    squeeze_op = model_ir.operators[1]
-    unary_op = model_ir.operators[2]
+    unary_op = model_ir.operators[0]
+    pre_op = model_ir.operators[1]
+    squeeze_op = model_ir.operators[2]
     add_op = model_ir.operators[3]
     relu_op = model_ir.operators[4]
 
@@ -42478,12 +42478,18 @@ def test_flatbuffer_direct_reverse_sequence_and_scatter_builtin_parity() -> None
 
 def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks() -> None:
     model_ir = ModelIR("singleton_gate_conv_concat_nhwc_bridge_blocks_test")
-    model_ir.inputs = ["x_nhwc"]
+    model_ir.inputs = [
+        "x_nhwc",
+        "clip_nhwc",
+        "conv_nhwc",
+        "keep1_nhwc",
+        "keep2_nhwc",
+    ]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
     model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 3, 5, 7], shape_signature=[1, 3, 5, 7])
     model_ir.tensors["to_nchw_perm"] = TensorIR(name="to_nchw_perm", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([0, 3, 1, 2], dtype=np.int32), is_variable=False)
-    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7], data=np.ones([1, 1, 5, 7], dtype=np.float32), is_variable=False)
     model_ir.tensors["split0_nhwc"] = TensorIR(name="split0_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
     model_ir.tensors["split0_shape"] = TensorIR(name="split0_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 5, 7, 1], dtype=np.int32), is_variable=False)
     model_ir.tensors["clip_nhwc"] = TensorIR(name="clip_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
@@ -42538,12 +42544,18 @@ def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks() -> No
 
 def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks_accepts_direct_singleton_aux() -> None:
     model_ir = ModelIR("singleton_gate_conv_concat_direct_aux_test")
-    model_ir.inputs = ["x_nhwc"]
+    model_ir.inputs = [
+        "x_nhwc",
+        "clip_nhwc",
+        "aux_nhwc",
+        "keep1_nhwc",
+        "keep2_nhwc",
+    ]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
     model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 3, 5, 7], shape_signature=[1, 3, 5, 7])
     model_ir.tensors["to_nchw_perm"] = TensorIR(name="to_nchw_perm", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([0, 3, 1, 2], dtype=np.int32), is_variable=False)
-    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7], data=np.ones([1, 1, 5, 7], dtype=np.float32), is_variable=False)
     model_ir.tensors["split0_nhwc"] = TensorIR(name="split0_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
     model_ir.tensors["split0_shape"] = TensorIR(name="split0_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 5, 7, 1], dtype=np.int32), is_variable=False)
     model_ir.tensors["clip_nhwc"] = TensorIR(name="clip_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
@@ -42589,7 +42601,7 @@ def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks_accepts
 
 def test_flatbuffer_direct_transpose_unary_split_concat_single_post_nchw() -> None:
     model_ir = ModelIR("transpose_unary_split_concat_single_post_nchw_test")
-    model_ir.inputs = ["x_nhwc"]
+    model_ir.inputs = ["x_nhwc", "clip3_nhwc"]
     model_ir.outputs = ["cat_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 2], shape_signature=[1, 5, 7, 2])
     model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 2, 5, 7], shape_signature=[1, 2, 5, 7])

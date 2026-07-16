@@ -9,10 +9,10 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _clone_quantization,
     _invert_perm,
     _is_per_tensor_quantization,
@@ -1135,6 +1135,7 @@ def run_input_unary_passthrough_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run the repeated leading-input, Asin, and Erf passthrough sequence."""
 
@@ -1269,6 +1270,7 @@ def run_input_unary_passthrough_cleanup(
             "rewritten_erf_transpose_passthrough_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -2014,6 +2016,7 @@ def run_hard_activation_passthrough_cleanup(
     reverse_hardsigmoid_order: bool = False,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run hard-activation passthrough specs in the selected production order."""
 
@@ -2295,6 +2298,7 @@ def run_hard_activation_passthrough_cleanup(
             "rewritten_hardsigmoid_mul_transpose_passthrough_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

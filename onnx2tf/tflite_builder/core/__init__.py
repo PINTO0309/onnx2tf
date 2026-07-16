@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
     summarize_model_ir_pass_diagnostics,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "ModelIRGraphIndex",
     "ModelIRPreflightResult",
     "ModelIRPassState",
+    "ModelIRPassStateScope",
     "run_model_ir_pass_group",
     "summarize_model_ir_pass_diagnostics",
     "ModelIRInvariantError",

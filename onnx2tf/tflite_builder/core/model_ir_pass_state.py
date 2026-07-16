@@ -250,6 +250,37 @@ class ModelIRPreflightResult:
     operators_visited: int
 
 
+@dataclass
+class ModelIRPassStateScope:
+    """Lazily share pass state across adjacent groups with no raw mutation."""
+
+    model_ir: ModelIR
+    layout_state: Optional[LayoutState] = None
+    _state: Optional[ModelIRPassState] = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
+
+    def acquire(
+        self,
+        *,
+        model_ir: ModelIR,
+        layout_state: Optional[LayoutState],
+    ) -> Tuple[ModelIRPassState, bool]:
+        if model_ir is not self.model_ir:
+            raise ValueError("ModelIRPassStateScope cannot cross ModelIR instances")
+        if layout_state is not self.layout_state:
+            raise ValueError("ModelIRPassStateScope cannot cross LayoutState instances")
+        if self._state is None:
+            self._state = ModelIRPassState(
+                self.model_ir,
+                layout_state=self.layout_state,
+            )
+            return self._state, True
+        return self._state, False
+
+
 def preflight_any_operator(
     model_ir: ModelIR,
     predicate: Callable[[OperatorIR], bool],
@@ -356,6 +387,7 @@ def run_model_ir_pass_group(
     layout_state: Optional[LayoutState] = None,
     default_details: Optional[Mapping[str, Any]] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
     preflight: Optional[
         Callable[[ModelIR], bool | ModelIRPreflightResult]
     ] = None,
@@ -431,8 +463,14 @@ def run_model_ir_pass_group(
             for spec in manager.ordered_specs()
         ]
     else:
-        state_built = True
-        state = ModelIRPassState(model_ir, layout_state=layout_state)
+        if state_scope is None:
+            state = ModelIRPassState(model_ir, layout_state=layout_state)
+            state_built = True
+        else:
+            state, state_built = state_scope.acquire(
+                model_ir=model_ir,
+                layout_state=layout_state,
+            )
         try:
             results = manager.run(state)
         except PassInvariantError as error:

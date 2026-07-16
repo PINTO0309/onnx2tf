@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-16T01:46:47+09:00",
+  "branch": "fb-refactor5",
+  "pre_fix_evidence_commit": "a6c4c227",
+  "pre_fix_result": "docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-16_result.json",
+  "status": "recorded_candidates_attributed_and_resolved",
+  "branch_attribution": {
+    "good_branch": "origin/main",
+    "good_commit": "a86401539c57188a49b1ce0481c9e0d978a05aa6",
+    "bad_commit": "48f92183574c0d726696d1cf4b6eef8a90ce53e2",
+    "first_bad_commit": "78ba42aed51907f824124cb332814aaff507a1b7",
+    "first_bad_subject": "Index NCHW concat transpose-conv repair",
+    "method": "Sequential git bisect using the retained ONNX files and requiring the TFLite accuracy report for both semantic candidates.",
+    "models_run_concurrently": 1
+  },
+  "root_causes": [
+    {
+      "model": "imageclassifier.onnx",
+      "cause": "The indexed candidate guard rejected compatible fan-out where one corrected NCHW Concat/activation tensor feeds multiple [0,2,3,1] Transpose-to-Conv branches.",
+      "pre_fix_runtime_error": "LiteRT CONV_2D node 454 rejected input/filter channel divisibility: 192 != 0."
+    },
+    {
+      "model": "text_detection_en_ppocrv3_2023may_int8.onnx",
+      "cause": "The indexed candidate guard required embedded ndarray filter storage and rejected the QLinearConv lowering form where a constant INT8 filter is shape-preservingly CAST to the runtime FLOAT32 Conv filter.",
+      "pre_fix_runtime_error": "LiteRT CONV_2D node 1324 rejected input/filter channel divisibility: 24 != 0."
+    }
+  ],
+  "fix": {
+    "owner": "onnx2tf/tflite_builder/passes/concat_transpose_conv_layout.py",
+    "changes": [
+      "Allow fan-out only when every sibling consumer is the same constant [0,2,3,1] Transpose contract or a Conv/TransposeConv data consumer with the same required input-channel count.",
+      "Continue rejecting public boundary tensors, unrelated side consumers, produced permutation tensors, duplicate producers, incompatible filter channels, and dynamic/non-constant filter storage.",
+      "Accept only the strict constant-source CAST filter form in addition to embedded ndarray filters.",
+      "Collect every compatible repair plan against the unchanged graph before applying plans, so all sibling branch metadata is updated consistently."
+    ],
+    "new_unit_contracts": [
+      "compatible shared Transpose-output Conv fan-out",
+      "compatible shared pre-Transpose fan-out",
+      "constant-source CAST filter storage",
+      "existing unsafe fan-out and produced-filter rejection matrix"
+    ]
+  },
+  "semantic_candidates": [
+    {
+      "model": "text_detection_en_ppocrv3_2023may_int8.onnx",
+      "origin_main": {
+        "classification": "tflite_fail",
+        "max_abs": 0.7411765307188034,
+        "duration_sec": 13.114933013916016,
+        "float32_tflite_sha256": "08adb41ce8ba8ad0f7a121cb383782043d3caaab292dcd7d01de082ffececce8"
+      },
+      "fb_refactor5_pre_fix": {
+        "classification": "missing_tflite_report",
+        "float32_tflite_sha256": "995709a457c6fdddeda675af3b0ae1be91a3f70f0fb720eb7e7c40e2377b83b3"
+      },
+      "fb_refactor5_post_fix": {
+        "classification": "tflite_fail",
+        "max_abs": 0.7411765307188034,
+        "duration_sec": 13.18602705001831,
+        "float32_tflite_sha256": "3a4be816fe223cb1dcfad15f837238c398a7216dfc733c1c3bef179f93e581f7",
+        "assessment": "Known numeric non-pass restored exactly; executable TFLite and accuracy report restored."
+      },
+      "swap_detected": false
+    },
+    {
+      "model": "imageclassifier.onnx",
+      "origin_main": {
+        "classification": "pass",
+        "max_abs": 6.67572021484375e-06,
+        "duration_sec": 7.4130613803863525,
+        "float32_tflite_sha256": "b22fb4bcb2d7be44e7f45ab9b70eff5ca0a1b06332569c7b9f82201510c654e7"
+      },
+      "fb_refactor5_pre_fix": {
+        "classification": "missing_tflite_report",
+        "float32_tflite_sha256": "0ae62a5840325d49ae24410105bc0120e7328e15c87d1ef62a1deb7a65e61004"
+      },
+      "fb_refactor5_post_fix": {
+        "classification": "pass",
+        "max_abs": 6.67572021484375e-06,
+        "duration_sec": 8.196080923080444,
+        "float32_tflite_sha256": "b22fb4bcb2d7be44e7f45ab9b70eff5ca0a1b06332569c7b9f82201510c654e7",
+        "assessment": "Pass restored with a byte-identical float32 TFLite artifact relative to origin/main."
+      },
+      "swap_detected": false
+    }
+  ],
+  "already_passing_neighbors": [
+    {
+      "model": "face_detection_yunet_2023mar_int8.onnx",
+      "classification": "pass",
+      "max_abs": 0.0,
+      "pre_and_post_float32_tflite_sha256": "99bf69b8b89902c43f0ed4f89654bb2e498ffa0e712d37aa284ebedd48104451"
+    },
+    {
+      "model": "FastestDet.onnx",
+      "classification": "pass",
+      "max_abs": 1.3113021850585938e-05,
+      "pre_and_post_float32_tflite_sha256": "3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b"
+    },
+    {
+      "model": "yolox_nano_with_post.onnx",
+      "classification": "pass",
+      "max_abs": 0.0,
+      "pre_and_post_float32_tflite_sha256": "6e307769aa9f8b7dc6d53183c7457cc0be6ca0758c22949b7e6c62327171acad"
+    },
+    {
+      "model": "human_segmentation_pphumanseg_2021oct_org.onnx",
+      "classification": "pass",
+      "max_abs": 2.384185791015625e-07,
+      "pre_and_post_float32_tflite_sha256": "b69eb57a7628668d73fbf4e06ffa23403d02ebab33b5661f0c60a81395610bb9"
+    }
+  ],
+  "hybridnets_timing_attribution": {
+    "model": "hybridnets_384x640_sim.onnx",
+    "initial_45_second_run": {
+      "classification": "timeout",
+      "duration_sec": 45.17418718338013,
+      "swap_detected": false
+    },
+    "fb_refactor5_90_second_diagnostic": {
+      "classification": "pass",
+      "duration_sec": 25.559048891067505,
+      "max_abs": 0.0002593994140625,
+      "swap_detected": false
+    },
+    "origin_main_90_second_diagnostic": {
+      "classification": "pass",
+      "duration_sec": 25.912007331848145,
+      "max_abs": 0.0002593994140625,
+      "swap_detected": false
+    },
+    "float32_tflite_sha256_both_branches": "413855e793ba823ff7a4d24cc05c029435391959715ec6bce94c3652c58b9d7b",
+    "assessment": "One-off runtime variance; no branch-specific semantic or performance regression and no exclusion added."
+  },
+  "tests": [
+    {
+      "command": "uv run --no-sync pytest -q tests/test_flatbuffer_direct_bulk_runner.py",
+      "result": "36 passed"
+    },
+    {
+      "command": "uv run --no-sync pytest -q tests/test_flatbuffer_direct_indexed_concat_transpose_conv_layout.py tests/test_flatbuffer_direct_architecture.py",
+      "result": "232 passed"
+    },
+    {
+      "command": "uv run --no-sync pytest -q tests/test_optional_tensorflow.py -k 'flatbuffer_direct_convert_succeeds_without_tensorflow or flatbuffer_direct_cotof_succeeds_without_tensorflow'",
+      "result": "2 passed, 9 deselected"
+    },
+    {
+      "command": "Focused sequential conversion of the two semantic candidates after the final guard change",
+      "result": "imageclassifier pass; text_detection known numeric fail restored; SWAP 0"
+    },
+    {
+      "command": "Focused sequential conversion of four already-passing structural neighbors",
+      "result": "4 passed; all four float32 TFLite hashes unchanged; SWAP 0"
+    }
+  ],
+  "full_corpus_rerun": {
+    "performed": false,
+    "reason": "The user requested minimal conversion testing while prioritizing fixes. The full 49-model pre-fix run is retained, and post-fix validation was limited to the affected models, four structural neighbors, and the timing candidate."
+  }
+}

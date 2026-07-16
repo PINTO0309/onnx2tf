@@ -10,8 +10,13 @@ from onnx2tf.tflite_builder.artifact_metadata import (
 from onnx2tf.tflite_builder.artifact_preparation import (
     isolate_float32_model_ir_for_tflite_write,
     resolve_requested_artifact_controls,
+    resolve_requested_exporter_controls,
 )
-from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
+from onnx2tf.tflite_builder.core.contracts import (
+    ArtifactPlan,
+    ConversionRequest,
+    ConversionResult,
+)
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.progress import (
     ProgressSpinner as _ProgressSpinner,
@@ -138,36 +143,26 @@ def _format_write_timing_line(
 
 def _build_export_progress_labels(
     *,
-    report_op_coverage: bool,
-    split_plan_requested: bool,
-    output_dynamic_range_quantized_tflite: bool,
-    output_integer_quantized_tflite: bool,
-    output_weights: bool,
-    output_saved_model_from_model_ir: bool,
-    output_pytorch_from_model_ir: bool,
+    artifact_plan: ArtifactPlan,
 ) -> List[str]:
     labels: List[str] = [
         "tensor correspondence report",
     ]
-    if report_op_coverage:
+    if artifact_plan.op_coverage_report:
         labels.append("op coverage report")
-    if split_plan_requested:
+    if artifact_plan.split_manifest:
         labels.append("split planning")
-    labels.extend(
-        [
-            "write float32 tflite",
-            "write saved_model",
-            "write pytorch",
-            "write float16 tflite",
-        ]
-    )
-    if not output_saved_model_from_model_ir:
-        labels.remove("write saved_model")
-    if not output_pytorch_from_model_ir:
-        labels.remove("write pytorch")
-    if output_dynamic_range_quantized_tflite:
+    if artifact_plan.float32_tflite:
+        labels.append("write float32 tflite")
+    if artifact_plan.saved_model:
+        labels.append("write saved_model")
+    if artifact_plan.pytorch:
+        labels.append("write pytorch")
+    if artifact_plan.float16_tflite:
+        labels.append("write float16 tflite")
+    if artifact_plan.dynamic_range_quantized_tflite:
         labels.append("write dynamic range quant tflite")
-    if output_integer_quantized_tflite:
+    if artifact_plan.integer_quantized_tflite:
         labels.extend(
             [
                 "write integer quant tflite",
@@ -176,16 +171,16 @@ def _build_export_progress_labels(
                 "write full integer quant int16-act tflite",
             ]
         )
-    if output_weights:
+    if artifact_plan.weights:
         labels.extend(
             [
                 "export float32 weights",
                 "export float16 weights",
             ]
         )
-        if output_dynamic_range_quantized_tflite:
+        if artifact_plan.dynamic_range_quantized_tflite:
             labels.append("export dynamic range quant weights")
-        if output_integer_quantized_tflite:
+        if artifact_plan.integer_quantized_tflite:
             labels.extend(
                 [
                     "export integer quant weights",
@@ -243,15 +238,12 @@ def _set_reduced_precision_support_metadata(
 
 def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     request = ConversionRequest.from_kwargs(kwargs)
-    _reject_unsupported_quantization(**kwargs)
+    _reject_unsupported_quantization(**request.options)
 
     output_folder_path = request.output_folder_path
     output_file_name = request.output_file_name
     onnx_graph = request.onnx_graph
     output_weights = request.artifacts.weights
-    quant_type = kwargs.get("quant_type", "per-channel")
-    input_quant_dtype = kwargs.get("input_quant_dtype", "int8")
-    output_quant_dtype = kwargs.get("output_quant_dtype", "int8")
     output_dynamic_range_quantized_tflite = request.artifacts.dynamic_range_quantized_tflite
     output_integer_quantized_tflite = request.artifacts.integer_quantized_tflite
     output_saved_model_from_model_ir = request.artifacts.saved_model
@@ -259,12 +251,6 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     output_torchscript_from_model_ir = request.artifacts.torchscript
     output_dynamo_onnx_from_model_ir = request.artifacts.dynamo_onnx
     output_exported_program_from_model_ir = request.artifacts.exported_program
-    if (
-        output_torchscript_from_model_ir
-        or output_dynamo_onnx_from_model_ir
-        or output_exported_program_from_model_ir
-    ):
-        output_pytorch_from_model_ir = True
     required_pytorch_feature: Optional[str] = None
     if output_torchscript_from_model_ir:
         required_pytorch_feature = "flatbuffer_direct TorchScript export"
@@ -276,75 +262,64 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         required_pytorch_feature = "flatbuffer_direct PyTorch package export"
     if required_pytorch_feature is not None:
         require_torch(required_pytorch_feature)
-    saved_model_output_folder_path = kwargs.get(
-        "saved_model_output_folder_path",
-        None,
+    exporter_controls = resolve_requested_exporter_controls(
+        request.options,
+        output_folder_path=output_folder_path,
+        output_file_name=output_file_name,
+        artifact_plan=request.artifacts,
     )
-    if saved_model_output_folder_path is None:
-        saved_model_output_folder_path = output_folder_path
-    pytorch_output_folder_path = kwargs.get(
-        "pytorch_output_folder_path",
-        None,
+    saved_model_output_folder_path = (
+        exporter_controls.saved_model_output_folder_path
     )
-    if pytorch_output_folder_path is None:
-        pytorch_output_folder_path = os.path.join(
-            output_folder_path,
-            f"{output_file_name}_pytorch",
-        )
-    persist_saved_model_output = bool(
-        kwargs.get(
-            "persist_saved_model_output",
-            output_saved_model_from_model_ir,
-        )
-    )
+    pytorch_output_folder_path = exporter_controls.pytorch_output_folder_path
+    persist_saved_model_output = exporter_controls.persist_saved_model_output
     enable_accumulation_type_float16 = bool(
-        kwargs.get("enable_accumulation_type_float16", False)
+        request.get("enable_accumulation_type_float16", False)
     )
     force_split_manifest = request.artifacts.split_manifest
     split_plan_requested = bool(force_split_manifest)
     report_op_coverage = request.artifacts.op_coverage_report
-    custom_input_op_name_np_data_path = kwargs.get(
-        "custom_input_op_name_np_data_path",
-        None,
+    custom_input_op_name_np_data_path = (
+        exporter_controls.custom_input_op_name_np_data_path
     )
-    shape_hints = kwargs.get("shape_hints", None)
-    test_data_nhwc_path = kwargs.get("test_data_nhwc_path", None)
-    native_pytorch_generation_timeout_sec = int(
-        kwargs.get("native_pytorch_generation_timeout_sec", 0) or 0
+    shape_hints = exporter_controls.shape_hints
+    test_data_nhwc_path = exporter_controls.test_data_nhwc_path
+    native_pytorch_generation_timeout_sec = (
+        exporter_controls.native_pytorch_generation_timeout_sec
     )
-    output_nms_with_argmax = bool(kwargs.get("output_nms_with_argmax", False))
-    switch_nms_version = str(kwargs.get("switch_nms_version", "v4")).strip().lower()
+    output_nms_with_argmax = bool(request.get("output_nms_with_argmax", False))
+    switch_nms_version = str(request.get("switch_nms_version", "v4")).strip().lower()
     if switch_nms_version not in {"v4", "v5"}:
         raise ValueError(
             "switch_nms_version must be 'v4' or 'v5'. "
             f"got: {switch_nms_version}"
         )
-    keep_ncw_or_nchw_or_ncdhw_input_names = kwargs.get(
+    keep_ncw_or_nchw_or_ncdhw_input_names = request.get(
         "keep_ncw_or_nchw_or_ncdhw_input_names",
         None,
     )
-    keep_nwc_or_nhwc_or_ndhwc_input_names = kwargs.get(
+    keep_nwc_or_nhwc_or_ndhwc_input_names = request.get(
         "keep_nwc_or_nhwc_or_ndhwc_input_names",
         None,
     )
-    keep_shape_absolutely_input_names = kwargs.get(
+    keep_shape_absolutely_input_names = request.get(
         "keep_shape_absolutely_input_names",
         None,
     )
     disable_group_convolution = bool(
-        kwargs.get("disable_group_convolution", False)
+        request.get("disable_group_convolution", False)
     )
     enable_batchmatmul_unfold = bool(
-        kwargs.get("enable_batchmatmul_unfold", False)
+        request.get("enable_batchmatmul_unfold", False)
     )
     enable_rnn_unroll = bool(
-        kwargs.get("enable_rnn_unroll", False)
+        request.get("enable_rnn_unroll", False)
     )
-    mvn_epsilon = float(kwargs.get("mvn_epsilon", 1e-10))
+    mvn_epsilon = float(request.get("mvn_epsilon", 1e-10))
     flatbuffer_direct_allow_custom_ops = bool(
-        kwargs.get("flatbuffer_direct_allow_custom_ops", False)
+        request.get("flatbuffer_direct_allow_custom_ops", False)
     )
-    custom_allowlist_raw = kwargs.get(
+    custom_allowlist_raw = request.get(
         "flatbuffer_direct_custom_op_allowlist",
         None,
     )
@@ -359,11 +334,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         flatbuffer_direct_custom_op_allowlist = [v] if v != "" else None
     artifact_execution_controls = resolve_requested_artifact_controls(
         request.options,
-        split_plan_requested=split_plan_requested,
-        quantization_requested=(
-            output_dynamic_range_quantized_tflite
-            or output_integer_quantized_tflite
-        ),
+        artifact_plan=request.artifacts,
         default_split_max_bytes=DEFAULT_TFLITE_SPLIT_MAX_BYTES,
         default_split_target_bytes=DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     )
@@ -379,45 +350,60 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         or output_integer_quantized_tflite
     ) and quant_controls is None:
         raise RuntimeError("quantization artifact controls were not resolved")
+    quant_type = (
+        quant_controls["quant_type"]
+        if quant_controls is not None
+        else "per-channel"
+    )
+    input_quant_dtype = (
+        quant_controls["input_quant_dtype"]
+        if quant_controls is not None
+        else "int8"
+    )
+    output_quant_dtype = (
+        quant_controls["output_quant_dtype"]
+        if quant_controls is not None
+        else "int8"
+    )
     flatbuffer_direct_show_progress = bool(
-        kwargs.get("flatbuffer_direct_show_progress", True)
+        request.get("flatbuffer_direct_show_progress", True)
     )
     number_of_dimensions_after_flextranspose_compression = int(
-        kwargs.get("number_of_dimensions_after_flextranspose_compression", 6)
+        request.get("number_of_dimensions_after_flextranspose_compression", 6)
     )
     disable_suppression_flextranspose = bool(
-        kwargs.get("disable_suppression_flextranspose", False)
+        request.get("disable_suppression_flextranspose", False)
     )
     number_of_dimensions_after_flexstridedslice_compression = int(
-        kwargs.get("number_of_dimensions_after_flexstridedslice_compression", 5)
+        request.get("number_of_dimensions_after_flexstridedslice_compression", 5)
     )
     disable_suppression_flexstridedslice = bool(
-        kwargs.get("disable_suppression_flexstridedslice", False)
+        request.get("disable_suppression_flexstridedslice", False)
     )
     optimization_for_gpu_delegate = bool(
-        kwargs.get("optimization_for_gpu_delegate", False)
+        request.get("optimization_for_gpu_delegate", False)
     )
     replace_argmax_to_reducemax_and_indices_is_int64 = bool(
-        kwargs.get("replace_argmax_to_reducemax_and_indices_is_int64", False)
+        request.get("replace_argmax_to_reducemax_and_indices_is_int64", False)
     )
     replace_argmax_to_reducemax_and_indices_is_float32 = bool(
-        kwargs.get("replace_argmax_to_reducemax_and_indices_is_float32", False)
+        request.get("replace_argmax_to_reducemax_and_indices_is_float32", False)
     )
     replace_argmax_to_fused_argmax_and_indices_is_int64 = bool(
-        kwargs.get("replace_argmax_to_fused_argmax_and_indices_is_int64", False)
+        request.get("replace_argmax_to_fused_argmax_and_indices_is_int64", False)
     )
     replace_argmax_to_fused_argmax_and_indices_is_float32 = bool(
-        kwargs.get("replace_argmax_to_fused_argmax_and_indices_is_float32", False)
+        request.get("replace_argmax_to_fused_argmax_and_indices_is_float32", False)
     )
     fused_argmax_scale_ratio = float(
-        kwargs.get("fused_argmax_scale_ratio", 0.5)
+        request.get("fused_argmax_scale_ratio", 0.5)
     )
-    requested_pseudo_ops_raw = kwargs.get("replace_to_pseudo_operators", None)
-    input_names_to_interrupt_model_conversion = kwargs.get(
+    requested_pseudo_ops_raw = request.get("replace_to_pseudo_operators", None)
+    input_names_to_interrupt_model_conversion = request.get(
         "input_names_to_interrupt_model_conversion",
         None,
     )
-    output_names_to_interrupt_model_conversion = kwargs.get(
+    output_names_to_interrupt_model_conversion = request.get(
         "output_names_to_interrupt_model_conversion",
         None,
     )
@@ -618,13 +604,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         raise
 
     export_progress_labels = _build_export_progress_labels(
-        report_op_coverage=report_op_coverage,
-        split_plan_requested=split_plan_requested,
-        output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-        output_integer_quantized_tflite=output_integer_quantized_tflite,
-        output_weights=output_weights,
-        output_saved_model_from_model_ir=output_saved_model_from_model_ir,
-        output_pytorch_from_model_ir=output_pytorch_from_model_ir,
+        artifact_plan=request.artifacts,
     )
     export_progress_total = int(len(export_progress_labels))
     export_progress_step = 0

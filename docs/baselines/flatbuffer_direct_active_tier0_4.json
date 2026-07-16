@@ -2470,8 +2470,9 @@
     {
       "tier": 3,
       "model": "vit_b_encoder.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 2.6226043701171875e-06
+      "baseline_classification": "timeout",
+      "baseline_reason": "timeout_after_600s",
+      "error_signature_sha256": "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
     },
     {
       "tier": 3,
@@ -2622,7 +2623,8 @@
     {
       "tier": 4,
       "model": "hybridnets_384x640_sim.onnx",
-      "baseline_classification": "pass"
+      "baseline_classification": "excluded",
+      "baseline_reason": "repeated_quick_ceiling_timeout"
     },
     {
       "tier": 4,
@@ -2706,8 +2708,9 @@
     {
       "tier": 4,
       "model": "superpoint_lightglue_end2end_fused_cpu.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 1.946091651916504e-05
+      "baseline_classification": "timeout",
+      "baseline_reason": "timeout_after_600s",
+      "error_signature_sha256": "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
     },
     {
       "tier": 4,

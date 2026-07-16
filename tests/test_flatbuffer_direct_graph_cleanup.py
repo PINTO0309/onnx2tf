@@ -5,7 +5,10 @@ import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassState,
+    ModelIRPassStateScope,
+)
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_maximum_minimum_relu0to1_chains,
@@ -421,11 +424,27 @@ def test_ordered_clamp_cleanup_updates_layout_state_and_uses_one_index(
         original_refresh(index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(
+        model_ir,
+        layout_state=layout_state,
+    )
 
-    stats = run_clamp_cleanup(model_ir, layout_state=layout_state)
+    stats = run_clamp_cleanup(
+        model_ir,
+        layout_state=layout_state,
+        state_scope=state_scope,
+    )
+    pass_state, state_built = state_scope.acquire(
+        model_ir=model_ir,
+        layout_state=layout_state,
+    )
 
     assert stats == {"rewritten_maximum_minimum_relu0to1_chains": 1}
     assert refresh_count == 1
+    assert state_built is False
+    assert pass_state.graph_index.operator_indices("MAXIMUM") == []
+    assert pass_state.graph_index.operator_indices("MINIMUM") == []
+    assert pass_state.graph_index.operator_indices("RELU_0_TO_1") == [0]
     assert [op.op_type for op in model_ir.operators] == ["RELU_0_TO_1"]
     assert "maximum" not in model_ir.tensors
     assert "maximum" not in layout_state.logical
@@ -482,15 +501,27 @@ def test_ordered_maximum_zero_relu_cleanup_updates_layout_and_diagnostics(
         original_refresh(index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(
+        model_ir,
+        layout_state=layout_state,
+    )
 
     stats = run_maximum_zero_relu_cleanup(
         model_ir,
         layout_state=layout_state,
         diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    pass_state, state_built = state_scope.acquire(
+        model_ir=model_ir,
+        layout_state=layout_state,
     )
 
     assert stats == {"rewritten_maximum_with_zero_input2_to_relu": 1}
     assert refresh_count == 1
+    assert state_built is False
+    assert pass_state.graph_index.operator_indices("MAXIMUM") == []
+    assert pass_state.graph_index.operator_indices("RELU") == [0]
     assert model_ir.operators[0].op_type == "RELU"
     assert model_ir.operators[0].inputs == ["x"]
     assert "zero" not in model_ir.tensors

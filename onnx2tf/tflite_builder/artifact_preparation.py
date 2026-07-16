@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
+from onnx2tf.tflite_builder.core.contracts import ArtifactPlan
 from onnx2tf.tflite_builder.ir import ModelIR, clone_model_ir_with_float32
 
 
@@ -67,17 +68,27 @@ class ArtifactExecutionControls:
     quantization: Optional[Mapping[str, Any]]
 
 
+@dataclass(frozen=True)
+class RequestedExporterControls:
+    saved_model_output_folder_path: str
+    persist_saved_model_output: bool
+    pytorch_output_folder_path: str
+    native_pytorch_generation_timeout_sec: int
+    custom_input_op_name_np_data_path: Any
+    shape_hints: Any
+    test_data_nhwc_path: Any
+
+
 def resolve_requested_artifact_controls(
     options: Mapping[str, Any],
     *,
-    split_plan_requested: bool,
-    quantization_requested: bool,
+    artifact_plan: ArtifactPlan,
     default_split_max_bytes: int,
     default_split_target_bytes: int,
 ) -> ArtifactExecutionControls:
     split_max_bytes: Optional[int] = None
     split_target_bytes: Optional[int] = None
-    if split_plan_requested:
+    if artifact_plan.split_manifest:
         split_max_bytes = int(
             _option_or_environment(
                 options,
@@ -96,8 +107,16 @@ def resolve_requested_artifact_controls(
         )
 
     quantization: Optional[Mapping[str, Any]] = None
-    if quantization_requested:
-        quantization = MappingProxyType(
+    if (
+        artifact_plan.dynamic_range_quantized_tflite
+        or artifact_plan.integer_quantized_tflite
+    ):
+        quantization_values = {
+            "quant_type": options.get("quant_type", "per-channel"),
+            "input_quant_dtype": options.get("input_quant_dtype", "int8"),
+            "output_quant_dtype": options.get("output_quant_dtype", "int8"),
+        }
+        quantization_values.update(
             {
                 key: cast(
                     _option_or_environment(
@@ -112,11 +131,73 @@ def resolve_requested_artifact_controls(
                 )
             }
         )
+        quantization = MappingProxyType(quantization_values)
 
     return ArtifactExecutionControls(
         split_max_bytes=split_max_bytes,
         split_target_bytes=split_target_bytes,
         quantization=quantization,
+    )
+
+
+def resolve_requested_exporter_controls(
+    options: Mapping[str, Any],
+    *,
+    output_folder_path: str,
+    output_file_name: str,
+    artifact_plan: ArtifactPlan,
+) -> RequestedExporterControls:
+    saved_model_output_folder_path = str(output_folder_path)
+    pytorch_output_folder_path = os.path.join(
+        str(output_folder_path),
+        f"{output_file_name}_pytorch",
+    )
+    persist_saved_model_output = False
+    native_pytorch_generation_timeout_sec = 0
+    custom_input_op_name_np_data_path = None
+    shape_hints = None
+    test_data_nhwc_path = None
+
+    if artifact_plan.saved_model:
+        saved_model_output_option = options.get(
+            "saved_model_output_folder_path",
+            None,
+        )
+        if saved_model_output_option is not None:
+            saved_model_output_folder_path = saved_model_output_option
+    if artifact_plan.pytorch:
+        pytorch_output_option = options.get(
+            "pytorch_output_folder_path",
+            None,
+        )
+        if pytorch_output_option is not None:
+            pytorch_output_folder_path = pytorch_output_option
+    if artifact_plan.saved_model:
+        persist_saved_model_output = bool(
+            options.get("persist_saved_model_output", True)
+        )
+    if artifact_plan.integer_quantized_tflite or artifact_plan.pytorch:
+        custom_input_op_name_np_data_path = options.get(
+            "custom_input_op_name_np_data_path",
+            None,
+        )
+    if artifact_plan.pytorch:
+        shape_hints = options.get("shape_hints", None)
+        test_data_nhwc_path = options.get("test_data_nhwc_path", None)
+        native_pytorch_generation_timeout_sec = int(
+            options.get("native_pytorch_generation_timeout_sec", 0) or 0
+        )
+
+    return RequestedExporterControls(
+        saved_model_output_folder_path=saved_model_output_folder_path,
+        persist_saved_model_output=persist_saved_model_output,
+        pytorch_output_folder_path=pytorch_output_folder_path,
+        native_pytorch_generation_timeout_sec=(
+            native_pytorch_generation_timeout_sec
+        ),
+        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        shape_hints=shape_hints,
+        test_data_nhwc_path=test_data_nhwc_path,
     )
 
 

@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
@@ -20,6 +21,7 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
+    run_boundary_input_batchmatmul_cleanup,
     run_boundary_input_normalization_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
@@ -296,6 +298,1321 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
         }
         for event in diagnostics
     )
+
+
+def test_adjacent_gate_runners_reuse_one_lazy_pass_state(monkeypatch) -> None:
+    operator_types = [
+        "TRANSPOSE",
+        "MEAN",
+        "REDUCE_MAX",
+        "CONCATENATION",
+        "MIRROR_PAD",
+        "TRANSPOSE",
+        "CONV_2D",
+        "MUL",
+        "ADD",
+        "LOGISTIC",
+        "SUB",
+        "RESHAPE",
+        "LEAKY_RELU",
+        "SCATTER_ND",
+        "CONV_3D",
+    ]
+    model_ir = ModelIR(
+        "gate_scope_preflight_only",
+        operators=[OperatorIR(op_type, [], []) for op_type in operator_types],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_mixed_attention_layout_cleanup,
+        run_elementwise_gate_layout_cleanup,
+        run_pad_layout_cleanup,
+        run_dual_postconv_gate_layout_cleanup,
+        run_ndhwc_gate_layout_cleanup,
+        run_cost_volume_scatter_layout_cleanup,
+        run_add_concat_suffix_layout_cleanup,
+        run_dual_mul_concat_layout_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 15
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_qkv_attention_pair_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "qkv_attention_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "GATHER",
+                "GATHER",
+                "RESHAPE",
+                "RESHAPE",
+                "TRANSPOSE",
+                "TRANSPOSE",
+                "SLICE",
+                "SLICE",
+                "SLICE",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_qkv_attention_prefix_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_qkv_attention_bridge_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 6
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
+
+
+def test_late_layout_qkv_bridge_pair_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "late_layout_qkv_bridge_scope_preflight_only",
+        operators=[
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("SLICE", [], []),
+            OperatorIR("SLICE", [], []),
+            OperatorIR("SLICE", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_layout_transpose_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_qkv_attention_bridge_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_duplicate_quantized_prelu_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "duplicate_quantized_prelu_scope_preflight_only",
+        operators=[
+            OperatorIR("RESHAPE", [], []),
+            OperatorIR("RESHAPE", [], []),
+            OperatorIR("DEQUANTIZE", [], []),
+            OperatorIR("PRELU", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_duplicate_fanout_cleanup(
+        model_ir,
+        include_transpose=False,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_quantized_prelu_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 5
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]
+
+
+def test_constant_fold_cast_pair_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "constant_fold_cast_scope_preflight_only",
+        operators=[
+            OperatorIR(
+                "CAST",
+                [],
+                [],
+                options={
+                    "inDataType": "INT32",
+                    "outDataType": "INT64",
+                },
+            ),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_constant_input_fold_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_redundant_cast_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 5
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
+
+
+def test_very_late_gather_constant_normalization_cluster_reuses_one_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "very_late_gather_constant_normalization_scope_preflight_only",
+        operators=[
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("GATHER", [], []),
+            OperatorIR(
+                "CAST",
+                [],
+                [],
+                options={
+                    "inDataType": "INT32",
+                    "outDataType": "INT64",
+                },
+            ),
+            OperatorIR("PAD", [], []),
+            OperatorIR("MEAN", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_transpose_gather_axis_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_constant_input_fold_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_redundant_cast_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_normalization_pad_layout_cleanup(
+        model_ir,
+        include_instance=False,
+        include_flatten=True,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 7
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_se_fc_gather_channel_fanout_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "se_fc_gather_channel_fanout_scope_preflight_only",
+        operators=[
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("MUL", [], []),
+            OperatorIR("FULLY_CONNECTED", [], []),
+            OperatorIR("GATHER", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_se_fc_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_transpose_gather_channel_fanout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 2
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        False,
+    ]
+
+
+def test_terminal_boundary_layout_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "terminal_boundary_layout_scope_preflight_only",
+        operators=[
+            OperatorIR(
+                "TRANSPOSE",
+                ["x", "perm"],
+                ["x_onnx_ncx_internal"],
+            ),
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("MUL", [], []),
+            OperatorIR("CONCATENATION", [], []),
+            OperatorIR("PAD", [], []),
+            OperatorIR("GATHER", [], []),
+        ],
+    )
+    model_ir.inputs = ["x"]
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_dual_mul_concat_layout_cleanup,
+        run_boundary_input_layout_cleanup,
+        run_pad_layout_cleanup,
+        run_layout_transpose_cleanup,
+        run_transpose_gather_channel_fanout_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 7
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_late_ndhwc_cost_volume_pair_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "late_ndhwc_cost_volume_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "RESHAPE",
+                "LEAKY_RELU",
+                "MUL",
+                "SCATTER_ND",
+                "CONV_3D",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_ndhwc_gate_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_cost_volume_scatter_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        True,
+        False,
+    ]
+
+
+def test_late_concat_layout_cluster_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "late_concat_layout_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "CONCATENATION",
+                "DEQUANTIZE",
+                "QUANTIZE",
+                "MEAN",
+                "SUB",
+                "MUL",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_axis3_const_concat_layout_cleanup,
+        run_dequant_concat_quantize_layout_cleanup,
+        run_layernorm_statistics_layout_cleanup,
+        run_layout_transpose_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 5
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]
+
+
+def test_late_dequant_unary_fanout_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_dequant_unary_fanout_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "DEQUANTIZE",
+                "CONCATENATION",
+                "QUANTIZE",
+                "RELU",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_dequant_concat_quantize_layout_cleanup,
+        run_transpose_unary_passthrough_cleanup,
+        run_transpose_unary_fanout_bridge_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_terminal_singleton_maxpool_reshape_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "terminal_singleton_maxpool_reshape_scope_preflight_only",
+        operators=[
+            OperatorIR("RESHAPE", [], []),
+            OperatorIR("MAX_POOL_2D", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_singleton_maxpool_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        True,
+        False,
+    ]
+
+
+def test_terminal_clamp_unary_relu_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "terminal_clamp_unary_relu_scope_preflight_only",
+        operators=[
+            OperatorIR("MAXIMUM", [], []),
+            OperatorIR("MINIMUM", [], []),
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("RELU", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_clamp_cleanup,
+        run_transpose_unary_passthrough_cleanup,
+        run_maximum_zero_relu_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_late_mean_spp_gather_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_mean_spp_gather_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "MEAN",
+                "MUL",
+                "RESHAPE",
+                "ADD",
+                "CONV_2D",
+                "RESIZE_BILINEAR",
+                "CONCATENATION",
+                "GATHER",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_mean_mul_add_conv_layout_cleanup,
+        run_spp_layout_cleanup,
+        run_transpose_gather_axis_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_late_layout_mean_spp_gather_constant_cast_cluster_reuses_one_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_layout_mean_spp_gather_constant_cast_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "MEAN",
+                "MUL",
+                "RESHAPE",
+                "ADD",
+                "CONV_2D",
+                "RESIZE_BILINEAR",
+                "CONCATENATION",
+                "GATHER",
+            ]
+        ]
+        + [
+            OperatorIR(
+                "CAST",
+                [],
+                [],
+                options={
+                    "inDataType": "INT32",
+                    "outDataType": "INT64",
+                },
+            )
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_layout_transpose_cleanup,
+        run_mean_mul_add_conv_layout_cleanup,
+        run_spp_layout_cleanup,
+        run_transpose_gather_axis_cleanup,
+        run_constant_input_fold_cleanup,
+        run_redundant_cast_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 9
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_late_spp_concat_unary_conv_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_spp_concat_unary_conv_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "RESIZE_BILINEAR",
+                "ADD",
+                "CONCATENATION",
+                "MUL",
+                "CONV_2D",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_spp_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_concat_unary_conv_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 2
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[1]["metrics"]["state_built"] is False
+
+
+def test_late_hard_activation_layout_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_hard_activation_layout_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in ["TRANSPOSE", "MUL", "ADD"]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_hard_activation_passthrough_cleanup(
+        model_ir,
+        include_hardswish=False,
+        include_hardsigmoid=True,
+        include_hardsigmoid_mul=True,
+        reverse_hardsigmoid_order=True,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_layout_transpose_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        True,
+        False,
+    ]
+
+
+def test_absolute_final_normalization_attention_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "absolute_final_normalization_attention_scope_preflight_only",
+        operators=[
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("MEAN", [], []),
+            OperatorIR("REDUCE_MAX", [], []),
+            OperatorIR("CONCATENATION", [], []),
+            OperatorIR("MIRROR_PAD", [], []),
+            OperatorIR("CONV_2D", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_normalization_pad_layout_cleanup(
+        model_ir,
+        include_instance=False,
+        include_flatten=True,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_mixed_attention_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 2
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[1]["metrics"]["state_built"] is False
+
+
+def test_shuffle_gather_cluster_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "shuffle_gather_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "CONCATENATION",
+                "RESHAPE",
+                "GATHER",
+                "RELU",
+                "ADD",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_two_way_channel_shuffle_cleanup,
+        run_nhwc_channel_shuffle_cleanup,
+        run_nchw_channel_shuffle_cleanup,
+        run_transpose_gather_axis_cleanup,
+        run_layout_transpose_cleanup,
+        run_transpose_unary_fanout_bridge_cleanup,
+        run_transpose_unary_binary_fanout_bridge_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 7
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_late_nchw_shuffle_gather_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_nchw_shuffle_gather_scope_preflight_only",
+        operators=[
+            OperatorIR("RESHAPE", [], []),
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("GATHER", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_nchw_channel_shuffle_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_transpose_gather_axis_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 2
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[1]["metrics"]["state_built"] is False
+
+
+def test_unary_fanout_cluster_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "unary_fanout_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in ["TRANSPOSE", "RELU", "ADD"]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_transpose_unary_passthrough_cleanup,
+        run_transpose_unary_fanout_bridge_cleanup,
+        run_transpose_unary_binary_fanout_bridge_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_post_qdq_layout_unary_fanout_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "post_qdq_layout_unary_fanout_scope_preflight_only",
+        operators=[
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("RELU", [], []),
+            OperatorIR("ADD", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_layout_transpose_cleanup,
+        run_transpose_unary_fanout_bridge_cleanup,
+        run_transpose_unary_binary_fanout_bridge_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_boundary_batchmatmul_unary_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("boundary_batchmatmul_unary_scope_preflight_only")
+    model_ir.inputs = ["x"]
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1], [1]),
+        "perm": TensorIR("perm", "INT32", [1], [1]),
+        "transposed": TensorIR("transposed", "FLOAT32", [1], [1]),
+    }
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["x", "perm"], ["transposed"]),
+        OperatorIR("BATCH_MATMUL", [], []),
+        OperatorIR("ADD", [], []),
+    ]
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_boundary_input_batchmatmul_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_input_unary_passthrough_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 4
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
+def test_channel_slice_pad_mul_pair_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "channel_slice_pad_mul_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "MUL",
+                "ADD",
+                "SLICE",
+                "SLICE",
+                "PAD",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_pad_mul_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 4
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        True,
+        True,
+        False,
+    ]
+
+
+def test_singleton_reshape_layout_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "singleton_reshape_layout_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "RESHAPE",
+                "RESHAPE",
+                "MAX_POOL_2D",
+                "CONCATENATION",
+                "SQUEEZE",
+                "RELU",
+                "MEAN",
+                "LOGISTIC",
+                "MUL",
+                "ADD",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_layout_transpose_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_singleton_channel_transpose_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_duplicate_fanout_cleanup(
+        model_ir,
+        include_transpose=False,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_singleton_reshape_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_singleton_maxpool_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_flatten_concat_reshape_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_squeeze_reshape_identity_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_singleton_spatial_reshape_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_multi_branch_gate_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 13
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
+def test_singleton_consecutive_reshape_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "singleton_consecutive_reshape_scope_preflight_only",
+        operators=[
+            OperatorIR("TRANSPOSE", [], []),
+            OperatorIR("RESHAPE", [], []),
+            OperatorIR("RESHAPE", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_singleton_channel_transpose_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_duplicate_fanout_cleanup(
+        model_ir,
+        include_transpose=False,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        False,
+        False,
+    ]
 
 
 def test_channel_slice_merge_guard_rejects_incomplete_prefix_before_snapshot(

@@ -66,6 +66,9 @@ from onnx2tf.tflite_builder.preprocess.rules.cleanup_unused_initializers import 
 from onnx2tf.tflite_builder.preprocess import (
     get_supported_pseudo_ops_wave1_aliases,
 )
+from onnx2tf.tflite_builder.artifact_metadata import (
+    select_tflite_evaluation_artifact_paths,
+)
 from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
 
@@ -5965,6 +5968,90 @@ def convert(
                 )
             )
 
+    def _validate_and_log_flatbuffer_direct_reports_and_quantization(
+        direct_outputs: Dict[str, Any],
+    ) -> None:
+        if report_op_coverage:
+            if 'op_coverage_report_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct OP coverage report was requested but no report was generated.'
+                )
+            info(
+                Color.GREEN(
+                    f'OP coverage report output complete! '
+                    f'({direct_outputs["op_coverage_report_path"]})'
+                )
+            )
+        if 'tensor_correspondence_report_path' in direct_outputs:
+            info(
+                Color.GREEN(
+                    f'Tensor correspondence report output complete! '
+                    f'({direct_outputs["tensor_correspondence_report_path"]})'
+                )
+            )
+        if output_dynamic_range_quantized_tflite:
+            if 'dynamic_range_quant_tflite_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
+                )
+            info(
+                Color.GREEN(
+                    f'Dynamic Range Quantization tflite output complete! '
+                    f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
+                )
+            )
+        if output_integer_quantized_tflite:
+            if 'integer_quant_tflite_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct integer quantization was requested but no output was generated.'
+                )
+            if 'full_integer_quant_tflite_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct full integer quantization was requested but no output was generated.'
+                )
+            int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
+            int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
+            if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
+                raise RuntimeError(
+                    'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
+                )
+            if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
+                raise RuntimeError(
+                    'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
+                )
+            info(
+                Color.GREEN(
+                    f'INT8 Quantization tflite output complete! '
+                    f'({direct_outputs["integer_quant_tflite_path"]})'
+                )
+            )
+            info(
+                Color.GREEN(
+                    f'Full INT8 Quantization tflite output complete! '
+                    f'({direct_outputs["full_integer_quant_tflite_path"]})'
+                )
+            )
+            if int16_act_skipped:
+                info(
+                    Color.YELLOW(
+                        'INT8 Quantization with int16 activations skipped. '
+                        f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
+                    )
+                )
+            else:
+                info(
+                    Color.GREEN(
+                        f'INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'Full INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
+
     def _run_flatbuffer_direct_export(
         *,
         export_output_folder_path: str,
@@ -6231,86 +6318,9 @@ def convert(
             force_split_manifest=force_split_manifest,
             target_bytes=tflite_split_target_bytes,
         )
-        if report_op_coverage:
-            if 'op_coverage_report_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct OP coverage report was requested but no report was generated.'
-                )
-            info(
-                Color.GREEN(
-                    f'OP coverage report output complete! '
-                    f'({direct_outputs["op_coverage_report_path"]})'
-                )
-            )
-        if 'tensor_correspondence_report_path' in direct_outputs:
-            info(
-                Color.GREEN(
-                    f'Tensor correspondence report output complete! '
-                    f'({direct_outputs["tensor_correspondence_report_path"]})'
-                )
-            )
-        if output_dynamic_range_quantized_tflite:
-            if 'dynamic_range_quant_tflite_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
-                )
-            info(
-                Color.GREEN(
-                    f'Dynamic Range Quantization tflite output complete! '
-                    f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
-                )
-            )
-        if output_integer_quantized_tflite:
-            if 'integer_quant_tflite_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct integer quantization was requested but no output was generated.'
-                )
-            if 'full_integer_quant_tflite_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct full integer quantization was requested but no output was generated.'
-                )
-            int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
-            int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
-            if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                raise RuntimeError(
-                    'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
-                )
-            if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                raise RuntimeError(
-                    'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
-                )
-            info(
-                Color.GREEN(
-                    f'INT8 Quantization tflite output complete! '
-                    f'({direct_outputs["integer_quant_tflite_path"]})'
-                )
-            )
-            info(
-                Color.GREEN(
-                    f'Full INT8 Quantization tflite output complete! '
-                    f'({direct_outputs["full_integer_quant_tflite_path"]})'
-                )
-            )
-            if int16_act_skipped:
-                info(
-                    Color.YELLOW(
-                        'INT8 Quantization with int16 activations skipped. '
-                        f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
-                    )
-                )
-            else:
-                info(
-                    Color.GREEN(
-                        f'INT8 Quantization with int16 activations tflite output complete! '
-                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
-                    )
-                )
-                info(
-                    Color.GREEN(
-                        f'Full INT8 Quantization with int16 activations tflite output complete! '
-                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
-                    )
-                )
+        _validate_and_log_flatbuffer_direct_reports_and_quantization(
+            direct_outputs,
+        )
         if copy_onnx_input_output_names_to_tflite:
             info(
                 'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
@@ -6339,21 +6349,9 @@ def convert(
             ),
             contains_custom_ops=direct_contains_custom_ops,
         )
-        direct_eval_paths = {}
-        if 'float32_tflite_path' in direct_outputs:
-            direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
-        if 'float16_tflite_path' in direct_outputs:
-            direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
-        if 'dynamic_range_quant_tflite_path' in direct_outputs:
-            direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
-        if 'integer_quant_tflite_path' in direct_outputs:
-            direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
-        if 'full_integer_quant_tflite_path' in direct_outputs:
-            direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
-        if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
-            direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
-        if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
-            direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
+        direct_eval_paths = select_tflite_evaluation_artifact_paths(
+            direct_outputs
+        )
         tflite_eval_result = _run_onnx_tflite_output_check(
             tflite_paths=direct_eval_paths,
             source_label=source_label,
@@ -6467,6 +6465,8 @@ def convert(
                 flatbuffer_direct_bridge_saved_model_dir.cleanup()
             if flatbuffer_direct_staging_dir is not None:
                 flatbuffer_direct_staging_dir.cleanup()
+
+    assert tflite_backend == 'tf_converter'
 
     # debug counta
     op_counta = 1
@@ -6858,8 +6858,7 @@ def convert(
                         f'Conversion failed and automatic JSON generation could not find a solution after {attempt} attempts.'
                     )
             elif (
-                tflite_backend != 'flatbuffer_direct'
-                and not param_replacement_file
+                not param_replacement_file
                 and input_onnx_file_path
                 and not auto_generate_json_on_error
             ):
@@ -6867,199 +6866,6 @@ def convert(
                     'Conversion failed. Automatic JSON generation on error is disabled by default.\n' +
                     'Re-run with --auto_generate_json_on_error or provide a parameter replacement JSON file.'
                 )
-            if tflite_backend == 'flatbuffer_direct':
-                info(
-                    Color.YELLOW(
-                        'TF conversion path failed. '
-                        'Attempting flatbuffer_direct-only conversion. '
-                        f'reason={ex}'
-                    )
-                )
-                try:
-                    from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
-                    direct_outputs = None
-                    direct_error = None
-                    for direct_allow_custom_ops in (
-                        [flatbuffer_direct_allow_custom_ops]
-                        if flatbuffer_direct_allow_custom_ops
-                        else [False, True]
-                    ):
-                        direct_output_nms_with_argmax = bool(output_nms_with_argmax)
-                        retried_nms_with_argmax = False
-                        while True:
-                            try:
-                                direct_outputs = export_tflite_model_flatbuffer_direct(
-                                    onnx_graph=onnx_graph,
-                                    output_folder_path=output_folder_path,
-                                    output_file_name=output_file_name,
-                                    output_weights=output_weights,
-                                    quant_type=quant_type,
-                                    input_quant_dtype=input_quant_dtype,
-                                    output_quant_dtype=output_quant_dtype,
-                                    output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-                                    output_integer_quantized_tflite=output_integer_quantized_tflite,
-                                    enable_accumulation_type_float16=enable_accumulation_type_float16,
-                                    force_split_manifest=force_split_manifest,
-                                    report_op_coverage=report_op_coverage,
-                                    output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
-                                    output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
-                                    output_torchscript_from_model_ir=flatbuffer_direct_output_torchscript,
-                                    output_dynamo_onnx_from_model_ir=flatbuffer_direct_output_dynamo_onnx,
-                                    output_exported_program_from_model_ir=flatbuffer_direct_output_exported_program,
-                                    pytorch_output_folder_path=os.path.join(
-                                        output_folder_path,
-                                        f'{output_file_name}_pytorch',
-                                    ),
-                                    custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                                    shape_hints=shape_hints,
-                                    test_data_nhwc_path=test_data_nhwc_path,
-                                    flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
-                                    flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
-                                    keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
-                                    keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
-                                    keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
-                                    disable_group_convolution=disable_group_convolution,
-                                    enable_batchmatmul_unfold=enable_batchmatmul_unfold,
-                                    enable_rnn_unroll=enable_rnn_unroll,
-                                    mvn_epsilon=mvn_epsilon,
-                                    output_nms_with_argmax=direct_output_nms_with_argmax,
-                                    switch_nms_version=switch_nms_version,
-                                    tflite_split_max_bytes=tflite_split_max_bytes,
-                                    tflite_split_target_bytes=tflite_split_target_bytes,
-                                    disable_suppression_flextranspose=disable_suppression_flextranspose,
-                                    number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
-                                    disable_suppression_flexstridedslice=disable_suppression_flexstridedslice,
-                                    number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
-                                    optimization_for_gpu_delegate=optimization_for_gpu_delegate,
-                                    replace_argmax_to_reducemax_and_indices_is_int64=replace_argmax_to_reducemax_and_indices_is_int64,
-                                    replace_argmax_to_reducemax_and_indices_is_float32=replace_argmax_to_reducemax_and_indices_is_float32,
-                                    replace_argmax_to_fused_argmax_and_indices_is_int64=replace_argmax_to_fused_argmax_and_indices_is_int64,
-                                    replace_argmax_to_fused_argmax_and_indices_is_float32=replace_argmax_to_fused_argmax_and_indices_is_float32,
-                                    fused_argmax_scale_ratio=fused_argmax_scale_ratio,
-                                    replace_to_pseudo_operators=replace_to_pseudo_operators,
-                                )
-                                if direct_output_nms_with_argmax and not output_nms_with_argmax:
-                                    info(
-                                        Color.YELLOW(
-                                            'Retrying flatbuffer_direct with output_nms_with_argmax enabled '
-                                            'for builtin NonMaxSuppression lowering.'
-                                        )
-                                    )
-                                if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
-                                    info(
-                                        Color.YELLOW(
-                                            'Retrying flatbuffer_direct with custom-op lowering enabled '
-                                            'after TF conversion failure.'
-                                        )
-                                    )
-                                direct_error = None
-                                break
-                            except Exception as retry_ex:
-                                retry_ex_str = str(retry_ex)
-                                retry_nms_argmax = (
-                                    'NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax'
-                                    in retry_ex_str
-                                    or (
-                                        'reason_code=custom_op_candidate_disabled' in retry_ex_str
-                                        and 'op=NonMaxSuppression' in retry_ex_str
-                                    )
-                                )
-                                if (
-                                    not retried_nms_with_argmax
-                                    and not output_nms_with_argmax
-                                    and not direct_output_nms_with_argmax
-                                    and retry_nms_argmax
-                                ):
-                                    retried_nms_with_argmax = True
-                                    direct_output_nms_with_argmax = True
-                                    continue
-                                if (
-                                    not flatbuffer_direct_allow_custom_ops
-                                    and not disable_group_convolution
-                                    and not direct_allow_custom_ops
-                                    and 'reason_code=unsupported_grouped_convolution' in retry_ex_str
-                                ):
-                                    direct_error = retry_ex
-                                    direct_outputs = None
-                                    break
-                                direct_error = retry_ex
-                                direct_outputs = None
-                                break
-                        if direct_error is None:
-                            break
-                    if direct_error is not None:
-                        raise direct_error
-                    if direct_outputs is not None:
-                        if 'saved_model_path' in direct_outputs:
-                            info(
-                                Color.GREEN(
-                                    f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
-                                )
-                            )
-                        if 'pytorch_package_path' in direct_outputs:
-                            info(
-                                Color.GREEN(
-                                    f'PyTorch package output complete! ({direct_outputs["pytorch_package_path"]})'
-                                )
-                            )
-                        direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
-                        _log_flatbuffer_direct_custom_op_summary(
-                            direct_outputs=direct_outputs,
-                            source_label='flatbuffer_direct',
-                        )
-                        _run_flatbuffer_direct_op_error_report(
-                            tflite_path=direct_outputs.get('float32_tflite_path', None),
-                            tensor_correspondence_report_path=direct_outputs.get(
-                                'tensor_correspondence_report_path',
-                                None,
-                            ),
-                            contains_custom_ops=direct_contains_custom_ops,
-                        )
-                        direct_eval_paths = {}
-                        if 'float32_tflite_path' in direct_outputs:
-                            direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
-                        if 'float16_tflite_path' in direct_outputs:
-                            direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
-                        if 'dynamic_range_quant_tflite_path' in direct_outputs:
-                            direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
-                        if 'integer_quant_tflite_path' in direct_outputs:
-                            direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
-                        if 'full_integer_quant_tflite_path' in direct_outputs:
-                            direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
-                        if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                            direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
-                        if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                            direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-                        tflite_eval_result = _run_onnx_tflite_output_check(
-                            tflite_paths=direct_eval_paths,
-                            source_label='flatbuffer_direct',
-                            contains_custom_ops=direct_contains_custom_ops,
-                            split_manifest_path=direct_outputs.get('split_manifest_path', None),
-                        )
-                        pytorch_eval_result = _run_onnx_pytorch_output_check(
-                            package_dir=direct_outputs.get('pytorch_package_path', None),
-                            source_label='flatbuffer_direct',
-                        )
-                        _write_accuracy_comparison_report(
-                            tflite_result=tflite_eval_result,
-                            pytorch_result=pytorch_eval_result,
-                            source_label='flatbuffer_direct',
-                        )
-                        if 'split_saved_model_dirs' in direct_outputs:
-                            _maybe_run_split_saved_model_inference_check(
-                                split_manifest_path=direct_outputs.get('split_manifest_path', None),
-                                reference_tflite_path=direct_outputs.get('float32_tflite_path', None),
-                                source_label='flatbuffer_direct',
-                            )
-                        else:
-                            _maybe_run_saved_model_inference_check(
-                                saved_model_path=direct_outputs.get('saved_model_path', None),
-                                float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
-                                source_label='flatbuffer_direct',
-                            )
-                    return None
-                except Exception:
-                    raise
             # Re-raise the original error
             raise ex
 
@@ -7266,11 +7072,6 @@ def convert(
                                     )
                                     matches = re.findall(r"'([^']*)'", s)
                                     error(f'{matches[0]}')
-                                    if tflite_backend == 'flatbuffer_direct':
-                                        warn(
-                                            'Skipping saved_model export and continuing with flatbuffer_direct flow.'
-                                        )
-                                        break
                                     error(
                                         f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
                                     )
@@ -7293,11 +7094,6 @@ def convert(
                             )
                             matches = re.findall(r"'([^']*)'", s)
                             error(f'{matches[0]}')
-                            if tflite_backend == 'flatbuffer_direct':
-                                warn(
-                                    'Skipping saved_model export and continuing with flatbuffer_direct flow.'
-                                )
-                                break
                             error(
                                 f'Please convert again with the `-osd` or `--output_signaturedefs` option.'
                             )
@@ -7351,324 +7147,6 @@ def convert(
         Name: flatbuffers
         Version: 22.10.26
         """
-        if tflite_backend == 'flatbuffer_direct':
-            direct_outputs = None
-            try:
-                from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
-                direct_error = None
-                for direct_allow_custom_ops in (
-                    [flatbuffer_direct_allow_custom_ops]
-                    if flatbuffer_direct_allow_custom_ops
-                    else [False, True]
-                ):
-                    direct_output_nms_with_argmax = bool(output_nms_with_argmax)
-                    retried_nms_with_argmax = False
-                    while True:
-                        try:
-                            direct_outputs = export_tflite_model_flatbuffer_direct(
-                                onnx_graph=onnx_graph,
-                                output_folder_path=output_folder_path,
-                                output_file_name=output_file_name,
-                                output_weights=output_weights,
-                                quant_type=quant_type,
-                                input_quant_dtype=input_quant_dtype,
-                                output_quant_dtype=output_quant_dtype,
-                                output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-                                output_integer_quantized_tflite=output_integer_quantized_tflite,
-                                enable_accumulation_type_float16=enable_accumulation_type_float16,
-                                force_split_manifest=force_split_manifest,
-                                report_op_coverage=report_op_coverage,
-                                output_saved_model_from_model_ir=flatbuffer_direct_output_saved_model,
-                                output_pytorch_from_model_ir=flatbuffer_direct_output_pytorch,
-                                output_torchscript_from_model_ir=flatbuffer_direct_output_torchscript,
-                                output_dynamo_onnx_from_model_ir=flatbuffer_direct_output_dynamo_onnx,
-                                output_exported_program_from_model_ir=flatbuffer_direct_output_exported_program,
-                                pytorch_output_folder_path=os.path.join(
-                                    output_folder_path,
-                                    f'{output_file_name}_pytorch',
-                                ),
-                                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-                                shape_hints=shape_hints,
-                                test_data_nhwc_path=test_data_nhwc_path,
-                                flatbuffer_direct_allow_custom_ops=direct_allow_custom_ops,
-                                flatbuffer_direct_custom_op_allowlist=flatbuffer_direct_custom_op_allowlist,
-                                keep_ncw_or_nchw_or_ncdhw_input_names=keep_ncw_or_nchw_or_ncdhw_input_names,
-                                keep_nwc_or_nhwc_or_ndhwc_input_names=keep_nwc_or_nhwc_or_ndhwc_input_names,
-                                keep_shape_absolutely_input_names=keep_shape_absolutely_input_names,
-                                disable_group_convolution=disable_group_convolution,
-                                enable_batchmatmul_unfold=enable_batchmatmul_unfold,
-                                enable_rnn_unroll=enable_rnn_unroll,
-                                mvn_epsilon=mvn_epsilon,
-                                output_nms_with_argmax=direct_output_nms_with_argmax,
-                                switch_nms_version=switch_nms_version,
-                                tflite_split_max_bytes=tflite_split_max_bytes,
-                                tflite_split_target_bytes=tflite_split_target_bytes,
-                                disable_suppression_flextranspose=disable_suppression_flextranspose,
-                                number_of_dimensions_after_flextranspose_compression=number_of_dimensions_after_flextranspose_compression,
-                                disable_suppression_flexstridedslice=disable_suppression_flexstridedslice,
-                                number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
-                                optimization_for_gpu_delegate=optimization_for_gpu_delegate,
-                                replace_argmax_to_reducemax_and_indices_is_int64=replace_argmax_to_reducemax_and_indices_is_int64,
-                                replace_argmax_to_reducemax_and_indices_is_float32=replace_argmax_to_reducemax_and_indices_is_float32,
-                                replace_argmax_to_fused_argmax_and_indices_is_int64=replace_argmax_to_fused_argmax_and_indices_is_int64,
-                                replace_argmax_to_fused_argmax_and_indices_is_float32=replace_argmax_to_fused_argmax_and_indices_is_float32,
-                                fused_argmax_scale_ratio=fused_argmax_scale_ratio,
-                                replace_to_pseudo_operators=replace_to_pseudo_operators,
-                            )
-                            if direct_output_nms_with_argmax and not output_nms_with_argmax:
-                                info(
-                                    Color.YELLOW(
-                                        'Retrying flatbuffer_direct with output_nms_with_argmax enabled '
-                                        'for builtin NonMaxSuppression lowering.'
-                                    )
-                                )
-                            if direct_allow_custom_ops and not flatbuffer_direct_allow_custom_ops:
-                                info(
-                                    Color.YELLOW(
-                                        'Retrying flatbuffer_direct with custom-op lowering enabled.'
-                                    )
-                                )
-                            direct_error = None
-                            break
-                        except Exception as retry_ex:
-                            retry_ex_str = str(retry_ex)
-                            retry_nms_argmax = (
-                                'NonMaxSuppression class dimension > 1 requires --output_nms_with_argmax'
-                                in retry_ex_str
-                                or (
-                                    'reason_code=custom_op_candidate_disabled' in retry_ex_str
-                                    and 'op=NonMaxSuppression' in retry_ex_str
-                                )
-                            )
-                            if (
-                                not retried_nms_with_argmax
-                                and not output_nms_with_argmax
-                                and not direct_output_nms_with_argmax
-                                and retry_nms_argmax
-                            ):
-                                retried_nms_with_argmax = True
-                                direct_output_nms_with_argmax = True
-                                continue
-                            if (
-                                not flatbuffer_direct_allow_custom_ops
-                                and not disable_group_convolution
-                                and not direct_allow_custom_ops
-                                and 'reason_code=unsupported_grouped_convolution' in retry_ex_str
-                            ):
-                                direct_error = retry_ex
-                                direct_outputs = None
-                                break
-                            direct_error = retry_ex
-                            direct_outputs = None
-                            break
-                    if direct_error is None:
-                        break
-                if direct_error is not None:
-                    raise direct_error
-            except Exception as ex:
-                raise RuntimeError(
-                    'flatbuffer_direct conversion failed.'
-                ) from ex
-
-            if direct_outputs is not None:
-                info(Color.GREEN(f'Float32 tflite output complete! ({direct_outputs["float32_tflite_path"]})'))
-                info(Color.GREEN(f'Float16 tflite output complete! ({direct_outputs["float16_tflite_path"]})'))
-                if 'saved_model_path' in direct_outputs:
-                    info(
-                        Color.GREEN(
-                            f'SavedModel output complete! ({direct_outputs["saved_model_path"]})'
-                        )
-                    )
-                if 'pytorch_package_path' in direct_outputs:
-                    info(
-                        Color.GREEN(
-                            f'PyTorch package output complete! ({direct_outputs["pytorch_package_path"]})'
-                        )
-                    )
-                _log_flatbuffer_direct_split_outputs(
-                    direct_outputs,
-                    split_plan_requested=split_plan_enabled,
-                    force_split_manifest=force_split_manifest,
-                    target_bytes=tflite_split_target_bytes,
-                )
-                if report_op_coverage:
-                    if 'op_coverage_report_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct OP coverage report was requested but no report was generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'OP coverage report output complete! '
-                            f'({direct_outputs["op_coverage_report_path"]})'
-                        )
-                    )
-                if 'tensor_correspondence_report_path' in direct_outputs:
-                    info(
-                        Color.GREEN(
-                            f'Tensor correspondence report output complete! '
-                            f'({direct_outputs["tensor_correspondence_report_path"]})'
-                        )
-                    )
-                if output_dynamic_range_quantized_tflite:
-                    if 'dynamic_range_quant_tflite_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'Dynamic range quantized tflite output complete! '
-                            f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
-                        )
-                    )
-                if output_integer_quantized_tflite:
-                    if 'integer_quant_tflite_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct integer quantization was requested but no output was generated.'
-                        )
-                    if 'full_integer_quant_tflite_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct full integer quantization was requested but no output was generated.'
-                        )
-                    int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
-                    int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
-                    if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                        raise RuntimeError(
-                            'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
-                        )
-                    if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                        raise RuntimeError(
-                            'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'INT8 Quantization tflite output complete! '
-                            f'({direct_outputs["integer_quant_tflite_path"]})'
-                        )
-                    )
-                    info(
-                        Color.GREEN(
-                            f'Full INT8 Quantization tflite output complete! '
-                            f'({direct_outputs["full_integer_quant_tflite_path"]})'
-                        )
-                    )
-                    if int16_act_skipped:
-                        info(
-                            Color.YELLOW(
-                                'INT8 Quantization with int16 activations skipped. '
-                                f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
-                            )
-                        )
-                    else:
-                        info(
-                            Color.GREEN(
-                                f'INT8 Quantization with int16 activations tflite output complete! '
-                                f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
-                            )
-                        )
-                        info(
-                            Color.GREEN(
-                                f'Full INT8 Quantization with int16 activations tflite output complete! '
-                                f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
-                            )
-                        )
-                if copy_onnx_input_output_names_to_tflite:
-                    info(
-                        'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
-                    )
-                direct_contains_custom_ops = int(direct_outputs.get('custom_op_count', 0)) > 0
-                _log_flatbuffer_direct_custom_op_summary(
-                    direct_outputs=direct_outputs,
-                    source_label='flatbuffer_direct',
-                )
-                _run_flatbuffer_direct_op_error_report(
-                    tflite_path=direct_outputs.get('float32_tflite_path', None),
-                    tensor_correspondence_report_path=direct_outputs.get(
-                        'tensor_correspondence_report_path',
-                        None,
-                    ),
-                    contains_custom_ops=direct_contains_custom_ops,
-                )
-                direct_eval_paths = {}
-                if 'float32_tflite_path' in direct_outputs:
-                    direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
-                if 'float16_tflite_path' in direct_outputs:
-                    direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
-                if 'dynamic_range_quant_tflite_path' in direct_outputs:
-                    direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
-                if 'integer_quant_tflite_path' in direct_outputs:
-                    direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
-                if 'full_integer_quant_tflite_path' in direct_outputs:
-                    direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
-                if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                    direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
-                if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                    direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
-                tflite_eval_result = _run_onnx_tflite_output_check(
-                    tflite_paths=direct_eval_paths,
-                    source_label='flatbuffer_direct',
-                    contains_custom_ops=direct_contains_custom_ops,
-                    split_manifest_path=direct_outputs.get('split_manifest_path', None),
-                )
-                pytorch_eval_result = _run_onnx_pytorch_output_check(
-                    package_dir=direct_outputs.get('pytorch_package_path', None),
-                    source_label='flatbuffer_direct',
-                )
-                _write_accuracy_comparison_report(
-                    tflite_result=tflite_eval_result,
-                    pytorch_result=pytorch_eval_result,
-                    source_label='flatbuffer_direct',
-                )
-                if 'split_saved_model_dirs' in direct_outputs:
-                    _maybe_run_split_saved_model_inference_check(
-                        split_manifest_path=direct_outputs.get('split_manifest_path', None),
-                        reference_tflite_path=direct_outputs.get('float32_tflite_path', None),
-                        source_label='flatbuffer_direct',
-                    )
-                else:
-                    _maybe_run_saved_model_inference_check(
-                        saved_model_path=direct_outputs.get('saved_model_path', None),
-                        float32_tflite_path=direct_outputs.get('float32_tflite_path', None),
-                        source_label='flatbuffer_direct',
-                    )
-                if eval_split_models is not None:
-                    if 'split_manifest_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'eval_split_models is set but split manifest is not available. '
-                            'Ensure enable_auto_split_model=True so split manifest output is generated.'
-                        )
-                    from onnx2tf.tflite_builder.split_accuracy_evaluator import evaluate_split_manifest_outputs
-                    split_accuracy_report_path = os.path.join(
-                        output_folder_path,
-                        f'{output_file_name}_split_accuracy_report.json',
-                    )
-                    reference_tflite_path = None
-                    if eval_split_models == 'unsplit_tflite':
-                        reference_tflite_path = direct_outputs['float32_tflite_path']
-                    split_report = evaluate_split_manifest_outputs(
-                        onnx_graph=onnx_graph,
-                        split_manifest_path=direct_outputs['split_manifest_path'],
-                        reference_mode=eval_split_models,
-                        reference_tflite_path=reference_tflite_path,
-                        output_report_path=split_accuracy_report_path,
-                        num_samples=eval_num_samples,
-                        seed=0,
-                        test_data_nhwc_path=test_data_nhwc_path,
-                        rtol=eval_rtol,
-                        atol=eval_atol,
-                        compare_mode=eval_compare_mode,
-                        fail_on_threshold=eval_split_fail_on_threshold,
-                    )
-                    info(
-                        Color.GREEN(
-                            'Split-model accuracy report output complete! '
-                            f'({split_accuracy_report_path}) '
-                            f'max_abs={split_report["overall_metrics"]["max_abs"]:.6g} '
-                            f'rmse={split_report["overall_metrics"]["rmse"]:.6g} '
-                            f'cosine={split_report["overall_metrics"]["cosine_similarity"]:.6g} '
-                            f'pass={split_report["evaluation_pass"]}'
-                        )
-                    )
-                return model
 
         tf_converter_eval_paths: Dict[str, str] = {}
 

@@ -30,6 +30,62 @@ TensorFlow- and Torch-free artifact policy only when the corresponding
 CLI values or environment variables, while requested values retain the legacy
 conversion and default semantics. The resolved quantization mapping is
 immutable and raw option dictionaries do not propagate into builders.
+The same guarded quantization mapping owns `quant_type`, input quant dtype, and
+output quant dtype. Their legacy `per-channel`/`int8` defaults are materialized
+without reading the request when no quantized output is selected; requested
+dynamic-range or integer artifacts receive the original explicit values.
+The direct export boundary constructs `ConversionRequest` once. Every option
+read after that boundary, including unsupported-quantization validation, uses
+the request's immutable mapping or typed `ArtifactPlan`; the original `kwargs`
+object is referenced only as the input to `ConversionRequest.from_kwargs`.
+This keeps legacy keys and default values intact while preventing later
+enhancements from bypassing normalization and reintroducing raw option
+propagation.
+SavedModel- and PyTorch-specific preparation options use a second requested-
+exporter control resolver in `artifact_preparation.py`. It does not read output
+paths, persistence, native PyTorch timeout, shape hints, or test data unless
+the corresponding artifact is requested. The custom input data option is read
+only for integer calibration or PyTorch-derived artifacts. Consequently, an
+invalid unused PyTorch timeout cannot fail a TFLite-only conversion, while a
+requested artifact retains the existing default paths, coercions, and error
+behavior.
+
+Both artifact-control resolvers and export-progress planning receive the
+normalized `ArtifactPlan` itself rather than parallel request booleans. Split,
+quantization, SavedModel, PyTorch, and integer-calibration dependencies are
+therefore derived from one immutable object. TorchScript, Dynamo ONNX, and
+ExportedProgram continue to imply the base PyTorch artifact only in
+`ArtifactPlan.from_options`; downstream preparation cannot accidentally omit
+that dependency or read options for an unrequested artifact. The default
+correspondence report and float32/float16 outputs retain their compatibility
+order, and all optional progress labels come directly from the same plan used
+to guard execution.
+
+The compatibility layer treats the direct builder's returned artifact mapping
+as the only source of TFLite paths for accuracy evaluation. The seven legacy
+variant keys and their stable evaluation order live in
+`artifact_metadata.select_tflite_evaluation_artifact_paths`; the terminal
+direct conversion path calls that owner once. Missing optional variants remain
+absent instead of being reconstructed from output-directory conventions, so
+report execution follows the actual `ConversionResult` artifacts.
+
+The same compatibility boundary has one validation and completion-log owner
+for OP coverage, tensor correspondence, dynamic-range quantization, integer
+quantization, and both int16-activation variants. The sole direct-result
+finalizer calls that owner, preserving required artifact keys, int16 skip
+semantics, and the six established failure messages. Tensor correspondence
+remains a compatibility-default artifact and is logged whenever the builder
+returns it.
+
+The direct fast path is terminal: successful finalization returns from
+`convert`, while every failure propagates through its cleanup `finally` block.
+The backend is normalized once, and an explicit post-boundary assertion limits
+the remaining legacy graph, SavedModel, and TFLite-converter pipeline to
+`tf_converter`. Historical direct retries after TensorFlow node-conversion or
+SavedModel failure and the duplicate direct TFLite serialization block were
+therefore unreachable and have been removed. Direct builder invocation,
+artifact evaluation selection, and direct-result finalization now each have
+one live compatibility-layer call site.
 
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle
@@ -42,6 +98,183 @@ data belongs to one session, is removed on first consumption, and is cleared
 on rollback, so it cannot leak across conversions or survive restored graph
 objects.
 
+`ModelIRPassStateScope` is the explicit reuse boundary for adjacent registered
+pass groups that have no raw ModelIR mutation between them. It is lazy, so a
+sequence whose model-only preflights all fail still constructs no graph index.
+The first matching group constructs one `ModelIRPassState`; later groups reuse
+its differentially maintained `ModelIRGraphIndex` and `LayoutState`. A scope
+rejects a different ModelIR or LayoutState identity and must end before any
+legacy/raw mutator. The repeated Mean/LayerNorm/terminal-Mean/SE/Conv-attention
+cluster is the first production consumer, preserving its original runner order
+while replacing up to seven identical index constructions with one.
+
+The repeated mixed-attention/elementwise-gate/Pad/dual-postconv-gate/NDHWC-
+gate/cost-volume-scatter/Add-Concat-suffix/dual-Mul-Concat sequence is the
+second production consumer. Four occurrences retain all eight runners and one
+occurrence retains the original seven-runner suffix without mixed attention.
+Each occurrence now constructs at most one index instead of as many as eight.
+Later isolated calls remain standalone because the scope must not cross the
+legacy ModelIR mutators surrounding them.
+
+The late NDHWC-gate/cost-volume-scatter pair uses a separate two-runner scope.
+The preceding mixed-attention runner is intentionally excluded because a
+legacy dequantize/HardSigmoid/quantize mutator separates it from the pair. The
+scope ends before the following raw convolution-affine fold.
+
+Immediately after that fold, the axis-3 constant-Concat, Dequantize/Concat/
+Quantize, LayerNorm-statistics, and generic transpose-cleanup runners share a
+third late scope. All four implementations mutate through the differential
+index. The scope ends before the conditional legacy elementwise-roundtrip
+optimizer.
+
+Five repeated two-way/NHWC/NCHW channel-shuffle plus Gather-axis sequences
+share one scope per occurrence. The final occurrence preserves its contiguous
+generic transpose and unary fan-out suffix inside the same scope, while the
+other four scopes end before their next legacy mutator. Four separate repeated
+unary-passthrough/unary-fan-out/binary-fan-out sequences likewise share one
+scope per occurrence.
+
+Four repeated boundary-input BatchMatMul followed by leading-input unary
+passthrough pairs share one scope per occurrence. Each scope is limited to the
+two adjacent registered runners; the legacy layout transforms before and after
+each occurrence remain hard boundaries.
+
+Three repeated strict channel-slice-merge followed by Pad/Mul cleanup pairs
+share one scope per occurrence. The three-spec channel-slice group and the
+single-spec Pad/Mul group keep their original order and diagnostic grouping.
+
+Two long terminal singleton/Reshape cleanup sequences share one scope per
+occurrence through a flag-controlled helper. The helper retains the original
+relative order of generic transpose cleanup, singleton-channel Transpose
+canonicalization, optional reshape-only duplicate fan-out cleanup, singleton
+Reshape cleanup, singleton MaxPool cleanup, flatten/Concat/Reshape cleanup,
+general consecutive Reshape cleanup, Squeeze/Reshape identity cleanup,
+singleton-spatial Reshape cleanup, and optional multi-branch gate cleanup.
+One occurrence keeps the leading generic transpose and terminal gate; the
+other keeps the duplicate-fan-out pass and disables the spatial post-Concat
+variant exactly as before. Three later singleton-channel/duplicate-fan-out/
+consecutive-Reshape triplets use a smaller target-parameterized helper, so the
+fallback ModelIR receives its own identity-bound scope without inheriting the
+primary Session layout state. No scope crosses the legacy rewrites around
+these sequences. The separate terminal singleton-MaxPool/consecutive-Reshape
+pair uses its own scope between the conditional elementwise-roundtrip and
+Conv/Pool-output legacy rewrites. Its two runners retain their order and
+three-spec diagnostic grouping while constructing one graph index.
+
+The terminal scalar-clamp, unary-passthrough, and maximum-zero-to-ReLU
+sequence shares one scope between the conditional terminal layout-recovery
+block and the raw SiNet rewrites. Clamp and maximum-zero canonicalization use
+`ModelIRGraphIndex.replace_operator_type()` so the shared operator-type index
+remains current after changing `MAXIMUM`/`MINIMUM` operators to their RELU
+forms. Both runners retain standalone behavior through optional scope
+arguments.
+
+The conditional generic-Transpose, late Mean/Mul/Add/Conv, generic SPP,
+Gather-axis, constant-fold, and redundant-Cast sequence shares one scope
+between the raw shape-extract and ExpandDims/Squeeze replacement rewrites.
+When layout optimization is disabled, the same helper skips only generic
+Transpose and lets the Mean runner lazily construct the state. Generic SPP
+cleanup and the constant-fold/Cast helper accept the shared scope; their
+existing differential mutations keep the index current across all nine pass
+events without a blanket refresh.
+
+The late generic SPP and Concat/unary/Conv pair shares one scope between the
+raw StridedSlice/Pad/Concat and shape-extract rewrites. Concat/unary/Conv
+cleanup now accepts an optional scope, and its existing differential input and
+operator-removal updates keep the shared index current.
+
+The absolute-final flattened-normalization Pad and mixed-attention pair shares
+one scope between the raw InstanceNorm bias-add rewrite and dynamic-rank
+Unsqueeze/Reshape shape rewrite. Normalization-Pad cleanup now accepts an
+optional scope. The helper preserves `include_instance=False` and
+`include_flatten=True`, so the final invocation still runs only the intended
+flattened normalization spec before mixed attention.
+
+The post-QDQ layout-transpose, unary-fan-out, and unary/binary-fan-out
+sequence reuses the existing unary-fan-out helper in a second mode. The helper
+defaults still run unary passthrough for its four prior call sites; the new
+call enables generic transpose cleanup and disables unary passthrough. Its
+scope remains between raw Softmax canonicalization and transpose-binary
+rewrites. Consolidation reduces the lowerer's registered-runner call
+characterization from 139 to 137.
+
+The late NCHW channel-shuffle and Gather-axis pair reuses the existing
+channel-shuffle helper with its two-way and NHWC modes disabled. Five prior
+helper invocations retain both modes by default. NHWC and NCHW shuffle
+rewrites now use `replace_operator_type()` when converting the surviving
+operator to `GATHER`, keeping the shared type index current. This consolidation
+reduces the registered-runner call characterization from 137 to 135.
+
+The conditional late generic-transpose and QKV-bridge pair reuses the QKV
+helper in a bridge-only mode. Two prior invocations retain the default
+prefix-plus-bridge path. The new invocation forwards the runtime layout flag,
+disables the prefix, and always runs the bridge. Its scope stays between the
+raw shape-extract and split/Conv/Concat rewrites, reducing the registered-
+runner call characterization from 135 to 134.
+
+The very-late Gather-axis, constant-fold/Cast, and flattened-normalization Pad
+sequence shares one scope between the raw unbound-input transpose repair and
+dynamic-Reshape resolution. The constant-fold/Cast helper accepts an optional
+external scope. Both production callers now provide their wrapper-owned scope:
+the earlier combined layout/Mean/SPP/Gather sequence and this later
+Gather/normalization sequence. Seven diagnostic events in the latter reuse one
+index without changing the registered-runner call characterization.
+
+Four AST-identical layout-recovery prefixes now use one ordered orchestration
+helper. The helper fixes the existing 19-call sequence from Q/DQ transpose
+bridges through boundary BatchMatMul/unary cleanup, hard-activation and generic
+SPP/NDHWC Concat recovery, and channel-shuffle/Gather cleanup. All four call
+sites retain their original surrounding rewrites and execute the sequence once.
+The hard-activation, SPP, and NDHWC runners intentionally remain unscoped
+inside this helper because raw ModelIR mutators separate them. Consolidation
+reduces the lowerer's registered-runner AST characterization from 134 to 125
+without crossing an index-validity boundary or changing runtime pass count.
+
+Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
+The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
+and Split/Reshape collapse) retain their order before the two bridge specs
+(shared pre-Transpose and weighted-sum bridge). The separate later bridge-only
+invocation remains standalone. Both runners keep optional scope arguments, and
+each production scope ends before the following legacy attention/layout
+rewriter.
+
+Two repeated duplicate-fan-out/quantized-PReLU pairs share one scope per
+occurrence. The helper receives the existing QDQ-derived
+`include_transpose` decision and forwards it unchanged to duplicate cleanup
+before the four quantized-PReLU specs. The earlier duplicate-fan-out invocation
+that is separated from PReLU by legacy QDQ rewrites remains standalone. Each
+shared scope ends before dequantize/TransposeConv/quantize cleanup.
+
+Two repeated constant-input-fold/redundant-Cast pairs share the enclosing
+wrapper scope at each occurrence. The three constant Pad/Pool/Cast specs retain
+their order before the widening-alias and narrowing-chain Cast specs. The first
+scope also covers its preceding conditional layout/Mean/SPP/Gather sequence
+and ends before the legacy ExpandDims/Squeeze replacement; the second starts at
+Gather-axis and continues through normalization-Pad. Both runners remain
+standalone-compatible through optional scope arguments.
+
+The fallback and primary absolute-final SE-FC/Gather-channel-fan-out pairs use
+a target-parameterized helper. The fallback invocation supplies
+`fallback_ir` with no Session LayoutState; the primary invocation supplies the
+main ModelIR and Session layout state. Both runners share one identity-bound
+scope for their respective target, and each scope ends before static-shape
+reconciliation.
+
+The terminal dual-Mul/Concat, boundary-input adapter, Pad-layout, generic
+transpose, and Gather-channel-fan-out sequence shares one scope. Its five
+runners retain their exact order and seven-spec diagnostic grouping. The
+scope begins after the final raw InstanceNorm residual/resize rewrite and ends
+before the conditional terminal Mean/attention stage. Boundary-input cleanup
+now accepts an optional scope while remaining standalone-compatible.
+
+The late Dequantize/Concat/Quantize, unary-passthrough, and unary-fan-out
+sequence also shares one scope. The scope begins after the raw Dequantize/
+HardSigmoid/Quantize bridge rewrite and ends before the independently indexed
+Swish dispatcher. The Swish semantic owner maintains its own differential
+index, so pass state is not shared across that phase boundary. The three
+runners retain their exact order and diagnostics while constructing one graph
+index instead of up to three.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
@@ -51,6 +284,24 @@ positions and is shifted together with all edge indices on insertion/removal,
 so bounded passes can enumerate only relevant operator families instead of
 rescanning the full ModelIR operator list. A full `refresh()` is retained only
 for compatibility with external mutations that bypass these APIs.
+`ConversionSession.tensor_consumer_count` is also the sole consumer-count
+source passed into `LoweringContext`. This preserves the pre-session safety
+contract used by inverse-transpose elision, including repeated uses of one
+input, without rebuilding a second ONNX edge-count map.
+Lowering-time logical and physical layout changes use
+`LoweringContext.set_tensor_layout()`. The method updates the tensor metadata
+and the Session-owned `LayoutState` together, so the first post-lowering pass
+receives current layout evidence without relying on that pass to hide stale
+state through a full resynchronization. Op-family builders must not assign
+`TensorIR.logical_layout` or `TensorIR.physical_layout` directly.
+`LoweringContext.add_operator()` and `remove_operator()` likewise own the
+lowering-time operator list and maintain differential IR producer and consumer
+maps. Inverse-Transpose generation uses the ONNX `GraphIndex` count for an ONNX
+edge and the current IR count plus the pending use for a synthetic edge. It may
+therefore remove an exclusive producer without rescanning the partial graph,
+while retaining that producer when a previously emitted side branch still
+consumes its synthetic output. Op-family builders must not mutate
+`model_ir.operators` directly.
 Lineage-aware graph mutation helpers accept an optional ModelIR index and
 update it atomically.
 `operator_indices_for_types()` returns a sorted, deduplicated union for
@@ -905,6 +1156,250 @@ LayoutState. Indexed guards trace singleton constants, Add/clamp topology,
 residual multiplication, optional Mean fan-out, and inverse terminal
 transposes before snapshotting; operator rewires and boundary-transpose removal
 update the differential index directly.
+
+Unquantized pseudo-Swish transpose passthrough is independently owned by
+`passes/activation_passthrough_layout.py`. The former 194-line raw helper is a thin
+dispatcher at its two unchanged production positions: once in the ordered
+activation recovery prefix and once in the no-layout-compatible late recovery.
+Both calls receive Session `LayoutState`. This owner is separate from the
+quantized Swish-QDQ phases because it recognizes the exact float or per-tensor
+`Logistic(x) * x` residual topology rather than Dequantize/Quantize closure.
+
+The resolver accepts a typed immutable INT32/INT64 permutation of rank two or
+higher, an exact source-to-transposed tensor view, one Logistic consumer, one
+residual Mul consumer in either operand order, and at least one typed inverse
+post adapter. Static shapes, independently dynamic signatures, dtype,
+per-tensor quantization, layout transition, provenance, unique production,
+consumer slots, graph order, public aliases, and every post-adapter output are
+proven before planning. Immutable operator-produced and constant sources are
+both supported; the source data is never transposed or mutated because Swish
+is elementwise and commutes with the boundary permutation.
+
+All post aliases collapse to one source-layout Mul output. Exact consumer-slot
+grouping preserves repeated inputs and selects a public post alias when one is
+present. If the old transposed Mul result still has a legacy consumer or is a
+graph output, one local adapter is inserted immediately after Mul. It reuses
+the proven pre-permutation buffer. The old helper instead overwrote a selected
+post-permutation buffer in place, which could corrupt an unrelated user when
+that constant was shared.
+
+The immutable plan records both head rewrites, every alias rewrite, metadata,
+public lists, adapter removals, and complete tensor/operator contracts. A full
+second resolution and preflight precede mutation. One differential graph index
+updates slots, compacts the pre/post adapters, changes the Mul output, and
+inserts the optional legacy adapter. LayoutState is updated only for surviving
+source-layout tensors and pruning occurs only after success. Graph-ordered
+Transpose candidates and an optional candidate-count limit replace the raw
+full-map unbounded fixed-point loop.
+
+Fifty-six focused cases cover rank-three/rank-four static and dynamic views,
+INT32/INT64 permutations, both Mul operand orders, one/multiple posts, repeated
+alias slots, a public post, immutable constant source, shared post permutation,
+legacy and public transposed boundaries, exact numerical equivalence,
+candidate limits, idempotence, GraphIndex, LayoutState, and twenty-seven
+transactional rejection cases. The focused owner, adjacent input and
+quantized-Swish owners, active Swish fixtures, and complete architecture suite
+pass together with `304 passed in 44.59s`. TensorFlow-blocked
+direct/default/`-cotof` checks pass sequentially, and YuNet reproduces all five
+fixed artifact hashes.
+
+The adjacent tanh-expanded GELU transpose passthrough is owned by the same
+activation module under an independent immutable plan. Its production position
+remains immediately after pseudo-Swish and before center/size-offset recovery.
+The compatibility wrapper retains its legacy name and statistic, receives
+Session `LayoutState`, and delegates only to the indexed owner.
+
+The resolver proves the complete nine-operation approximation:
+`x*x`, cubic multiplication, a cubic-scale Mul, residual Add, an outer-scale
+Mul, Tanh, an offset Add, residual multiplication by `x`, and a final-scale
+Mul. It validates all five direct source-consumer slots,
+linear ownership of every other intermediate, unique producers, strict graph
+order, and four immutable singleton constants before accepting the chain.
+Constants retain their declared dtype, data, shape, provenance, and per-tensor
+quantization. Both binary operand orders are supported where multiplication or
+addition is commutative.
+
+Typed rank-two-or-higher INT32/INT64 boundary permutations, exact static or
+dynamic tensor views, dtype, quantization, and known layout transitions follow
+the same contract as pseudo-Swish. All inverse post aliases collapse to one
+source-layout final result. A public post alias can be selected as the
+representative, while an existing consumer or public use of the old transposed
+final tensor is preserved by one local adapter immediately after the last Mul.
+The adapter reuses the proven pre-permutation, and no shared post-permutation
+buffer is modified.
+
+The complete plan is re-resolved before apply. One differential graph index
+rewires exact input slots, changes the final output, inserts the optional local
+adapter, compacts only proven private adapters, and updates LayoutState only
+after acceptance. Candidate enumeration is graph ordered and bounded; the raw
+full-map fixed-point loop and mutation-before-validation path are gone.
+
+Fifty-six focused GELU cases cover static/dynamic rank-three and rank-four
+views, INT32/INT64 permutations, binary operand order, one/multiple post
+aliases, repeated slots, public and legacy boundaries, constant input, shared
+permutation buffers, numerical equivalence, candidate limits, idempotence, and
+thirty transactional rejection variants. The Swish and GELU owners, adjacent
+layout suites, active fixtures, and complete architecture suite pass together
+with `362 passed in 42.95s`. TensorFlow-blocked direct/default/`-cotof` checks
+pass sequentially with `3 passed in 3.95s`, and YuNet again reproduces all five
+fixed artifact hashes.
+
+Center/size/offset terminal-head recovery is owned by
+`passes/center_size_offset_layout.py`. Its former roughly 390-line raw helper
+is a thin compatibility dispatcher at the same position between tanh-GELU and
+LeakyReLU. The call receives Session `LayoutState`; its public symbol and
+legacy statistic remain unchanged.
+
+The owner classifies three independent typed NHWC-to-NCHW Transpose roots by
+their semantic branch contracts rather than searching the following sixteen
+operators. The center root must have singleton channel and close through
+Logistic/Maximum/Minimum into a valid `[N,H*W]` Reshape. The size root uses the
+same activation prefix and a valid `[N,C,H*W]` Reshape/GatherND tail. The offset
+root closes directly through the equivalent Reshape/GatherND tail. Static
+shape, independently dynamic signature, dtype, per-tensor quantization,
+producer ownership, exact consumer slots, graph order, provenance, public
+boundaries, and known logical/physical layouts are proven for every branch.
+Ambiguous triples are rejected rather than selected by proximity.
+
+Each GatherND coordinate Concat is independently classified as batch, dynamic
+axis, and channel coordinates. The axis coordinate must be the exact output of
+a typed Reshape; the two immutable integer grids must be in range for the
+proven batch and channel dimensions. INT32 and INT64 coordinates, arbitrary
+original Concat order, a shared coordinate Concat, and equal-valued batch and
+channel grids are supported. The Concat output is closed over exactly the
+planned GatherND input slots before its inputs change from
+`[batch, channel, axis]` to `[batch, axis, channel]`.
+
+Size and offset Reshape literals rotate from `[N,C,HW]` to `[N,HW,C]` while
+preserving inferred `-1` dimensions and their option metadata. Shape constants
+are grouped by identity and exact input slot. An exclusive constant changes in
+place; a shared constant receives one deterministic typed copy-on-write clone,
+leaving unrelated consumers on the original value. The six activation
+intermediates move to the proven NHWC view, the two rank-three Reshape outputs
+become NWC, and LayoutState changes only with the accepted transaction.
+
+The immutable plan captures every input rewrite, constant use, option change,
+metadata update, removal, tensor/operator contract, and public list. It is
+fully re-resolved before apply. One differential graph index rewires slots and
+compacts all three adapters; graph-ordered candidates and an optional rewrite
+limit replace the raw fixed-point loop. Pruning occurs only after success.
+
+Thirty-seven focused cases cover static/dynamic views, INT32/INT64 shape and
+coordinate buffers, binary operand order, per-tensor quantization, inferred
+dimensions, shared constants and coordinates, numerical equivalence,
+GraphIndex, LayoutState, candidate limits, idempotence, and twenty-two unsafe
+transactional no-op variants. Pre/post characterization on five short models
+produces twenty zero-match invocations with unchanged operator/tensor counts.
+The owner, adjacent activation/layout suites, active fixtures, and complete
+architecture suite pass together with `399 passed in 42.94s`. TensorFlow-
+blocked direct/default/`-cotof` checks pass sequentially with
+`3 passed in 3.99s`, and YuNet reproduces all five fixed artifact hashes.
+
+Pseudo-expanded LeakyReLU transpose passthrough is owned by
+`passes/leakyrelu_passthrough_layout.py`. Its former roughly 240-line raw helper
+is a thin dispatcher at the unchanged position between center/size/offset and
+PReLU. The composite owner preserves the historical second phase: after all
+accepted layout passthroughs, it invokes the existing indexed pseudo-LeakyReLU
+fusion using the same differential graph index and Session LayoutState. Both
+legacy statistic keys and their execution order remain unchanged.
+
+The passthrough resolver proves the exact
+`Neg(x) → Relu → Mul(alpha)` negative branch, the direct `Relu(x)` positive
+branch, and ordered `Sub(positive, scaled-negative)` join. Both source slots,
+every private intermediate, the immutable singleton alpha, unique production,
+exact consumer slots, graph order, shape/dynamic signature, dtype, per-tensor
+quantization, provenance, layout transition, and public boundary are resolved
+before planning. Rank-three and rank-four typed INT32/INT64 permutations,
+either Mul constant position, and immutable constant sources are supported.
+
+All inverse post-Transpose aliases collapse onto one source-layout result. A
+public post alias is preferred as the representative, and repeated downstream
+alias slots are grouped exactly. When the old transposed Sub result remains a
+graph output or has a legacy consumer, one local adapter is inserted
+immediately after the retained join and reuses the immutable pre-permutation.
+The raw helper instead overwrote the selected post-permutation buffer with an
+INT32 copy of the opposite permutation, which could change dtype and corrupt an
+unrelated consumer.
+
+The immutable plan records every input/output slot, metadata update, removal,
+optional adapter, tensor/operator contract, and public list, then performs a
+full second resolution and preflight. One differential graph index rewires the
+two heads, aliases, Sub output, adapter insertion, and pre/post compaction.
+LayoutState updates only on acceptance and pruning is success-only. The
+following fusion converts the retained Sub to native `LEAKY_RELU` and compacts
+the four private producers through that same index.
+
+Fifty-one focused cases cover static/dynamic rank-three and rank-four views,
+INT32/INT64 permutations, both alpha positions, per-tensor quantization,
+constant input, one/multiple/public post aliases, repeated slots, legacy/public
+transposed boundaries, shared post permutations, numerical equivalence,
+candidate limits, idempotence, GraphIndex, LayoutState, and twenty-seven unsafe
+passthrough no-op variants. Pre/post characterization on five short models
+produces twenty zero-rewrite/zero-fusion invocations with unchanged counts.
+The owner, existing fusion owner, adjacent activation/layout suites, active
+fixtures, and complete architecture suite pass together with
+`467 passed in 42.33s`. TensorFlow-blocked direct/default/`-cotof` checks pass
+sequentially with `3 passed in 4.01s`, and YuNet reproduces all five fixed
+artifact hashes.
+
+PReLU transpose passthrough is owned by
+`passes/prelu_passthrough_layout.py`. Its former roughly 250-line lowerer
+helper is a thin compatibility dispatcher at all three unchanged production
+positions, each receiving Session LayoutState. The statistic key and the
+historical prune-on-zero-match behavior are unchanged.
+
+The resolver proves a typed rank-three-or-higher source Transpose, one PReLU
+data edge, one or more typed inverse post adapters, exact producer/consumer
+slots and graph order, static shape and independent dynamic signature, dtype,
+per-tensor quantization, provenance, public boundaries, and known logical and
+physical layout transitions. Unrelated users of the pre-Transpose result keep
+that adapter. Post aliases are grouped by exact downstream input slot and one
+public or consumed alias becomes the source-layout representative.
+
+Alpha selection preserves the former priority: inverse-layout remap for an
+equal-rank parameter, the original value, then the special rank-three channel
+form. Every candidate must broadcast to the concrete source shape and its
+dynamic signature. Exclusive parameters change in place; shared parameters
+receive one deterministic `_nhwc` copy with the original declared/NumPy dtype,
+quantization, layout, and ONNX tensor provenance. Scalar, rank-three,
+rank-four, and ambiguous equal-shape forms are supported.
+
+When the old transposed PReLU tensor remains observable, one local adapter is
+retained. An exclusively owned post permutation and its existing adapter are
+reused, preserving historical correspondence lineage. A shared post
+permutation is never changed; the adapter uses the proven pre permutation
+instead. INT32 and INT64 buffers retain their dtype. This closes the former
+path that overwrote a shared post buffer with an INT32 opposite permutation.
+
+The immutable plan captures the alpha update, every input/output rewrite,
+metadata update, removal, tensor/operator contract, and public list, then is
+fully re-resolved before apply. One differential graph index performs all
+rewiring and compaction. LayoutState changes only after acceptance. Bounded
+graph-order candidates and an optional rewrite limit replace the raw
+fixed-point loop.
+
+Twenty-eight focused cases cover typed static/dynamic rank-three and rank-four
+views, alpha remap/reuse/copy-on-write, scalar and ambiguous parameters,
+pre-adapter fan-out, multiple/public/legacy aliases, repeated slots, shared
+post permutations, numerical equivalence, limits, idempotence, GraphIndex,
+LayoutState, and fifteen transactional no-op variants. Five representative
+models reach the helper six times each. YuNet, FastestDet, HumanSeg, and OSNet
+remain zero-match; FastestDet retains its zero-match unused-tensor prune; and
+SiNet retains two 23-rewrite invocations. Its five artifacts are byte-identical
+to the preceding checkpoint. Adjacent owners, active fixtures, and the full
+architecture suite pass with `454 passed in 50.22s`; TensorFlow-blocked
+direct/default/`-cotof` checks pass sequentially with `3 passed in 4.38s`, and
+YuNet reproduces all five fixed artifact hashes.
+
+The terminal hard-activation recovery and its immediately following optional
+generic Transpose cleanup share one lazy `ModelIRPassStateScope`. The hard
+runner keeps its exact late configuration: HardSwish is disabled, both
+HardSigmoid variants are enabled, and their order is reversed. When generic
+layout optimization is disabled, the hard-activation runner still executes by
+itself as before; when enabled, the Transpose runner reuses the already-built
+graph index and layout state. The scope begins after the raw
+HardSwish/SE/HardSigmoid rewrite and ends before the raw pre-Concat rewrite, so
+no unindexed legacy mutation can invalidate the shared state.
 
 Pad layout ownership is centralized in `passes/pad_layout.py`. In addition to
 repairing a proven channel-last input/channel-first Pad mismatch, the module
@@ -2074,11 +2569,57 @@ consumer agree on one rank-four shape and the current shape is the exact H/W
 swap. The rule keeps its positional scalar grammar and uses the shared aligned
 and Softmax statement decoders; their remaining consumers are policy-local, so
 the exporter does not import them.
+The subsequent aligned-binary fallback is policy-owned as a separate decision.
+It preserves the narrower generated-statement grammar and runs only when the
+general binary alignment repair made no change. Two channel-first operand names
+are not sufficient by themselves: an immediate matching BN constant operation,
+direct return, or channel-first Resize with matching channel evidence is also
+required. Channel mismatches, channel-last Resize, mixed-layout operand names,
+and already-channel-first shapes remain no-ops. The exporter applies returned
+layout evidence before its existing Resize rule, preserving the established
+general-repair → downstream-fallback → Resize ordering.
+Channel-first Resize repair now has two explicit policy stages. The general
+`_repair_cf_resize_target_shape` decision remains first; when it does not
+rewrite the statement, the exact input/BN-evidence fallback may normalize the
+target and publish CF evidence for the following Pool and aligned-constant
+rules. Immediate direct and reshaped BN statements share policy-owned parsers,
+and a registered BN constant channel count is preferred when present but is
+not required for the legacy input-evidence fallback. Explicit NHWC input and
+already-channel-first target shapes remain no-ops, preserving the established
+Resize-to-Pool scan behavior.
+The two aligned BatchNorm-constant forms are handled by one policy decision
+after Resize, Pool, and Concat evidence has been applied. A direct constant is
+reshaped only when its registered channel count matches the generated target;
+an already-reshaped constant retains the legacy normalization based on its
+explicit reshape channel. Both forms require a CF-like input and a generated
+BatchNorm attribute name. Their exact direct/reshaped statement grammars are
+shared with the preceding Resize evidence rule, and the repaired output is
+published as CF evidence for later normalization decisions.
+Local-response-normalization output propagation is policy-owned as a state-only
+decision. It preserves the generated parser grammar, marks an output CF only
+when the input has exact dynamic or suffix evidence, copies only rank-four
+static shapes, and removes stale NHWC evidence for that output. The source line
+is not rewritten, so the exporter does not mark the file changed solely for
+this propagation; the updated evidence is consumed by the subsequent
+Softmax/ReduceMax and Pool decisions.
+Successful aligned-binary, Resize, and Pool rewrites record literal output
+shapes through one policy-owned cache helper. It accepts only a literal
+`target_shape=[...]` or the exact trailing aligned-shape form and leaves the
+existing cache untouched for dynamic or unparseable expressions. The exporter
+still invokes the update immediately after each rewrite, so every later rule in
+the ordered scan observes the same shape evidence as before extraction.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer
 evidence agree; otherwise the repair remains a no-op. Constant-pad axis repair
 and reshape-to-permute replacement reuse the shared parser and layout context.
+On a successful bridge rewrite, the same policy decision now publishes all
+four affected names as NHWC, removes their stale CF evidence, and records their
+legacy normalized state shape. The state shape is deliberately recomputed from
+the pre-rewrite Pool shape after the layout-set update, matching the old
+exporter-side sequence rather than silently switching the cache to the rendered
+rewrite target. The exporter retains only the changed flag and immediate Pool
+reparse required by the following ordered decisions.
 Channel-first binary alignment repair is co-located with that context as well.
 It normalizes only rank-four targets backed by CF operands or CF consumer
 evidence, preserves already normalized targets, and leaves explicit binary
@@ -3365,6 +3906,3170 @@ validation pass 60 tests. A single sequential `superpoint.onnx` smoke retains
 `1.0`; the NDHWC pre-Concat precondition skips all five production positions
 without snapshots or fingerprints for that unrelated rank-four graph.
 
+Two AST-identical 22-call post-lowering recovery suffixes are owned by
+`_run_layout_attention_quantized_recovery_suffix`. The helper preserves the
+original ordering from NHWC Mul/Add and Mean/attention recovery through gate,
+TransposeConv, Q/DQ bridge, quantized PReLU/Reshape, and final Softmax
+canonicalization. Its duplicate-Transpose feature flag is forwarded explicitly
+from both original call sites. Registered runners inside the suffix remain
+unscoped because raw ModelIR mutators separate them, so runtime pass-state and
+mutation boundaries are unchanged. A third similar sequence retains its
+separate `include_layernorm=True` behavior and is deliberately not merged.
+The extraction removes 21 net lowerer lines and reduces direct registered-
+runner call sites from 125 to 123 without changing the runtime pass sequence.
+
+Three AST-identical 16-call layout/reshape/attention recovery prefixes are
+owned by `_run_layout_reshape_attention_recovery_prefix`. The helper begins
+with the established 19-call layout-recovery sequence and preserves the
+following pre-Add, reshape/attention, window partition/reverse, unary-Squeeze,
+and Squeeze/Reshape cleanup order. The registered Squeeze/Reshape runner is not
+given a shared state scope because raw ModelIR mutators precede it. Two call
+sites retain their immediately following affine fold, while the third retains
+its distinct InstanceNorm recovery; those variant successors remain outside
+the helper and are asserted structurally. The extraction removes 37 net
+lowerer lines and reduces direct registered-runner call sites from 123 to 121
+without changing runtime invocation count or order.
+
+Two AST-identical 14-call terminal slice/Concat layout-recovery sequences are
+owned by `_run_terminal_slice_concat_layout_recovery_sequence`. The helper
+preserves channel-slice/Pad/Mul cleanup, post-Transpose Add, Concat affine,
+split-tail, NHWC-axis sanitation, StridedSlice, pre-Add, and final layout-
+Transpose cleanup order. The final registered runner remains unscoped because
+raw ModelIR mutators separate it from the first registered cluster. The
+immediately preceding channel-slice bridge remains outside because only the
+first site passes `layout_state`; the following boundary-QDQ and slice-
+passthrough calls also remain outside as distinct successors. The extraction
+removes 14 net lowerer lines and reduces direct registered-runner call sites
+from 121 to 120 without changing runtime invocation count or order.
+
+Two AST-identical 11-call absolute-terminal affine/Concat/split recovery
+sequences are owned by
+`_run_terminal_affine_concat_split_recovery_sequence`. The helper preserves
+affine folding, constant Mul/Add Transpose recovery, four Concat-affine
+variants, singleton-gate Concat, three split-tail variants, and NHWC-axis
+sanitation. It contains only existing raw ModelIR mutators, so it creates no
+new pass-state scope. The first site remains after InstanceNorm recovery and
+before pre-Add; the second remains between two StridedSlice/Pad recovery calls.
+Those differing boundaries are asserted outside the helper. The extraction
+removes 7 net lowerer lines without changing runtime invocation count, order,
+or the registered-runner call-site count of 120.
+
+Three AST-identical 10-call attention/gate/QDQ recovery sequences are owned by
+`_run_attention_gate_qdq_recovery_sequence`, including the copy previously
+embedded in the broader layout-attention quantized suffix. The helper preserves
+SA/PA MirrorPad propagation, SiNet attention, gate, TransposeConv, unary-
+fanout, Q/DQ activation, trailing-output Transpose, and quantized-PReLU bridge
+order. Its registered trailing-output runner remains unscoped because raw
+ModelIR mutators separate it from the surrounding registered clusters. The
+three callers retain their distinct LayerNorm-plus-quantized-PReLU, duplicate-
+PReLU, and pass-set-2 TransposeConv successors. The extraction removes 23 net
+lowerer lines and reduces direct registered-runner call sites from 120 to 118
+without changing runtime invocation count or order.
+
+Two AST-identical 10-call quantized-activation/binary-bridge recovery sequences
+are owned by
+`_run_quantized_activation_binary_bridge_recovery_sequence`. The helper keeps
+Dequantize/HardSigmoid, MaxPool, Softmax, and Logistic recovery ahead of
+Softmax-Transpose canonicalization and the five safe binary-bridge variants.
+It contains only raw ModelIR mutators and therefore creates no pass-state
+scope. The first caller remains after quantized Reshape and before the
+conditional full binary-bridge optimization; the second remains after
+Dequantize/TransposeConv and before Concat recovery. The extraction removes 6
+net lowerer lines without changing runtime invocation count, order, conditions,
+or the registered-runner call-site count of 118.
+
+Two AST-identical 8-call SiNet terminal layout-recovery sequences are owned by
+`_run_sinet_terminal_layout_recovery_sequence`. The helper preserves shuffle-
+residual, pre-Add/PReLU, fan-out, Concat/dual-Resize affine, Softmax-mask, and
+terminal constant-PReLU bridge ordering and contains only raw ModelIR
+mutators. Its first caller remains immediately after terminal clamp/unary/ReLU
+cleanup; its second remains after very-late indexed shape convergence.
+Shape reconciliation and the distinct hard-swish and repeated pre-Add
+successors remain outside and are asserted as boundaries. The extraction
+removes 4 net lowerer lines without changing runtime invocation count, order,
+or the registered-runner call-site count of 118.
+
+Two AST-identical 7-call pre-Add/Mean attention recovery sequences are owned by
+`_run_preadd_mean_attention_recovery_sequence`. The helper preserves three
+pre-Add/PReLU/fan-out rewrites, constant Mul/Add and unary fan-out recovery,
+Mean/Mul/Add recovery, and the existing Mean/attention registered-pass cluster.
+The cluster keeps its own bounded state scope; no state is shared across the
+preceding raw ModelIR mutators. One caller remains after the broad layout-
+recovery prefix and before attention/gate/QDQ recovery, while the other remains
+after channel-shuffle/Gather recovery and before its distinct SA/PA and limited-
+gate suffix. The extraction removes 3 net lowerer lines without changing
+runtime invocation count, order, or the registered-runner call-site count of
+118.
+
+Four AST-identical 6-call SiNet pre-Add/Resize recovery sequences are owned by
+`_run_sinet_preadd_resize_recovery_sequence`, including the copy nested in the
+broader 8-call SiNet terminal helper. The helper preserves pre-Add/PReLU,
+fan-out, Concat/dual-Resize affine, and Softmax-mask recovery and contains only
+raw ModelIR mutators. The four callers retain their distinct shuffle and
+terminal constant-PReLU, QDQ and singleton-Reshape, repeated pre-Add, and shape-
+reconciliation/CSP-attention boundaries. Recursively expanding the two SiNet
+helpers produces an AST identical to the pre-extraction lowerer. The extraction
+removes 12 net lowerer lines without changing runtime invocation count, order,
+or the registered-runner call-site count of 118.
+
+Three AST-identical 5-call safe binary-bridge recovery sequences are owned by
+`_run_safe_binary_bridge_recovery_sequence`, including the copy nested in the
+quantized-activation recovery helper. The symmetric legacy-only, single-post,
+mixed-fanout, asymmetric-fanout, and full-post variants retain their exact
+order. Separately, two AST-identical 5-call QLinear/Mean/Concat sequences are
+owned by `_run_qlinear_mean_concat_recovery_sequence`, preserving Mean/
+HardSigmoid, QLinear SiLU and Concat/Conv, pre-QDQ Concat, and Mean/MaxPool/
+Concat/Conv recovery. Both helpers contain only raw ModelIR mutators. Their
+conditional binary, post-QDQ, progress-description, layout-prefix, and Concat-
+recovery boundaries remain outside. Recursive helper expansion produces an AST
+identical to the pre-extraction lowerer. Together the helpers remove 6 net
+lowerer lines without changing runtime invocation count, order, conditions, or
+the registered-runner call-site count of 118.
+
+The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
+blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
+invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner
+supplies its already-built index to the second. Dead pruning removes operators
+through differential compaction, both reconciliation calls reuse the indexed
+producer map, and dynamic Reshape resolution enumerates only indexed
+`RESHAPE` roots. Reconciliation and Reshape resolution change tensor shape,
+signature, options, and constant data but do not change graph topology, so the
+updated index remains valid through the complete block. Standalone callers
+retain full-scan compatibility when no matching index is supplied. A focused
+characterization compares every remaining operator and tensor with the former
+four-call sequence and proves exact equality while observing exactly one index
+build. Architecture checks preserve both late-pipeline call boundaries.
+
+`_run_indexed_final_shape_activation_convergence` extends the terminal block
+through HARD_SWISH shape sanitation, another static reconcile/dynamic Reshape/
+static reconcile cycle, activation fusion, and final reconciliation without
+constructing another index. HARD_SWISH sanitation enumerates only indexed
+roots. Activation fusion uses case-normalized indexed producer dispatch and
+indexed consumer counts, changes the producer output through the differential
+setter, and removes the explicit activation through differential compaction;
+it no longer rebuilds a complete consumer map after every match. Single-
+operator removal also drops empty op-type buckets, making the maintained type
+index identical to a fresh rebuild. The end-to-end characterization exercises
+dead pruning, dynamic metadata, HARD_SWISH repair, and Conv/RELU fusion, proves
+one index build, and compares the complete final ModelIR with the former
+ten-call sequence.
+
+Rank-four channelwise broadcast-constant repair now builds one
+`ModelIRGraphIndex` instead of independently scanning the graph for producers,
+consumers, and binary candidates. Exact ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW
+candidates come from indexed type dispatch, producer layout evidence uses the
+indexed producer, and cloned-constant input rewrites update consumers through
+the differential setter. The consumer indices are intentionally snapshotted
+at pass entry. This preserves the former artifact policy for a shared constant:
+every candidate that was shared at entry receives its own deterministic clone,
+even after earlier rewrites reduce the live fan-out. Focused tests block both
+legacy map builders, observe no index refresh beyond the supplied initial
+build, compare the maintained index with a fresh rebuild, and preserve the
+existing rank-three, rank-four, inverse-rotation, ambiguous-layout, and no-op
+characterizations.
+
+Stale NCHW-to-NHWC channelwise-binary Transpose repair now uses one
+`ModelIRGraphIndex` for exact binary candidate order, adapter/peer producer
+lookup, and the single-consumer locality guard. A successful match rewrites the
+binary input through the indexed setter, updates output shape metadata, and
+removes the adapter through differential compaction before restarting from
+current indexed candidates. No producer or consumer compatibility map is
+rebuilt between matches. Fan-out adapters remain unchanged, and both data-
+input positions plus channelwise-constant and Conv-peer match families retain
+their former behavior.
+
+The two terminal fixed three-round broadcast/Transpose/shape convergence loops
+are owned by `_run_indexed_binary_layout_convergence`. One index is built per
+complete loop and supplied to all three operations in all three rounds.
+Broadcast repair changes only tensor data and indexed operator inputs, stale
+Transpose repair performs differential input/removal mutations, and shape
+reconciliation changes metadata only, so the index remains valid throughout.
+Primary and fallback call the same owner. End-to-end characterization proves
+one index build and complete ModelIR/stat equality with the former nine-call
+sequence while a separate multi-match case compares the maintained index with
+a fresh rebuild.
+
+The adjacent singleton-Reshape and stale NCHW-to-NHWC Transpose repairs in
+front of NHWC Conv inputs accept one shared `ModelIRGraphIndex`. Both enumerate
+only indexed `CONV_2D` candidates, obtain the adapter producer and exact
+consumer list from the index, rewrite the Conv data input through the indexed
+setter, and remove an accepted adapter through differential compaction. The
+primary and fallback pairs run through
+`_run_indexed_conv_input_adapter_repairs`, which builds one index for both
+repairs. The later standalone stale-Transpose cleanup remains outside that
+ownership boundary and builds its own compatibility index. Exact singleton
+shape, Transpose permutation, filter input-channel, single-consumer, and graph-
+output guards remain unchanged. Characterization compares the complete
+resulting ModelIR with the former explicit pair, proves one index build without
+legacy producer/consumer maps, exercises multiple matches, and preserves
+fan-out and graph-output adapters.
+
+Wrong-way NCHW-to-NHWC Transpose-before-Conv sanitation is owned by the Torch/
+TensorFlow-free `passes/conv_input_layout.py` module. A graph containing a
+Transpose constructs or reuses one `ModelIRGraphIndex`; a Transpose-free graph
+retains the former unused-tensor pruning but allocates no index. Candidate
+order comes from the indexed `TRANSPOSE` type bucket and every adapter consumer
+comes from the current consumer index. An adapter remains protected unless all
+consumers are Conv data-input users whose filters expect the already-NHWC
+source channel and reject the adapter's output channel. Accepted global input
+replacement updates every affected consumer through the index before
+differential operator removal. The lowerer's private API is a compatibility
+wrapper, and the formerly duplicated safety valve inside the Swish-QDQ NHWC-
+island optimizer delegates to the same owner at its unchanged execution point
+and maps removals back to the existing Swish statistic. Public adapter outputs,
+non-Conv fan-out, missing users, mismatched filters, ranks, and permutations
+retain the former no-op behavior. Complete legacy-reference comparison covers
+two removals and multi-Conv fan-out, observes one index build and no
+compatibility consumer-map call, confirms the maintained producer, consumer,
+duplicate-producer, identity, and type indexes equal a fresh rebuild, and
+proves identical Swish-only safety-valve output and statistics.
+
+Recurrent orphan-step alias repair is shared by direct lowering and PyTorch
+normalization through the Torch-free
+`passes/recurrent_alias.py::repair_orphan_recurrent_step_tensors` owner. It
+preflights tensor names using the exact `*_h_step_N`/`*_c_step_N` grammar and
+therefore builds no index when no candidate exists. Otherwise it reuses a
+matching supplied `ModelIRGraphIndex` or builds one index, rejects already-
+produced and public-input names, finds the first valid Reshape among indexed
+consumers of the corresponding `*_step_shape_N` tensor, and rewrites indexed
+alias consumers in place. Non-public orphan tensor metadata is removed; public
+output metadata remains. The direct wrapper converts the repaired count to its
+existing stats dictionary, while the PyTorch wrapper preserves its existing
+`None` return. Exact legacy comparison and cross-wrapper comparison cover
+multiple aliases, first-match order, public boundaries, missing and produced
+aliases, no-consumer cleanup, zero-candidate allocation, and maintained-index
+equivalence.
+
+Unbound nonconstant-input discovery and layout repair are owned by the Torch/
+TensorFlow-free `passes/unbound_input_layout.py` module. Standalone reporting
+keeps a lightweight producer-name scan and returns the existing issue schema.
+Repair snapshots consumer objects in graph/input order and builds one
+`ModelIRGraphIndex` only when an issue exists. Current operator positions are
+resolved by identity before every insertion, so one differential
+`insert_operator()` call updates all producer, consumer, identity, and type
+indexes without rescanning the graph. Later candidates observe newly inserted
+producers and skip duplicate repairs for a shared orphan.
+
+The owner keeps three explicit semantic families: DEQUANTIZE uses the exact
+`_nhwc_bridge` preference and restricted ADD fallback; RESHAPE, SHAPE, and
+SPLIT choose the nearest preceding compatible runtime tensor; ONNX-style
+`input.*` MUL aliases require every consumer to be MUL data input zero and a
+nearest compatible ADD `_input_nhwc` source. Shape, dtype, quantization,
+signature, unique permutation tensor, and insertion-order policies are
+unchanged. The lowerer wrapper preserves the stats schema and reconciles shape
+metadata using the returned current index. Exact former-implementation
+comparison covers five sequential insertions and two-consumer MUL fan-out;
+separate checks prove nearest DEQUANTIZE fallback, strict exact-source
+preference, no index allocation for clean graphs, and equality with a fresh
+index rebuild.
+
+Inverse layout Transposes around linear
+DEQUANTIZE-(RELU/RELU6)-QUANTIZE chains are owned by the Torch/TensorFlow-free
+`passes/quantized_activation.py` module. A no-Transpose preflight avoids index
+allocation; otherwise one `ModelIRGraphIndex` supplies graph-order Transpose
+candidates and every single-consumer edge. The DQ input and Q output change
+through indexed setters, then both wrapper Transposes are removed in one
+differential compaction. The ordered restart remains so a candidate made
+linear by a later removal can still be reconsidered without rebuilding maps.
+
+Intermediate and source public-boundary guards, exact inverse permutations,
+per-tensor quantization eligibility, source shape/signature propagation,
+destination dtype and quantization cloning, tensor pruning, lineage events,
+and the existing stats key are unchanged. Characterization compares the full
+two-chain RELU/RELU6 ModelIR with the former mutation sequence, blocks legacy
+consumer-map construction, checks public, fan-out, per-channel, and permutation
+no-ops, observes no index for a Transpose-free graph, and compares the
+maintained index with a fresh rebuild.
+
+Expanded HardSigmoid QDQ layout-bridge cleanup is owned by the same
+Torch/TensorFlow-free `passes/quantized_activation.py` module. The owner
+recognizes both `MUL->ADD->RELU_0_TO_1` and
+`MUL->ADD->MAXIMUM->MINIMUM` forms, traverses every linear edge through one
+`ModelIRGraphIndex`, updates the DQ/Q edges differentially, and removes both
+inverse Transposes in one indexed compaction. Rank-matched side constants are
+permuted only after every required constant has been validated: exclusive
+constants update in place, while shared constants are cloned and rewired
+through the index. Thus a missing late clamp constant is now a transactional
+no-op rather than leaving an earlier constant partially remapped.
+
+The owner preserves exact inverse-permutation and per-tensor quantization
+guards, source shape/signature propagation, destination dtype/quantization
+cloning, pruning, lineage, and the existing stats key. Every expanded
+HardSigmoid intermediate, including the `MAXIMUM` output in the clamp form,
+is treated as a public boundary when listed as a graph output. Focused
+characterization covers both valid forms in one graph, private and shared
+constant remapping, maintained-index equivalence, public intermediates and
+source, fan-out, per-channel quantization, non-inverse permutations,
+transactional rejection, and the no-Transpose/no-index preflight.
+
+The adjacent expanded `MUL->ADD->PRELU` QDQ layout bridge is also owned by
+`passes/quantized_activation.py`. It uses one `ModelIRGraphIndex` for
+graph-order Transpose candidates, every linear edge, side-constant ownership,
+DQ/Q rewiring, and batch removal of both wrappers. MUL and ADD retain either
+data/constant input order; PRELU retains its strict data-input-zero and
+constant-alpha contract. Public intermediates and source outputs, exact
+inverse permutations, per-tensor quantization, source shape/signature,
+destination metadata, pruning, lineage, and the existing stats key remain
+protected.
+
+HardSigmoid and expanded PReLU now share only the identical constant-remap
+mechanism. `_plan_constant_layout_remaps` validates all inputs and snapshots
+private/shared ownership without mutation; `_apply_constant_layout_remaps`
+then updates private rank-matched tensors in place or clones and index-rewires
+shared tensors. Eligibility remains explicit: HardSigmoid accepts any
+non-`None` constant buffer, while the established expanded-PReLU rule requires
+all three buffers to be NumPy arrays. Characterization covers two valid
+PReLU chains in one graph, reversed MUL/ADD inputs, private MUL/alpha remaps,
+shared ADD cloning with quantization metadata, maintained-index equivalence,
+public boundaries, fan-out, per-channel quantization, non-inverse
+permutations, non-array/missing alpha rejection, and no-Transpose/no-index
+preflight. A simple public-output ONNX graph is intentionally not used as an
+exact owner fixture because the ordered trailing-output cleanup removes its
+post-Transpose before this later specialized owner runs.
+
+Quantized logistic-gated MUL layout recovery is isolated in the Torch/
+TensorFlow-free `passes/quantized_gate.py` module rather than being forced
+through the linear activation owner. The pass recognizes the shared
+quantized input feeding separate data and logistic DQ branches, the internal
+LOGISTIC-Q-DQ gate, MUL-Q, and one or more inverse-Transpose output aliases.
+One `ModelIRGraphIndex` owns graph-order post candidates, producer traversal,
+strict branch-consumer guards, DQ rewiring, canonical Q-output selection,
+alias-consumer replacement, and batch removal of the pre/post Transposes.
+No producer or consumer compatibility map is rebuilt after a match.
+The nested backward walk that distinguishes the MUL data input from the
+LOGISTIC-Q-DQ input is isolated in `_match_logistic_gate_branch`; incomplete
+gate-looking chains retain the former behavior of falling back to a data-
+branch candidate, while duplicate data or gate branches remain ambiguous and
+ineligible.
+
+The first post alias in graph order remains canonical. Its tensor receives
+the permuted MUL-Q shape/signature, dtype, and cloned quantization metadata;
+later alias consumers are changed through indexed `_replace_tensor_inputs`.
+All original topology, fixed rank-four permutations, per-tensor quantization,
+metadata permutation, pruning, lineage, and stats contracts remain intact.
+Public-boundary protection is strengthened to cover every data/gate
+intermediate, not only the pre input, MUL output, and post aliases. Focused
+characterization compares complete former results for simultaneous single-
+and multi-post chains, reverses MUL inputs, blocks legacy graph-map builders,
+checks maintained-index equivalence, and covers public intermediates/source/
+aliases, branch fan-out, non-Transpose post users, per-channel quantization,
+wrong permutations, and the no-Transpose/no-index preflight.
+
+The primary branch-rewrite phase of the broader Swish-QDQ NHWC-island
+optimizer is owned by the Torch/TensorFlow-free
+`passes/quantized_swish_layout.py` module. Its explicit result contract returns
+the rewritten branch count, removed pre-Transpose count, and immutable set of
+NHWC-rewritten tensor names needed by later propagation phases. One optional
+or locally constructed `ModelIRGraphIndex` supplies graph-order Transpose
+candidates, every producer/consumer guard, both DQ source rewrites, and
+differential removal of an unused pre-Transpose. No legacy producer/consumer
+map is rebuilt, and a Transpose-free graph allocates no index.
+
+Shared-input multi-branch ordering, quantized and float MUL tails, peer Swish
+recognition, fixed spatial threshold, explicit concat-closure mode, public
+intermediate/post-output guards, data fan-out, shape/signature permutation, and
+the historical ordered restart are unchanged. Because only the two DQ source
+edges and an unused pre-Transpose can change, downstream match edges are read
+directly from the maintained index without copying the full consumer map.
+Extraction-time differential comparison runs the prior committed phase AST
+and the new owner over shared, closure, spatial-guard, public, and fan-out
+fixtures and compares the complete ModelIR and result. The comprehensive
+existing three-branch fixture retains digest
+`529b9889fafe9982ebb37ca63687b9329fa11a837562c154480c1856bbc05760`,
+with three rewritten branches, two removed pre-Transposes, and twenty rewritten
+tensors. Metadata propagation, late Concat normalization, inverse-post cleanup,
+and the independently owned Conv-input safety valve remain later ordered
+phases of the compatibility orchestrator.
+
+The immediately following Swish-QDQ metadata phase is owned by
+`propagate_swish_qdq_nhwc_metadata` in the same module. It treats unary
+quantization, binary broadcast, Pool/Resize channel preservation, and strict
+Concat-Q-inverse-Transpose closure as one fixed-point contract because all four
+families mutate the same rewritten-tensor state. Candidate order is the graph-
+ordered union of relevant type buckets from one `ModelIRGraphIndex`; topology
+does not change, so the stable indexed consumer relation is reused for every
+iteration. An empty rewritten seed returns without constructing an index.
+Unary shape/signature copying, binary static/dynamic broadcast fallback,
+Pool/Resize channel guards, public outputs, negative Concat axis normalization,
+strict tail fan-out, Concat axis/shape mutation, and quantized-output metadata
+retain their former behavior. The shape/signature copier is a single module
+owner also called by the later Dequantize-input repair in late Concat
+normalization; the lowerer no longer relies on a deleted nested closure.
+
+`run_swish_qdq_nhwc_primary_phases` constructs one index when a Transpose is
+present and passes it to both the branch and metadata owners. The branch phase
+maintains that index through its two source-edge changes and differential root
+removal; the metadata phase changes no topology. Fixed-point, public-output,
+channel-mismatch, and wrong-tail fixtures match the complete prior committed
+phase AST and result. The comprehensive fixture retains post-metadata digest
+`bab34e6351ec24bc564b9f95b4550bbfaca867f15906f9d77b92f7e8adf1d804`,
+one rewritten Concat axis, and twenty-four rewritten tensors. Late Concat
+normalization and inverse-post cleanup remain outside this shared-index
+boundary because they perform additional rewires and removals.
+
+Both inverse post-Transpose sweeps around late Concat normalization delegate to
+`remove_inverse_post_transposes_for_swish_qdq` in the same module. The two
+historical invocation points remain distinct, but match/guard/rewrite logic has
+one semantic owner. Each invocation skips index construction for an empty
+rewritten set or Transpose-free graph; otherwise one `ModelIRGraphIndex`
+supplies graph-order candidates, global alias-consumer replacement, and
+differential removal. A public post output, non-inverse permutation, or input
+outside the rewritten-tensor state remains untouched. Full fan-out is safe
+because every alias consumer is updated before removal, and a newly exposed
+alias chain is reconsidered by the ordered restart without rescanning all
+operators.
+
+The two former lowerer loops have identical ASTs. Differential
+characterization applies the prior committed loop and the indexed owner to a
+fixture containing chained aliases, multi-consumer fan-out, a public alias,
+wrong permutation, and untracked input; complete ModelIR and the three-removal
+count match. A supplied index remains equal to a fresh rebuild.
+
+Late mixed-input Concat normalization is now owned by
+`normalize_late_swish_qdq_concat_inputs` in the same module. A complete match
+plan is validated before mutation: every input must be rank four; at least one
+direct or Dequantize-wrapped NHWC-to-NCHW adapter must be bypassable; normalized
+batch and spatial dimensions must agree; the Concat output must be private;
+and the tail must be exactly one Quantize whose users are all inverse
+Transposes. Accepted Concat and Dequantize edges are updated through one
+`ModelIRGraphIndex`, axis and tensor metadata are committed together, and only
+input Transposes made unused by those rewires are removed. Processing restarts
+after each transaction so a compaction cannot leave a stale candidate index.
+Public source boundaries, mixed fan-out, missing tensors, mismatched shapes,
+and invalid tail permutations remain no-ops.
+
+`run_swish_qdq_late_concat_and_post_cleanup` shares that maintained index with
+the immediately following inverse-post cleanup. The first historical post
+cleanup remains before late normalization; the second is represented inside
+the runner, preserving ordered behavior and cumulative statistics while
+avoiding another full index build. An extraction-time check compiles the exact
+prior committed late-loop AST and confirms complete ModelIR, rewritten-state,
+axis-count, and two-input-adapter-removal equality on the mixed direct/DQ
+fixture. The Swish compatibility orchestrator is now 69 lines with no raw
+top-level mutation loop.
+
+Concat-input exact-grid Q/DQ bypass is owned by
+`passes/quantization_cleanup.py`. The owner recognizes only
+`DEQUANTIZE(source_q)->float->QUANTIZE->q->DEQUANTIZE->concat_input` and
+rewires the matching Concat slot to the first float tensor. The source and
+destination quantized tensors must have exactly equal dtype, scale, zero point,
+and quantized dimension; the two float shapes must match; `q` must be consumed
+only by its Dequantize; and neither `q` nor the second Dequantize output may be
+public. Arithmetic between the first Dequantize and Quantize therefore remains
+ineligible, preserving observable rounding and clipping.
+
+One optional or locally constructed `ModelIRGraphIndex` supplies graph-order
+Concat candidates, all producer traversal, the exclusive quantized-consumer
+guard, and differential Concat input replacement. Each accepted edge change
+restarts the ordered scan against the maintained index; multiple matches no
+longer rebuild complete producer and consumer maps after every rewrite. A graph
+without Concat still performs the historical unused-tensor pruning but does not
+allocate an index. The lowerer retains a thin compatibility wrapper and its two
+ordered call sites remain unchanged. Extraction-time characterization compiles
+the complete prior committed function AST and confirms exact ModelIR and stats
+equality for both one and two simultaneous matches.
+
+Terminal Transpose/Dequantize sanitation is owned by the same quantization-
+cleanup module and keeps one index across both historical subphases. The first
+subphase recognizes a private, exclusively consumed per-tensor-quantized
+`Transpose->Dequantize->graph output` boundary, moves Dequantize before the
+Transpose through indexed input/output replacement, creates the same uniquely
+named intermediate tensor, updates output shape/signature, and reorders the two
+operators through indexed remove/insert. The second subphase recognizes a
+terminal `Dequantize->Transpose->graph output`, globally renames the private
+pre-Transpose tensor to the public output through the index, and removes the
+Transpose differentially. Their separate sanitation and removal counters and
+ordered restart are unchanged.
+
+The owner protects terminal-output consumers, public intermediate and
+quantized inputs, shared Transpose outputs, missing tensors, invalid
+permutations, and per-channel quantization. It performs historical pruning but
+allocates no index unless both Dequantize and Transpose are present. The
+lowerer is a thin compatibility wrapper at both established call sites.
+Extraction-time characterization compiles the complete former function AST
+and confirms exact ModelIR and both stats for each subphase with one and two
+simultaneous matches.
+
+The adjacent Transpose-Dequantize-keepdims-Mean-Quantize bridge is also owned
+by `passes/quantization_cleanup.py`. One index supplies graph-order pre-
+Transpose candidates and every exclusive linear-edge guard. A complete rewrite
+plan normalizes negative reduction axes, maps them through the permutation,
+computes Dequantize/Mean/bridge shapes and signatures, validates the
+permutation, and reserves unique bridge/perm tensor names before mutation.
+Commit then bypasses the pre-Transpose, rewrites axes and metadata, updates the
+Quantize edge, inserts the preserving Transpose immediately before Quantize,
+and removes the former pre-Transpose through the same maintained index.
+
+Valid one- and two-match fixtures retain complete former ModelIR and stats.
+Public/fan-out intermediates, shared axes, `keepDims=False`, invalid axes,
+missing tensors, and missing required operator families remain no-ops. The
+transactional preflight deliberately fixes one former rough edge: an invalid
+permutation used to mutate Dequantize/Mean metadata and axes before discovering
+that the output bridge could not be formed; it now leaves the complete ModelIR
+unchanged. A graph without all four required operator types still performs
+historical pruning without allocating an index.
+
+Pseudo-op LeakyReLU fusion is owned by `passes/graph_cleanup.py`. The accepted
+grammar remains deliberately exact: `RELU(x)` must be the first SUB input;
+`MUL(alpha, RELU(NEG(x)))` must be the second; alpha may occupy either MUL
+slot but must be a singleton constant; and all four branch intermediates must
+be private and exclusively consumed by the next expected operator. When both
+boundary tensors exist they must be floating point. Reversed SUB inputs,
+source mismatch, integer boundaries, public intermediates, and any fan-out are
+no-ops.
+
+One optional or local `ModelIRGraphIndex` provides graph-order SUB candidates,
+producer traversal, all consumer guards, in-place type/input replacement of
+the retained SUB, and one batch compaction of NEG, both RELUs, and MUL. The
+retained operator is normalized to the same fresh `LEAKY_RELU` fields as the
+former object replacement, preserving graph position and output identity.
+Tensor and optional LayoutState pruning occur after the fixed point; a graph
+without the complete required operator family allocates no index. Exact former
+AST comparison confirms complete ModelIR and stats equality for one and two
+matches, including both alpha input orders.
+
+The former YOLO-named MUL-square fold now has a model-neutral semantic owner,
+`_optimize_mul_square_anchor_constant_chains`, in
+`passes/constant_fold.py`. It matches only
+`MUL(x,c)->MUL(a,a)->MUL(anchor)->MUL(scale)` with an exact self-square,
+singleton finite pre-scale, floating anchor and scale buffers, finite fused
+values, and exclusive consumption of all three intermediates. Constant inputs
+retain either-side acceptance at each commutative MUL, while unrelated MUL
+chains remain ineligible. The legacy lowerer function and stats key remain as
+compatibility adapters only.
+
+One optional or local graph index supplies graph-order MUL candidates,
+producer traversal, duplicate-aware square consumption, differential input and
+output rewrites, and batch removal of the first and final MUL. The fused buffer
+retains anchor dtype, normalized shape/signature, cloned quantization metadata,
+and optional LayoutState registration; the retained square and anchor MULs keep
+their graph positions and the anchor assumes the public final output identity.
+All topology and finite-value checks complete before mutation. Public `a`,
+square, or anchor intermediates are now protected transactionally—a deliberate
+fix for the former rule, which could remove producers of graph outputs. Valid
+one- and two-match fixtures retain complete former ModelIR and statistics.
+
+Leading-singleton Gather-to-Reshape canonicalization is owned by
+`passes/gather_reshape_cleanup.py`. One optional or local
+`ModelIRGraphIndex` enumerates graph-order Gather candidates, proves the sole
+Reshape consumer, records the Reshape data-edge replacement through the common
+lineage-aware setter, and removes the Gather differentially. Multiple matches
+therefore use one index instead of rebuilding the complete consumer map after
+each removal. The graph-order scan restarts only after a successful removal,
+preserving the former fixed point when an inner Gather removal exposes an
+outer Gather directly before Reshape. Graphs missing either required operator
+family retain historical unused-tensor pruning without allocating an index,
+and optional LayoutState pruning keeps the session contract current.
+
+The value-preservation contract requires normalized axis zero, zero batch
+dimensions, exactly one signed-integer zero in the constant index buffer, a
+statically fixed leading-one input signature, exact rank-reduced tail
+shape/signature, matching input/Gather-output dtype and quantization, a private
+uniquely produced Gather output, and a topologically later Reshape that consumes
+it only at data input zero. The singleton index may retain physical shape
+`[1]`, matching direct TFLite scalar-index legalization. Every guard completes
+before mutation. This deliberately prevents two unsafe former rewrites:
+multiple zero indices, which repeat the selected slice, and a dynamic leading
+signature, which cannot prove that bypassing Gather preserves element count.
+Exact former-function AST comparison confirms complete ModelIR, lineage, and
+statistics equality for valid independent one- and two-match fixtures and the
+nested fixed point.
+
+Marker-gated terminal Softmax/Transpose cleanup is owned by
+`passes/terminal_softmax_layout.py`. The preceding canonicalizer imports the
+same `_SOFTMAX_NHWC_PROPAGATED_MARKER`, so propagation and consumption no
+longer duplicate a private string contract. One optional or local
+`ModelIRGraphIndex` follows deterministic public-output order, rejects any
+internally consumed terminal output, proves unique Transpose and Softmax
+producers, and checks the private Softmax intermediate's exact consumer. The
+lineage-aware indexed output setter moves public producer identity to Softmax;
+the terminal Transpose is then removed differentially. Multiple public outputs
+reuse the same index, and graphs missing either required family retain
+historical tensor and optional LayoutState pruning without index construction.
+
+All marker, permutation, arity, producer, consumer, public-input/output, and
+operator-order guards complete before mutation. A terminal output cannot also
+be a graph input. Rank-four source shape/signature and a destination tensor are
+also required, and source
+quantization is cloned before commit. The existing public tensor object and
+its provenance remain stable while dtype, quantization, shape, and signature
+take the retained Softmax output metadata; every other Softmax option,
+including axis and beta, remains unchanged when the marker is removed. This
+deliberately fixes two former invalid-IR paths: rewriting when the private
+Softmax output is also public, and deleting the adapter when its source tensor
+metadata is absent. Exact former-function AST comparison confirms complete
+ModelIR, lineage, and statistics equality for valid one- and two-output
+fixtures.
+
+Pre-ArgMax channel-layout cleanup is owned by
+`passes/terminal_argmax_layout.py`. One optional or local
+`ModelIRGraphIndex` enumerates graph-order Transposes, proves each private
+adapter's sole topologically later ArgMax consumer, tracks axis-constant
+ownership, applies lineage-aware data/axis rewiring, and removes the adapter
+differentially. Independent matches and changes from shared to private axis
+ownership therefore reuse the same current index. Graphs missing either
+required operator family retain historical tensor and optional LayoutState
+pruning without index construction; successful calls synchronize LayoutState
+after registering any cloned constant and pruning dead tensors.
+
+The accepted adapter is exactly rank-four `[0,3,1,2]`. A singleton signed
+INT32/INT64 axis must normalize to NCHW channel axis one and maps to NHWC axis
+three. Source and adapter shape/signature must be the exact permutation, the
+ArgMax output metadata must equal the rank-reduced NHWC prefix, and source and
+adapter dtypes must agree. The adapter output cannot cross either public
+boundary or fan out. Private axis constants retain in-place update semantics;
+shared constants and constants at either public boundary receive a uniquely
+named clone with preserved NumPy dtype and cloned quantization. All metadata,
+clone, topology, and public-boundary decisions finish before mutation. This
+deliberately prevents the former rule from changing a public axis output from
+one to three or removing the producer of a public-input adapter tensor. Exact
+former-function AST comparison confirms complete ModelIR, lineage, and
+statistics equality for valid private, shared, and negative-axis fixtures.
+
+Exact-grid quantized MaxPool cleanup is owned by
+`passes/quantized_pool.py`. One optional or local `ModelIRGraphIndex`
+enumerates graph-order Dequantize candidates, proves the exclusive and
+topologically ordered MaxPool/Quantize consumers, applies lineage-aware Pool
+input/output rewrites, and removes both wrappers differentially. Independent
+INT8 and UINT8 chains therefore share one current index. Graphs missing any
+required operator family retain historical unused-tensor and optional
+LayoutState pruning without allocating an index; both production call sites
+supply the Session-owned LayoutState.
+
+The retained builtin requires exactly equal input/output quantization grids:
+the dtype is the same INT8 or UINT8, scale is positive and finite, zero point
+is identical and within the dtype range, and scale equality is exact rather
+than tolerant. All four tensor records must exist. Both float bridges have the
+same floating dtype, and quantized/float shape plus shape-signature metadata
+must agree exactly at each rank-four boundary. The bridge tensors cannot cross
+either public boundary, fan out, or have duplicate producers; the quantized
+output cannot also be a graph input. Quantization cloning and every topology
+and metadata guard finish before mutation. Pool options, version, ONNX
+provenance, public output identity, and valid former statistics remain
+unchanged. This deliberately prevents three former invalid rewrites: folding
+near-equal but distinct grids, folding without float bridge metadata, and
+removing a producer whose bridge is exposed as a public input. Exact former-
+function differential execution confirms complete ModelIR and statistics
+equality for valid one- and two-chain fixtures.
+
+Canonical quantized Logistic cleanup is owned by
+`passes/quantized_logistic.py`. One optional or local `ModelIRGraphIndex`
+enumerates graph-order Dequantize candidates, proves the exclusive and
+topologically ordered Logistic/Quantize consumers, applies lineage-aware
+Logistic input/output rewrites, and removes both wrappers differentially.
+Independent INT8 and UINT8 chains therefore share one current index. Graphs
+missing any required operator family retain historical unused-tensor and
+optional LayoutState pruning without allocating an index; both production
+call sites supply the Session-owned LayoutState.
+
+The quantized input and output use the same INT8 or UINT8 dtype. Input scale
+must be positive and finite, with its zero point in the dtype range. Output
+quantization is exactly the builtin's canonical scale `1/256` and zero point
+`-128` for INT8 or `0` for UINT8; the former tolerance is intentionally not
+used. All four tensor records must exist, the two bridge dtypes must be the
+same floating type, and elementwise shape/signature metadata must agree across
+the complete chain without imposing a rank-four restriction. Both bridges are
+private, exclusively consumed, uniquely produced, and topologically ordered;
+the quantized output cannot also be a graph input. All guards finish before
+mutation. Logistic options and provenance remain on the retained object,
+version becomes two for INT8 and one for UINT8, and the public output object
+and canonical quantization remain stable. This deliberately prevents former
+rewrites with a near-canonical output scale, absent or invalid input grid,
+missing float metadata, or public-input bridge. Exact former-function
+differential execution confirms complete ModelIR and statistics equality for
+valid one- and two-chain fixtures.
+
+Canonical quantized Softmax cleanup is owned by
+`passes/quantized_softmax.py`. One optional or local `ModelIRGraphIndex`
+enumerates graph-order Dequantize candidates, proves the exclusive and
+topologically ordered Softmax/Quantize consumers, applies lineage-aware
+Softmax input/output rewrites, and removes both wrappers differentially.
+Independent INT8 and UINT8 chains therefore share one current index. Graphs
+missing any required operator family retain historical unused-tensor and
+optional LayoutState pruning without allocating an index; both production
+call sites supply the Session-owned LayoutState.
+
+Input and canonical output grid requirements match quantized Logistic. The
+existing absolute beta tolerance of `1e-6` remains, with finite and parseable
+beta now required. Tensor rank must be positive, and an explicit negative or
+positive axis must normalize to the final dimension; when axis is omitted the
+final dimension is the default. This makes the match consistent with the
+serialized TFLite Softmax options, which retain beta but have no independent
+axis field. All four tensor records must exist, float dtypes must agree, and
+elementwise shape/signature metadata must match throughout. Both bridges are
+private, exclusively consumed, uniquely produced, and topologically ordered;
+the quantized output cannot also be a graph input. All guards finish before
+mutation. Softmax options and provenance remain on the retained object,
+version becomes two for INT8 and one for UINT8, and public output identity and
+canonical quantization remain stable. This deliberately prevents former folds
+with a near-canonical output grid, absent/invalid input grid, missing float
+metadata, public-input bridge, malformed options, scalar rank, or non-last
+axis. Exact former-function differential execution confirms complete ModelIR
+and statistics equality for valid one- and two-chain fixtures, while a real
+QLinearSoftmax wrap inference remains bit-exact to ONNX.
+
+Expanded HardSigmoid QDQ cleanup is owned by
+`passes/quantized_hardsigmoid.py`. One optional or local
+`ModelIRGraphIndex` traverses the exact `DEQUANTIZE -> MUL -> ADD -> MAXIMUM ->
+MINIMUM -> QUANTIZE` chain, supports either scalar-input position, proves every
+exclusive producer/consumer and graph-order edge, applies lineage-aware data,
+constant, and output rewrites, and removes both wrappers differentially.
+Independent INT8/UINT8 matches share one current index. Graphs missing any
+required operator family retain historical unused-tensor and optional
+LayoutState pruning without allocating an index; both production call sites
+supply the Session-owned LayoutState.
+
+Input and output tensors require the same exact finite positive per-tensor
+INT8/UINT8 grid and an in-range zero point. All seven data tensors must exist;
+the five intermediate tensors have the same floating dtype, and every data
+shape/signature is identical. The five float bridges are private, uniquely
+produced, exclusively consumed, and topologically ordered; the quantized
+output cannot also be a graph input. Each alpha, beta, low, and high side
+tensor is a finite producer-free singleton whose quantized reconstruction is
+within the preserved quarter-scale or `1e-3` tolerance.
+
+Constant retargeting is now a four-item immutable pre-mutation plan. It owns
+the quantized value, cloned grid, source metadata, private/shared/public
+decision, and a deterministically reserved clone name. Private exclusive
+constants retain in-place conversion; shared or public constants receive `_q`
+clones. This fixes the former mutation of publicly observable scalar values.
+Only after all four plans and all intermediate grid clones succeed are edges,
+dtypes, grids, and output identity committed and wrappers removed. Injecting a
+failure into the second grid clone proves complete transactional rejection;
+the former helper had already changed the first constant's data and dtype
+before raising. Exact former-function differential execution confirms complete
+ModelIR/statistics equality for valid private one/two-match fixtures and a
+shared-four-constant fixture, while near-equal grids, absent float metadata,
+and public bridges are now no-ops.
+
+Quantized TransposeConv QDQ cleanup is owned by
+`passes/quantized_transpose_conv.py`. One optional or local
+`ModelIRGraphIndex` enumerates graph-order Dequantize candidates, proves the
+exclusive and topologically ordered TransposeConv/Quantize consumers, applies
+lineage-aware input/output rewrites, and removes both wrappers differentially.
+Independent chains therefore share one current index, and all three production
+call sites supply the Session-owned LayoutState. Graphs missing any required
+operator family retain historical unused-tensor and optional LayoutState
+pruning without allocating an index. A graph containing the complete family
+but no valid candidate is a complete no-op.
+
+The retained operator keeps the exact TFLite input roles `[output_shape,
+filter, data]`, its options, axis semantics, ONNX provenance, and at least
+opcode version three. Input and output activations independently require valid
+finite positive per-tensor INT8 grids with in-range zero points; they need not
+share a grid. Quantized/float shape and signature metadata must agree at each
+boundary, and both float bridges must share a floating dtype. Every bridge is
+private, uniquely produced, exclusively consumed, and ordered; the quantized
+output cannot also be a graph input.
+
+The producer-free rank-four filter is planned before mutation. A valid INT8
+filter remains unchanged. A finite FLOAT16/FLOAT32/FLOAT64 filter is quantized
+in place only when it is private and exclusively consumed by this operator;
+shared or public filters receive a deterministic `_q` clone. Filter metadata
+must exactly describe its NumPy buffer. Output-grid cloning, filter data,
+ownership, name reservation, and all topology/metadata guards finish before
+the first mutation. This prevents the former partial conversion of a private
+float filter when output-grid cloning raises, preserves public float filters,
+and rejects missing bridge metadata, public-input bridges, invalid activation
+grids, produced constants, and malformed buffers transactionally. Exact
+former-function differential execution confirms complete ModelIR/statistics
+equality for valid one/two-chain and shared-filter fixtures.
+
+Decomposed InstanceNormalization layout repair is owned by
+`passes/instance_normalization_layout.py`. It performs a marker-only preflight,
+then uses one optional or local `ModelIRGraphIndex` for every rank-three,
+rank-four, and rank-five candidate. The index proves the exact ordered
+`MEAN -> SUB -> square -> MEAN -> epsilon ADD -> SQRT -> reciprocal DIV ->
+normalize MUL -> scale MUL -> optional TRANSPOSE -> bias ADD` grammar, unique
+producers, exclusive internal consumers, and private intermediate boundaries.
+The final production call supplies the Session LayoutState. Graphs without a
+marked first Mean allocate no index.
+
+Logical layout selects channel axis one for NCW/NCHW/NCDHW and the final axis
+for NWC/NHWC/NDHWC. Both Mean axes, reduced/full intermediate shapes, and
+scale/bias broadcast buffers are immutable plans constructed before mutation.
+An axes constant that must change may be shared only by the two Mean operators;
+changing axes, scale, or bias constants requires producer-free, non-public
+ownership and the exact expected consumers. Epsilon must be a finite singleton
+and the reciprocal numerator must be the producer-free scalar one. Scale and
+bias buffers must contain exactly the positive static channel count, and an
+optional post-Transpose must contain a complete rank permutation before its
+bias axis is derived.
+
+Every tensor record, integer axis buffer, shape/signature, constant reshape,
+operator type/arity/order, and ownership decision is validated before any
+state is changed. This deliberately rejects the former acceptance of reversed
+SUB, non-ADD epsilon nodes, public intermediate shape mutation, shared scale
+mutation, floating axis buffers, incomplete channel constants, and malformed
+post permutations. It also prevents a late malformed bias shape from raising
+after axes, intermediate metadata, and scale data were already changed. Exact
+former-function differential execution confirms complete ModelIR/statistics
+equality for valid multi-layout and rank-five fixtures.
+
+NCHW Concat/global-pool/Conv axis repair is owned by
+`passes/concat_global_pool_layout.py`. A four-family preflight avoids index
+construction for unrelated graphs. One optional or local `ModelIRGraphIndex`
+then walks Conv candidates backward through the exact ordered and exclusive
+`CONCATENATION -> global MEAN -> RESHAPE -> CONV_2D` chain. The sole production
+call supplies the Session LayoutState.
+
+The Mean must keep dimensions and reduce exactly rank-four spatial axes two
+and three, accepting their equivalent negative representation. Every Concat
+input has a fully positive NCHW rank-four shape with common batch and spatial
+dimensions. The sum of axis-one channels must equal the constant OHWI Conv
+filter input channel. Concat, Mean, and Reshape intermediates are uniquely
+produced, exclusively consumed by the next operator, topologically ordered,
+and private. The producer-free Reshape shape tensor is a private exclusive
+integer constant with four elements.
+
+Concat axis/options, Concat/Mean/Reshape shape and signature metadata, Reshape
+options, and the shape buffer are immutable plans completed before mutation.
+This prevents the former rule from changing non-global reductions, public or
+fan-out intermediates, duplicate-producer chains, runtime/malformed filters,
+shared/public/produced or non-integer shape tensors, and incomplete shape
+buffers. It also prevents a late shape-buffer read exception from leaving the
+Concat axis and three tensor records partially changed. Exact former-function
+differential execution confirms complete ModelIR/statistics equality for valid
+one/two-chain, negative-axis, and INT64-shape fixtures.
+
+NCHW Concat/Transpose/(Transpose)Conv axis repair is owned by
+`passes/concat_transpose_conv_layout.py`. A family preflight avoids index
+construction for unrelated graphs. One optional or local `ModelIRGraphIndex`
+walks Conv and TransposeConv candidates backward through optional post-
+Transpose PAD/CAST/SUB and optional pre-Transpose
+RELU/RELU6/QUANTIZE/DEQUANTIZE/CAST chains to one Concat. Every edge is
+uniquely produced, exclusively consumed by its next ordered operator, and
+private. The sole production call supplies the Session LayoutState.
+
+The boundary Transpose is exactly `[0,2,3,1]` with a producer-free permutation
+constant. Every Concat input has a fully positive NCHW rank-four shape with
+common batch/spatial dimensions; its axis-one channel sum equals the constant
+OHWI filter input channel and the filter buffer exactly matches its metadata.
+The existing already-correct Transpose-output guard remains. Direct Conv
+without a post-prefix retains its output-shape refresh, while prefixed Conv and
+TransposeConv retain their former output metadata.
+
+Concat options plus Concat, pre-passthrough, Transpose, and eligible direct-
+Conv shape/signature records are one immutable plan. This prevents mutation of
+public or fan-out adapters, duplicate producers, produced permutation/filter
+constants, malformed/runtime filters, invalid input shapes, and nonexclusive
+pre/post chains. Exact former-function differential execution confirms
+complete ModelIR/statistics equality for direct Conv, pre/post-prefix Conv, and
+TransposeConv fixtures.
+
+Mixed singleton NCHW-input repair for an NHWC Concat is owned by
+`passes/mixed_singleton_concat_layout.py`. A Concat-family preflight avoids
+index construction for unrelated graphs. One optional or local
+`ModelIRGraphIndex` enumerates every graph-order `CONCATENATION` exactly once,
+plans all local adapters before mutation, and maintains producer/consumer and
+operator-type state while inserting each Reshape. The sole production call
+supplies the Session LayoutState.
+
+A candidate must have at least two same-dtype inputs, one output, and exact
+axis three. Every concrete rank-four dimension is positive; the output's last
+dimension equals the input count, and every input is either the matching NHWC
+singleton shape or its NCHW `[N,1,H,W]` projection. Shape signatures must
+describe the same layout contract. One dynamic batch or spatial dimension is
+preserved as the sole `-1` in the Reshape buffer, options, and adapter
+signature. A contract needing two dynamic Reshape dimensions is left
+unchanged because one TFLite Reshape cannot infer both safely.
+
+Each runtime source is a graph input or has one earlier producer; producer-
+free constants remain accepted. Duplicate, self, later, or unresolved
+producers are rejected. Repeated uses of one NCHW source share one local
+adapter instead of creating duplicate producers. Adapter and shape names are
+reserved across all tensor, operator, and public-boundary names before any
+operator is inserted. Source dtype and cloned quantization are retained, and
+the integer shape tensor plus Reshape operator are immutable plan objects.
+
+Indexed insertion and lineage-aware Concat rewiring occur only after every
+fallible shape, name, and quantization decision for that candidate succeeds.
+This prevents the former partial insertion when a later quantization clone
+raises, and rejects output-channel mismatches, mixed dtypes, inconsistent
+dynamic metadata, and ambiguous topology as complete no-ops. Exact
+former-function differential execution confirms ModelIR/statistics equality
+for valid static multi-candidate, multi-adapter, quantized-metadata, and name-
+collision fixtures.
+
+Swin-style window-partition canonicalization is owned by
+`passes/window_partition_layout.py`. A two-Reshape/one-Transpose preflight
+preserves historical unused-tensor pruning without constructing an index for
+unrelated graphs. Otherwise one optional or local `ModelIRGraphIndex`
+enumerates graph-order first-Reshape candidates and proves the exact ordered,
+exclusive `RESHAPE -> TRANSPOSE -> RESHAPE` chain before replacing it with
+`SPACE_TO_DEPTH -> RESHAPE`. Both production call sites supply the Session
+LayoutState.
+
+The input is rank-four NHWC and the first Reshape is exactly
+`[N,OH,BS,OW,BS,C]`, where the square block is greater than one and reconstructs
+the input height and width. The Transpose permutation is exactly
+`[0,1,3,2,4,5]`, its output is `[N,OH,OW,BS,BS,C]`, and the retained final
+Reshape is `[N*OH*OW,BS*BS,C]`. All data tensors have identical dtypes and
+either no quantization or the same valid per-tensor grid. Shape and permutation
+vectors are producer-free INT32/INT64 constants with exact vector metadata;
+runtime graph inputs are not treated as constants.
+
+Every produced boundary has one producer, internal outputs are private and
+exclusively consumed by the next ordered operator, and the data source is a
+graph input, producer-free constant, or uniquely produced earlier value. The
+former Transpose object becomes SPACE_TO_DEPTH in place, preserving version,
+axis semantics, and ONNX provenance while receiving the exact block option and
+lineage-aware data edge. One differential index maintains its type, inputs,
+and removal of the first Reshape.
+
+Static valid graphs retain exact former ModelIR and statistics. Consistent
+dynamic batch, spatial, or channel metadata is propagated through
+SPACE_TO_DEPTH. When the retained final Reshape needs one inferred dimension,
+its private shape vector and `newShape`/`onnxRawNewShape` options are planned as
+one `-1` transaction and protected from later static cleanup. Two inferred
+output dimensions cannot be represented by this Reshape and remain unchanged.
+This also makes duplicate/later producers, public-input conflicts, floating or
+produced constants, missing output metadata, mixed dtypes, invalid grids, and
+shape/signature mismatches complete no-ops.
+
+The paired Swin-style window-reverse canonicalization is owned by the same
+`passes/window_partition_layout.py` module. Its two-Reshape/one-Transpose
+preflight also preserves historical pruning without allocating an index for
+unrelated graphs. Otherwise one optional or local `ModelIRGraphIndex` captures
+the graph-order Reshape objects once and resolves their current positions as
+earlier final Reshapes are removed. This avoids repeated consumer-map scans
+while preserving the former sequential shared-constant behavior.
+
+The reverse input is rank three `[N*OH*OW,BS*BS,C]`. Its first Reshape must be
+exactly `[N,OH,OW,BS,BS,C]`, the square block must be greater than one, the
+Transpose permutation must be `[0,1,3,2,4,5]`, and the final Reshape must be
+`[N,OH*BS,OW*BS,C]`. The replacement retains the first Reshape with target
+`[N,OH,OW,BS*BS*C]`, changes the same Transpose object in place to
+DEPTH_TO_SPACE with the exact block option and final output, and removes the
+last Reshape. Operator version, axis semantics, ONNX provenance, output
+lineage, public output identity, and unused-tensor pruning are preserved.
+
+All four data tensors have one dtype and either no quantization or the same
+valid per-tensor grid. Every internal edge is private, uniquely produced, and
+exclusively consumed in increasing graph order. The data source is a graph
+input, producer-free constant, or uniquely produced earlier value. Shape and
+permutation tensors are exact producer-free INT32/INT64 vectors; runtime graph
+inputs are not accepted as constants, and the first shape vector cannot be a
+public output because the rewrite changes its value.
+
+The changed first-Reshape vector is prepared before graph mutation. A private
+vector is updated in place. A shared vector is cloned with its original dtype
+and quantization, using the former deterministic `*_d2s_shape` naming rule;
+after that edge is updated in the differential index, a later sole consumer
+can update the original vector in place exactly as before. Clone failure is a
+complete no-op. One consistent dynamic batch, spatial, or channel dimension is
+encoded as the sole `-1` in the changed shape vector, options, and tensor
+signature. Contracts needing two inferred first-Reshape dimensions are not
+rewritten.
+
+Static public-input, produced-input, quantized, and shared-vector multi-chain
+fixtures retain exact former ModelIR and statistics. Extra operator inputs,
+floating shape vectors, a public first shape vector, mixed data dtypes, and
+inconsistent signatures formerly matched but now remain transactionally
+unchanged. Both production call sites supply the Session LayoutState, and a
+real ONNX Reshape/Transpose/Reshape graph characterizes the production owner.
+
+Conv1D-shim unary canonicalization is owned by
+`passes/conv1d_unary_layout.py`. A two-Transpose, Squeeze, ExpandDims, and
+supported-Unary preflight preserves historical unused-tensor pruning without
+constructing an index for unrelated graphs. Otherwise one optional or local
+`ModelIRGraphIndex` captures graph-order first-Transpose objects and resolves
+each against the current graph after earlier chains are removed. The former
+per-rewrite full consumer-map rebuild is eliminated.
+
+The exact chain is NHWC rank-four input, Transpose `[0,3,1,2]`, one-axis
+Squeeze to rank three, one shape-preserving unary, ExpandDims at the same axis,
+and Transpose `[0,2,3,1]` back to the original NHWC shape. Concrete shapes are
+positive and every shape signature is either its concrete dimension or `-1`.
+The pre-Transpose, squeezed, unary, expanded, and final signatures must satisfy
+the complete permutation/drop/insert/inverse-permutation equations. A squeezed
+axis must be statically one in both shape and signature. When `squeezeDims` is
+absent, exactly one axis must produce the recorded rank-three shape.
+
+Both permutation vectors and the ExpandDims axis are producer-free INT32 or
+INT64 constants with exact vector metadata; runtime graph inputs are not
+treated as constants. The data source is a public input, producer-free
+constant, or uniquely produced earlier value. Every intermediate has one
+producer, is private, and is exclusively consumed by the next strictly later
+operator. The final output has one producer, is not a graph input, and any
+downstream consumers occur after the removed post-Transpose.
+
+Transpose and Squeeze preserve one dtype and valid per-tensor quantization
+grid; unary output and ExpandDims preserve another. Non-CAST unary operators
+require those groups to be the same. CAST retains the former ability to change
+dtype. The final output's dtype and cloned quantization continue to be repaired
+from the unary output. That clone is prepared before mutation, so an
+unclonable quantization object leaves the complete graph unchanged instead of
+rewiring the unary and then raising.
+
+The same unary object is retained with its options, version, axis semantics,
+and ONNX provenance. Its input becomes the original NHWC source and its output
+becomes the former post-Transpose output; four wrapper operators are removed
+with one differential-index compaction. Static public-input, produced-input,
+quantized, CAST, inferred-axis, and alternate-spatial-axis fixtures retain
+exact former ModelIR and statistics. Floating/produced constants, inconsistent
+internal shapes, mixed dtypes, and duplicate final producers formerly matched
+but now remain complete no-ops. Consistent dynamic batch, spatial, and channel
+signatures are preserved without introducing a Reshape. The sole production
+call supplies the Session LayoutState.
+
+The adjacent rank-four Conv1D-shim variant is owned by the same module. Its
+exact chain is an NHWC rank-four source, Transpose `[0,3,1,2]`, a supported
+unary, Transpose `[0,2,1,3]`, Reshape from `[1,H,C,W]` to `[H,C,W]`,
+ExpandDims at axis two, and Transpose `[0,2,3,1]`. The indexed rewrite removes
+the three Transposes, runs the unary directly on NHWC, changes the Reshape
+target to `[H,W,C]`, and changes ExpandDims to axis one. The original unary,
+Reshape, and ExpandDims objects retain their options, version, axis semantics,
+and ONNX provenance.
+
+All data tensors satisfy exact shape/signature permutation equations, strict
+producer and consumer ordering, compatible dtypes, and valid per-tensor
+quantization. CAST may transition dtype; other supported unary operators may
+not. Permutation, shape, and axis tensors are typed producer-free integer
+vectors and are not public inputs or outputs. At most one retained Reshape
+dimension may be dynamic. Shared Reshape-shape or ExpandDims-axis constants
+are cloned before their consumer edge changes; private constants update in
+place. Quantization and constant clones are prepared before graph mutation, so
+clone failure leaves ModelIR unchanged.
+
+When the rank-three Reshape output has side consumers, the owner inserts one
+`[0,2,1]` compatibility Transpose immediately before the earliest side
+consumer and rewires only those consumers. The primary ExpandDims branch stays
+in HWC order. This preserves the former side-branch values while fixing the
+legacy helper's locally non-topological append order. Without fan-out, static
+public-input, produced-input, quantized, and CAST fixtures retain exact former
+ModelIR and statistics. Floating or produced constants, inconsistent metadata,
+mixed dtypes, duplicate producers, backward consumers, and public
+intermediates are complete no-ops. One supplied or locally constructed
+`ModelIRGraphIndex` is maintained across all matches, and the sole production
+call supplies the Session LayoutState.
+
+Conv1D-shim unary fan-out bypass is the third semantic family in
+`passes/conv1d_unary_layout.py`. It applies only when the rank-three unary
+output has one exact ExpandDims/Transpose branch back to NHWC plus a retained
+NCHW side use. That side use may be a strictly later operator consumer or the
+unary output itself may be a public graph output. A chain without genuine
+fan-out is left to the preceding full-chain owner and is not partially
+rewritten by this pass.
+
+The full-chain and fan-out families share one
+`_resolve_unary_prefix_candidate` for the complete NHWC-to-NCHW Transpose,
+Squeeze, unary, shape/signature, source, boundary, producer, consumer, dtype,
+and quantization-independent prefix contract. The only prefix-policy
+difference is whether a public unary output is permitted. Each family owns
+only its distinct suffix validation and rewrite transaction.
+
+The bypass keeps the original unary object but moves it before the retained
+NHWC-to-NCHW Transpose. The unary now consumes the original NHWC source and
+produces the former post-Transpose output. The retained Transpose consumes that
+output, and the retained Squeeze produces the former unary output for every
+NCHW side consumer. The selected ExpandDims and post-Transpose are removed in
+one indexed compaction, after which the unary is inserted before the retained
+Transpose. This produces a topological operator order instead of the legacy
+helper's backward producer edge.
+
+Shape and signature equations, typed producer-free permutations and axis,
+strict producer/consumer order, private changed intermediates, dtypes, and
+per-tensor quantization are validated before mutation. A public unary output
+is allowed because its NCHW value and name remain unchanged; the pre-Transpose,
+pre-unary Squeeze, and removed ExpandDims outputs are not public. CAST retains
+its dtype transition. In that case the retained Transpose output dtype and
+quantization are repaired from the unary output, correcting metadata that the
+legacy helper left in the input dtype. Both required quantization clones are
+prepared before graph mutation, so clone failure is a complete no-op.
+
+Static public-input, produced-input, quantized, alternate-axis, and non-CAST
+fixtures become byte-for-byte identical to the legacy result after applying a
+topological sort to that legacy result. No-fan-out chains, floating or produced
+constants, inconsistent shape/signature metadata, mixed dtypes or grids,
+duplicate producers, backward consumers, and public removed intermediates are
+complete no-ops. One supplied or locally constructed `ModelIRGraphIndex` is
+maintained across all matches, and the sole production call supplies the
+Session LayoutState.
+
+Flattened InstanceNormalization Conv1D-shim canonicalization is isolated in
+`passes/conv1d_instance_norm_layout.py`; it is not added to the unary owner.
+The exact 17-operator path is NHWC-to-NCHW Transpose, axis-two Squeeze,
+Reshape to `[N,1,C*W]`, two axis-two kept-dimension means and the complete
+`SUB -> square -> variance+epsilon -> SQRT -> reciprocal -> normalize ->
+scale -> bias` decomposition, Reshape to `[N,C,W]`, a supported unary,
+axis-two ExpandDims, and NCHW-to-NHWC Transpose.
+
+The indexed owner validates every producer, consumer multiplicity, operator
+role and order, public boundary, concrete shape, dynamic signature, dtype,
+quantization state, and constant before mutation. Mean axes are exact typed
+producer-free `[2]` vectors. Epsilon, reciprocal numerator, scale, and bias
+are finite producer-free floating scalars; epsilon is nonnegative and the
+reciprocal numerator is exactly one. SUB and DIV retain their required input
+order, while the mathematically commutative MUL/ADD edges may use either input
+order. Extra fan-out from any layout-sensitive normalization intermediate is
+rejected.
+
+The rewrite removes only the two boundary Transposes. Squeeze consumes the
+original `[N,1,W,C]` source at axis one, its output and the second Reshape and
+unary outputs become `[N,W,C]`, the second Reshape target becomes `[N,W,C]`,
+and ExpandDims moves to axis one with `[N,1,W,C]` output metadata. Downstream
+consumers and graph outputs are redirected from the former post-Transpose name
+to the retained ExpandDims output. The InstanceNormalization interior remains
+unchanged because normalization across flattened `C*W` is permutation
+equivariant.
+
+Changed Reshape and ExpandDims constants are fully planned before graph
+mutation. Private constants update in place; shared constants are cloned with
+deterministic `*_nhwc_shape` and `*_nhwc_axis` names, preserving unrelated
+consumers. Clone failure is a complete no-op. One consistent dynamic batch,
+width, or channel dimension is preserved in signatures and the Reshape target;
+targets requiring two inferred dimensions are rejected. CAST retains its
+output dtype transition, while the floating normalization path requires one
+unquantized FLOAT16 or FLOAT32 contract.
+
+Static public-input, produced-input, CAST, and alternate-unary fixtures retain
+exact legacy ModelIR and statistics. Floating or produced constants, negative
+epsilon, reversed reciprocal DIV, mixed data dtypes, duplicate producers, and
+inconsistent metadata formerly matched but are now complete no-ops. One
+supplied or locally constructed `ModelIRGraphIndex` is maintained across all
+matches, and the sole production call supplies the Session LayoutState.
+
+The adjacent tencoder residual-gate family is isolated in
+`passes/conv1d_tencoder_layout.py`. Its right branch reuses
+`_resolve_flattened_instance_norm_prefix`, the side-effect-free prefix plan
+shared with the complete InstanceNormalization/unary family. Consequently,
+the residual pass cannot accept an arbitrary upstream Squeeze/Transpose path:
+it must prove the exact two-Mean normalization topology, scalar contracts,
+producer/consumer multiplicities, dtype, quantization, shape, and boundary
+invariants before considering the gate suffix.
+
+The suffix contract covers two complementary channel Slices from `[N,2C,W]`,
+Logistic gating, elementwise multiplication, one `[C,1]` or `[1,C]` floating
+scale, a simple rank-four Transpose/Squeeze or legacy rank-three Transpose left
+branch, residual ADD, axis-two ExpandDims, NCHW-to-NHWC Transpose, and one or
+more Conv consumers. Every changed intermediate is private and has an exact
+FLOAT16 or FLOAT32 shape/signature contract. One dynamic batch or width
+dimension is carried through the Reshape, Slice, residual, and bridge targets;
+a dynamic split-channel dimension is rejected because the two Slice boundaries
+are compile-time constants. Layout-sensitive fan-out inside either branch is
+rejected instead of being silently reinterpreted.
+
+The plan converts both residual inputs to NWC, updates the second Reshape and
+Slice vectors, transposes the channel scale to `[1,C]`, changes ExpandDims to
+axis one, and repairs Squeeze, Slice, Logistic, gate, residual, and rank-four
+metadata. All integer and floating constant changes are preplanned. Shared
+constants receive distinct deterministic clones, including the case where two
+changed operator inputs originally share one tensor; private constants update
+in place. The three boundary Transposes are removed through one maintained
+`ModelIRGraphIndex` only after the complete plan succeeds.
+
+When residual ADD has side consumers, one `[0,2,1]` NWC-to-NCW compatibility
+Transpose is inserted immediately before the earliest side consumer and only
+those edges are redirected. The Conv path consumes the retained ExpandDims
+output directly. This preserves side values and emits topological operator
+order, unlike the legacy helper's unconditional append. Exact NumPy
+differential tests cover simple and legacy left branches with and without
+fan-out, and the sole production call supplies the Session LayoutState.
+
+Conv1D-shim Squeeze/unary/BatchMatMul canonicalization is owned by
+`passes/conv1d_batchmatmul_layout.py`. The owner accepts one typed
+NHWC-to-NCHW Transpose, an explicit singleton Squeeze, zero or more strict
+supported unary operators, and a left-hand BatchMatMul tail. Every changed
+intermediate is private and single-consumer; the source may be a public input,
+a constant, or a uniquely produced earlier tensor. The right operand and
+BatchMatMul output are also validated for unique producers, graph order,
+dtype, per-tensor quantization, contracted dimensions, broadcast batch shape,
+and concrete output shape.
+
+The exact axis mapping determines the only permitted rewrite. Removing a
+transposed channel singleton yields the same `[N,H,W]` rank-three order, so
+`adjX` is preserved. Removing either supported spatial singleton changes
+`[N,C,L]` to `[N,L,C]`; all Squeeze and unary shape/signature metadata swaps
+its last two axes and `adjX` is toggled. In both cases the effective left
+matrix, right operand, and BatchMatMul output shape are proved identical before
+mutation. The batch dimension may retain a dynamic signature.
+
+The Squeeze consumes the original NHWC tensor at the mapped source axis, the
+original unary and BatchMatMul objects retain their unrelated options and ONNX
+provenance, and the boundary Transpose is removed through the same
+`ModelIRGraphIndex`. Floating or produced permutation constants, fan-out,
+public changed intermediates, right-operand placement, shape/dtype/grid
+mismatches, per-axis quantization, duplicate producers, and backward consumers
+are complete no-ops. The sole production call supplies the Session
+LayoutState.
+
+Decoder BatchMatMul-to-TransposeConv input canonicalization is owned by
+`passes/decoder_deconv_layout.py`. The exact path is a rank-three
+BatchMatMul result, commutative constant-bias ADD, axis-two ExpandDims,
+Transpose `[0,2,3,1]`, and input two of one TransposeConv. All changed
+intermediates are private and single-consumer. Both matrix operands may be
+public, constant, or uniquely produced earlier tensors; rank-two and rank-
+three broadcast operands are supported.
+
+The owner validates the original BatchMatMul output from both operand shapes,
+`adjX`, `adjY`, and batch broadcasting. It separately proves that swapping the
+operands and assigning `new adjX = not old adjY` and
+`new adjY = not old adjX` produces the exact `[N,L,C]` transpose of the old
+`[N,C,L]` result. ADD, ExpandDims, Transpose, and TransposeConv input metadata
+must satisfy every corresponding shape/signature permutation equation. One
+dynamic batch signature is retained.
+
+The bias must be a producer-free floating constant with exactly `L` values and
+an old broadcast shape of `[L]`, `[1,L]`, or `[1,1,L]`; it becomes
+`[1,L,1]`. ExpandDims accepts equivalent axis two or negative axis `-2` and
+moves to axis one. Private constants update in place. Shared bias and axis
+constants receive deterministic clones, including quantization metadata,
+before any operator or tensor changes.
+
+After preflight, the existing BatchMatMul inputs are swapped, only its two
+adjoint options change, rank-three result and ADD metadata swap their last two
+axes, and the retained ExpandDims output adopts the former Transpose output
+contract. TransposeConv input two is redirected and the sole Transpose is
+removed through the maintained `ModelIRGraphIndex`. Fan-out, public changed
+intermediates, produced/floating constants, incompatible bias, matrix or
+layout shapes, per-axis quantization, duplicate producers, backward consumers,
+and clone failures are complete no-ops. The sole production call supplies the
+Session LayoutState.
+
+Terminal decoder Squeeze/Mean canonicalization is owned by
+`passes/terminal_squeeze_mean_layout.py`. The exact path is an NHWC-to-NCHW
+Transpose `[0,3,1,2]`, rank-four Squeeze on axis two, rank-three Mean on axis
+one with `keepDims=True`, and a second Squeeze on axis one. The source may be
+a public input, a constant, or a uniquely produced earlier tensor. The three
+changed intermediates are private and single-consumer, while the final rank-
+two tensor retains its existing name, graph-output position, consumers, dtype,
+shape, signature, and quantization contract.
+
+One `ModelIRGraphIndex` proves the complete operator order and every producer,
+consumer, public boundary, typed constant, shape/signature equation, singleton
+axis, dtype, and per-tensor quantization contract before mutation. Equivalent
+negative Squeeze and Mean axes are accepted. The Mean axis must be a typed,
+producer-free one-element integer constant; a shared axis is cloned with a
+deterministic `*_nhwc_axis` name so unrelated consumers retain the old value.
+Clone allocation and every other changed value are preflighted before an edge
+or metadata mutation.
+
+The rewrite makes the first Squeeze consume the original `[N,1,W,C]` NHWC
+source on axis one, changes its intermediate from `[N,C,W]` to `[N,W,C]`,
+moves the kept-dimension Mean from axis one to axis two, changes its output
+from `[N,1,W]` to `[N,W,1]`, and moves the final Squeeze to axis two. The final
+`[N,W]` values and metadata therefore remain identical while the boundary
+Transpose is removed through the maintained index. Dynamic batch, width, or
+reduced-channel signatures are retained. Fan-out, public changed
+intermediates, floating or produced
+constants, dynamic singleton axes, inconsistent metadata, mixed dtypes or
+quantization grids, per-axis quantization, duplicate producers, backward
+consumers, and clone failures are complete no-ops. The sole production call
+supplies the Session LayoutState.
+
+The direct, side-Squeeze, Squeeze/unary/Reshape, and
+Squeeze/residual-ADD/Reshape subsets of decomposed
+InstanceNormalization pre/post canonicalization are owned by
+`passes/instance_norm_prepost_layout.py`. Their common exact boundary is an
+NHWC-to-NCHW Transpose, batch-axis Squeeze, Reshape back to rank four, the
+two-Mean `SUB -> square -> variance+epsilon -> SQRT -> reciprocal -> normalize
+-> scale -> bias` decomposition. The direct mode requires one private
+NCHW-to-NHWC post-Transpose. The side mode requires that post-Transpose plus
+exactly one additional axis-zero Squeeze consumer. The unary/Reshape mode
+requires an axis-zero Squeeze, one of the thirteen retained unary operators, a
+second rank-four Reshape, and the post-Transpose. The residual mode replaces
+the unary with an ADD whose other input is normalized from either a rank-three
+HWC-to-CHW Transpose or an NHWC-to-NCHW Transpose followed by Squeeze and an
+optional supported unary. All four modes are fully owned; the compatibility
+function is a 60-line graph-order/shared-32-cap dispatcher with no ModelIR
+mutation of its own.
+
+One `ModelIRGraphIndex` proves every producer, duplicate producer, consumer
+multiplicity, operator role and order, public boundary, exact concrete shape,
+dynamic signature, dtype, unquantized floating contract, and typed constant
+before mutation. Both Means must keep dimensions and reduce the two NCHW
+spatial axes; equivalent negative or reversed axis vectors are accepted. SUB
+and reciprocal DIV retain their noncommutative input order. Epsilon is finite
+and nonnegative, the reciprocal numerator is exactly one, and scale and bias
+are finite `[1,C,1,1]` FLOAT16 or FLOAT32 constants.
+
+All four rewrites move the first Squeeze and rank-four normalization computation
+to NHWC, change the reduction axes to `[1,2]`, transpose every changed tensor
+metadata contract, convert scale and bias to `[1,1,1,C]`, and remove only the
+two boundary Transposes. Direct and side modes redirect the existing bias ADD
+to the post-Transpose output name. In side mode, a fixed `[0,3,1,2]` adapter is
+inserted immediately before the side Squeeze and reproduces its original
+`inst_output` tensor name, NCHW shape/signature, dtype, and quantization
+contract. The adapter constant is validated and reused when compatible or
+allocated before mutation when absent. Unary/Reshape mode converts the second
+Reshape's CHW input and NCHW output metadata to HWC/NHWC, rewrites its shape
+constant and `newShape`, and moves the post-Transpose output name to that
+Reshape. CAST alone may change dtype; all other supported unary operators must
+preserve it. Dynamic height, width, or channel signatures are carried through
+the full, kept-dimension, side-branch, unary, and second-Reshape tensors.
+Residual mode also lifts its residual branch to HWC. If the ADD output has
+non-Reshape consumers, one preplanned HWC-to-CHW adapter preserves all legacy
+consumer slots; compatible INT32/INT64 permutation constants are reused and
+incompatible, produced, public, or quantized constants reject the entire
+transaction.
+
+Changed Reshape, Mean-axis, scale, bias, and optional second-Reshape constants
+are fully planned before mutation. A private constant updates in place; a constant shared with any
+unrelated consumer receives one deterministic clone, including one shared
+axis vector used by both Means. Clone failure is a complete no-op. Static
+public-input, produced-input, FLOAT16, negative-axis, and commuted affine
+fixtures produce exactly the same ModelIR as the committed legacy helper.
+Separate but equivalent Mean-axis constants, which the legacy helper skipped
+because it required one shared tensor, are now handled safely. Unsafe direct-,
+side-, unary/Reshape-, or residual/Reshape-tail candidates are not passed back
+to a legacy mutator. Invalid, public, produced, floating, or quantized
+adapter/shape constants and unsafe tail tensors are complete no-ops. The production calls supply the Session
+LayoutState. A supplied graph index is used by the indexed owner, refreshed
+immediately after a retained legacy rewrite so subsequent dispatch remains
+current, and reconciled once at the compatibility boundary. The compatibility
+loop offers each pre-Transpose to all four indexed modes at its original graph
+position, so mixed tail modes retain the legacy graph-order priority and one
+shared 32-rewrite ceiling.
+
+The adjacent decomposed-InstanceNormalization form whose bias ADD is already
+after the NCHW-to-NHWC post-Transpose is owned separately by
+`passes/instance_norm_post_bias_layout.py`. Its strict boundary is
+`NHWC -> Transpose[0,3,1,2] -> two-Mean decomposition through scale ->
+Transpose[0,2,3,1] -> bias ADD`. The common decomposition matcher, exact tensor
+contracts, finite FLOAT16/FLOAT32 constant validation, deterministic constant
+cloning, and constant-update application live in
+`passes/decomposed_instance_norm.py`; both InstanceNorm owners consume this
+same side-effect-free contract instead of maintaining a second rule chain.
+
+One `ModelIRGraphIndex` validates the complete operator order, producer and
+consumer multiplicity, duplicate producers, public boundaries, exact concrete
+shape and dynamic signature permutations, dtype, quantization, typed
+permutation/axis constants, nonnegative epsilon, unit reciprocal numerator,
+and scale/bias broadcast forms before mutation. Equivalent positive, negative,
+or reversed NCHW spatial axes and commuted affine operators are accepted. Scale
+and bias may be scalar, `[1,C,1,1]`, or `[1,1,1,C]`; only coefficients that
+actually change layout are updated, and unrelated consumers receive one
+deterministic clone. A shared scale/bias tensor is planned once for both uses.
+
+The transaction redirects both Mean/SUB source edges to the original NHWC
+tensor, changes the Mean axes to `[1,2]`, permutes every retained full and
+reduced core tensor contract, redirects the bias ADD from the post-Transpose
+output to the scaled tensor, and removes only the two Transposes. Unused bridge
+tensors are pruned only after a successful rewrite; a rejected candidate is an
+exact no-op. The lowerer compatibility function is a 19-line dispatcher. The
+two-pass normalization recovery loop shares one live graph index between the
+four-tail owner and this post-bias owner, while all production calls supply the
+Session `LayoutState`. The owner has a deterministic 32-rewrite ceiling and no
+whole-graph consumer-map rebuild or fixed-point `while` loop.
+
+The dual-branch decomposed-InstanceNormalization form whose normalized result
+is added to a residual NCHW branch is owned by
+`passes/instance_norm_residual_add_layout.py`. Its exact boundary is two
+independent `NHWC -> Transpose[0,3,1,2]` inputs, the common two-Mean
+InstanceNorm core through scale and bias, and a residual ADD with at least one
+later NCHW consumer. The rewrite removes both input Transposes, performs the
+normalization and residual ADD in NHWC, then inserts exactly one
+`Transpose[0,3,1,2]` immediately before the earliest downstream consumer. The
+adapter reproduces the original ADD output name and NCHW tensor contract, so
+all downstream fan-out and repeated input slots remain unchanged.
+
+One `ModelIRGraphIndex` proves the full producer, consumer, graph-order,
+boundary, shape/signature, dtype, quantization, permutation, affine-constant,
+and adapter contract before mutation. The common constant planner in
+`passes/decomposed_instance_norm.py` prepares both Mean-axis updates and the
+scale/bias changes as one transaction. Shared constants receive deterministic
+clones when required; an existing adapter permutation is reused only when it
+is a private unquantized INT32/INT64 `[0,3,1,2]` constant. Clone, output, and
+adapter-name collisions, invalid public or produced constants, unsafe dynamic
+contracts, and unsupported graph boundaries are complete no-ops.
+
+The indexed owner scans Transpose candidates in graph order, applies at most
+32 rewrites, updates the graph index differentially, and prunes unused tensors
+only after at least one successful rewrite. Its lowerer compatibility function
+is a 19-line dispatcher. The repeated normalization recovery loop supplies the
+same live index used by the adjacent post-bias owner, and both production calls
+supply the Session `LayoutState`. No full producer/consumer-map rebuild or
+unbounded fixed-point loop remains in this path.
+
+The following residual-MUL/CONCAT InstanceNormalization tail is owned by
+`passes/instance_norm_residual_mul_concat_layout.py`. Its strict prefix is the
+same direct NCHW decomposed core and bias ADD, followed by an
+`NCHW -> NHWC` Transpose and a residual ADD. The tail has exactly two MUL users
+of that ADD, two scalar or channelwise coefficients, one channel-axis CONCAT,
+and a final `NCHW -> NHWC` Transpose. The compatibility name retains its
+historical `...concat_conv...` spelling, but the owner deliberately preserves
+the legacy contract by not requiring a Conv consumer: the final tensor may be
+a public graph output or feed any later, graph-ordered consumers.
+
+All three Transposes are removed in one transaction. The normalization core,
+bias ADD, residual ADD, and both tail MULs execute in NHWC; the MUL outputs and
+CONCAT metadata are permuted to NHWC; the CONCAT axis changes from 1 to 3; and
+the CONCAT directly produces the former final-Transpose output name. Exact
+shape/signature permutations, including dynamic height, width, or channel,
+preserve the existing public and downstream tensor contract. CONCAT inputs are
+compared with multiplicity rather than as a set, so duplicated or missing
+branches cannot match accidentally.
+
+`plan_nhwc_instance_norm_constant_updates` accepts additional coefficient uses
+for this owner and plans both Mean axes, scale, bias, and the two tail-MUL
+coefficients together before mutation. A constant shared by any subset of
+those four affine sites is updated once; unrelated consumers receive one
+deterministic clone. Invalid, non-finite, produced, public, quantized, mixed-
+dtype, wrongly shaped, or colliding constants reject the whole transaction.
+One `ModelIRGraphIndex` proves every producer, consumer multiplicity, graph
+order, tensor, permutation, public boundary, and output-renaming contract. The
+owner uses a bounded graph-order scan, a 32-rewrite ceiling, differential index
+updates, success-only pruning, and Session `LayoutState` synchronization. Its
+former 501-line lowerer mutator is now a 19-line dispatcher; all four production
+calls supply LayoutState, and the repeated recovery loop reuses its live
+`residual_graph_index`.
+
+Dual-statistics normalization is intentionally not matched by the standard
+decomposed-InstanceNormalization core. It is owned independently by
+`passes/instance_norm_dual_stats_layout.py`. The input feeds two branches: one
+reduces only NCHW spatial axes `[2,3]`, while the other reduces all non-batch
+axes `[1,2,3]`. Each branch has the distinct
+`Mean -> SUB -> square -> Mean -> variance-factor -> epsilon -> SQRT ->
+DIV(centered,std) -> scale` contract. The standard core instead uses a unit
+reciprocal followed by MUL and has no variance factor, so sharing its matcher
+would silently conflate different mathematics. Only typed constant planning,
+metadata, index, and tensor-contract utilities are shared.
+
+The two scaled branches are added, followed by gamma MUL and beta ADD. Gamma
+and beta may be scalar/NCHW/NHWC constants or exact rank-one/rank-two vectors
+reshaped to `[1,C,1,1]`. Vector reshapes are validated through their producer,
+typed shape constant, dtype, quantization, consumer, source, and graph-order
+contracts; on success the NHWC operator consumes the vector directly and the
+now-dead Reshape is removed. Direct constants and both branch scales use the
+common grouped coefficient transaction. Spatial Mean axes are planned as one
+`[1,2]` transaction, including deterministic clones for unrelated users;
+global axes remain `[1,2,3]` and are validated but not changed. Finite,
+nonnegative scalar variance factors and epsilon values are required.
+
+Two exact output modes are supported. Direct mode removes the input and output
+Transposes and makes beta ADD produce the former NHWC output name. Residual
+mode additionally proves one independent NHWC-to-NCHW residual bridge, moves
+the residual ADD to NHWC, removes all three Transposes, and makes that ADD
+produce the preserved NHWC name. The residual ADD's old output contract is
+validated and permuted before rename so dynamic axes cannot leak from NCHW
+positions into NHWC metadata. The historical helper name contains `resize`,
+but the legacy boundary does not require a Resize: any later graph-ordered
+consumer is preserved, including fan-out and repeated input slots.
+
+One `ModelIRGraphIndex` proves both complete paths, consumer multiplicity,
+producer uniqueness, dependency order, public boundaries, concrete and dynamic
+shape/signature permutations, dtype, quantization, typed permutation and axis
+constants, coefficient ownership, optional Reshape removal, and final output
+rename before mutation. The owner scans graph-order candidates with a
+32-rewrite ceiling, updates the index differentially, prunes only after
+success, and synchronizes Session `LayoutState`. The former 712-line lowerer
+mutator is a 19-line dispatcher. All four production calls supply LayoutState,
+and the repeated normalization loop reuses the live `residual_graph_index`.
+
+The strict `MUL(c1) -> ADD(c2) -> MUL(c3)` affine fold is owned by
+`passes/affine_chain_fold.py`. It replaces the three operators with
+`MUL(c1*c3) -> ADD(c2*c3)` only for finite, non-variable FLOAT16, FLOAT32, or
+FLOAT64 constants and unquantized tensors of the same dtype. All three binary
+operators must have no fused activation. Static broadcast shapes and dynamic
+shape signatures are validated for the original three operations and the
+folded two-operation form before any constant or graph mutation.
+
+Constant roles are planned together. A constant shared by the first MUL and
+ADD is updated once, and sharing with the removed final MUL is treated as an
+internal chain use. Any unrelated consumer receives a deterministic folded
+clone while the original value remains unchanged. Produced, public, variable,
+quantized, non-finite, incorrectly typed or shaped constants reject the whole
+candidate. Clone names are reserved for the complete plan before mutation.
+
+The two intermediate tensors must have exact single-consumer multiplicity,
+unique producers, valid dependency order, and no public boundary role. The
+source must resolve to a prior producer or public input; downstream fan-out and
+repeated slots on the preserved final output remain untouched. The final
+output tensor and its dtype, quantization, shape, signature, layout, and ONNX
+provenance remain authoritative. This corrects the legacy behavior that copied
+the removed intermediate ADD tensor's metadata onto the final output tensor.
+Only the surviving first-MUL intermediate metadata is changed when folding a
+final broadcast expansion into it.
+
+Every candidate is resolved side-effect-free and resolved again immediately
+before apply. The owner uses one differential `ModelIRGraphIndex`, a bounded
+graph-order candidate snapshot, a configurable 32-rewrite ceiling,
+success-only pruning, and Session `LayoutState` synchronization. The former
+219-line raw lowerer loop is a 17-line compatibility dispatcher, and all three
+production calls provide the Session LayoutState.
+
+The strict
+`NHWC -> Transpose(NCHW) -> MUL(const) -> ADD(const) -> Transpose(NHWC)`
+layout island is owned by `passes/affine_prepost_layout.py`. Matching begins at
+each MUL candidate and proves the unique pre-Transpose producer, sole ADD
+consumer, and every inverse post-Transpose consumer. The pre adapter may remain
+for unrelated branches. The ADD output may fan out only through valid inverse
+post adapters; all post aliases are merged into the first graph-ordered output
+while downstream fan-out and repeated input slots are preserved.
+
+The owner supports finite FLOAT16, FLOAT32, and FLOAT64 scalar or rank-four
+constants. Raw NCHW channel, spatial, and full tensors are transposed once to
+NHWC. A constant already compatible only with the NHWC target is retained, so
+recovery is idempotent after an earlier partial layout sweep. Known
+logical/physical NCHW or NHWC annotations disambiguate orientation when
+available. If both the direct and rotated non-invariant arrays are compatible
+because channel and spatial dimensions coincide, the owner rejects the
+candidate instead of guessing an axis meaning. Constants are grouped across
+MUL and ADD; unrelated consumers receive deterministic `_nhwc` clones.
+
+Pre/post permutation tensors must be private, typed INT32/INT64 vectors with
+exact values. All data tensors must be rank four, unquantized, same-dtype, and
+have exact NCHW/NHWC shape and dynamic-signature permutations. Fused binary
+activations, public intermediates or post outputs, produced or variable
+constants, legacy ADD-output consumers, duplicate producers, invalid order,
+and partial alias contracts reject the entire plan before mutation. The
+disabled legacy PRELU branch and unused `valid_posts` state are not part of the
+owner contract.
+
+The first post output tensor is the authoritative final contract and is not
+overwritten. The surviving MUL intermediate adopts its shape, signature,
+logical layout, and physical layout; the old ADD intermediate receives the
+same metadata only so output renaming cannot contaminate dynamic axes before it
+is pruned. This fixes the legacy path that first permuted the ADD intermediate,
+copied it onto the canonical output, and then permuted the canonical tensor a
+second time. A side-effect-free plan is resolved again immediately before
+apply. One differential index, a graph-ordered candidate snapshot, a
+configurable 32-rewrite ceiling, success-only pruning, and LayoutState sync
+replace the unbounded full-map loop. The former 409-line helper is a 17-line
+dispatcher, and all seven production calls provide the Session LayoutState.
+
+The adjacent strict
+`NHWC -> Transpose(NCHW) -> MUL(const) -> Transpose(NHWC) -> ADD(const)`
+layout island is owned by `passes/affine_post_add_layout.py`. The owner starts
+from graph-ordered MUL candidates, proves one typed NHWC-to-NCHW producer and
+one typed NCHW-to-NHWC consumer, then validates every consumer of the private
+post output as a plain ADD tail. Multiple ADD branches and downstream repeated
+input slots are preserved. The pre adapter remains when another branch still
+uses its NCHW output; otherwise both Transposes are removed.
+
+The surviving MUL output adopts the removed post-Transpose tensor's exact
+shape, dynamic signature, logical layout, and physical layout. This makes the
+post tensor the sole authoritative layout contract and replaces the legacy
+metadata permutation heuristic. ADD side inputs are finite same-dtype scalar
+or exact `[1,1,1,C]` constants. MUL supports finite FLOAT16, FLOAT32, and
+FLOAT64 scalar, raw NCHW channel/spatial/full, already-NHWC, and legacy direct
+non-rank-four constants under the same shared orientation contract as the
+affine pre/post owner. Ambiguous equal-axis non-invariant rank-four constants
+are rejected. A changed MUL constant with an unrelated consumer receives one
+deterministic `_nhwc` clone.
+
+Producer uniqueness, exact consumer multiplicity, dependency order, public
+boundaries, rank-four shape/signature permutations, dtype, quantization,
+fused activation, constant provenance, and downstream order are resolved
+before mutation with one `ModelIRGraphIndex`. The plan is resolved again at
+apply time, including clone-name and removal preflight. Candidate traversal is
+bounded by a configurable 32-rewrite ceiling; pruning is success-only and the
+Session `LayoutState` is synchronized. The former 278-line lowerer helper is a
+17-line dispatcher and all four production calls provide LayoutState. The
+four-line Pad compatibility wrapper remains independently owned by
+`passes/pad_layout.py` because its topology and constant contracts differ.
+
+The strict two-stage SiNet Shuffle residual island is owned by
+`passes/sinet_shuffle_residual_layout.py`. Its one candidate spans five layout
+adapters and the complete graph
+`ADD -> MUL -> ADD -> PRELU -> {post Transpose, channel Concat} -> MUL -> ADD
+-> PRELU -> post Transpose`. The owner matches from the terminal post-
+Transpose, proves all thirteen operators with one `ModelIRGraphIndex`, and
+rewrites the two residual inputs, the independent Concat input, both affine/
+PReLU stages, and the Concat axis as one transaction. The three input adapters
+and both post adapters are removed only after the complete plan is re-resolved.
+
+Every intermediate must have one unique producer, exact consumer
+multiplicity, valid dependency order, and no public boundary role. The first
+PReLU output must have exactly the intended Concat and inverse-Transpose uses;
+the second PReLU output must feed only its inverse Transpose. Arbitrary later
+fan-out and repeated input slots from the two canonical post outputs remain
+unchanged. Both residual inputs must have identical concrete and dynamic
+contracts. The independent branch, residual branch, and channel-axis Concat
+must agree in batch and spatial dimensions, including conservative propagation
+of unknown signature axes. All data tensors are rank-four, unquantized,
+FLOAT16/FLOAT32/FLOAT64 tensors of one dtype; permutation tensors are typed,
+private, exact constants; binary/Concat/PReLU fused activations must be NONE.
+
+Six scalar or NCHW/NHWC channel constants cover both MUL, ADD, and PReLU
+stages. Constant roles are grouped by tensor identity before mutation. A
+constant reused by several roles is updated once, even across both stages;
+unrelated consumers receive one deterministic `_nhwc` clone. Produced,
+public, variable, quantized, non-finite, wrongly typed or shaped constants
+reject the whole candidate. Clone names, all mutation indices, output tensors,
+and removable operators are preflighted before the first write.
+
+The existing post-Transpose tensors remain the authoritative public-facing
+contracts. The first stage's ADD/MUL/ADD intermediates adopt the first post
+tensor's exact shape, signature, and layouts; the Concat and second stage's
+MUL/ADD intermediates adopt the second post tensor's contract. The PReLU
+operators produce those canonical names directly, so neither canonical tensor
+is permuted or overwritten. A graph-ordered candidate snapshot, configurable
+32-rewrite ceiling, success-only pruning, and Session `LayoutState` sync
+replace the legacy unbounded full-map loop. The former 482-line lowerer helper
+is a 17-line dispatcher and its production call supplies LayoutState.
+
+The paired partially restored SiNet variant shares the same
+`_resolve_prefix` contract. Its variant-specific tail is
+`Concat(NCHW) -> MUL -> Transpose(NHWC) -> ADD -> PRELU`; only the MUL and
+Concat move from NCHW to NHWC, while the ADD/PReLU tail already has the target
+layout. The terminal root is the post-MUL Transpose. It must be private, have
+one exact MUL producer and one exact ADD consumer, and the ADD must have one
+exact PReLU consumer. The final PReLU output may be a public output or retain
+arbitrary later fan-out and repeated slots.
+
+The MUL now produces the existing post-Transpose tensor name directly. That
+canonical tensor, the ADD output, and the final PReLU output remain unchanged;
+only the Concat intermediate adopts the canonical post tensor's shape,
+signature, and layouts. The same grouped six-role constant transaction handles
+the first-stage affine/PReLU constants, the pre-Transpose MUL constant, and the
+already-NHWC ADD/PReLU constants. Raw channel constants accepted by the legacy
+recovery path are normalized in the same all-or-nothing plan.
+
+The owner re-resolves the shared prefix and variant tail immediately before
+apply, preflights every constant clone, operator mutation, output rewrite,
+metadata update, and five-adapter removal, and updates one differential index.
+Its graph-order traversal is capped at 32 rewrites, with success-only pruning
+and optional LayoutState synchronization. The former 470-line lowerer helper
+is a 17-line dispatcher. The primary production call supplies the Session
+LayoutState; the independently inferred fallback IR call passes the explicit
+`None` boundary.
+
+The adjacent late residual fan-out is a third indexed owner in
+`passes/sinet_shuffle_residual_layout.py`. It recognizes the semantic island
+`two NHWC inputs -> two NCHW adapters -> ADD -> MUL -> ADD -> PReLU`, where
+exactly one input comes from a channel-last Concat. The PReLU feeds both a
+conv-side NCHW-to-NHWC adapter and at least one legacy NCHW consumer. Matching
+does not depend on the former fixed 40-by-40 spatial guard: exact rank-four
+shape and dynamic-signature permutations, one floating dtype, unique
+producers, consumer multiplicity, public boundaries, and dependency order are
+the contract.
+
+The ADD/MUL/ADD/PReLU island is lifted to NHWC and the two input adapters are
+removed. PReLU produces the existing canonical NHWC post tensor directly. The
+old post adapter remains as the one inverse NHWC-to-NCHW adapter and produces
+the former PReLU tensor name, preserving every later legacy consumer and
+repeated input slot. The canonical post tensor is not overwritten or
+re-permuted; the three affine intermediates adopt its exact shape, signature,
+logical layout, and physical layout, while the legacy tensor retains its NCHW
+contract.
+
+Affine and PReLU constants must be finite, same-dtype, private constants that
+broadcast in the original NCHW operation. Non-scalars are explicitly rotated
+and must also broadcast in the target NHWC operation. This replaces the old
+size-specific assumption and safely supports raw channel constants as well as
+already-oriented rank-four constants when their actual axes make both graphs
+valid. Constants shared across roles are updated once; unrelated consumers
+receive one deterministic clone. The retained permutation constant is part of
+the same transaction and is cloned when another Transpose still needs its
+original value.
+
+The complete plan is resolved again before apply. Clone names, operator
+indices, metadata targets, output renames, and both removals are preflighted
+before the first mutation. Candidate traversal uses one differential
+`ModelIRGraphIndex`, deterministic graph order, a configurable 32-rewrite
+ceiling, success-only pruning, and optional Session `LayoutState`
+synchronization. The former 331-line raw helper is a 17-line compatibility
+dispatcher and its production call supplies the Session LayoutState.
+
+The deep-skip Resize/affine residual island is isolated in
+`passes/sinet_deep_skip_layout.py`. Its matcher is deliberately staged into
+three bounded semantic resolvers: the terminal Concat/MUL/post-Transpose/
+ADD/PReLU tail, the central ADD/MUL/ADD/PReLU residual stage, and the
+Resize-plus-affine dual branch feeding the first Concat. A final resolver joins
+those locally proven contracts and applies one all-or-nothing transaction; no
+stage mutates a partially matched graph.
+
+Four private NHWC/NCHW adapters are removed. The Resize branch's MUL/ADD,
+both channel Concats, the central residual stage, and the terminal MUL move to
+NHWC. The terminal ADD/PReLU remains on its existing canonical NHWC tensors.
+The central residual input may be either an already annotated channel-last
+tensor or an NCHW tensor with one explicit earlier NCHW-to-NHWC adapter. The
+former 40-by-40 shape-name heuristic is not used: relational shape and dynamic
+signature equality, typed permutations, and the tensor's logical/physical
+layout select the form.
+
+Each intermediate has one unique producer, exact consumer multiplicity, and
+valid dependency order. Concat shapes and signatures are derived on axis 1 in
+the original NCHW graph and axis 3 in the target NHWC graph. The Resize source,
+independent branch, central residual, skip branch, and terminal canonical post
+tensor must agree in batch and spatial axes, including conservative unknown
+signature propagation. All activation tensors are unquantized rank-four
+FLOAT16/FLOAT32/FLOAT64 tensors of one dtype; fused activations and public
+intermediate boundaries reject the complete candidate.
+
+Six NCHW-side affine/PReLU constants are validated against both the original
+NCHW broadcast and the rotated NHWC broadcast. The terminal ADD/PReLU
+constants use the canonical NHWC contract. Constant roles are grouped by
+tensor identity across the entire island; unrelated consumers receive one
+deterministic clone, and conflicting shared orientations reject the plan. The
+SiNet owners share one constant-application and one metadata-application
+implementation so clone rewiring and layout updates cannot diverge.
+
+The complete graph is re-resolved before apply. Clone names, four removals,
+five input changes, both Concat axes, and every metadata target are preflighted
+before the first write. One differential `ModelIRGraphIndex`, graph-ordered
+candidates, a configurable 32-rewrite ceiling, success-only pruning, and
+Session `LayoutState` synchronization replace the legacy unbounded full-map
+loop. The former 641-line lowerer helper is a 17-line dispatcher and its
+production call supplies LayoutState.
+
+The adjacent SiNet pre-ADD fan-out island is owned by
+`passes/sinet_preadd_fanout_layout.py`. It shares the late residual owner's
+strict terminal contract for
+`ADD -> MUL -> ADD -> PReLU -> Transpose -> Conv`, including the later legacy
+NCHW consumers. Its distinct prefix proves one channel-last Concat followed by
+an NHWC-to-NCHW adapter and one direct NCHW source that already has exactly one
+earlier NCHW-to-NHWC sibling adapter. The direct source may have no other
+consumer, so the existing sibling tensor is the unique channel-last value used
+by the lifted ADD.
+
+The rewrite removes only the Concat-side adapter. The ADD consumes the
+canonical Concat output and the retained sibling adapter output, and the
+affine/PReLU tail moves to NHWC. PReLU produces the existing canonical post
+tensor. The terminal post adapter is inverted in place and produces the former
+PReLU NCHW tensor, preserving every later legacy consumer and repeated slot.
+The retained sibling adapter remains available to its original branch.
+
+Rank-four concrete shapes and dynamic signatures must prove the two exact
+layout permutations and all stage tensors; no model name or fixed spatial
+size is used. The Concat axis is explicitly channel-last. Floating dtype,
+quantization, public boundaries, unique producers, exact consumer
+multiplicity, dependency order, fused activation, downstream Conv ownership,
+and the existence and ordering of legacy consumers are validated before any
+mutation. The three affine/PReLU constants must broadcast in NCHW and after
+their explicit NHWC rotation. The inverted terminal permutation participates
+in the same grouped constant transaction, so unrelated uses receive a
+deterministic clone.
+
+Candidate resolution is repeated immediately before apply. Clone collisions,
+all mutation indices, metadata targets, output swaps, and the adapter removal
+are preflighted before the first write. One differential `ModelIRGraphIndex`,
+graph-order candidates, a configurable 32-rewrite ceiling, success-only
+pruning, and Session `LayoutState` synchronization replace the former full-map
+loop. The former 359-line lowerer helper is a 17-line compatibility dispatcher
+and its sole production call supplies LayoutState.
+
+The two SiNet dual-Resize residual variants share one indexed owner in
+`passes/sinet_dual_resize_layout.py`. Both variants prove the complete graph
+of two
+`Resize -> NHWC-to-NCHW Transpose -> MUL -> ADD` branches, a channel-axis
+Concat, residual ADD, terminal MUL/ADD/PReLU, and one or more
+NCHW-to-NHWC post adapters. Their only semantic difference is the residual
+source boundary. The direct variant owns and removes a private
+NHWC-to-NCHW residual adapter. The deep-skip variant reuses an earlier
+NCHW-to-NHWC sibling adapter and leaves it available to its existing Conv
+branch.
+
+Both Resize outputs are the authoritative branch-local NHWC contracts. Their
+MUL and ADD intermediates adopt the exact concrete shape, dynamic signature,
+logical layout, and physical layout of the corresponding Resize output. The
+two branch contracts independently prove both the original NCHW axis-1
+Concat and target NHWC axis-3 Concat. The canonical first post-adapter output
+is the authoritative merged contract for the Concat and terminal
+ADD/MUL/ADD intermediates; it is not overwritten or permuted twice.
+
+The owner accepts both bilinear and nearest-neighbor Resize operators and
+finite FLOAT16/FLOAT32/FLOAT64 scalar or raw NCHW broadcast constants. Four
+branch affine constants and three terminal affine/PReLU constants must
+broadcast before and after explicit channel-axis rotation. Constants are
+grouped across the entire island, so shared roles are updated once and
+unrelated consumers receive one deterministic clone. Typed permutation,
+producer uniqueness, exact fan-out, dependency order, public boundaries,
+rank-four shape/signature relations, dtype, quantization, fused activation,
+and Resize provenance are validated before mutation. No model name or fixed
+spatial dimension participates in matching.
+
+Multiple equivalent post adapters are merged into the first graph-ordered
+canonical output while all downstream repeated input slots are preserved.
+For the direct variant, later consumers of the old NCHW PReLU name receive one
+topologically inserted inverse adapter, preserving local numerical semantics.
+The deep-skip compatibility boundary retains the established pipeline
+contract: later consumers are rewired to the canonical NHWC post tensor for
+the following SiNet layout recovery passes. This behavior is explicit in the
+mode-specific plan instead of being an incidental side effect of separate raw
+loops.
+
+The complete plan is resolved again immediately before apply. Constant clone
+names, every mutation and removal index, repeated-slot rewrites, metadata
+targets, and optional compatibility-adapter insertion are preflighted before
+the first write. One differential `ModelIRGraphIndex`, graph-order candidates,
+a configurable 32-rewrite ceiling, success-only pruning, and Session
+`LayoutState` synchronization replace two independent full-map loops. The
+former 505-line direct helper and 503-line deep-skip helper are both 17-line
+compatibility dispatchers and both production calls supply LayoutState.
+
+The adjacent shared-post SiNet fan-out island is owned by
+`passes/sinet_shared_post_layout.py`. It proves two private
+NHWC-to-NCHW adapters feeding
+`ADD -> MUL -> ADD -> PReLU -> NCHW-to-NHWC Transpose`, with exactly one
+adapter source produced by a channel-last Concat. The canonical post tensor
+must fan out to at least one Conv or DepthwiseConv data input and at least one
+plain ADD; any other consumer role rejects the complete candidate.
+
+The canonical post tensor is the authoritative NHWC contract. Both source
+tensors must have the same rank-four concrete shape and dynamic signature,
+while every NCHW stage tensor must be its exact permutation. The rewrite
+removes both input adapters and the terminal output adapter, makes the first
+ADD consume the two canonical NHWC sources, makes PReLU produce the existing
+post tensor directly, and updates only the three affine intermediates to the
+canonical metadata. Post-consumer names and repeated ADD input slots remain
+unchanged.
+
+All activation tensors use one unquantized FLOAT16/FLOAT32/FLOAT64 contract.
+Typed permutation constants, unique producers, exact private fan-out,
+dependency order, public boundaries, Concat axis and fused activation, Conv
+data-input ownership, and plain affine operators are validated before
+mutation. MUL, ADD, and PReLU constants must be finite same-dtype broadcasts
+in the original NCHW graph and after explicit NHWC rotation. Identity-grouped
+roles are updated once; constants with unrelated consumers receive one
+deterministic clone.
+
+The plan is resolved again immediately before apply. Constant clone names,
+all removal and mutation indices, post consumers, and metadata targets are
+preflighted before the first write. One differential `ModelIRGraphIndex`,
+graph-order candidates, a configurable 32-rewrite ceiling, success-only
+pruning, and Session `LayoutState` synchronization replace the former full-map
+fixed-point loop. The former 321-line lowerer helper is a 17-line compatibility
+dispatcher and its sole production call supplies LayoutState. Matching uses no
+model name or fixed spatial dimension.
+
+The mid-stage SiNet Concat/Resize affine island is owned by
+`passes/sinet_concat_resize_layout.py`. It proves three private
+NHWC-to-NCHW adapters: one merged residual input, one independent Concat
+branch, and one bilinear or nearest-neighbor Resize output followed by
+MUL/ADD. The two branch results feed a plain NCHW axis-1 Concat, then the
+merged residual ADD/MUL/ADD/PReLU tail and one or more NCHW-to-NHWC post
+adapters.
+
+The Resize output is the authoritative NHWC contract for its affine branch.
+The first graph-ordered post output is the authoritative merged NHWC contract.
+The independent branch and Resize branch must derive the original NCHW
+axis-1 Concat and target NHWC axis-3 Concat exactly; the residual source and
+all tail tensors must match the corresponding merged contracts. The rewrite
+removes all three input adapters and every equivalent post adapter, changes
+the Concat axis to 3, lifts the affine and residual tails to NHWC, and makes
+PReLU produce the canonical post tensor directly.
+
+Additional post aliases are merged into the canonical output while every
+downstream repeated input slot is preserved. If the former PReLU NCHW tensor
+has later consumers, one inverse adapter is inserted immediately before the
+first such consumer. This preserves the existing downstream residual branch
+without allowing a removed adapter or stale producer to survive.
+
+All activation tensors use one unquantized FLOAT16/FLOAT32/FLOAT64 contract.
+Typed permutations, exact Resize provenance, producer uniqueness, consumer
+multiplicity, dependency order, public boundaries, fused activation, Concat
+axis, rank-four concrete shape, dynamic signature, and logical/physical
+layout are validated before mutation. Two Resize-branch constants and three
+merged-tail constants must be finite same-dtype broadcasts before and after
+explicit channel-axis rotation. Identity-grouped roles are updated once and
+unrelated consumers receive deterministic clones.
+
+The complete plan is resolved again immediately before apply. Constant clone
+names, all mutation/removal indices, alias input slots, metadata targets, and
+legacy-adapter insertion are preflighted before the first write. One
+differential `ModelIRGraphIndex`, graph-order candidates, a configurable
+32-rewrite ceiling, success-only pruning, and Session `LayoutState`
+synchronization replace the former full-map fixed-point loop. The former
+487-line lowerer helper is a 17-line compatibility dispatcher, and both
+production calls supply LayoutState. Matching uses no model name or fixed
+spatial dimension.
+
+The two-Concat SiNet affine tail is owned by
+`passes/sinet_tail_concat_layout.py`. It reuses the indexed adapter and
+Resize-affine branch contracts from `sinet_concat_resize_layout.py`, then
+proves two nested residual stages. The first stage merges an independent
+branch and one Resize/affine branch, adds a same-width residual, and applies
+MUL/ADD/PReLU. The second stage concatenates that result with an independent
+skip adapter and applies a second MUL/ADD/PReLU plus one or more post adapters.
+
+The first residual source is authoritative for the first stage's NHWC
+contract. The first graph-ordered post output is authoritative for the second
+stage's merged NHWC contract. Both original NCHW axis-1 Concats and target
+NHWC axis-3 Concats are derived independently from their branch shapes and
+dynamic signatures. Four input adapters and all equivalent post adapters are
+removed only after both stages satisfy their exact relational contracts.
+
+The rewrite reconnects the Resize-affine data input, both canonical branch
+sources, and both residual/skip sources, changes both Concat axes to 3, and
+makes the final PReLU produce the canonical post tensor. Additional post
+aliases retain all repeated downstream slots. Later consumers of the former
+final NCHW PReLU tensor receive one inverse adapter inserted before their
+first use.
+
+Eight finite FLOAT16/FLOAT32/FLOAT64 constants are validated as broadcasts in
+their original NCHW stage and after explicit NHWC rotation: two Resize-branch
+constants, three first-stage affine/PReLU constants, and three second-stage
+constants. Identity-grouped roles update once and unrelated consumers receive
+deterministic clones. Typed permutations, Resize provenance, unique producers,
+exact fan-out, dependency order, public boundaries, fused activation,
+quantization, rank-four shape/signature, and layout are complete guards.
+
+The plan is resolved again immediately before apply. Clone names, mutation
+and removal indices, alias slots, metadata targets, and the optional legacy
+adapter are preflighted before mutation. One differential graph index,
+graph-order candidates, a configurable 32-rewrite ceiling, success-only
+pruning, and Session LayoutState synchronization replace the former full-map
+fixed-point loop. The former 654-line lowerer helper is a 17-line compatibility
+dispatcher and its sole production call supplies LayoutState. No model name or
+fixed spatial dimension participates in matching.
+
+The late SiNet Softmax-mask residual island is owned by
+`passes/sinet_softmax_mask_layout.py`. It proves two private NHWC-to-NCHW
+input adapters. The main branch applies MUL/ADD, wraps a channel Softmax in
+the self-inverse `[0,3,2,1]` permutation, reduces its channel maximum, forms a
+singleton-channel mask through SUB/Reshape/MUL, and combines that mask with a
+PReLU side branch before the residual ADD and one or more post adapters.
+
+The first graph-ordered post output is the authoritative NHWC contract. Every
+main, side, mask, and residual NCHW tensor must be its exact rank-four
+permutation; the Softmax wrapper has the derived NWHC contract, and the
+ReduceMax/SUB/Reshape contracts are derived by removing and reinserting the
+channel dimension. The rewrite removes both input adapters, both Softmax
+wrapper adapters, and every equivalent terminal adapter. Softmax directly
+consumes and produces NHWC tensors, ReduceMax axis 1 becomes axis 3, and the
+Reshape target changes from `[N,1,H,W]` to `[N,H,W,1]`.
+
+Three affine/PReLU constants and the full mask-expansion constant must be
+finite same-dtype broadcasts in the original NCHW graph and after explicit
+NHWC rotation. The two integer axis/shape constants retain their original
+INT32 or INT64 dtype. All six transformed constants are grouped by identity;
+unrelated consumers receive deterministic clones and incompatible shared
+roles reject the candidate. The SUB singleton is validated but never mutated.
+
+Post aliases retain every repeated downstream slot. Later consumers of the
+former final NCHW residual receive one inverse adapter before their first use.
+Typed permutations, unique producers, exact private fan-out, dependency order,
+public boundaries, Softmax axis and finite beta, ReduceMax keep-dims behavior,
+plain fused activations, FLOAT16/FLOAT32/FLOAT64 dtype, quantization, layout,
+shape, and dynamic signature are complete preconditions.
+
+The complete plan is resolved again before apply. Constant clone names,
+mutation/removal indices, reshape options, alias slots, metadata targets, and
+optional legacy-adapter insertion are preflighted before the first write. One
+differential graph index, graph-order candidates, a configurable 32-rewrite
+ceiling, success-only pruning, and Session LayoutState synchronization replace
+the former full-map fixed-point loop. The former 612-line lowerer helper is a
+17-line compatibility dispatcher and its sole production call supplies
+LayoutState. Matching contains neither a model name nor a fixed spatial size.
+
+The SiNet double-Logistic mix-attention compatibility island is owned by
+`passes/sinet_mix_attention_layout.py`. A production audit established that
+the legacy helper matches zero candidates across all six invocations in the
+current `sinet_320_op.onnx` ordered pipeline. The semantic owner nevertheless
+preserves both historical residual forms: one private NHWC-to-NCHW branch
+adapter paired with either a direct residual adapter or an ADD of two private
+residual adapters.
+
+The resolver begins at the terminal NCHW-to-NHWC adapter and its sole post-
+Conv consumer. It proves the double-Logistic gate and the
+`gate * branch + (1 - gate) * residual` tail back to their shared source ADD.
+The channel-attention branch is Mean, NCHW-to-NHWC, two Conv operators, and
+NHWC-to-NCHW. The spatial-attention branch is Mean plus ReduceMax, channel
+Concat, MirrorPad, NCHW-to-NHWC, Conv, and Reshape. The position-attention
+merge uses two rank-five Reshapes, Concat, one rank-four Reshape, MirrorPad,
+NCHW-to-NHWC, Conv, and NHWC-to-NCHW. Binary and Concat roles are resolved by
+producer semantics and remain valid when their input order is reversed.
+
+The terminal NHWC tensor is the authoritative rank-four contract. All NCHW
+attention and tail tensors must be its exact typed permutation. Channel-
+attention and spatial-attention shapes, both rank-five expansion shapes, their
+Concat result, and the rank-four position-attention shape are derived
+relationally. Reduce axes, both MirrorPad pair tensors, all Reshape targets,
+and Concat axes retain their original INT32 or INT64 dtype while being
+remapped. Transformed rank-five tensors receive unknown layout metadata rather
+than an invalid rank-four label.
+
+Every transformed constant is grouped by tensor identity. Unrelated consumers
+receive deterministic clones and conflicting shared orientations reject the
+candidate. Producer uniqueness, exact fan-out, dependency order, private
+intermediates, public boundaries, plain fused activations, finite floating
+data, dtype, quantization, layout, concrete shape, and dynamic signature are
+complete guards across the island.
+
+The plan is resolved again immediately before apply. Constant clone names,
+operator indices, input slots, option changes, metadata targets, and the eight
+direct-residual or nine ADD-residual adapters are preflighted before mutation.
+The rewrite connects the branch and residual uses to their canonical NHWC
+sources. This corrects the former compatibility helper's defective branch
+rewrite, which removed the branch adapter but left consumers attached to its
+now-unbound output name.
+
+One differential `ModelIRGraphIndex`, graph-ordered candidates, a configurable
+32-rewrite ceiling, success-only pruning, and Session `LayoutState`
+synchronization replace the full-map fixed-point loop. The former 808-line
+lowerer helper is a 17-line compatibility dispatcher and both production calls
+supply LayoutState. Matching contains neither a model name nor a fixed spatial
+size.
+
+The preceding SiNet SA/PA MirrorPad compatibility island is owned by
+`passes/sinet_sa_pa_mirrorpad_layout.py`. A production audit established that
+both the legacy and indexed owners match zero candidates across all seven
+invocations in the current `sinet_320_op.onnx` ordered pipeline. The path is
+retained as a semantically guarded compatibility owner rather than broadened
+against that artifact.
+
+The resolver begins at one private NHWC-to-NCHW source adapter. Its exact
+NCHW fan-out is Mean, ReduceMax, and one rank-five source Reshape; the legacy
+form additionally feeds the terminal Mul. Mean and ReduceMax converge at a
+channel Concat followed by MirrorPad, NCHW-to-NHWC, Conv, and one removable
+Reshape. The second attention input is an external NHWC channel-attention
+value behind a private NHWC-to-NCHW adapter. Their ADD result and the original
+source are expanded to rank five, concatenated, reshaped to rank four, padded,
+and passed through NCHW-to-NHWC and Conv before Logistic and Mul.
+
+The terminal Mul has two explicit contracts. The direct form consumes the
+original NHWC source and an NHWC gate. The legacy form consumes the NCHW
+source and a gate behind one NHWC-to-NCHW adapter. The rewrite lifts both to
+NHWC. For the legacy form, Mul receives a deterministic private NHWC output
+and one inverse adapter is inserted immediately afterward, preserving the old
+NCHW tensor name, public output, and all downstream consumers.
+
+The source channel must be concretely one. This is the invariant that makes
+the removed SA Reshape and channel-attention adapter value-preserving; the
+former raw helper did not state it. Non-singleton candidates are now
+transactional no-ops. Spatial dimensions remain arbitrary and dynamic
+signatures are derived relationally.
+
+Both reduce axes, both MirrorPad tensors, both rank-five expansion targets,
+and the final rank-four target retain INT32 or INT64 dtype while being
+remapped. Constant roles are grouped by tensor identity. Unrelated consumers
+receive deterministic clones and incompatible shared roles reject the plan.
+Rank-four metadata follows the proven NHWC contract, while rank-five tensors
+are explicitly layout-unknown.
+
+The complete plan is resolved again immediately before apply. Source
+provenance, producer uniqueness, exact fan-out, dependency order, public
+boundaries, constant clone and legacy-output names, input slots, option
+changes, metadata targets, and all five direct or six legacy removals are
+preflighted before mutation. One differential `ModelIRGraphIndex`, graph-
+ordered candidates, a configurable 32-rewrite ceiling, success-only pruning,
+and Session `LayoutState` synchronization replace the full-map fixed-point
+loop. The former 683-line lowerer helper is a 17-line compatibility dispatcher
+and all three production calls supply LayoutState. Matching contains neither a
+model name nor a fixed spatial size.
+
+The general symmetric and asymmetric Transpose/binary compatibility path is
+owned by `passes/binary_bridge_layout.py`. The former 650-line lowerer helper
+is a 17-line dispatcher, and its one non-QDQ production call supplies the
+Session LayoutState. A pre-extraction audit found zero symmetric and zero
+asymmetric matches in each of five short representative production models, so
+the owner preserves the proven compatibility topologies without broadening
+them from model-specific evidence.
+
+Symmetric matching starts from a plain ADD, SUB, MUL, or DIV. Both inputs must
+be private outputs of distinct Transposes with the same typed permutation. The
+owner retains three output contracts. A sole inverse post is removed together
+with both pre-adapters. With later legacy-layout users, the post is retained
+and reversed to adapt the new raw-layout binary output back to the old tensor
+name. With no inverse post, a uniquely named raw binary output and one adapter
+are inserted immediately before the first existing legacy consumer. The
+permanently disabled former Pattern C implementation is not part of the new
+production owner.
+
+Asymmetric matching requires exactly one private pre-Transpose and one sole
+inverse post-Transpose. The pre operator is reused to transform the plain
+operand with the inverse permutation, then the binary consumes the original
+raw operand and the transformed plain operand in the order required by the
+original expression. SUB and DIV therefore remain order-sensitive. The plain
+operand must already exist before the reused Transpose; this explicit guard
+prevents a producer-after-consumer graph that the raw helper could create.
+
+Both resolvers require unique producers, resolved graph-input/constant/earlier
+operator sources, exact consumer multiplicity, dependency order, protected
+public boundaries, no fused activation, immutable INT32/INT64 permutation
+constants, same dtype, per-tensor quantization, static broadcast consistency,
+and compatible dynamic signatures. Mixed fan-out uses the already-proven pre
+permutation tensor instead of mutating the possibly shared post constant. The
+legacy-only raw tensor shape is derived from the broadcast contract, and its
+adapter insertion index is preflighted before any mutation.
+
+Every complete plan is re-resolved immediately before apply. One differential
+`ModelIRGraphIndex`, graph-ordered binary candidates, symmetric-before-
+asymmetric phase priority, a configurable 32-rewrite ceiling, success-only
+pruning, and LayoutState synchronization replace the repeated full-map
+producer/consumer rebuild and unbounded `while True` loop. The no-post path no
+longer rewires inputs before later tensor and quantization guards, so a rejected
+candidate is a transactional no-op.
+
+The five late safe binary recovery modes share the same owner and one ordered
+entry point, `run_safe_binary_bridge_recovery`. Their historical phase order
+is fixed as symmetric legacy-only, symmetric single-post, symmetric mixed
+fan-out, asymmetric fan-out, and symmetric full-post fan-out. The lowerer
+retains 17-line compatibility dispatchers for the five former helpers, but all
+three lowerer call sites now call the single ordered owner and supply Session
+LayoutState. This replaces 938 lines of repeated full-map
+fixed-point mutation.
+
+Legacy-only and single-post modes reuse the strict symmetric resolver and
+applier. The safe phases additionally retain the historical
+`__preserve_layout_boundary__` marker on inserted or reversed adapters; the
+earlier general bridge phase does not acquire this late cleanup boundary.
+This distinction preserves later activation-fusion and adapter-cleanup order.
+
+Mixed fan-out and full-post fan-out share one multi-post plan. Every output
+consumer is classified as an inverse post or a legacy-layout user. Full-post
+mode requires at least two inverse posts and no legacy user, selects the first
+post output as the canonical raw tensor, rewires later aliases, and removes all
+posts. Mixed mode requires both classes, converts the first post into the one
+raw-to-legacy adapter, rewires later post aliases to the canonical raw tensor,
+and removes only the remaining posts. The retained adapter references the
+already-proven pre-permutation constant; the former mutation of a potentially
+shared inverse-permutation buffer is gone. It must precede every legacy user.
+
+Asymmetric fan-out retains its distinct requirement for an existing inverse
+Transpose of the plain binary operand. That producer must already precede the
+binary. The binary consumes the original raw pre-adapter source and this
+existing raw-layout peer without changing SUB or DIV operand order. The first
+inverse output post supplies the canonical result. When the original output
+has other consumers or is public, one adapter is inserted immediately after
+the binary to preserve the original tensor name and layout.
+
+All five phases use the same differential `ModelIRGraphIndex`. Each phase
+enumerates current binary candidates in graph order and has its own
+configurable 32-rewrite ceiling. Typed permutations, source provenance,
+producer uniqueness, exact fan-out, graph order, public boundaries, fused
+activation, dtype, per-tensor quantization, broadcast shape, dynamic
+signature, alias consumers, and every removal/insertion index are planned and
+re-resolved before apply. Pruning and LayoutState synchronization occur once
+after the selected ordered phases.
+
+A production audit observed four ordered invocations per model across five
+short representatives. Four modes matched zero candidates everywhere. Only
+the first SiNet invocation was active: legacy-only rewrote `Add_52` and
+`Add_109`, exactly two candidates. The indexed sequence preserves those two
+matches and emits byte-identical SiNet float32, float16, correspondence, and
+schema artifacts.
+
+The binary/Split channelwise tail is owned by
+`passes/split_channelwise_layout.py`. It recognizes one exact private
+NHWC-to-NCHW Transpose followed by two plain ADD, SUB, MUL, DIV, MAXIMUM, or
+MINIMUM operators and an equal channel Split. The former 218-line lowerer
+helper is a compatibility dispatcher, and both unchanged ordered production
+sequence positions supply Session `LayoutState`.
+
+The resolver proves the typed INT32/INT64 `[0,3,1,2]` permutation, exact
+rank-four source/adapter shape and dynamic-signature relationship, unique
+producers, one-use linear prefix, producer-before-consumer order, same dtype,
+per-tensor quantization, and NHWC broadcast validity for both binary
+operations. Operand slots are retained, so SUB and DIV remain order-sensitive.
+External rank-four values must carry NHWC physical evidence or satisfy the
+source-relative NHWC broadcast contract; explicit NCHW inputs are rejected.
+
+The root Split axis must be a private immutable axis-one INT32/INT64 constant.
+Every Split output must have the exact channel-last metadata implied by its
+former NCHW contract, with equal channels that reconstruct the input. A shared
+axis constant receives a deterministic clone, preserving both the declared and
+NumPy dtype. The same contract applies to downstream Split operators.
+
+Closure discovery uses an edge-bounded consumer `deque`, not repeated graph
+scans. Only the audited layout-preserving unary family, plain binary family,
+channel Concat, and channel Split may enter the closure. Concat axis 1 or -3
+becomes axis 3. Static shapes and dynamic signatures are recomputed for every
+binary and Concat output. Every rewritten tensor must terminate at another
+accepted closure operator or the sole public output; an unsupported consumer,
+dead converted branch, multiple public outputs, or consumer-before-producer
+ordering rejects the complete candidate.
+
+One terminal NHWC-to-NCHW adapter preserves the public output name, original
+NCHW shape, and layout. Its private input receives the converted NHWC metadata,
+and it reuses the proven input permutation constant. This corrects the raw
+helper behavior that permuted the public tensor metadata itself before adding
+the terminal adapter. Removing the input adapter is also conditional on a
+closed closure, so no unsupported consumer can retain an unbound or
+wrong-layout tensor.
+
+All tensor data, metadata, quantization, operator inputs/outputs/options,
+provenance, axis-clone names, public private-name allocation, and graph order
+are captured in an immutable plan. The complete plan is re-resolved before
+apply, every slot and new name is preflighted, and only then are axis clones,
+metadata, the terminal adapter, and input-adapter removal applied through one
+`ModelIRGraphIndex`. Candidate-only execution and a configurable 32-rewrite
+ceiling replace the former unbounded full-map fixed-point loops. LayoutState is
+updated differentially and unused tensors are pruned only after success.
+
+Pre-extraction production characterization observed zero matches in every
+runtime invocation: four each for YuNet, FastestDet, HumanSeg, and OSNet, and
+eight for SiNet. The semantic owner retains the active synthetic compatibility
+path without broadening from those artifacts. Thirty-three focused tests cover
+all six binary operations and both operand orientations, exact numerical
+behavior, dynamic signatures, downstream Split/Concat closure, shared INT64
+axis cloning, public output layout, differential index and LayoutState,
+candidate limits, idempotence, deterministic names, and sixteen transactional
+unsafe no-op contracts. A sequential YuNet comparison against the preceding
+source checkpoint emitted byte-identical float32, float16, correspondence, and
+schema artifacts.
+
+The direct Split channelwise tail now shares that indexed owner while retaining
+a separate root plan. It recognizes one exact private NHWC-to-NCHW Transpose
+feeding a channel Split directly, then permits the same closed unary, binary,
+Concat, and downstream Split closure plus the historically supported Slice
+family. The former lowerer implementation is a compatibility dispatcher; its
+two ordered production positions and stats key are unchanged, and both calls
+supply Session `LayoutState`.
+
+Slice propagation requires an exact three-input, one-output rank-four Slice.
+Begin and size must be immutable typed INT32 or INT64 four-element constants,
+the declared dtypes must agree, and the original NCHW and converted NHWC Slice
+results must both agree with static output metadata and compatible dynamic
+signatures. Begin and size are permuted from `[N,C,H,W]` to `[N,H,W,C]` only as
+part of the complete tail transaction. Constants used exclusively by planned
+Slice input slots may change in place; constants with any unrelated consumer
+receive one deterministic shared clone for all planned uses. Conflicting roles,
+producer-backed constants, variables, public constants, invalid bounds, dtype
+mismatches, and per-axis quantization reject the candidate.
+
+Closure discovery begins only from root Split outputs. The raw Transpose input
+is deliberately not treated as converted closure state, so unrelated consumers
+of that NHWC source remain untouched. Root and downstream Split axes use the
+same copy-on-write INT32/INT64 contract as the binary-root family. Unsupported
+closure consumers, dead converted branches, public intermediates, multiple
+outputs, duplicate producers, stale order, and shared Transpose outputs reject
+the entire plan before mutation.
+
+The common immutable tail plan owns metadata, Split-axis updates, Concat-axis
+updates, grouped Slice-constant updates, the accepted closure, and the sole
+terminal output adapter. It is resolved again immediately before apply and
+preflighted against every input/output slot and allocated name. Differential
+graph-index updates, differential LayoutState synchronization, a configurable
+32-rewrite ceiling, and success-only pruning preserve the same bounded
+transactional contract as the binary-root family.
+
+Pre-extraction characterization observed zero direct-root matches in all
+runtime invocations on the same five short representatives. Twenty focused
+tests cover INT32 and INT64 constants, static and dynamic signatures, numerical
+equivalence, grouped shared-constant cloning, an unrelated source consumer,
+candidate limits, idempotence, and thirteen unsafe transactional no-op cases.
+The direct and binary-root suites pass together, and a sequential YuNet
+comparison against the preceding checkpoint emits byte-identical float32,
+float16, correspondence, and schema artifacts.
+
+The unary/Split/Concat compatibility island is the third root family in
+`passes/split_channelwise_layout.py`. It matches one exact private
+NHWC-to-NCHW Transpose, one layout-preserving unary, a channel Split, every
+Split output consumed either directly or through one allowed unary, exactly
+one external Concat branch, and one channel-axis Concat. The lowerer retains a
+thin compatibility dispatcher at both unchanged sequence positions and passes
+Session `LayoutState`.
+
+The root and every branch form a closed local island. The pre-Transpose output
+must feed only the pre-Split unary, that unary must feed only the Split, every
+Split output must appear exactly once, and an optional branch unary must feed
+only the Concat. Duplicate or missing branches, a second external input,
+external fan-out from a converted branch, public intermediate tensors,
+duplicate producers, and consumer-before-producer order reject the plan. The
+allowed unary set remains the exact historical RELU, RELU6, RELU_0_TO_1,
+LOGISTIC, HARD_SWISH, LEAKY_RELU, and TANH family.
+
+The external branch is either an already-proven NHWC tensor or the source of a
+layout-only singleton Reshape. The bypass form now requires both rank-four
+shapes and signatures to have the exact NHWC-to-NCHW relationship, channel
+size one in both representations, matching dtype, per-tensor quantization,
+resolved provenance, unique production, graph order, and non-NHWC physical
+evidence on the Reshape output. This corrects the raw helper's misleading
+"singleton" guard, which accepted arbitrary channel counts.
+
+The immutable plan reuses the common typed Split-axis copy-on-write, Concat
+shape/signature validation, metadata updates, private NHWC output allocation,
+and local NHWC-to-NCHW adapter. Unlike the closed public-tail families, the
+adapter may preserve either a graph output or an intermediate legacy NCHW
+contract, so existing downstream consumers remain unchanged. The proven input
+permutation is reused rather than creating another buffer.
+
+The complete plan is resolved twice and preflighted before the pre-unary or
+Concat input changes. This removes the raw partial-mutation path that changed
+the Split axis, multiple tensor metadata records, and Concat inputs/options
+before discovering a missing or invalid Concat output. One differential graph
+index, graph-ordered Concat candidates, a configurable 32-rewrite ceiling,
+success-only pruning, and LayoutState synchronization replace the full-map
+unbounded loop.
+
+Pre-extraction characterization observed zero matches in all 24 runtime
+invocations on YuNet, FastestDet, HumanSeg, OSNet, and SiNet. Twenty-nine
+focused tests cover INT32/INT64 axes, static and dynamic signatures, public and
+local NCHW boundaries, exact numerical equivalence, a direct NHWC external
+branch, shared axes and side consumers, candidate limits, idempotence, and
+eighteen unsafe transactional no-op cases. A sequential YuNet comparison
+against the preceding checkpoint emits five byte-identical artifacts.
+
+The exact RELU/Split all-output compatibility island is owned by
+`passes/split_all_outputs_layout.py`. It recognizes one private typed
+NHWC-to-NCHW Transpose, RELU, an equal channel Split, and exactly one typed
+inverse Transpose on every Split output. The former 182-line lowerer
+implementation is a thin compatibility dispatcher at both unchanged ordered
+positions, and both calls supply Session `LayoutState`.
+
+The Split axis must be a private or shared immutable INT32/INT64 scalar
+constant normalized to channel axis one. A declared `numSplits`, when present,
+must equal the output count. The static input channel must divide evenly and
+every Split output must have the exact equal NCHW shape; independently
+compatible dynamic signatures are converted to NHWC. This deliberately
+rejects the former synthetic fixture's invalid unequal 2/4 metadata for a
+six-channel two-way TFLite `SPLIT`; the corrected contract is 3/3.
+
+Both permutation buffers, source provenance, producer uniqueness, graph
+order, private intermediate boundaries, exact fan-out, dtype, per-tensor
+quantization, static/dynamic shape relations, and physical layout are resolved
+before a plan exists. The pre-Transpose output feeds only RELU, the RELU output
+feeds only Split, and each Split output feeds only its owned inverse adapter.
+Every consumer of an inverse-adapter result must occur later in graph order.
+Public intermediate, duplicate producer, missing tensor, variable/constant
+intermediate, per-axis quantization, contradictory layout, or stale order
+rejects the complete candidate without mutation.
+
+All downstream input replacements are grouped by operator and exact slot. A
+single Concat may therefore consume several former adapter outputs, and one
+former output may have several later consumers, without one rewrite replacing
+another. The existing Split tensor names survive and acquire NHWC metadata;
+the adapter-output aliases and removed pre-Transpose tensor are pruned only
+after success.
+
+An exclusive Split axis changes from one to three in place. A shared axis
+receives one deterministic clone with the same TensorIR/NumPy INT32 or INT64
+dtype, quantization, layout metadata, and provenance, while unrelated users
+retain the original value. The immutable plan captures tensor/operator
+contracts, every input slot, metadata, clone name, and removal. It is resolved
+again immediately before apply, then one differential `ModelIRGraphIndex`
+updates inputs and compacts every adapter removal. Graph-ordered candidates,
+an optional rewrite limit bounded by current candidate count, differential
+LayoutState updates, and success-only pruning replace the raw repeated map
+build and unbounded fixed-point loop.
+
+Pre-extraction audit covered this owner together with the adjacent exact
+Conv/Concat and direct Split/Conv/Concat bridge roots. All 41 sequential
+invocations on YuNet, FastestDet, HumanSeg, OSNet, and SiNet were zero-match;
+the all-output root accounted for 12 invocations. Thirty-two focused owner and
+active-fixture tests cover two/three branches, INT32/INT64 and negative axes,
+static/dynamic signatures, exact numerical equivalence, combined and multiple
+consumers, shared-axis cloning, candidate limits, idempotence, GraphIndex,
+LayoutState, and nineteen transactional rejection cases. The adjacent indexed
+owners and complete architecture suite pass together, and sequential YuNet
+conversion reproduces all five fixed artifact hashes.
+
+The exact two-branch RELU/Split/Conv/Concat compatibility island is a separate
+immutable plan in the same `passes/split_all_outputs_layout.py` owner. It
+recognizes a private NHWC-to-NCHW Transpose and RELU, an equal two-way channel
+Split, one branch returning to NHWC for Conv2D, that Conv output returning to
+NCHW for RELU, the untouched Split branch joining through channel Concat, and
+one final inverse Transpose. The former 340-line raw helper is a thin
+dispatcher at both unchanged sequence positions, immediately after the
+all-output plan, and both calls supply Session `LayoutState`.
+
+The Conv branch may be either Split output and may occupy either Concat input
+slot. Neither Split-output order nor Concat order is changed. The Split input
+channel must divide exactly in half, both output shapes and signatures must
+match that equal result, and `numSplits`, when present, must be two. The
+historical synthetic fixture's invalid six-channel 2/4 split is therefore
+corrected to an eight-channel 4/4 contract. Conv may change the branch channel
+count; the old NCHW Concat and new NHWC Concat shapes are independently
+derived from the Conv result and retained branch, then required to agree
+through the final inverse adapter.
+
+Every permutation, producer, consumer, input slot, runtime tensor, Conv side
+input provenance, graph-order edge, public boundary, static/dynamic shape,
+dtype, per-tensor activation quantization, and physical layout is proven before
+planning. Adapter endpoints must have equal dtype and quantization parameters.
+The owned pre-Transpose, Conv-input adapter, Conv-output adapter, and final
+Concat adapter are removed only together. Fan-out from any owned NCHW
+intermediate, an additional Split output, unequal Split metadata, unresolved
+filter/bias, stale order, duplicate producer, or contradictory layout rejects
+the whole candidate without mutation.
+
+The plan rewires pre-RELU, Conv, post-Conv RELU, and every consumer of the final
+adapter by exact input slot. Split-axis copy-on-write reuses the all-output
+contract. RELU/Split/Concat tensor metadata and Session LayoutState change to
+NHWC only after a second complete resolution; Concat axis changes from one or
+negative-three to three at the same point. One differential graph index
+performs every input update and one four-operator compaction. Graph-ordered
+Concat candidates, an optional candidate-count rewrite limit, and success-only
+pruning replace the raw repeated full-map fixed point.
+
+Forty-nine dedicated tests cover both Split branch positions, both Concat
+orders, INT32/INT64 and negative axes, static/dynamic signatures, Conv channel
+changes, exact numerical equivalence, multiple final consumers, shared-axis
+cloning, candidate limits, idempotence, GraphIndex, LayoutState, and twenty-nine
+transactional rejection cases. With the active compatibility fixture, adjacent
+indexed owners, and full architecture suite, `525` tests pass. TensorFlow-
+blocked direct/default/`-cotof` checks pass sequentially, and YuNet reproduces
+the five fixed artifact hashes.
+
+The direct Split/Conv/Concat bridge is independently owned by
+`passes/split_conv_concat_bridge_layout.py`. The former 287-line lowerer
+implementation is a thin dispatcher at all three unchanged production
+positions. Each invocation receives Session `LayoutState`, and its phase order
+relative to the exact all-output, Conv/Concat, and late QKV helpers is
+unchanged.
+
+The resolver requires a private typed NHWC-to-NCHW adapter feeding an equal
+channel Split exclusively. Exactly one Split output must own one typed inverse
+adapter. Every other Split output must occur exactly once as a direct input of
+one selected NCHW Concat; every remaining Concat input must be the exclusive
+output of a typed NHWC-to-NCHW adapter. At least one of those post-adapter
+inputs must be reachable from the converted Split branch through a bounded,
+graph-ordered NHWC interior. The interior is deliberately operation-agnostic:
+it preserves existing Conv and non-Conv computation instead of recognizing a
+model name or one hard-coded chain.
+
+Source and axis provenance, typed permutations, producer uniqueness,
+consumer slots, graph order, public boundaries, equal Split metadata,
+static/dynamic shapes, dtype, per-tensor quantization, physical layout, Concat
+input classification, and the retained NCHW output contract are all resolved
+before planning. Every consumer of the inverse branch adapter is rewired by
+exact input slot. An unclassified Concat input, Split fan-out, post-adapter
+fan-out, unreachable converted branch, duplicate producer, missing tensor,
+stale order, per-axis quantization, or contradictory layout rejects the full
+candidate without mutation.
+
+The immutable plan records all input replacements, every Split metadata
+update, Split-axis copy-on-write, the Concat axis/output change, a private NHWC
+Concat tensor, the three-or-more adapter removal group, and all tensor/operator
+contracts. The original local NCHW Concat tensor name and metadata remain the
+output of one inserted post adapter, which reuses the proven pre-adapter
+permutation. Shared INT32/INT64 axes receive deterministic typed clones; an
+exclusive axis changes in place. A second complete resolution and preflight
+precedes writes, one differential graph index performs compaction and adapter
+insertion, LayoutState is updated differentially, and pruning occurs only
+after success.
+
+Forty-six dedicated tests cover two- and three-way Split, either branch,
+multiple NHWC post paths, both Concat orders, static/dynamic signatures,
+INT32/INT64 and negative axes, exact numerical equivalence, branch-side
+consumers, shared-axis cloning, candidate limits, idempotence, GraphIndex,
+LayoutState, and twenty-four transactional rejection cases. With the adjacent
+indexed owners, two active fixtures, and complete architecture suite, `534`
+tests pass. TensorFlow-blocked direct/default/`-cotof` checks pass
+sequentially, and one sequential YuNet conversion reproduces all five fixed
+artifact hashes.
+
+The adjacent singleton gate/Conv/Concat compatibility island is owned by
+`passes/singleton_gate_layout.py`. The former lowerer implementation mixed
+matching, metadata writes, consumer rewiring, and operator deletion in one
+unbounded full-map loop. Its two ordered production positions remain intact as
+thin dispatches, and both supply Session `LayoutState` to the new owner.
+
+The resolver accepts the exact historical gate topology: an NHWC clip tensor
+viewed through a singleton NCHW Reshape feeds both the gate multiply and the
+scalar-minus-clip branch; a second singleton adapter supplies either a direct
+auxiliary signal or the input to a Logistic; the two multiplied branches join
+through Add and one allowed unary before a singleton output adapter reaches a
+channel-last Concat. An optional RGB multiply may consume the same clip through
+either a proven `[0,3,1,2]` input Transpose or a private constant whose physical
+NHWC evidence shows its NCHW metadata is stale.
+
+Every removed Reshape must represent an exact `[N,H,W,1]` to `[N,1,H,W]` view,
+including compatible dynamic signatures, equal dtype, and per-tensor
+quantization. Typed shape inputs, when present, must be immutable INT32 or
+INT64 constants consistent with the declared output. All core producers,
+consumer multiplicities, public boundaries, graph order, unary/binary options,
+static broadcasts, and dynamic broadcasts are resolved before a plan exists.
+This replaces the raw predicate that accepted arbitrary channel counts and the
+raw mutation path that could remove an adapter while leaving an unsupported
+fan-out in the old layout.
+
+The plan records every operator input rewrite, tensor contract, operator
+contract, metadata update, and removal. It is fully re-resolved immediately
+before apply. Split and terminal adapter aliases are rewired only for their
+proven view-equivalent consumers; unrelated consumers of the original NHWC
+sources remain unchanged. Shared side consumers are preserved. Constant data
+with stale layout metadata is reshaped to the validated NHWC view at the same
+time as its TensorIR metadata, so physical storage and declared shape cannot
+diverge after the rewrite.
+
+One differential `ModelIRGraphIndex`, graph-ordered Concat candidates, a
+configurable 32-rewrite ceiling, success-only pruning, and differential
+LayoutState updates replace the raw `while True` loop and repeated producer/
+consumer map construction. Candidate-only operation and idempotence use the
+same entry point as production.
+
+Pre-extraction characterization observed zero matches in all 24 sequential
+runtime invocations: four each on YuNet, FastestDet, HumanSeg, and OSNet, and
+eight on SiNet. Twenty-nine focused tests cover both auxiliary variants,
+static and dynamic signatures, the optional Transpose RGB bridge, the stale
+constant RGB view, shared side consumers, exact numerical equivalence,
+candidate and rewrite limits, differential-index freshness, LayoutState, and
+nineteen unsafe transactional no-op contracts. A sequential YuNet comparison
+against the preceding checkpoint emits byte-identical float32, float16,
+correspondence, and schema artifacts.
+
+Conv-family output passthrough chains are owned by
+`passes/conv_output_passthrough_layout.py`. The owner recognizes a private
+NHWC-to-NCHW Transpose produced by Conv2D, DepthwiseConv2D, or TransposeConv,
+one or more strictly linear unary/binary operations, and one inverse
+NCHW-to-NHWC Transpose whose output remains an intermediate tensor. The former
+316-line lowerer helper is a thin dispatcher in its unchanged ordered position
+and receives Session `LayoutState`.
+
+Both permutation tensors must be immutable typed INT32/INT64 constants. The
+resolver proves producer uniqueness and order, the exact rank-four shape and
+dynamic-signature relation across each adapter, private intermediate tensors,
+one-consumer linearity, per-tensor quantization, existing output metadata, and
+consumer order after the inverse adapter. QUANTIZE, DEQUANTIZE, CAST, RELU,
+RELU6, RELU_0_TO_1, and HARD_SWISH retain their unary semantics. ADD, SUB,
+MUL, DIV, MAXIMUM, and MINIMUM retain their operand slots, so asymmetric SUB
+and DIV are not reordered.
+
+Non-scalar binary side inputs must be private immutable rank-four constants
+whose data, TensorIR shape/signature, dtype, original NCHW broadcast, converted
+NHWC broadcast, and output contract all agree. Exclusive constants are
+transposed in place. A constant with any consumer outside the accepted chain
+receives one deterministic NHWC clone shared by all planned slots; the legacy
+constant and unrelated consumers remain unchanged. This grouping also avoids
+the raw helper's repeated in-place transpose when one constant appears more
+than once in a chain.
+
+Every input/output rewrite, constant update, tensor/operator contract,
+metadata update, and adapter removal belongs to one immutable plan that is
+fully resolved again immediately before apply. The surviving inverse-adapter
+output takes the converted final chain shape/signature and dtype/quantization
+directly from the former chain output; it is not blindly permuted from possibly
+stale existing metadata. One differential `ModelIRGraphIndex`, a candidate
+list bounded by the current Transpose count, an optional explicit rewrite
+limit, success-only pruning, and differential LayoutState updates replace the
+repeated full-map rebuild and unbounded fixed-point loop.
+
+Pre-extraction sequential characterization observed four invocations per
+representative. Only the first was active: YuNet rewrote 10 chains, FastestDet
+23, HumanSeg 27, OSNet 63, and SiNet zero. All 123 active chains were
+Conv2D/DepthwiseConv2D followed by RELU, while the full historical unary,
+binary, and TransposeConv capability remains covered synthetically. The
+separate channel-one TransposeConv/Squeeze terminal helper matched zero in all
+20 invocations and is implemented as a distinct semantic plan in the same
+op-family owner.
+
+Fifty-six focused tests cover all three producer types, all seven unary types,
+all six binary types in both operand positions, exact numerical equivalence,
+dynamic signatures, grouped shared-constant cloning, candidate limits,
+idempotence, GraphIndex/LayoutState integrity, and twenty unsafe transactional
+no-op contracts. Sequential comparisons against the preceding checkpoint emit
+byte-identical float32, float16, correspondence, and schema artifacts for all
+four active representatives.
+
+The channel-one terminal plan recognizes only a TransposeConv-produced NHWC
+tensor whose static and dynamic channel dimension is exactly one, its private
+NHWC-to-NCHW adapter, a strictly linear unary/binary chain containing exactly
+one Squeeze, and a final graph output with no consumers. It retains its own
+entry point and stats key; the lowerer dispatcher remains immediately after
+the general passthrough dispatcher and also receives Session LayoutState.
+
+Explicit, negative, and implicit Squeeze axes are normalized against the
+original rank-four NCHW contract and remapped by semantic axis label to NHWC.
+Every removed dimension must be statically and dynamically one. The surviving
+semantic axis order after Squeeze must be identical in both paths. This admits
+the intended channel removal and other order-preserving cases while rejecting
+spatial-only rewrites that would silently expose a channel-last graph output
+under the original channel-first rank-three contract.
+
+The terminal plan preserves the larger historical unary family before or
+after Squeeze. Non-scalar binary constants are accepted only before Squeeze
+and use the shared rank-four constant planner; binary operations after Squeeze
+must use a scalar constant. Static/dynamic broadcasts, dtype, per-tensor
+quantization, operand order, producer/consumer order, public intermediates,
+the exact graph output, Squeeze options, metadata, constants, and the one
+adapter removal are fully planned and re-resolved before apply.
+
+Fifty-seven focused tests cover explicit/negative/implicit axes, static and
+dynamic signatures, all fourteen unary operations, all six binary operations
+in both operand positions, exact numerical behavior, a post-Squeeze scalar
+binary, shared constant cloning, candidate limits, idempotence, GraphIndex and
+LayoutState integrity, and twenty-two transactional rejection cases. YuNet
+retains four zero-match invocations and emits five byte-identical artifacts
+against the preceding checkpoint.
+
+Elementwise/Concat/Conv NHWC group recovery is owned by
+`passes/elementwise_concat_layout.py`. The former lowerer implementation built
+complete producer/consumer maps inside an unbounded fixed-point loop and
+mutated a connected group while still discovering its boundaries. The lowerer
+now has one thin dispatcher at each of the two unchanged ordered positions and
+passes the Session `LayoutState` into a graph-indexed semantic owner.
+
+The owner starts from graph-ordered channel-axis Concat candidates whose every
+consumer is a private NCHW-to-NHWC adapter. Reverse traversal classifies one
+connected closure containing the complete historical eleven-unary and six-
+binary families. A boundary must be a direct rank-four graph input, a proven
+NHWC-to-NCHW adapter, or a reusable private NCHW-to-NHWC alias. Additional
+Concat roots that consume the same closure are admitted into the same plan, so
+shared producers cannot be converted under only part of the connected group.
+The traversal is bounded by the current graph input-edge count.
+
+Every static and dynamic rank-four view, dtype, per-tensor quantization,
+producer, consumer slot, graph-order relation, public boundary, typed
+permutation, binary broadcast, constant buffer, and provenance field is fixed
+before a plan exists. Binary operand positions are retained. A rank-four
+constant is transposed only when it is immutable and every actual consumer
+slot is contained in the accepted closure; unrelated use rejects the complete
+candidate. Explicit pre-adapters with fan-out remain for their legacy users.
+Supported external unary/binary users of a converted closure output share one
+deterministic local NHWC-to-NCHW adapter, while unsupported or public fan-out
+rejects the group transactionally.
+
+The immutable plan records all input and output rewrites, Concat axis changes,
+tensor metadata updates, constant transposes, post aliases, legacy adapters,
+removals, and complete tensor/operator contracts. It is resolved again from
+the same seed immediately before apply. One differential
+`ModelIRGraphIndex` maintains rewritten slots, removals, and adapter
+insertions. Candidate-only operation and an explicit rewrite limit use the
+same production entry point. Pruning runs once at owner exit, including on a
+zero-match call, preserving the historical permutation-buffer and
+correspondence-event ordering.
+
+Converted closure, constant, and Concat tensors are explicitly recorded as
+NHWC in both TensorIR and Session `LayoutState`. Sequential comparison with
+the preceding checkpoint shows identical operator topology, names, options,
+shape/signature, dtype, quantization, constants, and provenance at every
+FastestDet and HumanSeg invocation boundary. The only full ModelIR-digest
+difference is this intentional replacement of stale `UNKNOWN` layout
+provenance with the resolved NHWC contract. Float32, float16,
+correspondence, and schema artifacts remain byte-identical.
+
+Fifty-six focused tests cover all unary types, all binary types in both
+operand positions, rank-four constants, INT32/INT64 and negative axes,
+dynamic signatures, connected groups, direct/preexisting boundaries, multiple
+post aliases, legacy adapters, pre-adapter fan-out, numerical equivalence,
+candidate limits, idempotence, GraphIndex/LayoutState integrity, and twenty-
+three transactional rejection cases. Sequential characterization observed
+five calls on each short representative. FastestDet retained two groups and
+HumanSeg one group in the first call; the other twenty-two calls were
+zero-match. YuNet, FastestDet, and HumanSeg reproduce their fifteen fixed
+artifacts. No Tier corpus was run for this checkpoint.
+
+StridedSlice/Concat fan-in recovery is owned by
+`passes/stridedslice_concat_layout.py`. The former lowerer helper rebuilt full
+producer/consumer maps inside an unbounded fixed-point loop, changed Slice
+constants and metadata before validating the full group, and rewrote the first
+post-permutation buffer when a legacy NCHW boundary had to survive. Both
+ordered production positions now call one thin dispatcher with Session
+`LayoutState`.
+
+The candidate root is one typed private NHWC-to-NCHW Transpose with at least
+two consumers. Its entire output fan-out must consist of supported rank-four
+`STRIDED_SLICE` operations. Each Slice has four distinct inputs, zero masks,
+no offset, and one immutable nonzero stride vector. Begin, end, and stride
+constants must be rank-four INT32 or INT64 values whose TensorIR dtype, NumPy
+dtype, static/dynamic shape, producer state, public ownership, and complete
+consumer-slot set agree. Each constant is exclusive to its one Slice and the
+three roles are distinct; shared or conflicting roles reject the transaction
+before mutation.
+
+Every Slice output is private, rank four, and consumed exactly once by the
+same channel-axis Concat. The resolver proves producer order, dtype,
+per-tensor quantization, old NCHW and new NHWC views, Concat input uniqueness,
+static/dynamic Concat result, output metadata, and all post consumers. At least
+one private typed NCHW-to-NHWC post adapter is required. Additional private
+posts are aliases of the first canonical NHWC output; repeated downstream
+input slots are recorded explicitly. Arbitrary later NCHW consumers and a
+public Concat output are preserved through one local inverse adapter.
+
+All constant updates, Slice rewrites, metadata changes, Concat axis/output
+changes, post aliases, compatibility-boundary changes, removals, and complete
+tensor/operator contracts belong to one immutable plan. The same seed is
+fully resolved a second time immediately before apply. One differential
+`ModelIRGraphIndex`, a graph-ordered Transpose candidate list, candidate-only
+operation, and an optional rewrite limit replace the full scans and unbounded
+loop. Pruning still runs once at owner exit, including zero-match calls, to
+preserve the historical side effect.
+
+Ordinary and multi-post active forms retain byte-identical non-layout ModelIR
+digests against the raw helper, including lineage metadata and event order.
+Slice input rewrites retain the historical `replace_operator_input_at` event;
+each alias retains one group-level replacement event even when the downstream
+operator repeats that alias in multiple slots. TensorIR and Session
+`LayoutState` now record converted Slice and Concat tensors as NHWC.
+
+When a compatibility boundary is required, the owner reuses the already-
+proven typed pre-permutation. The raw helper instead overwrote the first post
+buffer with an INT32 opposite permutation, even when the buffer was INT64 or
+shared. The indexed owner never changes that post buffer or unrelated users.
+It also rejects a legacy consumer ordered before the adapter that would become
+its producer, preventing an invalid topological result.
+
+Fifty-eight focused tests cover INT32/INT64 parameters and permutations,
+dynamic signatures, negative axes, multiple post aliases, repeated slots,
+legacy/public boundaries, shared post buffers, exact numerical equivalence,
+candidate limits, idempotence, GraphIndex/LayoutState integrity, lineage
+compatibility, zero-match pruning, and forty-two transactional rejection
+cases. Pre/post characterization observed five zero-match calls on each of
+YuNet, FastestDet, HumanSeg, OSNet, and SiNet. The related owner and complete
+architecture gate passes 542 tests, TensorFlow-blocked direct/default/`-cotof`
+passes three tests sequentially, and YuNet reproduces its five fixed artifacts.
+No Tier corpus was run for this checkpoint.
+
+Split/mixed-Concat fan-in recovery is owned by
+`passes/split_mixed_concat_layout.py`. The former lowerer helper rebuilt full
+producer/consumer maps inside an unbounded fixed-point loop. It is now one thin
+dispatcher at each of its three unchanged source positions, and every
+production call receives the Session `LayoutState`.
+
+The indexed root is a private rank-four channel-axis Concat with at least one
+direct Split output. Every other input must be another output of an accepted
+Split or the exclusive result of a typed NHWC-to-NCHW adapter. All Split
+outputs are classified as a unit: they may feed the target Concat directly or
+private typed NCHW-to-NHWC aliases, but public or unrelated consumers reject
+the entire transaction. This keeps the following general input-chain helper a
+separate ordered family instead of allowing either pass to consume a partial
+match owned by the other.
+
+The resolver proves rank-four static/dynamic views, dtype, per-tensor
+quantization, explicit or unknown physical layout, graph order, producer
+uniqueness, exact consumer slots, typed INT32/INT64 permutation constants, and
+the derived NHWC Concat view. A Split axis must be an immutable scalar typed
+constant normalized to channel axis one. It changes in place only when the
+Split owns its only consumer slot; otherwise the plan creates one deterministic
+dtype-preserving axis-three clone. Produced, variable, public, malformed, or
+per-axis-quantized values are rejected.
+
+The plan owns each pre-Split adapter, Split input and output metadata update,
+alias rewire, direct-adapter removal, Concat input/axis/output change, terminal
+NCHW compatibility adapter, tensor contract, operator contract, and public
+graph boundary. The same Concat is resolved again immediately before apply.
+One differential `ModelIRGraphIndex` maintains the rewrites, removals, and
+insertions; graph-ordered Concat candidates, candidate-only operation, and an
+explicit rewrite limit replace the raw scan and fixed-point loop. Converted
+tensors are recorded in both TensorIR and Session `LayoutState`.
+
+Seven sequential short Tier 0-4 characterization models containing Split and
+Concat produced no runtime match for this specialized family, while the
+following general input-chain family retained its existing matches. The active
+contract is therefore fixed synthetically rather than broadened to absorb
+production patterns owned elsewhere. Sixteen dedicated tests cover active and
+all-Split forms, dynamic signatures, negative axes, shared axis cloning,
+public/fan-out/quantization/producer guards, stale-plan rejection, candidate
+limits, repeated sweeps, and index/layout integrity. The adjacent owner and
+architecture gate passes 524 tests. Sequential `-cotof` validation preserves
+the managed values for `yolov9` (`3.0517578125e-05`) and `sgscsh`
+(`2.5331974029541016e-07`).
+
+General Concat input-adapter recovery is owned by
+`passes/concat_input_adapter_layout.py`. The former lowerer helper rebuilt full
+producer and consumer maps inside an unbounded fixed-point loop. It is now a
+thin compatibility dispatcher at its three direct production positions and
+its conservative safe-transpose fallback position. Direct production calls
+receive the Session `LayoutState`; the no-keyword fallback entry remains
+compatible.
+
+The indexed root is a rank-four channel-axis Concat. Each input branch must be
+the private output of a typed NHWC-to-NCHW Transpose, or one of the historical
+thirteen unary operations fed by that Transpose or by an exactly equivalent
+singleton-channel NHWC-to-NCHW Reshape. Direct and unary forms may be mixed.
+Repeated input slots reuse one branch plan so shared metadata is changed once.
+The accepted Transpose, Reshape, and unary intermediates cannot be public or
+have unrelated consumers.
+
+Every static and dynamic view, dtype, per-tensor quantization, explicit or
+unknown layout, producer and consumer relation, graph-order relation, typed
+constant, unary view, and derived NHWC Concat output is proven before a plan
+exists. The original NCHW Concat output name, metadata, graph-output role, and
+existing consumers are preserved through one terminal compatibility
+Transpose. If no proven permutation buffer is available, the plan creates one
+deterministic INT32 constant. Per-axis quantization, malformed or produced
+constants, duplicate producers, unresolved sources, unsafe fan-out, and stale
+or backward edges reject the complete candidate before mutation.
+
+The immutable plan contains branch classification, adapter removals, unary
+rewires, metadata/layout updates, Concat changes, permutation ownership,
+terminal insertion, tensor/operator contracts, and graph boundaries. It is
+fully resolved again immediately before apply. A graph-ordered candidate list,
+candidate-only operation, and an explicit rewrite limit replace the raw scan
+and fixed-point loop. One differential `ModelIRGraphIndex` maintains all
+rewrites, removals, and insertions. TensorIR and Session `LayoutState` are
+updated together, and pruning retains the historical zero-match side effect.
+
+Sequential characterization retained three first-invocation direct groups in
+`yolov9` and two second-invocation direct groups in `sgscsh`; the other seven
+invocations were zero-match. The preceding Split/mixed-Concat owner did not
+claim those groups. Thirty-six dedicated cases and two existing active
+fixtures cover direct, unary, singleton-Reshape, dynamic, public-boundary,
+repeated-slot, stale-plan, bounded dispatch, safe-bundle, determinism, and
+transactional rejection behavior. The related owner and architecture gate
+passes 561 tests. Identical conversion-only invocations against checkpoint
+`f5505052` reproduce all ten fixed artifacts across `yolov9` and `sgscsh`;
+separate sequential `-cotof` checks remain below `1e-1`.
+
+Slice/optional-Logistic/Concat/Reshape detection-tail recovery is owned by
+`passes/slice_logistic_concat_reshape_tail_layout.py`. The former lowerer
+helper rebuilt complete producer and consumer maps inside an unbounded
+fixed-point loop and began changing Slice constants and metadata before the
+complete multi-branch tail was known to be valid. Both ordered production
+positions now call one thin dispatcher with Session `LayoutState`.
+
+The indexed root is a rank-three spatial-axis Concat with at least two unique
+inputs. Each input must be one private rank-three Reshape fed by one private
+two-input rank-four channel-axis Concat. Both Concat inputs trace through an
+optional Logistic to distinct private Slice operators. The two Slices must be
+the exact fan-out of one typed NHWC-to-NCHW Transpose. Different branches own
+different adapters and internal operators, although their already-NHWC source
+tensor may be shared safely.
+
+The resolver proves rank-three and rank-four static/dynamic views, dtype,
+per-tensor quantization, explicit or unknown layout, unique producers, strict
+graph order, exact consumer slots, typed INT32/INT64 permutation and Slice
+constants, Slice bounds and derived results, branch and tail Concat results,
+Reshape element counts, and every public or downstream boundary. Both
+`newShape` and `onnxRawNewShape` are validated against the original and target
+views before their channel/spatial dimensions are exchanged.
+
+Slice begin and size constants must be immutable, non-public, non-variable,
+non-produced, and exclusive to their exact operator slots. This makes their
+axis remap safe and rejects the conflicting shared-role cases that the raw
+helper could mutate twice. An exclusive Reshape shape changes in place. A
+shape shared with an unrelated Reshape receives one deterministic clone that
+retains TensorIR dtype, NumPy dtype, quantization, and original consumers.
+Malformed values, zero dimensions, per-axis quantization, duplicate producers,
+repeated branch inputs, unsafe fan-out, and backward consumers reject the
+whole transaction.
+
+The immutable plan contains all Slice rewrites/constants, optional Logistic
+metadata, branch Concat axes and metadata, Reshape constant/input/options and
+metadata, tail Concat axis/output, typed 3D post-permutation selection or
+creation, terminal compatibility adapter, removals, tensor/operator contracts,
+and graph boundaries. The same tail candidate is fully resolved immediately
+before apply. A graph-ordered candidate list, candidate-only operation, and an
+explicit rewrite limit replace the raw scans and loop. One differential
+`ModelIRGraphIndex` maintains rewritten slots, insertion, and removal;
+TensorIR and Session `LayoutState` are updated together. Exit pruning preserves
+the legacy zero-match side effect.
+
+Production characterization found one four-branch first-call match in
+`nanodet-plus-m_416` followed by four zero-match calls. Each branch splits 37
+channels into Logistic-wrapped 5-channel and direct 32-channel paths across
+52x52, 26x26, 13x13, and 7x7 feature maps. The preceding general input owner
+rewrites seven disjoint groups without consuming this owner’s tail. Yolov9
+retains five zero-match calls. Forty dedicated cases and the existing active
+fixture cover numerical equivalence, all optional-Logistic forms, dynamic
+signatures, typed constants, copy-on-write, bounded dispatch, graph/layout
+state, stale plans, and twenty-four transactional rejections. The related gate
+passes 603 tests, all five nanodet conversion artifacts remain byte-identical
+to checkpoint `762dcdef`, and sequential `-cotof` remains below `1e-1`.
+
+Strict direct/unary residual-Add adapter recovery is owned by
+`passes/pre_add_direct_unary_layout.py`. The existing
+`_optimize_transpose_pre_add_nhwc_chains` entry point remains the compatibility
+owner at all four production positions and in the conservative safe-transpose
+bundle. It invokes the indexed sub-owner first, then retains the historical
+implementation for Swish, Gather, constant affine, PReLU, broadcast, nested
+Add, and direct-fallback patterns. Direct production calls receive the Session
+`LayoutState`; the safe-bundle call remains source compatible without one.
+
+The bounded input contract is an equal-shape rank-four residual Add. Each
+operand must be either a typed NHWC-to-NCHW Transpose result or one of the
+historical seven unary operations fed exclusively by such a Transpose. A
+direct adapter may remain for unrelated NCHW consumers; a unary branch must
+be closed so its input adapter can be removed and its output metadata can be
+changed to NHWC. The output suffix may be the Add itself or one exclusive
+unary of the same family. At least one private typed NCHW-to-NHWC post adapter
+must expose the canonical NHWC result.
+
+The resolver proves graph order, unique producers, exact consumer slots,
+static and dynamic views, dtype, per-tensor quantization, explicit or unknown
+physical layout, typed immutable permutations, post aliases, public
+boundaries, and the old-NCHW/new-NHWC view relation. Multiple post adapters
+become aliases of the first output. Arbitrary NCHW consumers are preserved by
+retaining one local inverse adapter only when its INT32 permutation buffer is
+owned exclusively by the accepted post set. Shared or produced post constants
+reject the indexed candidate and leave it to compatibility behavior.
+
+One immutable plan owns input classification, optional unary rewires,
+metadata/LayoutState changes, Add and output-unary producer identity, post
+aliases, retained-boundary rewrites, adapter removal, complete tensor and
+operator contracts, and graph boundaries. The candidate is fully resolved a
+second time immediately before apply. A graph-ordered Add candidate list,
+candidate-only operation, rewrite bound, and one differential
+`ModelIRGraphIndex` replace repeated producer/consumer map construction for
+the accepted family. The indexed owner intentionally does not prune tensors:
+the compatibility wrapper retains the single historical cleanup boundary so
+lineage event grouping and correspondence reports remain byte-identical.
+
+The initial direct-output-only version was evaluated before being broadened.
+It produced zero indexed matches on SiNet, FastestDet, HumanSeg, and OSNet
+while the fallback preserved every result. Characterizing that finding showed
+that OSNet's strict residuals all use an optional ReLU suffix. After adding the
+bounded output-unary contract, the indexed first call owns six OSNet residuals
+and one HumanSeg residual. FastestDet remains on the direct-fallback path and
+SiNet remains on affine/PReLU paths. A first cleanup attempt split one HumanSeg
+lineage prune event; moving cleanup back to the wrapper restored the exact
+correspondence report without changing the graph.
+
+Twenty focused cases cover every input-unary type, direct and unary mixing,
+optional output unary, multiple post aliases, retained NCHW consumers,
+dynamic signatures, quantization and ownership guards, stale-plan rejection,
+bounded dispatch, idempotence, GraphIndex/LayoutState consistency, and the
+single cleanup boundary. The focused, QLinear, active compatibility, and full
+architecture gate passes 235 tests. TensorFlow-blocked direct, default-direct,
+and direct `-cotof` pass three tests. Sequential focused `-cotof` checks pass
+for SiNet, OSNet, FastestDet, and HumanSeg with zero model-process SWAP and
+their exact recorded maximum errors. All float32 and float16 TFLite files are
+byte-identical to the prior checkpoint; final conversion-only checks also
+restore the fixed correspondence-report hashes.
+
+The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
+semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
+the historical position inside `_run_layout_reshape_attention_recovery_prefix`
+and deliberately covers both direct/direct and direct/Mul-constant branches:
+the compatibility helper historically claims both families despite its
+Mul-const name. It dispatches only indexed Add operators and reuses one
+`ModelIRGraphIndex` for each prefix invocation. Candidate resolution validates
+typed `[0,3,1,2]` and `[0,2,1]` permutations, positive rank-four source and Add
+views, exact `[N,C,H*W]` and `[N,H*W,C]` suffix views, shape/dtype/layout and
+per-tensor quantization compatibility, graph boundaries, producer ordering,
+exclusive mutable edges, and typed reshape constants before mutation.
+
+Each accepted candidate becomes an immutable plan containing operator and
+tensor contracts. Apply resolves the candidate again and rejects a stale plan
+atomically. Channelwise Mul constants and shared reshape-shape constants use
+copy-on-write; exclusive constants are updated in place to preserve existing
+artifact names. Legacy NCHW consumers receive one dedicated indexed adapter,
+while closed suffixes remove all redundant Transposes. `LayoutState` is updated
+alongside tensor metadata. The indexed owner does not prune, so the existing
+compatibility wrapper remains the sole cleanup and tensor-lineage report
+boundary. Strict rejections continue through the original raw fallback.
+
+The production characterization model is Tier 2
+`iat_llie_180x320.onnx`: its three ordered invocations index 5, 4, and 4
+rewrites, including seven direct/direct and six direct/Mul-constant chains.
+Its float32, float16, and correspondence artifacts remain byte-identical to
+the pre-extraction baseline, and the sequential accuracy gate passes with
+maximum absolute error `4.470348358154297e-07` and zero process SWAP.
+
+The formerly adjacent raw direct/direct-only helper has been removed. It was
+not a second semantic owner: the compatibility helper above has always
+accepted the same direct/direct producer and suffix contracts before it, in
+addition to its Mul-constant family. Production-boundary instrumentation
+confirmed zero residual rewrites in all three ordered invocations for
+IAT-LLIE, five short zero-SWAP representatives, and LINEA. A topology scan of
+the fixed 49-model Tier 0-4 measured-quick set found no other candidate model.
+Removing the unreachable helper deletes 290 lines and avoids three repeated
+producer/consumer-map builds plus full Add scans per conversion. Architecture
+tests now forbid reintroducing either its private definition or call while the
+single ordered indexed/compatibility owner retains all fixtures and artifact
+behavior.
+
+The rank-four Swish to rank-three reshape suffix now has a bounded indexed
+owner in `pre_unary_reshape_suffix_layout.py`. It dispatches only indexed Mul
+operators and accepts the generic
+`Transpose -> Logistic/Mul -> Reshape -> Transpose` family when typed
+permutations, exact NHWC/NCHW and NCW/NWC views, dtype and per-tensor
+quantization, graph boundaries, exclusive mutable edges, operator order, and
+an exclusive typed reshape constant all agree. An immutable plan records the
+complete tensor/operator contract and is fully resolved again immediately
+before mutation. Apply uses differential graph-index updates, explicitly
+updates Session layout state, and has a deterministic rewrite bound. Plain
+unary cases, shared constants, dynamic or relaxed views, and every strict
+reject remain on the unchanged raw fallback. Pruning stays at the wrapper's
+single historical cleanup boundary, which removes corresponding stale layout
+entries after cleanup.
+
+LINEA is the non-zero production model: the first prefix invocation indexes
+one Swish suffix and the next two index zero. The first implementation exposed
+one correspondence-only incompatibility because a whole-input mutation
+reported `set_operator_inputs` instead of the historical
+`replace_operator_input_at`. Recording and correcting that single lineage
+source label restored all artifacts byte-for-byte. The sequential accuracy
+gate passes with maximum absolute error `0.002297189086675644` and zero
+process-tree SWAP.
+
+The factorized rank-four to rank-five detection-head reshape now has a strict
+indexed Case B owner in `expanddims_reshape_layout.py`. The owner dispatches
+each indexed Transpose candidate once and accepts only
+`NHWC -> NCHW -> [N,A,B,H,W] -> [N,A,H,W,B]` when `A > 1`, `C=A*B`, both
+typed permutations, both exclusively owned mutable constants, exact static
+views and signatures, dtype/quantization, layouts, operator order, and graph
+boundaries agree. The immutable plan is re-resolved before apply; graph edges
+and removal use differential index updates and Session layout state is
+reconciled explicitly. Singleton Case A and every strict reject remain on the
+raw fallback. The wrapper retains one prune/report boundary and now also
+rejects shared shape or permutation constants before its legacy in-place
+mutation.
+
+`yolov7-tiny.onnx` and `yolo_test.onnx` each record indexed counts 3, 0, 0,
+and 0 at the four production invocations. A first focused implementation
+mistakenly used a rank-four-only typed permutation helper for the rank-five
+post edge; the problem was recorded before adding the bounded length-aware
+reader. Both models then retained byte-identical float32, float16, and
+correspondence artifacts. The sequential yolo_test accuracy gate passes with
+maximum absolute error `2.4437904357910156e-06` and zero process-tree SWAP.
+
+The static rank-four to rank-three flatten-HW suffix now has a bounded indexed
+owner in `flatten_hw_reshape_layout.py`. It accepts only the exact semantic
+family `NHWC -> NCHW -> [N,C,H*W] -> [N,H*W,C]`. Candidate resolution checks
+typed rank-four and rank-three permutation constants, exact positive shapes
+and signatures, dtype and per-tensor quantization, graph ordering and
+boundaries, exclusive mutable data edges, an exclusive typed reshape-shape
+constant, and Session layout compatibility. Each candidate becomes an
+immutable operator/tensor plan that is fully resolved again immediately
+before differential mutation. The owner has a deterministic candidate bound,
+uses one shared graph index, reconciles `LayoutState`, and never performs
+internal pruning or a whole-graph producer/consumer rebuild.
+
+The existing wrapper remains the compatibility boundary for dynamic or
+otherwise relaxed variants and performs the single historical prune. Its raw
+path now refuses to mutate a reshape-shape tensor visible through another
+consumer, graph input/output, producer, or variable state. Thus strict
+rejection cannot corrupt a shared constant. LINEA is the sole established
+non-zero short zero-SWAP production model: indexed invocation counts are
+`2, 0, 0, 0`, while thirteen other measured representatives remain zero at
+all invocations. LINEA's float32, float16, and correspondence artifacts remain
+byte-identical, and its sequential `-cotof` gate passes at maximum absolute
+error `0.002297189086675644` with zero process-tree SWAP.
+
+The static QKV rank adapter now has a bounded indexed owner in
+`attention_qkv_reshape_layout.py`. It accepts only the production-proven
+`[A,1,C] -> [A,H,D] -> [H,A,D] -> [1,H,A,D]` family with rank-three
+permutation `[1,0,2]`, where `C=H*D`. Candidate resolution requires exact
+positive shapes and signatures, matching dtype and per-tensor quantization,
+typed and exclusively owned mutable shape/permutation constants, a typed tail
+shape constant, resolved sources, exclusive data edges, graph order and
+boundaries, and UNKNOWN Session layout throughout the semantic view chain.
+Each candidate is captured in an immutable operator/tensor contract and fully
+resolved immediately before apply. Mutation updates the shared graph index
+differentially, records the historical output-lineage event, removes only the
+tail Reshape, reconciles `LayoutState`, and obeys a deterministic rewrite
+bound without internal pruning or repeated graph-wide map construction.
+
+The wrapper retains one compatibility fallback and one historical prune.
+Unproven permutation `[1,2,0]`, shared-constant copy-on-write, dynamic
+signatures, and all other relaxed contracts therefore preserve their previous
+behavior. Tier 3 `rf-detr-nano.onnx` establishes the real owner with indexed
+invocation counts `5, 0, 0, 0`; the raw fallback has zero residual rewrites.
+Its float32, float16, and correspondence outputs remain byte-identical to the
+pre-extraction baseline. The sequential `-cotof` gate passes with maximum
+absolute error `0.000102996826171875` and zero process-tree SWAP.
+
+The static Swish-to-Squeeze rank adapter now has a bounded indexed owner in
+`pre_unary_squeeze_suffix_layout.py`. It accepts only the production-proven
+`NHWC -> NCHW -> Logistic/Mul -> Squeeze(axis=2) -> Transpose([0,2,1])`
+family. Resolution requires typed rank-four and rank-three permutations,
+positive and identical static shape signatures, exact NHWC/NCHW and NCW/NWC
+views, matching dtype and per-tensor quantization, resolved source ownership,
+exclusive mutable data edges, graph order and public-boundary safety, and
+compatible Session layout state. Malformed Squeeze options are a strict
+no-op. Each accepted candidate is captured as an immutable tensor/operator
+contract and fully resolved again before mutation, so stale plans are rejected
+atomically. Apply updates inputs and outputs through the shared graph index,
+removes only the pre/post Transposes, explicitly reconciles layout state, and
+has a deterministic candidate/rewrite bound without internal pruning or
+whole-graph producer/consumer-map reconstruction.
+
+The wrapper preserves the original raw implementation after the indexed
+dispatch and remains the single historical prune/report boundary. Plain unary
+operators, NCHW axis-3 Squeeze, dynamic signatures, relaxed or shared edges,
+and every other strict rejection therefore retain compatibility behavior.
+Tier 1 `inference_ops15.onnx` establishes the real owner with indexed counts
+`1, 0, 0`. Its float32, float16, and correspondence outputs remain
+byte-identical to the pre-extraction baseline. Sequential `-cotof` passes with
+maximum absolute error `1.9073486328125e-06`, and both conversion checks record
+zero process-tree SWAP.
+
+The production-proven static Conv/Mul affine fold now has a bounded indexed
+owner in `conv_mul_affine_fold.py`. It accepts only
+`CONV_2D(fused=NONE) -> MUL(fused=NONE)` with an exclusive FLOAT32
+`[1,1,1,O]` scale, exclusive FLOAT32 `[O,1,1,I]` filter and `[O]` bias,
+static equal NHWC-compatible Conv/Mul output views, SAME padding, unit stride
+and dilation, resolved graph ownership, safe public boundaries, and no
+constant Add suffix. Each candidate is captured in an immutable
+operator/tensor contract and resolved again immediately before apply. The
+rewrite changes the Conv output and removes Mul through differential
+`ModelIRGraphIndex` updates, reconciles the Session `LayoutState`, and obeys a
+deterministic candidate/rewrite bound without internal pruning or complete
+producer/consumer-map reconstruction.
+
+The existing wrapper remains the single compatibility and cleanup boundary.
+Add-only, Mul/Add, fused-ReLU, missing-bias, scalar or relaxed coefficients,
+dynamic signatures, quantized/shared/public constants, and all other strict
+rejects therefore continue through the historical implementation. The
+indexed bias calculation deliberately retains the legacy float32
+`bias * scale + positive_zero` operation order. That apparently redundant
+addition canonicalizes an IEEE-754 negative-zero product to positive zero and
+is required for byte-identical serialized buffers.
+
+Tier 2 `iat_llie_180x320.onnx` establishes the real owner with indexed counts
+`12, 0, 0`; all twelve are Mul-only folds and the fallback has no residual
+rewrite. Its float32, float16, and correspondence artifacts remain
+byte-identical to the pre-extraction baseline. The sequential `-cotof` gate
+passes with maximum absolute error `4.470348358154297e-07` and zero
+process-tree SWAP.
+
+Producer/activation fusion is isolated in `activation_fusion.py`. The public
+compatibility surface remains the private lowerer wrapper
+`_optimize_fuse_conv_activation_chains`, while the implementation module owns
+indexed matching for Conv2D, depthwise Conv2D, Add, Sub, Mul, and Div followed
+by their supported ReLU family. It preserves the historical single-consumer,
+dtype, protected-boundary, graph-output bridge, existing fused-activation, and
+operator-arity guards. Output replacement and activation removal update one
+`ModelIRGraphIndex` differentially, and the exact Conv/Add/binary lineage event
+types and per-family counters remain unchanged.
+
+Cleanup remains at the same pass exit and now receives the Session
+`LayoutState`, so removal of unused pre-fusion tensor names cannot leave stale
+layout entries. All direct production calls and the shared final convergence
+forward the same Session state; the final convergence also continues to reuse
+its single graph index. The compatibility scan/restart loop is intentionally
+unchanged in this mechanical checkpoint. Moving it out of the central lowerer
+reduces unrelated lowering context without altering semantic ownership or
+artifact order.
+
+FastestDet, HumanSeg, OSNet, and IAT-LLIE establish real production ownership.
+Their three invocation totals are respectively `35,0,0`, `60,0,0`,
+`77,0,24`, and `1,0,0`. The families jointly cover Conv and Add fusion; the
+focused synthetic contract additionally fixes depthwise Conv, Sub, Mul, and
+Div behavior. Every float32, float16, and correspondence artifact for all four
+models is byte-identical across extraction, and every monitored conversion
+records zero process-tree SWAP.
+
+Dynamic Reshape metadata resolution is isolated in
+`dynamic_reshape_resolution.py`. The implementation owns both the static
+element-count resolver and the ModelIR pass that reconciles `newShape`,
+`onnxRawNewShape`, optional `allowZero`, constant shape inputs, and output
+shape/signature metadata. It preserves runtime-driven empty templates,
+dynamic `-1`, final high-rank runtime-inference preference, zero-copy axes,
+stale static constants, layout-transpose-as-Reshape markers, and malformed or
+unresolvable no-op behavior.
+
+The lowerer retains thin compatibility wrappers for both historical private
+names. Callers that already share a `ModelIRGraphIndex` still dispatch only
+indexed Reshape operators; legacy standalone callers retain their original
+single operator-list traversal. This metadata-only extraction does not alter
+topology, pass order, counters, or public API, but removes the complete
+shape-family decision tree from unrelated central lowering context.
+
+Tier 3 `rf-detr-nano.onnx` establishes real production ownership: its first
+four ordered resolver invocations report zero and the absolute-final
+runtime-inference invocation resolves three Reshapes. Its float32, float16,
+and correspondence artifacts remain byte-identical across extraction, and
+both monitored conversions record zero process-tree SWAP. IAT-LLIE and OSNet
+provide measured zero-owner controls at all five boundaries.
+
+Static shape fixed-point reconciliation and its pure inference helpers are
+isolated in `static_shape_reconciliation.py`. The module owns Slice and
+StridedSlice extents, BatchMatMul broadcasting, reduction axes, Squeeze,
+rank-four signature propagation, Conv/pool output dimensions, and the
+cross-op fixed-point resolver. The historical lowerer private names remain
+thin wrappers, preserving direct test and internal call compatibility without
+making the new internal type part of the public API.
+
+The reconciler retains its exact 32-sweep ceiling, operator order, per-op
+guards, dynamic-signature preservation, constant updates, and update counter.
+When a caller supplies `ModelIRGraphIndex`, the producer table is derived from
+that shared index; standalone callers retain the historical producer-table
+construction. The pass does not mutate topology and performs no consumer-map
+scan. Extraction therefore removes the multi-op decision tree from central
+lowering context without changing convergence semantics or pass scheduling.
+
+Tier 3 `rf-detr-nano.onnx` establishes real ownership across 29 production
+invocations. Six are non-zero with update counts `141,16,16,138,16,6`, for
+333 total tensor updates. All 29 counts and every float32, float16, and
+correspondence artifact are identical across extraction, with zero monitored
+process-tree SWAP. IAT-LLIE provides a 29-invocation zero-owner control.
+
+HARD_SWISH metadata sanitation is isolated in
+`hardswish_shape_sanitization.py`. The lowerer retains the historical private
+wrapper, while the module owns the invariant that HARD_SWISH output shape and
+signature match the input and that a fully static input receives a fully
+static signature. A valid shared `ModelIRGraphIndex` limits traversal to
+HARD_SWISH operators; standalone callers retain the original single list
+traversal. The pass is metadata-only and performs no topology, cleanup,
+layout-state, lineage, or constant-buffer mutation.
+
+All root models that directly contain ONNX `HardSwish` were measured before
+the move. Their production invocations were zero-update controls and all
+strictly sequential conversions recorded process-tree SWAP zero. The existing
+synthetic stale-metadata fixture supplies the positive ownership contract.
+Tier 1 `inference_ops15.onnx` is the fixed artifact representative: both
+production invocations remain zero and its float32, float16, and correspondence
+artifacts are byte-identical across extraction. This mechanical boundary must
+not be broadened into semantic inference without first recording a real owner
+and an independent regression contract.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
@@ -3383,6 +7088,14 @@ the next corpus run, with `baseline_reason` set to
 exclusion contract tests must be updated in the same checkpoint. Because that
 changes profile identity, the next authoritative run starts with a clean
 output directory rather than resuming results produced by the older profile.
+
+Expected or repeated quick-ceiling timeouts follow the same evidence-first
+policy. Preserve the complete timed-out run before changing a profile; compare
+completed artifacts and prior successful accuracy evidence to distinguish
+runtime variance from a semantic regression. A model that is no longer
+reliably short is retained as excluded history with a normalized reason such
+as `repeated_quick_ceiling_timeout`. Do not increase the quick ceiling or
+change converter source merely to keep that model in the short-runtime set.
 
 ## Remaining refactoring order
 

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_consecutive_reshape_passthrough_chains,
     _reconcile_static_tensor_shapes,
     _replace_expand_dims_and_squeeze_with_reshape,
+)
+from onnx2tf.tflite_builder.passes.static_shape_reconciliation import (
+    reconcile_static_tensor_shapes,
 )
 
 
@@ -76,9 +82,24 @@ def test_reconcile_strided_slice_repairs_lowered_squeeze_target() -> None:
     ]
 
     _replace_expand_dims_and_squeeze_with_reshape(model_ir)
+    module_ir = copy.deepcopy(model_ir)
     stats = _reconcile_static_tensor_shapes(model_ir)
+    module_stats = reconcile_static_tensor_shapes(
+        module_ir,
+        graph_index=ModelIRGraphIndex(module_ir),
+    )
 
     reshape_op = model_ir.operators[1]
+    assert module_stats == stats
+    assert [operator.options for operator in module_ir.operators] == [
+        operator.options for operator in model_ir.operators
+    ]
+    for name, tensor in model_ir.tensors.items():
+        module_tensor = module_ir.tensors[name]
+        assert module_tensor.shape == tensor.shape
+        assert module_tensor.shape_signature == tensor.shape_signature
+        if tensor.data is not None:
+            np.testing.assert_array_equal(module_tensor.data, tensor.data)
     assert str(reshape_op.op_type) == "RESHAPE"
     assert reshape_op.options["onnxSqueezeDims"] == [3]
     assert reshape_op.options["newShape"] == [1, 32, 64, 16]
