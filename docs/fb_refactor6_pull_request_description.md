@@ -1635,4 +1635,13 @@ malformed axis handling, duplicate producers, reverse topology, and a public
 internal alias. Resume by building a complete indexed topology, metadata,
 constant, quantization, name, adapter, removal, and insertion plan before the
 first mutation, then turn all 27 xfails green while preserving valid behavior
-and both ordered recovery boundaries.
+and both ordered recovery boundaries. That transactional correction is now
+complete in the 866-line raw owner. A single differential
+`ModelIRGraphIndex`, strict topology and rank-four metadata preflight, two
+immutable affine-constant plans, public-output/shared cloning, complete QDIM
+remapping, collision-safe adapter ownership, and producer-before-consumer
+adapter insertion turn all 27 former xfails green. Focused coverage now has 46
+green cases, including one-index construction and explicit public-output
+clones, while both ordered recovery boundaries remain unchanged. Resume by
+mechanically extracting the corrected owner into a focused pass module with
+exact AST and owner/wrapper equality.

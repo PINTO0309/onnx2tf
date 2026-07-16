@@ -8174,6 +8174,41 @@ before their earliest legacy consumer. Existing match order, statistics,
 fixed point, scalar/shared constants, pruning, options/provenance, and both
 runtime boundaries must remain unchanged.
 
+The correction is now implemented in the 866-line raw owner. One
+`ModelIRGraphIndex` replaces producer/consumer-map reconstruction on every
+fixed-point round and is updated differentially through input/output setters,
+batched removals, and adapter insertion. Two independent matches construct
+the index once.
+
+Each candidate now proves the strict pre-Transpose/Concat/Mul/Add/post-
+Transpose/tail-Add order, unique retained producers, exact single-consumer
+internal edges, private intermediate boundaries, complete rank-four source/
+Concat/Mul/Add shapes and effective signatures, a valid Concat axis/options
+mapping, and a broadcast-compatible NHWC tail constant before mutation.
+Missing tensors, short signatures, malformed axes, duplicate producers,
+reverse order, and public internal aliases return zero with complete ModelIR
+equality.
+
+Both affine constants are planned from the unchanged graph. Scalars and
+already NHWC-broadcastable values remain untouched. Rotated constants require
+immutable non-public-input ownership and valid target broadcasting; shared or
+public-output values receive deterministic private clones, while variables and
+public inputs reject. Per-axis quantization is cloned and remapped with the
+same NCHW-to-NHWC permutation for both constants and the canonical Concat,
+Mul-output, and Add-output tensors. Candidate-local names are published only
+after every constant, metadata, quantization, adapter, setter, removal, and
+insertion decision succeeds.
+
+The reserved adapter tensor is reusable only as a private, immutable,
+unquantized INT32 `[4]` constant with an INT32 buffer and the exact
+permutation. Every unsafe collision is preserved and receives a private
+collision-safe replacement. Legacy adapters are inserted immediately after
+their Concat producer, before the main affine chain and every legacy consumer.
+All 27 former strict xfails are green; public-output affine constants are
+explicitly verified as successful private-clone rewrites. The original 18
+characterization cases, plus clone and one-index coverage, now form 46 green
+focused tests.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

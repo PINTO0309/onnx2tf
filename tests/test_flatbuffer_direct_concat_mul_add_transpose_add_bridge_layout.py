@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -385,6 +386,30 @@ def test_concat_mul_add_transpose_add_rewrites_multiple_and_fixed_point() -> Non
     ] == [3, 3]
 
 
+def test_concat_mul_add_transpose_add_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(branches=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(
+        model_ir
+    )
+
+    assert stats == {
+        "optimized_concat_mul_add_transpose_add_nhwc_bridge_chains": 2,
+    }
+    assert refresh_count == 1
+
+
 def test_concat_mul_add_transpose_add_accepts_scalar_affine_constants() -> None:
     model_ir = _model()
     for name, value in (
@@ -559,10 +584,6 @@ def test_concat_mul_add_transpose_add_preserves_existing_rejections(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="legacy compatibility adapter is appended after its consumer",
-)
 def test_concat_mul_add_transpose_add_keeps_legacy_adapter_topological() -> None:
     model_ir = _model(legacy_consumer=True)
 
@@ -583,12 +604,9 @@ def test_concat_mul_add_transpose_add_keeps_legacy_adapter_topological() -> None
         if operator.outputs == ["branch0_legacy_out"]
     )
     assert adapter_index < legacy_index
+    assert validate_model_ir_invariants(model_ir) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="required rank-four metadata is not prevalidated",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -624,19 +642,13 @@ def test_concat_mul_add_transpose_add_rejects_incomplete_metadata(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mutable and public affine constants are rotated in place",
-)
 @pytest.mark.parametrize(
     "constant_name,ownership",
     [
         ("branch0_mul_const", "public-input"),
         ("branch0_mul_const", "variable"),
-        ("branch0_mul_const", "public-output"),
         ("branch0_pre_add_const", "public-input"),
         ("branch0_pre_add_const", "variable"),
-        ("branch0_pre_add_const", "public-output"),
     ],
 )
 def test_concat_mul_add_transpose_add_preserves_constant_ownership(
@@ -648,16 +660,49 @@ def test_concat_mul_add_transpose_add_preserves_constant_ownership(
         model_ir.inputs.append(constant_name)
     elif ownership == "variable":
         model_ir.tensors[constant_name].is_variable = True
-    elif ownership == "public-output":
-        model_ir.outputs.append(constant_name)
-
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="per-axis quantized dimensions are not remapped to NHWC",
+@pytest.mark.parametrize(
+    "constant_name,op_output,data_input",
+    [
+        (
+            "branch0_mul_const",
+            "branch0_mul_out",
+            "branch0_cat_nchw",
+        ),
+        (
+            "branch0_pre_add_const",
+            "branch0_pre_add_out",
+            "branch0_mul_out",
+        ),
+    ],
 )
+def test_concat_mul_add_transpose_add_clones_public_constant_output(
+    constant_name: str,
+    op_output: str,
+    data_input: str,
+) -> None:
+    model_ir = _model()
+    original = np.asarray(model_ir.tensors[constant_name].data).copy()
+    model_ir.outputs.append(constant_name)
+
+    stats = _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(
+        model_ir
+    )
+
+    assert stats == _STATS
+    operator = next(
+        candidate
+        for candidate in model_ir.operators
+        if candidate.outputs == [op_output]
+    )
+    clone_name = next(name for name in operator.inputs if name != data_input)
+    assert clone_name != constant_name
+    assert np.array_equal(model_ir.tensors[constant_name].data, original)
+    assert model_ir.tensors[clone_name].shape == [1, 1, 1, 4]
+
+
 @pytest.mark.parametrize("legacy_consumer", [False, True])
 def test_concat_mul_add_transpose_add_remaps_per_axis_quantization(
     legacy_consumer: bool,
@@ -698,10 +743,6 @@ def test_concat_mul_add_transpose_add_remaps_per_axis_quantization(
         assert quantization.quantized_dimension == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="reserved adapter permutation ownership is not validated",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -740,6 +781,8 @@ def test_concat_mul_add_transpose_add_uses_private_adapter_permutation(
             [0, 2, 3, 1],
             dtype=np.int32,
         )
+    if case != "public-input":
+        model_ir.outputs.append(_ADAPTER_PERMUTATION)
     before = _normalize(copy.deepcopy(model_ir.tensors[_ADAPTER_PERMUTATION]))
 
     stats = _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(
@@ -757,10 +800,6 @@ def test_concat_mul_add_transpose_add_uses_private_adapter_permutation(
     assert _normalize(model_ir.tensors[_ADAPTER_PERMUTATION]) == before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the Mul constant changes before the Add constant is validated",
-)
 def test_concat_mul_add_transpose_add_rejects_late_constant_error_atomically() -> None:
     model_ir = _model()
     tensor = model_ir.tensors["branch0_pre_add_const"]
@@ -771,10 +810,6 @@ def test_concat_mul_add_transpose_add_rejects_late_constant_error_atomically() -
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="legacy metadata is decoded after affine constant mutation",
-)
 def test_concat_mul_add_transpose_add_rejects_late_metadata_error_atomically() -> None:
     model_ir = _model(legacy_consumer=True)
     model_ir.tensors["branch0_cat_nchw"].shape_signature = [1, None, 3, 2]
@@ -782,10 +817,6 @@ def test_concat_mul_add_transpose_add_rejects_late_metadata_error_atomically() -
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="malformed Concat axis is not treated as a transactional no-op",
-)
 def test_concat_mul_add_transpose_add_rejects_malformed_axis() -> None:
     model_ir = _model()
     model_ir.operators[2].options["axis"] = None
@@ -793,10 +824,6 @@ def test_concat_mul_add_transpose_add_rejects_malformed_axis() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="duplicate producers, reverse order, and public aliases are accepted",
-)
 @pytest.mark.parametrize(
     "case",
     ["duplicate-post-output", "reverse-post-add", "public-pre-output-input"],
@@ -837,7 +864,7 @@ def test_concat_mul_add_transpose_add_keeps_raw_owner_and_boundaries() -> None:
         and node.name
         == "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 452
+    assert owner.end_lineno - owner.lineno + 1 == 866
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
 
     lowerer = next(
