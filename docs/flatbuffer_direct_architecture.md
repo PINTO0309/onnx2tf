@@ -6950,6 +6950,35 @@ byte-identical to the pre-extraction baseline. Sequential `-cotof` passes with
 maximum absolute error `1.9073486328125e-06`, and both conversion checks record
 zero process-tree SWAP.
 
+The production-proven static Conv/Mul affine fold now has a bounded indexed
+owner in `conv_mul_affine_fold.py`. It accepts only
+`CONV_2D(fused=NONE) -> MUL(fused=NONE)` with an exclusive FLOAT32
+`[1,1,1,O]` scale, exclusive FLOAT32 `[O,1,1,I]` filter and `[O]` bias,
+static equal NHWC-compatible Conv/Mul output views, SAME padding, unit stride
+and dilation, resolved graph ownership, safe public boundaries, and no
+constant Add suffix. Each candidate is captured in an immutable
+operator/tensor contract and resolved again immediately before apply. The
+rewrite changes the Conv output and removes Mul through differential
+`ModelIRGraphIndex` updates, reconciles the Session `LayoutState`, and obeys a
+deterministic candidate/rewrite bound without internal pruning or complete
+producer/consumer-map reconstruction.
+
+The existing wrapper remains the single compatibility and cleanup boundary.
+Add-only, Mul/Add, fused-ReLU, missing-bias, scalar or relaxed coefficients,
+dynamic signatures, quantized/shared/public constants, and all other strict
+rejects therefore continue through the historical implementation. The
+indexed bias calculation deliberately retains the legacy float32
+`bias * scale + positive_zero` operation order. That apparently redundant
+addition canonicalizes an IEEE-754 negative-zero product to positive zero and
+is required for byte-identical serialized buffers.
+
+Tier 2 `iat_llie_180x320.onnx` establishes the real owner with indexed counts
+`12, 0, 0`; all twelve are Mul-only folds and the fallback has no residual
+rewrite. Its float32, float16, and correspondence artifacts remain
+byte-identical to the pre-extraction baseline. The sequential `-cotof` gate
+passes with maximum absolute error `4.470348358154297e-07` and zero
+process-tree SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

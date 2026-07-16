@@ -6770,3 +6770,205 @@ actual production order before selecting a source target; continue to record
 non-zero ownership and problems before implementation, use minimal sequential
 zero-SWAP validation, commit and push coherent units, and do not create a pull
 request.
+
+## QLinear recovery group: measured no-change decision
+
+The next production interval contains four remaining raw QLinear recovery
+helpers:
+
+- `_optimize_transpose_mean_hardsigmoid_muladd_chains`;
+- `_optimize_nhwc_prefix_qlinear_silu_chains`;
+- `_optimize_nhwc_propagation_qlinear_concat_conv`;
+- `_optimize_transpose_mean_maxpool_concat_conv_chains`.
+
+To avoid repeating conversions helper by helper, all four were instrumented
+simultaneously at both unchanged production invocations. Six short INT8/QDQ
+representatives first covered YuNet INT8, PPHumanSeg INT8, LPD-YuNet INT8,
+Version-RFB INT8, NanoDet INT8, and YOLOX INT8. All exited 0 in 1.580-3.899
+seconds with process-tree SWAP zero, and every helper count was zero.
+
+A read-only op-set scan of all 381 active Tier 0-4 graphs then completed in
+9.115 seconds with no load failure and SWAP zero. No active graph even
+contained the complete source-op set for either Mean-based helper. Six graphs
+contained the loose prefix-SiLU op set and four contained the loose
+Concat/Conv op set. The smallest distinct uncovered candidates,
+`ssd_mobilenet_v1_12-int8.onnx` and `dequantize_linear.onnx`, were converted
+once with all four helpers still instrumented. Both exited 0 in 3.109 and
+4.043 seconds respectively, with SWAP zero and all counts zero. Version-RFB
+already represented the smallest prefix candidate; the remaining candidates
+were duplicate graph variants or larger known non-passes and were not run.
+
+These raw helpers retain large rule-specific scans and mutation surfaces, but
+there is no current real non-zero owner from which artifact and accuracy
+behavior can be frozen. No source or test behavior is changed for this group;
+the compatibility paths remain available until a real model establishes
+ownership.
+
+## Conv/Mul affine fold checkpoint: pre-change record
+
+The core and terminal cleanup boundaries were then instrumented together for
+`_optimize_fold_conv_mul_add_affine_chains` and the already indexed
+`_optimize_fuse_conv_activation_chains`. Six short models converted
+sequentially in 1.820-3.319 seconds with exit code 0 and process-tree SWAP
+zero. FastestDet, PPHumanSeg, OSNet, and IAT exercised the activation fusion
+owner. Only Tier 2 `iat_llie_180x320.onnx` established ownership for the raw
+affine fold: its three invocation counts were `12, 0, 0`, all classified as
+Mul-only folds. YuNet INT8, FastestDet, PPHumanSeg, OSNet, and yolo_test
+recorded zero affine folds.
+
+All twelve IAT chains have the exact static production form
+`CONV_2D(fused=NONE) -> MUL(fused=NONE, [1,1,1,16] FLOAT32 constant)`.
+Every filter is exclusive, unquantized FLOAT32 `[16,1,1,I]`, where `I` is 16
+or 64; every bias is exclusive unquantized FLOAT32 `[16]`; every side constant
+is an unproduced, non-variable, exclusive FLOAT32 tensor; and the Conv/Mul
+views are identical fixed `[1,180,320,16]` FLOAT32 tensors with UNKNOWN or
+NHWC layout. The Mul outputs continue into dynamic Add branches, so the safe
+fold removes only Mul and renames the Conv output. One later
+`CONV_2D(fused=RELU) -> MUL([1,180,320,3] dynamic side)` candidate remains
+correctly rejected at both later invocations.
+
+The fixed pre-extraction IAT artifacts are:
+
+- float32: `75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881`;
+- float16: `4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43`;
+- correspondence: `a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`.
+
+No observed regression prompted this extraction. The raw owner nevertheless
+uses an unbounded full-Conv scan and rebuilds the whole consumer map after
+each of twelve rewrites. It mutates filter and bias buffers before graph-edge
+replacement and operator removal without an immutable full-plan
+revalidation or rollback. In its no-bias path it can create a bias tensor and
+rewire the Conv before later coefficient validation rejects the candidate.
+Filter, bias, and side constants lack complete typed producer and public-
+boundary ownership checks, and mutations do not update a shared graph index
+or Session layout state. The safe indexed scope is therefore only the exact
+static IAT Mul-only family above. Add-only, Mul/Add, fused-RELU, missing-bias,
+scalar/relaxed coefficients, dynamic signatures, quantized/shared/public
+constants, and every strict rejection must remain on the existing raw
+fallback.
+
+The first post-extraction conversion was deliberately compared before any
+corrective edit. Indexed and wrapper invocation counts were both `12, 0, 0`,
+the correspondence report remained byte-identical at
+`a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`,
+and conversion exited 0 in 2.181 seconds with SWAP zero. However, the float32
+and float16 artifacts were not byte-identical: their first observed float32
+difference was at byte 4928, and the new hashes were
+`44480f7707ff371f3acdcea19f4e1f9b75ffc91586e204ba52af563119a937bc`
+and `c5562e790c9e1e21ff7d5d5ae5ea57a388a5367414686678e9074e173ed95bfd`.
+This is recorded as an artifact regression before correction. Do not accept
+the extraction until tensor-buffer comparison identifies the cause, exact
+artifacts are restored, and the sequential accuracy gate passes.
+
+## Conv/Mul affine fold checkpoint: completed state
+
+The recorded artifact regression was diagnosed before any corrective edit.
+Name-based FlatBuffer inspection proved that tensor order, operator codes,
+operator metadata, all filter buffers, and every finite non-zero bias value
+were unchanged. Exactly twelve `[16]` bias buffers differed, and every byte
+difference represented only IEEE-754 negative zero versus positive zero. The
+raw compatibility implementation calculates Mul-only bias as
+`bias * scale + float32(+0)`, whereas the first indexed implementation omitted
+the numerically redundant addition. Adding positive zero canonicalizes each
+negative-zero product to positive zero, so the omission violated byte-level
+artifact compatibility even though inference values were equal.
+
+The indexed owner now preserves that exact float32 operation order, and a
+dedicated bit-pattern test prevents its removal as an apparent simplification.
+The corrected IAT conversion exited 0 in 2.180 seconds with process-tree SWAP
+zero. The indexed and wrapper counts are both `12, 0, 0`, and all three fixed
+artifacts are byte-identical again:
+
+- float32:
+  `75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881`;
+- float16:
+  `4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43`;
+- correspondence:
+  `a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`.
+
+### Completed work and design decisions
+
+The strict static IAT Mul-only family is now owned by
+`conv_mul_affine_fold.py`. It uses indexed Conv dispatch, a deterministic
+rewrite limit, immutable tensor/operator contracts, full candidate
+re-resolution immediately before mutation, differential graph-index updates,
+Session layout reconciliation, and no internal whole-graph prune or repeated
+producer/consumer-map build. The compatibility wrapper dispatches this owner
+first, seeds all four historical counters from its result, retains the raw
+fallback for every relaxed or unproven family, and remains the only historical
+prune/report boundary. All three production calls pass
+`session.layout_state`.
+
+The strict contract requires SAME/unit-stride/unit-dilation
+`CONV_2D(fused=NONE)`, exactly three inputs, exclusive unquantized FLOAT32
+filter `[O,1,1,I]`, bias `[O]`, and scale `[1,1,1,O]`, identical positive
+static rank-four Conv/Mul output views, UNKNOWN or NHWC-compatible layout,
+resolved producers, exclusive mutable edges, and graph-boundary safety. A
+constant Add suffix is deliberately excluded so the historical Mul/Add owner
+retains it. Add-only, fused-ReLU, missing-bias, scalar/relaxed coefficient,
+dynamic, quantized, shared, public, and malformed variants remain on the raw
+fallback. No public API, CLI default, artifact name, dependency, optional
+TensorFlow boundary, managed profile, corpus exclusion, or ONNX file changed.
+
+The preceding QLinear recovery characterization is also complete in this
+working interval. All four raw helpers retained zero ownership across the
+short INT8 representatives and the additional smallest op-set candidates, so
+their compatibility implementations remain unchanged.
+
+### Verification completed
+
+- strict owner, fallback interaction, legacy affine fixtures, signed-zero
+  bit compatibility, determinism, stale-plan atomicity, graph index, layout,
+  and cleanup boundary: `21 passed, 745 deselected in 0.61s`;
+- complete flatbuffer-direct architecture contract:
+  `215 passed in 44.24s`;
+- TensorFlow-import-blocked explicit direct, default direct, and direct
+  `-cotof`: `3 passed in 4.28s`;
+- corrected sequential IAT conversion: exit 0 in 2.180 seconds, all fixed
+  artifacts byte-identical, indexed counts `12, 0, 0`, and
+  `peak_swap_kib=0`;
+- corrected sequential IAT `-cotof`: exit 0 in 16.676 seconds,
+  `evaluation_pass=true`, maximum absolute error
+  `4.470348358154297e-07`, and `peak_swap_kib=0`;
+- scoped Ruff, Python syntax compilation, and `git diff --check`: pass after
+  final documentation synchronization. Whole-file lowerer Ruff reports the
+  same ten inherited F841 findings as the parent and no new finding.
+
+### Branch, checkpoint files, and known issues
+
+The branch is `fb-refactor5`. This checkpoint changes:
+
+- `onnx2tf/tflite_builder/passes/conv_mul_affine_fold.py` (new strict indexed
+  owner);
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py` (indexed-first wrapper,
+  historical counters, Session layout propagation, and cleanup reconciliation);
+- `tests/test_flatbuffer_direct_indexed_conv_mul_affine_fold.py` (owner,
+  atomicity, determinism, bit-level compatibility, fallback, and layout tests);
+- `tests/test_flatbuffer_direct_architecture.py` (bounded owner and production
+  wiring contract);
+- `docs/flatbuffer_direct_architecture.md` and this handoff (design, evidence,
+  validation, remaining work, and resume point).
+
+There is no known failing test, artifact regression, accuracy regression, or
+new model issue in this checkpoint. The whole-file inherited lowerer Ruff
+findings and optional exporter limitations recorded earlier remain unchanged.
+The optional TensorFlow exporter suite was not synchronized or executed; only
+the direct TensorFlow-import boundary was tested. No broad Tier run was
+performed because the user requested minimal conversion work and IAT is the
+only measured non-zero owner for this extraction. The Goal as a whole remains
+incomplete: remaining raw semantic helpers, lowering consolidation,
+quantization/split/crop and artifact-matrix coverage, optional TensorFlow
+exporter confirmation, shared PyTorch-family canonicalization/emission, and
+final Tier/efficiency regression work are still outstanding.
+
+### First work after resume
+
+After verifying that `fb-refactor5` is clean and synchronized with
+`origin/fb-refactor5`, inspect the next raw helper in actual production order.
+Characterize all of its unchanged production invocations on the smallest
+short zero-SWAP representatives before changing source. If no real non-zero
+owner exists, record a no-change decision; otherwise freeze its exact
+artifact, lineage, layout, and accuracy contract before extracting a bounded
+semantic owner. Continue strictly sequential validation, exclude any model
+whose converter process tree generates SWAP, commit and push coherent units,
+and do not create a pull request.

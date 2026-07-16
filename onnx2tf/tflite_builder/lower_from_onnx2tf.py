@@ -133,6 +133,9 @@ from onnx2tf.tflite_builder.passes.instance_norm_dual_stats_layout import (
 from onnx2tf.tflite_builder.passes.affine_chain_fold import (
     optimize_fold_mul_add_mul_affine_chains as _optimize_fold_mul_add_mul_affine_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.conv_mul_affine_fold import (
+    optimize_conv_mul_affine_mul_only_chains as _optimize_conv_mul_affine_mul_only_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.affine_prepost_layout import (
     optimize_transpose_mul_add_const_prepost_nhwc_chains as _optimize_transpose_mul_add_const_prepost_nhwc_chains_pass,
 )
@@ -19704,6 +19707,7 @@ def _optimize_fold_conv_mul_add_affine_chains(
     model_ir: ModelIR,
     *,
     enable_conv_add_only_fold: bool = True,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Fold single-path affine chains after CONV_2D into CONV_2D.
@@ -19751,6 +19755,17 @@ def _optimize_fold_conv_mul_add_affine_chains(
     - Chains with Conv output fan-out (>=2) are excluded.
     """
 
+    indexed_stats = _optimize_conv_mul_affine_mul_only_chains_pass(
+        model_ir,
+        graph_index=ModelIRGraphIndex(model_ir),
+        layout_state=layout_state,
+    )
+    tensors_before_fallback_prune = (
+        set(str(name) for name in model_ir.tensors)
+        if layout_state is not None
+        else set()
+    )
+
     def _extract_nhwc_channelwise_coeff(
         *,
         tensor: Optional[TensorIR],
@@ -19786,10 +19801,16 @@ def _optimize_fold_conv_mul_add_affine_chains(
             suffix += 1
         return name
 
-    folded = 0
-    folded_conv_add_only = 0
-    folded_conv_mul_only = 0
-    folded_conv_mul_add = 0
+    folded = int(indexed_stats.get("folded_conv_mul_add_affine_chains", 0))
+    folded_conv_add_only = int(
+        indexed_stats.get("folded_conv_add_only_affine_chains", 0)
+    )
+    folded_conv_mul_only = int(
+        indexed_stats.get("folded_conv_mul_only_affine_chains", 0)
+    )
+    folded_conv_mul_add = int(
+        indexed_stats.get("folded_conv_mul_add_only_affine_chains", 0)
+    )
 
     while True:
         changed = False
@@ -20052,6 +20073,11 @@ def _optimize_fold_conv_mul_add_affine_chains(
             break
 
     _prune_unused_tensors(model_ir)
+    if layout_state is not None:
+        layout_state.remove(
+            tensors_before_fallback_prune
+            - set(str(name) for name in model_ir.tensors)
+        )
     return {
         "folded_conv_mul_add_affine_chains": int(folded),
         "folded_conv_add_only_affine_chains": int(folded_conv_add_only),
@@ -26638,6 +26664,7 @@ def lower_onnx_to_ir(
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,
+        layout_state=session.layout_state,
     )
     _optimize_fuse_conv_activation_chains(model_ir)
     _resolve_dynamic_reshape_shapes(model_ir)
@@ -26804,6 +26831,7 @@ def lower_onnx_to_ir(
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,
+        layout_state=session.layout_state,
     )
     _optimize_fuse_conv_activation_chains(model_ir)
     _optimize_transpose_pre_argmax_nhwc_terminal_chains(
@@ -26970,6 +26998,7 @@ def lower_onnx_to_ir(
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,
+        layout_state=session.layout_state,
     )
     late_concat_layout_state_scope = ModelIRPassStateScope(
         model_ir,
