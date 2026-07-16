@@ -5503,6 +5503,35 @@ tracked source, test, and documentation files relative to `762dcdef`:
 No generated model artifact, root ONNX model, dependency file, bulk-regression
 profile, or exclusion policy is changed by this checkpoint.
 
+## Tier 0–4 measured-quick regression checkpoint after `f5a40947`
+
+The complete 49-model measured-short, zero-SWAP Tier 0–4 manifest was rerun
+sequentially after the Slice/Logistic/Concat/Reshape-tail checkpoint. The run
+completed in 390.255 seconds with 43 passes and six preserved known
+non-passes. There were zero timeouts, zero converter nonzero exits, and zero
+model-process SWAP detections. All 49 classifications and all 47 available
+numeric maximum-error results match the corrected recorded expectations, so
+no new correctness regression was found and no production fix was applied.
+
+The pass-metric comparison is also stable. Of 48 comparable models, only
+`sinet_320_op.onnx` changed aggregate work: preflight operator visits fell from
+33,303 to 31,906 while events, statuses, snapshots, state builds, accuracy, and
+classification stayed identical. This is the intended indexed-traversal
+benefit.
+
+DEIM completed successfully with the already approved TopK-index acceptance,
+but its one measured duration increased from 24.043 to 37.630 seconds. It used
+zero SWAP and preserved the exact raw maximum error. Treat this as an
+unconfirmed runtime observation, not a semantic failure: remeasure it once
+before the next quick-profile refresh, and exclude it from that quick profile
+only if the over-30-second duration repeats. Do not change source code in
+response to this single sample.
+
+Detailed analysis is in
+`docs/flatbuffer_direct_quick_regression_2026-07-16.md`; compact per-model
+evidence is in
+`docs/baselines/flatbuffer_direct_quick_tier0_4_f5a40947_result.json`.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.

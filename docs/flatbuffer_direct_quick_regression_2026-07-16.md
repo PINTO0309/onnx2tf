@@ -288,3 +288,71 @@ eligible for the measured-quick profile.
 The full 49-model corpus was intentionally not rerun after this narrow fix.
 The complete pre-fix run is retained, while post-fix conversion work was kept
 to the affected models and small structural-neighbor set as requested.
+
+## Full post-extraction checkpoint rerun at `f5a40947`
+
+After the subsequent Split/mixed-Concat, general Concat input-adapter, and
+Slice/Logistic/Concat/Reshape-tail extractions, the same 49-model manifest was
+rerun in full at commit `f5a40947988cdb842c2f4015eb7237e905afdeb7`.
+This was a regression check only: the worktree was clean before execution, and
+no production source was changed in response before the evidence was
+classified and recorded.
+
+The fixed-order, single-process command completed all 49 models in 390.255
+seconds. It produced 43 passes and the same six known strict non-passes. There
+were no timeouts, conversion nonzero exits, missing models, or process-tree
+SWAP detections. The runner exited 1 only because known numeric failures and
+missing reports remain strict failures by design.
+
+| Tier | Selected | Pass | Known numeric fail | Known missing report | Total time |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 12 | 10 | 0 | 2 | 36.898 s |
+| 1 | 12 | 11 | 1 | 0 | 55.517 s |
+| 2 | 12 | 10 | 2 | 0 | 94.182 s |
+| 3 | 9 | 8 | 1 | 0 | 136.367 s |
+| 4 | 4 | 4 | 0 | 0 | 67.291 s |
+| **Total** | **49** | **43** | **4** | **2** | **390.255 s** |
+
+All 49 classifications match the corrected expected state. All 47 models that
+emitted a numeric report reproduce the exact recorded expected maximum
+absolute error. In particular:
+
+- `text_detection_en_ppocrv3_2023may_int8.onnx` retains its executable TFLite
+  and known `0.7411765307188034` mismatch;
+- `imageclassifier.onnx` remains a pass at `6.67572021484375e-06`;
+- `hybridnets_384x640_sim.onnx` remains a pass at
+  `0.0002593994140625` and completed in 27.612 seconds;
+- DEIM remains accepted under the user-approved near-tied TopK-index policy,
+  with its unchanged raw maximum absolute error of `27.0`;
+- the largest ordinary passing error remains
+  `0.0443115234375` for the MediaPipe pose model, below `1e-1`.
+
+The only aggregate pass-metric change among the 48 models with comparable
+pre/post metrics is beneficial: `sinet_320_op.onnx` reduced preflight operator
+visits from 33,303 to 31,906. Its event/status counts, snapshots, state builds,
+classification, and maximum error are unchanged. This is consistent with the
+new indexed lookup replacing repeated traversal without changing semantics.
+
+Two single-sample runtime increases were recorded before deciding whether any
+action was warranted. `text_detection_en_ppocrv3_2023may_int8.onnx` moved from
+8.323 to 14.432 seconds, and DEIM moved from 24.043 to 37.630 seconds. Neither
+changed pass metrics, classification, maximum error, or SWAP use. They are
+therefore runtime observations rather than confirmed regressions; no source
+fix or baseline relaxation was made. DEIM should be measured once more before
+the next quick-profile refresh, and removed from that quick profile only if its
+over-30-second runtime is reproducible.
+
+The compact per-model machine-readable evidence is
+[`docs/baselines/flatbuffer_direct_quick_tier0_4_f5a40947_result.json`](baselines/flatbuffer_direct_quick_tier0_4_f5a40947_result.json).
+The temporary generated TFLite artifacts are not part of the retained
+evidence and may be deleted after the JSON and documentation checkpoint is
+validated.
+
+The current checkpoint validation also includes:
+
+- `uv run --no-sync pytest -q tests/test_flatbuffer_direct_bulk_runner.py`:
+  36 passed;
+- manifest parsing: 49 active entries, Tier 0–4 only, concurrency 1;
+- retained JSON parsing and exact 49-entry comparison with runner state:
+  passed;
+- `git diff --check`: passed.
