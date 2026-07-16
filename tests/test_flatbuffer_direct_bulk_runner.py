@@ -750,6 +750,44 @@ def test_flatbuffer_direct_bulk_runner_passes_native_pytorch_generation_timeout(
     assert seen_cmds[0][timeout_index + 1] == "37"
 
 
+def test_flatbuffer_direct_bulk_runner_can_limit_pytorch_to_native_package(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "native.onnx"
+    _write_dummy(model)
+    seen_cmds: List[List[str]] = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        seen_cmds.append(list(cmd))
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        stem = Path(cmd[cmd.index("-i") + 1]).stem
+        _write_accuracy_report(
+            path=artifact_dir / f"{stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        _write_accuracy_report(
+            path=artifact_dir / f"{stem}_pytorch_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        native_pytorch_only=True,
+    )
+
+    assert len(seen_cmds) == 1
+    assert "-fdopt" in seen_cmds[0]
+    assert "-fdots" not in seen_cmds[0]
+    assert "-fdodo" not in seen_cmds[0]
+    assert "-fdoep" not in seen_cmds[0]
+    assert state["native_pytorch_only"] is True
+    assert state["summary"]["filters"]["pytorch_artifact_mode"] == "native"
+
+
 def test_flatbuffer_direct_bulk_runner_updates_tqdm_progress(
     tmp_path,
     monkeypatch,

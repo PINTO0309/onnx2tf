@@ -751,6 +751,12 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
             state.get("include_pytorch_artifacts", True)
         ),
     }
+    if bool(state.get("include_pytorch_artifacts", True)):
+        filters["pytorch_artifact_mode"] = (
+            "native"
+            if bool(state.get("native_pytorch_only", False))
+            else "all"
+        )
     if state.get("regression_profile") is not None:
         filters["regression_profile"] = dict(state["regression_profile"])
     summary = {
@@ -870,6 +876,7 @@ def run_flatbuffer_direct_bulk_verification(
     min_nodes: Optional[int] = None,
     max_nodes: Optional[int] = None,
     include_pytorch_artifacts: bool = True,
+    native_pytorch_only: bool = False,
     recursive: bool = True,
     regression_profile: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -906,6 +913,10 @@ def run_flatbuffer_direct_bulk_verification(
         raise ValueError("max_nodes must be >= 0")
     if min_nodes is not None and max_nodes is not None and int(min_nodes) > int(max_nodes):
         raise ValueError("min_nodes must be <= max_nodes")
+    if bool(native_pytorch_only) and not bool(include_pytorch_artifacts):
+        raise ValueError(
+            "native_pytorch_only requires include_pytorch_artifacts=True."
+        )
     discovered_source = (
         _discover_onnx_models(root_dir_abs)
         if recursive
@@ -995,6 +1006,12 @@ def run_flatbuffer_direct_bulk_verification(
                 f"state={state.get('include_pytorch_artifacts')} "
                 f"current={include_pytorch_artifacts}"
             )
+        if bool(state.get("native_pytorch_only", False)) != bool(native_pytorch_only):
+            raise RuntimeError(
+                "Resume state does not match native_pytorch_only. "
+                f"state={state.get('native_pytorch_only')} "
+                f"current={native_pytorch_only}"
+            )
         if bool(state.get("recursive", True)) != bool(recursive):
             raise RuntimeError(
                 "Resume state does not match recursive discovery mode. "
@@ -1013,6 +1030,7 @@ def run_flatbuffer_direct_bulk_verification(
             "min_nodes": min_nodes,
             "max_nodes": max_nodes,
             "include_pytorch_artifacts": bool(include_pytorch_artifacts),
+            "native_pytorch_only": bool(native_pytorch_only),
             "recursive": bool(recursive),
             "regression_profile": profile_identity,
             "started_at": _utc_now_iso(),
@@ -1158,7 +1176,9 @@ def run_flatbuffer_direct_bulk_verification(
                 if eval_num_samples is not None:
                     cmd.extend(["-ens", str(int(eval_num_samples))])
             if include_pytorch_artifacts:
-                cmd.extend(["-fdopt", "-fdots", "-fdodo", "-fdoep"])
+                cmd.append("-fdopt")
+                if not native_pytorch_only:
+                    cmd.extend(["-fdots", "-fdodo", "-fdoep"])
             if int(native_pytorch_generation_timeout_sec) > 0:
                 cmd.extend(
                     [
@@ -1400,6 +1420,14 @@ def main() -> None:
         help="Run the TensorFlow-free ONNX/TFLite check without optional PyTorch artifacts.",
     )
     parser.add_argument(
+        "--native_pytorch_only",
+        action="store_true",
+        help=(
+            "Generate and verify only the native PyTorch package in addition "
+            "to TFLite, without TorchScript, Dynamo ONNX, or ExportedProgram."
+        ),
+    )
+    parser.add_argument(
         "--root_only",
         action="store_true",
         help="Discover only *.onnx directly under root_dir, excluding nested test assets.",
@@ -1425,6 +1453,7 @@ def main() -> None:
         min_nodes=args.min_nodes,
         max_nodes=args.max_nodes,
         include_pytorch_artifacts=not bool(args.tflite_only),
+        native_pytorch_only=bool(args.native_pytorch_only),
         recursive=not bool(args.root_only),
         regression_profile=args.regression_profile,
     )
