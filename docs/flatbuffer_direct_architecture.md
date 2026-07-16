@@ -8111,6 +8111,25 @@ provenance, and both ordered production boundaries remain green. Removing the
 obsolete local `add_out_name` assignment reduces pre-existing lowerer Ruff
 findings from seven to six.
 
+Ownership now resides in
+`passes/concat_mul_add_bridge_layout.py`. The extracted function and the
+corrected raw owner at checkpoint `5193fc11` are each 652 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical function name as a one-return compatibility
+wrapper. Both terminal recovery-sequence positions and their immediate
+predecessor/successor calls remain unchanged, and the focused module has no
+lowerer import.
+
+Direct owner/wrapper comparison covers ordinary static and dynamic metadata,
+multiple matches, scalar constants, shared and public-output constant clones,
+legacy and public-Concat adapters, ordinary and legacy per-axis quantization,
+adapter-name collision, unmatched pruning behavior, missing metadata, reverse
+topology, and a public internal boundary. Statistics and the complete
+normalized ModelIR—including buffers, quantization, options, provenance,
+topology, and diagnostics—are identical in every case. The extraction adds no
+semantic change and does not alter public APIs, artifacts, dependencies,
+corpus policy, or TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

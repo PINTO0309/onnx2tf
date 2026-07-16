@@ -1617,4 +1617,13 @@ producer-before-consumer adapter insertion turn all 16 xfails green. Valid
 statistics, fixed point, public Concat outputs, pruning behavior, and both
 ordered boundaries remain intact. Resume by mechanically extracting the
 corrected owner into a focused pass module; six pre-existing lowerer Ruff
-findings remain.
+findings remain. That extraction is now complete in
+`passes/concat_mul_add_bridge_layout.py`. Its 652-line function AST is exact to
+checkpoint `5193fc11`, the lowerer retains a one-return compatibility wrapper,
+and both ordered recovery-sequence positions are unchanged. Fifteen direct
+owner/wrapper comparison families cover valid static/dynamic and multi-match
+rewrites, constant and adapter ownership, per-axis quantization, pruning, and
+transactional rejection; complete normalized ModelIR state and statistics are
+identical. Resume by inventorying and characterizing the next raw source-order
+owner, `_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains` (452 lines),
+before any semantic or ownership change.
