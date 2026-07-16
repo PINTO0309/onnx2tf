@@ -7157,3 +7157,73 @@ boundary, managed profile, exclusion, or ONNX model. No failure or regression
 is known. After synchronization, inspect the next unmodularized production
 helper and repeat the evidence-first process; commit and push only, with no
 pull request.
+
+## Static shape reconciliation extraction: pre-change record
+
+The next unmodularized production owner was
+`_reconcile_static_tensor_shapes`. The fixed-point implementation occupied
+1,291 lines and depended on nine adjacent pure shape helpers for Slice,
+BatchMatMul, rank-four signature, reduce, Squeeze, and Conv/pool inference.
+Together, this cohesive shape-family interval contributed more than 1,500
+lines to the central lowerer and forced unrelated pass maintenance to load its
+full multi-op decision tree.
+
+Ownership was measured before source work. IAT-LLIE exited 0 in 2.087 seconds
+with SWAP zero and invoked reconciliation 29 times, all with zero updates.
+Tier 3 `rf-detr-nano.onnx` then established the real owner: it exited 0 in
+12.101 seconds with SWAP zero, invoked the helper 29 times, and recorded
+non-zero `(invocation, updates)` pairs `(1,141)`, `(3,16)`, `(11,16)`,
+`(13,138)`, `(15,16)`, and `(16,6)`, for 333 total updates.
+
+The fixed RF-DETR artifacts are:
+
+- float32:
+  `fda7d97eaad2b19ee2ac31411099067e78b747515952b7c65ba52a0f1454f1fb`;
+- float16:
+  `a80051b2d6bb871ee871f0d1528e1ea7c8d4e7f6ecbfc16daec4fa78d696fd1f`;
+- correspondence:
+  `262235cec5a8df73ff2afd7f1eb28678cc7312f4a19dd09d278fd8db77cbdec4`.
+
+A symbol-table dependency audit was completed before movement. The interval
+closes over ten functions and existing core ModelIR utilities only; it needs
+no lowerer import and introduces no cycle. The recorded maintenance problem
+was central context size and op-family coupling, not an observed conversion
+failure. Preserve the 32-pass fixed-point ceiling, operator order, direct
+metadata mutation, dynamic-signature rules, optional producer index, counters,
+and every helper signature. Algorithmic optimization or semantic narrowing is
+out of scope for this mechanical checkpoint.
+
+## Static shape reconciliation extraction: completed state
+
+`passes/static_shape_reconciliation.py` now owns reconciliation and all nine
+adjacent pure inference helpers. Ten thin lowerer wrappers retain every
+historical private name and signature. The move removes 1,542 implementation
+lines from the central lowerer while keeping the full decision tree in one
+cohesive module. Shared convergence continues to supply its existing
+`ModelIRGraphIndex`; standalone and fallback callers retain their original
+behavior. There is no topology, layout, lineage, cleanup, counter, pass-order,
+public API, or artifact change.
+
+The focused gate covers direct module/wrapper equivalence, indexed producer
+reuse, all existing shape-reconcile op families, dynamic Reshape, high-rank
+runtime shapes, window partition/reverse, binary layout convergence, final
+convergence, BatchMatMul, and rank-four signature inference. Results are:
+
+- focused shape-family and architecture selection:
+  `133 passed, 954 deselected in 3.15s`;
+- complete flatbuffer-direct architecture contract:
+  `217 passed in 40.62s`;
+- TensorFlow-import-blocked explicit direct, default direct, and direct
+  `-cotof`: `3 passed in 4.27s`;
+- scoped Ruff, syntax compilation, and `git diff --check`: pass. Whole-file
+  lowerer Ruff retains exactly the parent's one inherited F401 and ten F841
+  findings, with no new finding.
+
+The post-extraction RF-DETR run exited 0 in 10.811 seconds with SWAP zero and
+reproduced all 29 invocation counts, the six non-zero positions, 333 total
+updates, and all three artifacts byte-for-byte. Because the executable TFLite
+artifacts are identical, no duplicate real-model inference was run. No failure
+or regression is known. After this checkpoint is synchronized, continue with
+the next unmodularized production helper using the same evidence-first,
+short-model, sequential, zero-SWAP policy; commit and push only, and do not
+create a pull request.

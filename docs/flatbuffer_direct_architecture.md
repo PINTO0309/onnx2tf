@@ -7029,6 +7029,28 @@ and correspondence artifacts remain byte-identical across extraction, and
 both monitored conversions record zero process-tree SWAP. IAT-LLIE and OSNet
 provide measured zero-owner controls at all five boundaries.
 
+Static shape fixed-point reconciliation and its pure inference helpers are
+isolated in `static_shape_reconciliation.py`. The module owns Slice and
+StridedSlice extents, BatchMatMul broadcasting, reduction axes, Squeeze,
+rank-four signature propagation, Conv/pool output dimensions, and the
+cross-op fixed-point resolver. The historical lowerer private names remain
+thin wrappers, preserving direct test and internal call compatibility without
+making the new internal type part of the public API.
+
+The reconciler retains its exact 32-sweep ceiling, operator order, per-op
+guards, dynamic-signature preservation, constant updates, and update counter.
+When a caller supplies `ModelIRGraphIndex`, the producer table is derived from
+that shared index; standalone callers retain the historical producer-table
+construction. The pass does not mutate topology and performs no consumer-map
+scan. Extraction therefore removes the multi-op decision tree from central
+lowering context without changing convergence semantics or pass scheduling.
+
+Tier 3 `rf-detr-nano.onnx` establishes real ownership across 29 production
+invocations. Six are non-zero with update counts `141,16,16,138,16,6`, for
+333 total tensor updates. All 29 counts and every float32, float16, and
+correspondence artifact are identical across extraction, with zero monitored
+process-tree SWAP. IAT-LLIE provides a 29-invocation zero-owner control.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

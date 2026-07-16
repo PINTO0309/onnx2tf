@@ -1529,6 +1529,79 @@ def test_dynamic_reshape_resolution_has_one_module_owner() -> None:
     assert "lower_from_onnx2tf" not in owner_source
 
 
+def test_static_shape_reconciliation_has_one_module_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_targets = {
+        "_infer_slice_output_shape_and_resolved_params": (
+            "_infer_slice_output_shape_and_resolved_params"
+        ),
+        "_infer_slice_output_signature": "_infer_slice_output_signature",
+        "_infer_batch_matmul_output_shape_and_signature": (
+            "_infer_batch_matmul_output_shape_and_signature"
+        ),
+        "_infer_rank4_signature_from_input": (
+            "_infer_rank4_signature_from_input"
+        ),
+        "_normalize_reduce_axes_for_rank": "_normalize_reduce_axes_for_rank",
+        "_infer_reduce_output_shape_and_signature": (
+            "_infer_reduce_output_shape_and_signature"
+        ),
+        "_parse_axes_option": "_parse_axes_option",
+        "_infer_squeeze_output_shape_and_signature": (
+            "_infer_squeeze_output_shape_and_signature"
+        ),
+        "_infer_conv_out_dim": "_infer_conv_out_dim",
+        "_reconcile_static_tensor_shapes": "reconcile_static_tensor_shapes",
+    }
+    for wrapper_name, target_name in wrapper_targets.items():
+        wrapper = next(
+            node
+            for node in lowerer_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+        )
+        dispatches = [
+            node
+            for node in ast.walk(wrapper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "_static_shape_reconciliation_pass"
+        ]
+        assert len(dispatches) == 1
+        assert dispatches[0].func.attr == target_name
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "static_shape_reconciliation.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "reconcile_static_tensor_shapes"
+    )
+    assert "max_passes = 32" in owner_source
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "lower_from_onnx2tf" not in owner_source
+    owner_call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_update_tensor_shape" in owner_call_names
+    assert "operator_indices" not in owner_call_names
+
+
 def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
