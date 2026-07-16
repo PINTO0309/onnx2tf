@@ -7399,3 +7399,92 @@ its real invocation counts, exact artifacts, dynamic-shape branches,
 pre-operator insertion order, pruning behavior, and wrapper contract before
 moving any code. Continue with short sequential zero-SWAP validation, commit
 and push coherent units, and do not create a pull request.
+
+## ExpandDims/Squeeze-to-Reshape extraction: pre-change record
+
+The next source-order helper is
+`_replace_expand_dims_and_squeeze_with_reshape`. Its 344-line implementation
+has one terminal production invocation and owns five coupled behaviors:
+
+- static ExpandDims/Squeeze replacement with deterministic shape constants;
+- speculative inactive-If Squeeze safety through a single `-1` target;
+- dynamic Squeeze shape plumbing through inserted SHAPE and GATHER operators;
+- semantic-rank and original-axis metadata retained for later reconciliation;
+- dead-tensor pruning and LayoutState synchronization after successful work.
+
+The helper already uses `ModelIRGraphIndex.insert_operator()` for its dynamic
+pre-operators, but the policy, nested target-selection helpers, tensor
+creation, mutation order, and pruning boundary remain in the central lowerer.
+No conversion failure prompted this checkpoint. The maintenance problem is
+the central ownership of a cohesive topology-and-shape pass, not an observed
+semantic defect.
+
+Real ownership was measured before source work with temporary, uncommitted
+stats instrumentation at the single production call. The shortest active
+positive representative, `GRU.onnx`, rewrote 13 ExpandDims/Squeeze operators
+and created 13 shape tensors. Its sequential `-tb flatbuffer_direct -cotof`
+run passed in 2.711 seconds with maximum absolute error
+`8.940696716308594e-08` and process-tree SWAP zero. The fixed artifacts are:
+
+- float32:
+  `f597fff552422165dcf034aa5628618c8349ae4dc776c750fbdc13de5f086b8f`;
+- float16:
+  `6bc8c810326efe563dd9730f0875b628b0cc8fa1bfa51337f39b6e4c462ef830`;
+- tensor correspondence:
+  `00f802d0ba18acc81ba8bb32e6915b374e33f0cef6ff2b3d4cb965915e2be3f7`.
+
+Existing synthetic tests already cover the positive static and dynamic
+Squeeze branches, speculative inactive-If execution, all-ones and dynamic
+ExpandDims no-op guards, later shape reconciliation, differential pre-operator
+insertion, and LayoutState-aware pruning. The safe scope is therefore a
+mechanical owner move only. Preserve traversal order, unique-name selection,
+branch precedence, operator/tensor construction order, option keys, graph
+index insertion order, pruning, counters, production scheduling, and the
+private compatibility signature. Algorithmic or semantic changes require a
+separate checkpoint.
+
+## ExpandDims/Squeeze-to-Reshape extraction: completed state
+
+`passes/expand_squeeze_reshape.py` now owns the complete implementation and
+`lower_from_onnx2tf.py` retains a thin private wrapper with the same positional
+and keyword contract. The single production invocation remains immediately
+after late layout/Mean/SPP/Gather/constant/Cast cleanup and before static shape
+reconciliation. No branch, traversal, mutation, counter, pruning, or scheduling
+behavior was intentionally changed.
+
+The owner still creates a `ModelIRGraphIndex` only when dynamic Squeeze
+pre-operators were collected. It inserts original operator groups in reverse
+index order and each local SHAPE/GATHER pair in reverse insertion order, which
+preserves final SHAPE, GATHER, RESHAPE execution order without direct operator-
+list replacement. Successful work retains the original unused-tensor prune and
+LayoutState synchronization boundary. Static rewrites do not pay for a graph
+index they do not need.
+
+A dedicated owner test now proves dynamic kept-axis tensor data, exact SHAPE/
+GATHER/RESHAPE order, LayoutState validity, old-wrapper equivalence, full
+ModelIR equality, and idempotence. Together with the existing dynamic-Reshape,
+shape-reconciliation, speculative-branch, all-ones, and dynamic-ExpandDims
+fixtures, the focused gate completes with `19 passed in 0.63s`. The architecture
+contract now reads the implementation from its pass module, fixes the one-call
+wrapper, differential insertion, prune/sync boundary, and absence of a lowerer
+import cycle. The complete focused set plus the complete flatbuffer-direct
+architecture contract passes `238 passed in 37.63s`.
+
+Post-extraction `GRU.onnx` completed in 2.608 seconds with
+`evaluation_pass=true`, maximum absolute error `8.940696716308594e-08`, and
+process-tree SWAP zero. Its float32, float16, and correspondence artifacts are
+byte-identical to the three pre-change hashes, proving compatibility across
+the 13 real production rewrites.
+
+This checkpoint changes the new ExpandDims/Squeeze owner, the lowerer wrapper,
+one dedicated test module, the architecture contract, the architecture
+document, and this handoff. It changes no public API, CLI, artifact, dependency,
+TensorFlow boundary, corpus profile, exclusion, or ONNX model. No failure or
+regression is known.
+
+After synchronization, inspect
+`_repair_rank4_binary_layout_mismatch_with_transpose_adapter`, the next raw
+source-order helper. First determine whether its behavior is already covered
+by an indexed binary-layout owner and measure a shortest non-zero real owner;
+do not create a duplicate pass. Continue with short sequential zero-SWAP
+validation, commit and push coherent units, and do not create a pull request.

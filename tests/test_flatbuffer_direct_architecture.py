@@ -8056,19 +8056,46 @@ def test_expand_squeeze_pre_ops_use_differential_graph_index_insertion() -> None
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    source = lowering_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    function_node = next(
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper = next(
         node
-        for node in tree.body
+        for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_replace_expand_dims_and_squeeze_with_reshape"
     )
-    function_source = ast.get_source_segment(source, function_node)
-    assert function_source is not None
-    assert "model_ir.operators =" not in function_source
-    assert "ModelIRGraphIndex(model_ir)" in function_source
-    assert "graph_index.insert_operator(" in function_source
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_replace_expand_dims_and_squeeze_with_reshape_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "expand_squeeze_reshape.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "replace_expand_dims_and_squeeze_with_reshape"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert "model_ir.operators =" not in owner_function_source
+    assert "ModelIRGraphIndex(model_ir)" in owner_function_source
+    assert "graph_index.insert_operator(" in owner_function_source
+    assert "_prune_unused_tensors(" in owner_function_source
+    assert "layout_state.sync_from_model_ir(model_ir)" in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
 
 
 def test_dynamic_range_quantization_uses_differential_graph_index() -> None:

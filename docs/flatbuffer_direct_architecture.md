@@ -4066,6 +4066,20 @@ does not query producers or consumers and does not change topology. Dedicated
 tests preserve wrapper equivalence, constant-payload authority, metadata
 repair, counters, idempotence, and the no-import-cycle boundary.
 
+The terminal LiteRT.js compatibility rewrite for ExpandDims and Squeeze is
+owned by `passes/expand_squeeze_reshape.py`; the lowerer retains one private
+compatibility wrapper at the unchanged production boundary. The owner keeps
+static target construction, speculative inactive-If Squeeze handling, dynamic
+SHAPE/GATHER target construction, semantic-axis metadata, pruning, and
+LayoutState synchronization together. Dynamic pre-operators are collected by
+original operator index and inserted in reverse index/reverse local order
+through `ModelIRGraphIndex.insert_operator()`, preserving the intended runtime
+SHAPE then GATHER then RESHAPE order without replacing the operator list. A
+graph index is constructed only when dynamic pre-operators exist. Direct owner
+tests fix wrapper equality, exact operator order, kept-axis data, LayoutState
+validity, and idempotence; existing shape tests preserve all static, dynamic,
+speculative-branch, and no-op guards.
+
 Rank-four channelwise broadcast-constant repair now builds one
 `ModelIRGraphIndex` instead of independently scanning the graph for producers,
 consumers, and binary candidates. Exact ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW
