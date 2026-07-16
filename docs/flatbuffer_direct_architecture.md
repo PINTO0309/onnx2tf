@@ -4105,6 +4105,27 @@ identical to the pre-extraction lowerer. Together the helpers remove 6 net
 lowerer lines without changing runtime invocation count, order, conditions, or
 the registered-runner call-site count of 118.
 
+The raw 419-line `_optimize_nhwc_prefix_qlinear_silu_chains` compatibility
+owner remains in the lowerer while its mutation contract is stabilized.
+Synthetic characterization covers the direct LOGISTIC and decomposed
+HardSigmoid paths, multiple fixed-point matches, post-Transpose removal,
+legacy-consumer adapter insertion, and eight guard families. The production
+QLinear recovery sequence and its two call boundaries are unchanged. Existing
+sequential corpus instrumentation remains authoritative: all measured owners
+returned zero rewrites with zero process-tree SWAP, so this checkpoint adds no
+duplicate conversion.
+
+Four strict xfails define its current unsafe boundary. The helper eagerly
+creates the fixed-name NHWC-to-NCHW permutation tensor even when no legacy
+adapter is committed; pruning then changes lineage metadata on rejected and
+second no-rewrite calls. It also reuses a colliding tensor without validating
+the payload and accepts a malformed Mul output signature before rewiring and
+rank-four adapter insertion. The correction must prevalidate rank-four output
+shape/signature and construct an immutable adapter plan before any edge or
+metadata mutation. A permutation constant is allocated only when that plan
+needs one, and an occupied name is reused only when its type, shape, and
+payload are exact; otherwise a collision-safe name is required.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner

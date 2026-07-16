@@ -618,6 +618,30 @@ rank and signature guards to precede mutation in the module owner, preserve
 the wrapper's index forwarding, and freeze the runner plus both standalone
 production call boundaries.
 
+### QLinear SiLU prefix characterization
+
+The remaining raw 419-line
+`_optimize_nhwc_prefix_qlinear_silu_chains` helper now has an explicit
+pre-change synthetic contract. LOGISTIC and decomposed HardSigmoid branches
+both prove NHWC propagation, pre/post Transpose removal, metadata permutation,
+and exact statistics. A two-candidate fixture freezes fixed-point restart and
+candidate order. A separate legacy-consumer case freezes insertion of the
+NHWC-to-NCHW adapter. Eight rejection cases cover permutation, public/fan-out,
+quantization, shared sigmoid output, layout-sensitive consumer, and
+non-singleton-constant boundaries. Architecture coverage records the raw
+owner's current 419-line location, full-scan consumer-map ownership, mutation
+APIs, fixed-point loop, and ordered QLinear recovery call boundary.
+
+Four strict xfails record pre-existing problems before implementation changes:
+rejected and second no-rewrite calls create then prune an otherwise unused
+internal permutation tensor and append lineage metadata; an unrelated public
+tensor colliding with the reserved internal name is reused without payload
+validation; and a rank-two Mul output signature is accepted before graph
+rewiring and a rank-four legacy adapter insertion. Production source remains
+unchanged at this characterization checkpoint. The existing sequential real-
+model audit already established zero rewrites and zero SWAP for every measured
+candidate, so no redundant conversion was run.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -839,6 +863,10 @@ Latest checkpoint results:
   `9 passed`;
 - changed-file focused branch regression after the ownership extraction:
   `618 passed`;
+- focused QLinear SiLU prefix characterization and architecture gate:
+  `14 passed, 4 xfailed`;
+- changed-file focused branch regression including the characterization:
+  `631 passed, 4 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1376,7 +1404,13 @@ guard; both rank-four checks now precede channel evidence, so the two former
 strict xfails are green complete no-ops. The corrected 132-line owner is now
 mechanically extracted to `passes/stale_binary_adapter_repair.py` with an
 AST-identical body, a lowerer compatibility wrapper, both standalone calls,
-and the central three-round convergence runner preserved. Resume by
-characterizing the next raw source-order owner,
-`_optimize_nhwc_prefix_qlinear_silu_chains` (419 lines), before changing it.
-No broad conversion sweep is implied by this checkpoint.
+and the central three-round convergence runner preserved. The next raw
+source-order owner, `_optimize_nhwc_prefix_qlinear_silu_chains` (419 lines),
+now has positive, multiple-match, legacy-adapter, rejection, idempotence,
+collision, malformed-signature, and architecture characterization. Resume by
+correcting its four strict xfails without changing valid candidate order,
+statistics, production call boundaries, or artifacts. Create the internal
+permutation only for a committed legacy-adapter plan, choose a collision-safe
+validated constant, and validate rank-four output metadata before the first
+edge mutation. Do not extract the owner until those corrections are green. No
+broad conversion sweep is implied by this checkpoint.

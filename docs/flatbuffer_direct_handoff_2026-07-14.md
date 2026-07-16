@@ -10770,3 +10770,62 @@ editing it: `_optimize_nhwc_prefix_qlinear_silu_chains` (419 lines). Preserve
 its positive/rejection behavior, call boundaries, statistics, and artifact
 contract before considering ownership or semantic changes. Keep validation
 minimal and strictly sequential, and do not create a pull request.
+
+## QLinear SiLU prefix characterization: completed state
+
+The raw 419-line `_optimize_nhwc_prefix_qlinear_silu_chains` owner remains
+unchanged in `lower_from_onnx2tf.py`. New synthetic fixtures freeze both
+supported activation forms: direct DEQUANTIZE/LOGISTIC/QUANTIZE and decomposed
+DEQUANTIZE/MUL/ADD/MAXIMUM/MINIMUM/QUANTIZE. They verify exact statistics,
+NHWC input rewiring, redundant pre/post Transpose removal, rank-four metadata
+permutation, and downstream alias rewiring. A combined two-chain fixture
+freezes fixed-point restart and order, while a legacy RELU consumer freezes
+the inserted NHWC-to-NCHW adapter, tensor shapes, and permutation payload.
+
+Eight ordinary rejection cases cover wrong pre-permutation, public and fan-out
+pre-adapters, per-axis quantization, shared sigmoid-quantize output, a blocked
+layout-sensitive consumer, public post-adapter output, and a non-singleton
+HardSigmoid constant. The raw owner returns zero and preserves operator and
+shape metadata for each. Architecture coverage records its 419-line central
+ownership, consumer-map scan, mutation APIs, fixed-point loop, and existing
+ordered QLinear recovery boundary.
+
+Four strict xfails isolate pre-existing defects before any source correction:
+
+- rejected calls eagerly create and prune
+  `__nhwc_to_nchw_perm_rank4__`, leaving a tensor-lineage metadata event rather
+  than a complete ModelIR no-op;
+- a second zero-rewrite call after success repeats that metadata mutation, so
+  the helper is not fully idempotent;
+- an unrelated public tensor occupying the reserved name is reused as the
+  adapter permutation without validating `[0,3,1,2]`;
+- a rank-two `mul_out` signature is accepted, after which the helper rewires
+  the graph and creates a rank-four Transpose adapter carrying malformed
+  signature metadata.
+
+Validation completed as follows:
+
+- focused QLinear SiLU prefix plus ordered-owner architecture selector:
+  `14 passed, 245 deselected, 4 xfailed in 0.68s`;
+- changed-file focused branch regression:
+  `631 passed, 4 xfailed in 23.56s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.35s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No model conversion was repeated. The earlier QLinear recovery-group audit
+already ran the candidate set strictly sequentially, observed zero rewrites in
+every instrumented invocation, and recorded zero process-tree SWAP. Production
+source, public API, CLI, artifacts, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; future work is commit/push only and must not create a pull request.
+
+At restart, fix these four xfails before extracting the owner. Prevalidate the
+Mul output shape and effective signature as rank four and build the complete
+legacy-adapter plan before changing DEQUANTIZE/MUL/user inputs or metadata.
+Create the permutation constant only if a committed plan needs an adapter.
+Reuse the reserved name only when dtype, shape, signature, and payload are
+exact; otherwise allocate a collision-safe name without mutating the existing
+tensor. Preserve valid candidate order, fixed-point count, statistics, both
+production sequence boundaries, and all ordinary characterization. Keep tests
+and any necessary model validation strictly sequential, then commit and push;
+do not create a pull request.
