@@ -8098,6 +8098,66 @@ def test_expand_squeeze_pre_ops_use_differential_graph_index_insertion() -> None
     assert "lower_from_onnx2tf" not in owner_source
 
 
+def test_rank4_binary_layout_adapter_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_repair_rank4_binary_layout_mismatch_with_transpose_adapter"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 4
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_layout_adapter.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "repair_rank4_binary_layout_mismatch_with_transpose_adapter"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert "model_ir.operators.insert(" in owner_function_source
+    assert "_replace_operator_input_at(" in owner_function_source
+    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
 def test_dynamic_range_quantization_uses_differential_graph_index() -> None:
     quantization_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "quantization.py"

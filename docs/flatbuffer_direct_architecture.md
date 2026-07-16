@@ -4080,6 +4080,18 @@ tests fix wrapper equality, exact operator order, kept-axis data, LayoutState
 validity, and idempotence; existing shape tests preserve all static, dynamic,
 speculative-branch, and no-op guards.
 
+Exact rank-four binary layout mismatch adaptation is owned by
+`passes/binary_layout_adapter.py`. It remains distinct from indexed stale-
+adapter removal and transpose-bridge reduction: this compatibility guard
+inserts a missing input-1 Transpose only when the two full static shapes are
+exact NHWC/NCHW permutations. Its four historical production positions call
+one lowerer wrapper. The owner retains the bounded binary-op set, permutation
+precedence, quantization cloning, fixed-point restart, and terminal prune.
+Synthetic tests cover both directions for every supported binary operator,
+dynamic/equal/non-permutation no-ops, idempotence, and wrapper equality. The
+current corpus measurements are zero-owner evidence; differential indexing or
+broader inference is not combined with the mechanical ownership move.
+
 Rank-four channelwise broadcast-constant repair now builds one
 `ModelIRGraphIndex` instead of independently scanning the graph for producers,
 consumers, and binary candidates. Exact ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW

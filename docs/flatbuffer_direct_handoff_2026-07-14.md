@@ -7488,3 +7488,92 @@ source-order helper. First determine whether its behavior is already covered
 by an indexed binary-layout owner and measure a shortest non-zero real owner;
 do not create a duplicate pass. Continue with short sequential zero-SWAP
 validation, commit and push coherent units, and do not create a pull request.
+
+## Rank-four binary layout-adapter extraction: pre-change record
+
+`_repair_rank4_binary_layout_mismatch_with_transpose_adapter` is the next raw
+source-order helper. Its 91-line fixed-point implementation recognizes exact
+rank-four NHWC/NCHW shape permutations on ADD, MUL, SUB, DIV, MAXIMUM, and
+MINIMUM, inserts one Transpose on input 1, clones per-tensor quantization onto
+the adapted tensor, rewires only the matched operand, restarts discovery, and
+prunes unused tensors after convergence.
+
+The existing indexed binary-layout owners were audited before source work.
+They remove stale channelwise adapters or reduce established transpose bridge
+patterns; they do not insert a missing adapter for two already-materialized,
+full rank-four tensor shapes. Reusing those owners would conflate inverse
+contracts. This helper therefore remains a distinct semantic owner, but it is
+placed in a binary adapter module that can later receive the adjacent
+singleton-broadcast variant without creating duplicate central dispatch.
+
+Temporary, uncommitted instrumentation measured both unconditional production
+invocations on six short representatives: `GRU.onnx`, `iat_llie_180x320.onnx`,
+`FastestDet.onnx`, `face_detection_yunet_2023mar.onnx`,
+`human_segmentation_pphumanseg_2021oct.onnx`, and
+`osnet025_Nx3x256x128.onnx`. All twelve invocation results were zero. Every
+model passed, durations were 2.695-15.949 seconds, maximum absolute errors
+were below `2.2e-05`, and every process-tree SWAP peak was zero. The fallback
+and placeholder-restoration calls were not entered. This is retained as a
+production zero-owner control; a dedicated synthetic permutation fixture is
+the positive contract.
+
+`FastestDet.onnx` fixes the zero-owner artifacts:
+
+- float32:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`.
+
+The safe scope is an exact code move only. Preserve binary op eligibility,
+input-1-only adaptation, permutation selection precedence, unique names,
+tensor metadata and quantization, insertion/rewrite order, fixed-point restart,
+unconditional prune, stats key, four production positions, and the private
+compatibility signature. Differential indexing or expanded semantic guards
+require separate real ownership and regression evidence.
+
+## Rank-four binary layout-adapter extraction: completed state
+
+`passes/binary_layout_adapter.py` now owns the exact full-rank permutation
+adapter and `lower_from_onnx2tf.py` retains a thin private wrapper. All four
+production positions are unchanged: two unconditional terminal passes, one
+fallback normalization path, and one placeholder-MatMul restoration path. The
+adjacent singleton-broadcast repair is deliberately not moved in this
+checkpoint; it has different output-shape and operand-selection semantics and
+must be characterized separately.
+
+The implementation retains its original direct operator insertion and
+compatibility input setter. This checkpoint does not claim a differential-
+index performance change: it establishes module ownership first, while the
+six measured real models prove only zero-owner compatibility. A later indexed
+rewrite must first prove exact candidate ordering, restart behavior, and
+pruning equivalence with a non-zero real owner or an independently accepted
+synthetic contract.
+
+Seventeen dedicated tests cover all six binary types in both NHWC/NCHW
+directions, exact permutation constants, input-1-only rewiring, adapted tensor
+shape/signature, independent quantization cloning, equal/dynamic/rank/non-
+permutation no-ops, idempotence, and old-wrapper equivalence. The architecture
+contract fixes one module owner, four production calls, insertion/rewrite/
+prune ownership, and the no-import-cycle boundary. The complete focused owner
+suite plus the complete flatbuffer-direct architecture contract passes
+`237 passed in 38.80s`.
+
+Post-extraction `FastestDet.onnx` passed in 3.718 seconds with maximum absolute
+error `1.3113021850585938e-05` and process-tree SWAP zero. Its float32,
+float16, and correspondence artifacts are byte-identical to the three fixed
+pre-change hashes.
+
+This checkpoint changes the binary adapter owner, the lowerer wrapper, one
+focused test module, the architecture contract, the architecture document,
+and this handoff. It changes no public API, CLI, artifact, dependency,
+TensorFlow boundary, corpus profile, exclusion, or ONNX model. No failure or
+regression is known.
+
+After synchronization, characterize
+`_repair_rank4_binary_singleton_broadcast_layout_mismatch`, the adjacent raw
+helper. It may join `binary_layout_adapter.py` only after its two operand
+directions, output-shape guard, insertion order, and real invocation counts are
+fixed independently. Continue with short sequential zero-SWAP validation,
+commit and push coherent units, and do not create a pull request.
