@@ -4164,6 +4164,25 @@ legacy-adapter, and reserved-name collision cases. The module cannot import the
 lowerer, while architecture checks keep all transactional and deduplication
 invariants on the module owner.
 
+The adjacent raw 310-line
+`_optimize_transpose_mean_maxpool_concat_conv_chains` owner remains in the
+lowerer while its mutation contract is characterized. Positive fixtures cover
+static and dynamic signatures, Mean-axis remapping, per-axis QDIM remapping,
+multiple post adapters, multiple fixed-point matches, pruning, and idempotence;
+ten rejection families preserve the established topology and boundary guards.
+The ordered QLinear recovery sequence and both production boundaries remain
+unchanged, and earlier sequential instrumentation remains authoritative with
+zero rewrites and zero process-tree SWAP.
+
+Nine strict xfails define the unsafe planning boundary. The owner rewires the
+mean branch, writes the axes constant, changes Mean metadata, and rewires
+Concat before validating every rank-four signature and every additional Concat
+input. It also mutates axes owned by another consumer, graph input/output, or a
+variable tensor. A correction must require a local immutable axes tensor and
+resolve every source/target tensor, effective signature, planned Concat input,
+output shape/signature, axis option, and QDIM update before the first ModelIR
+mutation. Rejection must preserve graph and diagnostic metadata completely.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner

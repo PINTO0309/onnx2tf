@@ -1077,6 +1077,39 @@ def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:
     assert dispatch.args[0].id == "model_ir"
 
 
+def test_mean_maxpool_concat_raw_owner_contract_is_explicit() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    owner_name = "_optimize_transpose_mean_maxpool_concat_conv_chains"
+    owner = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert owner.end_lineno - owner.lineno + 1 == 310
+    call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" in call_names
+    assert "_build_tensor_producer_map" in call_names
+    assert "ModelIRGraphIndex" not in call_names
+    assert "_read_transpose_perm" in call_names
+    assert "_read_const_ints_from_tensor" in call_names
+    assert "_write_const_ints_to_tensor" in call_names
+    assert "_set_operator_inputs" in call_names
+    assert "_replace_tensor_inputs" in call_names
+    assert "_prune_unused_tensors" in call_names
+    outer_loops = [node for node in owner.body if isinstance(node, ast.While)]
+    assert len(outer_loops) == 1
+    assert isinstance(outer_loops[0].test, ast.Constant)
+    assert outer_loops[0].test.value is True
+
+
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

@@ -696,6 +696,30 @@ planning, conditional pruning, ordered consumer deduplication, exact 513-line
 ownership, the thin wrapper, and the existing recovery sequence. This is a
 mechanical ownership move after the separately committed correctness fixes.
 
+### Mean/MaxPool/Concat/Conv characterization
+
+The next raw 310-line
+`_optimize_transpose_mean_maxpool_concat_conv_chains` owner now has an explicit
+pre-change contract. Synthetic positive cases freeze NHWC rewiring of both
+DEQUANTIZE branches, Mean axes `[2,3]` to `[1,2]`, pool-adapter removal,
+Concat axis `1` to `3`, dynamic batch signatures, per-axis quantized dimension
+`1` to `3`, multiple post-Quantize adapters, fixed-point multiple matches,
+pruning, statistics, and idempotence. Ten ordinary rejection cases preserve
+wrong permutation, boundary/fan-out, keepDims/axes, Concat-axis, quantization,
+and post-consumer guards. Architecture coverage records the raw 310-line
+owner, both whole-graph maps, mutation utilities, fixed-point loop, and its
+existing ordered QLinear recovery boundary.
+
+Nine strict xfails record pre-existing correctness problems before source
+changes. Short source or pool signatures are read after mutations; missing,
+rank-three, and short-signature additional Concat inputs are validated only
+after both branches and Concat have been rewritten; and the Mean axes constant
+is modified without excluding shared, graph-input, graph-output, or variable
+ownership. These cases require a zero statistic and complete unchanged ModelIR
+but currently raise or leave partial/nonlocal mutations. The earlier
+sequential QLinear group audit already established zero production rewrites
+and zero SWAP, so no duplicate model conversion was run.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -933,6 +957,10 @@ Latest checkpoint results:
   `28 passed`;
 - changed-file focused branch regression after ownership extraction:
   `645 passed`;
+- focused Mean/MaxPool/Concat characterization and architecture gate:
+  `17 passed, 9 xfailed`;
+- changed-file focused branch regression including the characterization:
+  `661 passed, 9 xfailed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1487,5 +1515,10 @@ is now complete with exact AST identity, a one-return private wrapper, direct
 owner/wrapper equality, and unchanged ordered production boundaries. Resume by
 inventorying and characterizing the next raw source-order owner,
 `_optimize_transpose_mean_maxpool_concat_conv_chains` (310 lines), before any
-semantic or ownership change. No broad conversion sweep is implied by this
-checkpoint.
+semantic or ownership change. That characterization now freezes positive,
+fixed-point, rejection, metadata, quantization, pruning, and ordered-boundary
+behavior and isolates nine strict xfails. Resume by enforcing local immutable
+axes ownership and building a complete rank-four branch/Concat metadata plan
+before the first edge, constant, option, or tensor mutation. Turn every xfail
+green before extracting the owner. No broad conversion sweep is implied by
+this checkpoint.

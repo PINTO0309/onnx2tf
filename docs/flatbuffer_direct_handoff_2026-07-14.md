@@ -10970,3 +10970,66 @@ statistics, and ordered production boundaries before deciding on correctness
 changes or mechanical ownership. Reuse the earlier zero-owner model evidence,
 keep any additional validation minimal and strictly sequential, then commit
 and push; do not create a pull request.
+
+## Mean/MaxPool/Concat/Conv characterization: completed state
+
+The raw 310-line
+`_optimize_transpose_mean_maxpool_concat_conv_chains` owner remains unchanged
+in `lower_from_onnx2tf.py`. Its new synthetic positive contract verifies:
+
+- direct NHWC input rewiring for the Mean DEQUANTIZE branch;
+- Mean axes `[2,3]` to `[1,2]` and keepDims metadata;
+- removal of the pool NCHW adapter and every post-Quantize NHWC adapter;
+- Concat input replacement and axis `1` to `3`;
+- static and dynamic batch shape/signature propagation;
+- per-axis QDIM `1` to `3`;
+- deterministic multiple-post and multiple-chain fixed-point behavior;
+- exact statistics, pruning, and second-call idempotence.
+
+Ten ordinary rejection cases cover wrong pre/pool permutation, public/fan-out
+pre-adapter, keepDims and Mean axes, Concat axis, incompatible per-axis QDIM,
+public post output, and non-Transpose post consumers. They return zero and
+preserve the complete ModelIR. Architecture coverage records the central
+310-line owner, consumer/producer map rebuilds, mutation utilities, unbounded
+fixed-point loop, and existing ordered recovery boundary.
+
+Nine strict xfails isolate pre-existing problems before any source correction:
+
+- short `q_raw_nhwc` and `pool_nhwc` signatures are consumed after input,
+  axes, and metadata mutation;
+- a missing, rank-three, or short-signature additional Concat input is checked
+  only after both branches and the Concat have been rewritten;
+- the Mean axes constant is modified when shared with another operator, listed
+  as a graph output, listed as a graph input, or marked variable.
+
+Each strict xfail requires a zero statistic and unchanged graph/tensor/options/
+constant/metadata state. Current behavior raises or leaves partial/nonlocal
+mutation, proving the correction boundary rather than merely documenting a
+theoretical risk.
+
+Validation completed as follows:
+
+- focused raw-owner plus ordered-boundary architecture selector:
+  `17 passed, 246 deselected, 9 xfailed in 0.93s`;
+- changed-file focused branch regression:
+  `661 passed, 9 xfailed in 23.74s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No model conversion was repeated. The earlier sequential QLinear recovery
+audit already established zero rewrites and zero process-tree SWAP for every
+measured candidate. Production source, public API, CLI, behavior, ordered
+boundaries, TensorFlow isolation, dependencies, corpus profiles, exclusions,
+and ONNX operation tiers are unchanged. PR #952 remains closed; future work is
+commit/push only and must not create a pull request.
+
+At restart, require `mean_axes` to be an immutable local INT32 constant: not a
+graph input/output, not variable, and consumed only by the matched Mean. Before
+mutation, resolve and rank-validate the source signature, every planned Concat
+input after pool substitution, every target tensor/signature, the new Mean and
+Concat shapes/signatures, the Concat axis, and optional per-axis QDIM update.
+Only a complete plan may commit setters, constant data, options, metadata,
+alias rewiring, and removals. Turn all nine strict xfails green while preserving
+valid candidate order/statistics and production boundaries. Do not extract the
+owner until the correction is committed; keep tests strictly sequential,
+commit and push, and do not create a pull request.
