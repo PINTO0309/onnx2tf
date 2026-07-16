@@ -8311,3 +8311,75 @@ permutation, shared-constant behavior, graph-output guards, conditional
 production position, statistic, fixtures, and short zero-SWAP ownership before
 changing source. Keep inference strictly sequential and minimal, then commit
 and push one coherent unit without creating a pull request.
+
+## Terminal PReLU/Reshape/BatchMatMul ownership extraction: completed state
+
+The complete 263-line
+`_optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains`
+implementation is now owned by `passes/terminal_prelu_bmm_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at the unchanged
+single conditional late production position. After normalizing only the
+function name, the prior lowerer function and new owner ASTs are identical.
+
+The owner preserves the exclusive Transpose→PReLU→Reshape→BatchMatMul chain,
+all public intermediate guards, positive NHWC/NCHW view relation, scalar,
+rank-three CHW, rank-four NCHW, and already-NHWC alpha forms, shared alpha and
+RHS copy-on-write, RHS flatten-order permutation, adjX/adjY rejection, metadata
+and quantization cloning, fixed-point restart, pruning, and statistic. The
+legacy unused producer-map build remains in place with a local compatibility
+annotation so scan cost and order are not changed by the move.
+
+The dedicated corpus plus the existing positive fixture cover every supported
+alpha form, exclusive and shared alpha/RHS constants, independent quantization
+clones, idempotence, public Transpose/PReLU/Reshape intermediates, wrong
+permutation, dynamic channel, RHS width, adjX, adjY, input fan-out,
+one-dimensional alpha rejection, and module-owner/private-wrapper equality.
+The focused selector passes `18 passed, 231 deselected in 2.06s`; the existing
+positive fixture passes independently; focused plus complete architecture
+passes `249 passed in 33.09s`; the branch-wide selection passes `711 passed in
+34.52s`; and the optional-TensorFlow import-blocked suite passes `11 passed in
+9.54s`.
+
+Tier 1 `inference_ops15.onnx` was characterized strictly sequentially. Its
+conditional helper call remained zero before and after extraction. The pre
+conversion completed in 1.823 seconds and post conversion in 1.860 seconds;
+both recorded process-tree SWAP zero. Its core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3ce4af63727dd927666f09bb51555ccfd60e1cf01b4ba7fc674170e8277b9a96`;
+- float16 TFLite:
+  `ee97304641e2b1330bbbe1f1472fc32a4a4d41d4bdb08a3e660da64b5204ce47`;
+- tensor correspondence:
+  `a50f21319df0380165e8fee2c47f679ccb1682eee965fbd3b0f05ad02cc3d276`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding `inference_ops15` sequential accuracy baseline is
+`max_abs=1.9073486328125e-06`. No duplicate inference run was added because
+the executed TFLite artifact is identical. A read-only scan of all root ONNX
+files up to 50 MiB found no exact raw Transpose→PRelu→Reshape→MatMul/Gemm
+source chain. No non-zero production owner is claimed; the positive contract
+is synthetic.
+
+The existing alpha/RHS ownership weakness remains recorded. The helper checks
+data and consumer sharing but does not fully reject a producer, variable state,
+or graph-visible constant before mutation or cloning. Adding those contracts
+requires focused compatibility evidence and an immutable planning checkpoint;
+they are not mixed into the mechanical ownership move.
+
+Changed files are the new terminal PReLU/BMM pass module, lowerer import and
+wrapper, focused corpus, architecture ownership test, and three branch
+documents. No dependency, public API, CLI, artifact name, TensorFlow boundary,
+corpus profile, exclusion policy, or ONNX tier policy changes. Temporary
+tracing and conversion outputs are removed before commit. PR #952 remains
+closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 415-line
+`_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains`. At restart, inventory
+its dual pre-Add residual prefix, Mul/Add affine constants, PReLU alpha, post
+adapters and legacy consumers, production positions, statistic, fixtures, and
+short zero-SWAP ownership before changing source. Keep inference strictly
+sequential and minimal, then commit and push one coherent unit without creating
+a pull request.

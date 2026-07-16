@@ -7052,6 +7052,26 @@ before discovering that the Add constant is invalid, leaving a partial change
 on a zero-stat result. This transactional defect is recorded without changing
 compatibility in the mechanical ownership checkpoint.
 
+The adjacent terminal Transpose/PReLU/Reshape/BatchMatMul rule is isolated in
+`passes/terminal_prelu_bmm_layout.py`. Its complete 263-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves scalar, rank-three CHW, rank-four NCHW, and already-NHWC alpha
+handling, shared alpha/RHS copy-on-write, NHWC flatten-order RHS permutation,
+adjoint rejection, metadata and quantization cloning, fixed-point restart,
+pruning, statistic, and its single conditional late production position. The
+lowerer retains a one-call private wrapper.
+
+Seventeen focused and existing positive cases cover all supported alpha forms,
+shared constants, independent quantization clones, idempotence, public
+intermediates, wrong permutation, dynamic shape, RHS width, adjX/adjY, input
+fan-out, one-dimensional alpha rejection, and owner/wrapper equality.
+`inference_ops15` supplies the zero-owner artifact control with zero
+process-tree SWAP and five byte-identical core artifacts. A read-only scan of
+root ONNX files up to 50 MiB found no complete raw source chain, so non-zero
+production ownership is not claimed. Alpha and RHS tensors still lack complete
+producer, variable-state, and graph-visibility ownership validation; that
+semantic hardening remains separate from the exact ownership move.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`
