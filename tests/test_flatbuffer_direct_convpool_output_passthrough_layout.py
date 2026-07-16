@@ -10,6 +10,9 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_convpool_output_transpose_nhwc_passthrough_chains,
 )
+from onnx2tf.tflite_builder.passes.convpool_output_passthrough_compat import (
+    optimize_convpool_output_transpose_nhwc_passthrough_chains,
+)
 
 
 def _tensor(
@@ -89,12 +92,26 @@ def _fingerprint(model_ir: ModelIR) -> bytes:
     return ModelIRPassState(model_ir).fingerprint()
 
 
-def test_convpool_output_passthrough_rewrites_elementwise_region() -> None:
-    model_ir = _build_chain()
-
-    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(
-        model_ir
+def _run_owner_and_wrapper(
+    model_ir: ModelIR,
+) -> tuple[ModelIR, dict[str, int]]:
+    owner_model_ir = deepcopy(model_ir)
+    wrapper_model_ir = deepcopy(model_ir)
+    owner_stats = optimize_convpool_output_transpose_nhwc_passthrough_chains(
+        owner_model_ir
     )
+    wrapper_stats = (
+        _optimize_convpool_output_transpose_nhwc_passthrough_chains(
+            wrapper_model_ir
+        )
+    )
+    assert owner_stats == wrapper_stats
+    assert _fingerprint(owner_model_ir) == _fingerprint(wrapper_model_ir)
+    return wrapper_model_ir, wrapper_stats
+
+
+def test_convpool_output_passthrough_rewrites_elementwise_region() -> None:
+    model_ir, stats = _run_owner_and_wrapper(_build_chain())
 
     assert stats == {
         "optimized_convpool_output_transpose_nhwc_passthrough_chains": 1
@@ -157,9 +174,7 @@ def test_convpool_output_passthrough_rejects_unsafe_boundaries(case: str) -> Non
         model_ir.operators[2].outputs.append("tail_2")
     before = deepcopy(model_ir)
 
-    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(
-        model_ir
-    )
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     assert stats == {
         "optimized_convpool_output_transpose_nhwc_passthrough_chains": 0
@@ -175,9 +190,7 @@ def test_convpool_output_passthrough_adapts_external_runtime_input() -> None:
     scale.shape_signature = [1, 8, 6, 6]
     model_ir.inputs.append("scale")
 
-    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(
-        model_ir
-    )
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     assert stats == {
         "optimized_convpool_output_transpose_nhwc_passthrough_chains": 1
@@ -213,9 +226,7 @@ def test_convpool_output_passthrough_absorbs_keepdims_mean_boundary() -> None:
         options={"keepDims": True, "axes": [2, 3]},
     )
 
-    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(
-        model_ir
-    )
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     assert stats == {
         "optimized_convpool_output_transpose_nhwc_passthrough_chains": 1
@@ -253,9 +264,7 @@ def test_convpool_output_passthrough_invalid_external_input_is_atomic() -> None:
     model_ir.inputs.extend(["add_bias", "scale"])
     before = deepcopy(model_ir)
 
-    stats = _optimize_convpool_output_transpose_nhwc_passthrough_chains(
-        model_ir
-    )
+    model_ir, stats = _run_owner_and_wrapper(model_ir)
 
     assert stats == {
         "optimized_convpool_output_transpose_nhwc_passthrough_chains": 0

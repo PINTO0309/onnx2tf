@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving thirty-three
+This branch continues the staged `flatbuffer_direct` refactor by moving thirty-four
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -11,6 +11,7 @@ lowerer and into focused pass modules:
 - exact rank-four binary NHWC/NCHW adaptation;
 - singleton-broadcast rank-four binary NHWC/NCHW adaptation;
 - rank-three/four channelwise broadcast-constant runtime-layout repair;
+- Conv/Pool output elementwise-passthrough compatibility recovery;
 - final static runtime-shape/signature consistency;
 - dynamic boundary-signature map realignment;
 - Transpose/QDQ bridge and residual-closure optimization;
@@ -128,6 +129,22 @@ NHWC constant, and the historical statistic. Exclusive constants are still
 updated in place. Shared constants retain snapshot-based copy-on-write,
 quantization cloning, deterministic names, and differential consumer updates
 through `_set_operator_inputs(..., graph_index=graph_index)`.
+
+### Conv/Pool output elementwise passthrough
+
+`passes/convpool_output_passthrough_compat.py` owns the complete corrected
+compatibility helper for a Conv/Pool-family NHWC output followed by a leading
+NHWC-to-NCHW Transpose and an elementwise region. After normalizing only the
+function name, its 556-line AST is identical to the corrected lowerer owner.
+The lowerer retains one private wrapper and its single ordered production call.
+
+Forward elementwise discovery, external-runtime input adapters, channel-last
+metadata hints, legacy boundary adapters, keepdims Mean-axis absorption,
+Reshape/Transpose/Squeeze follow-up handling, mutation order, pruning, and the
+historical statistic remain unchanged. The pre-extraction atomicity correction
+is retained: all external runtime shapes are planned before the first metadata
+or graph mutation. The focused success and rejection corpus compares module
+owner and compatibility wrapper over complete ModelIR fingerprints.
 
 ### Static shape-signature consistency
 
@@ -714,6 +731,8 @@ Latest checkpoint results:
 - focused Conv/Pool atomicity correction and raw-owner gate: `12 passed`;
 - changed-file branch regression gate after the atomicity correction:
   `544 passed`;
+- focused Conv/Pool owner/wrapper and production-boundary gate: `12 passed`;
+- changed-file branch regression gate after Conv/Pool extraction: `544 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1055,13 +1074,15 @@ The preceding FastestDet accuracy baseline remains
 executed TFLite artifact is unchanged. Positive production ownership is not
 claimed; the focused synthetic cases are the semantic authority.
 
-The next Conv/Pool output passthrough helper remains central and is only
-characterized in this branch checkpoint. FastestDet, HumanSeg, OSNet, and
-inference_ops15 each reached its single production position with a zero rewrite
-result. Their sequential conversion-only runs completed in 0.789, 0.513,
-1.239, and 0.764 seconds respectively, and every process-tree SWAP monitor
-reported zero. The moved positive fixture and compact focused corpus are the
-current semantic authority; positive production ownership is not claimed.
+The Conv/Pool output passthrough helper is now mechanically extracted.
+FastestDet, HumanSeg, OSNet, and inference_ops15 each reached its single
+production position with a zero rewrite result. Their characterization runs
+completed in 0.789, 0.513, 1.239, and 0.764 seconds respectively, and every
+process-tree SWAP monitor reported zero. The extraction-specific FastestDet
+pre/post runs completed in 0.788 and 0.807 seconds with zero SWAP and byte-
+identical float32, float16, tensor-correspondence, schema, and generated-schema
+artifacts. Positive production ownership is not claimed; the focused synthetic
+corpus is the semantic authority.
 
 The characterization exposed one pre-existing atomicity defect: the helper
 rewired its elementwise root before rejecting a non-rank-four external runtime
@@ -1087,12 +1108,10 @@ dedicated positive and rejection contract, but the structurally matching gaze
 model still records zero production rewrites. Do not mechanically extract it
 until positive production ownership is observed or a later checkpoint
 explicitly accepts zero-owner evidence. The next raw source-order
-implementation is the 535-line
-`_optimize_convpool_output_transpose_nhwc_passthrough_chains` helper. Its
-focused match/guard/rewrite contract, atomic rejection boundary, and four zero-
-owner model traces are now recorded. Resume by comparing the complete corrected
-owner AST with a proposed focused pass module and deciding explicitly whether
-the strong synthetic contract plus zero-owner artifact evidence is sufficient
-for a mechanical extraction. Do not mix an indexed/transactional redesign into
-that ownership decision. No broad conversion sweep is implied by this
-checkpoint.
+implementation is the 381-line `_optimize_fold_conv_mul_add_affine_chains`
+compatibility fallback. Its indexed owner and focused tests already exist, but
+the raw fixed-point fallback and its three production positions remain central.
+Resume by separating indexed and raw statistics/cleanup ownership and proving
+the raw fallback's candidate order, constant copy-on-write, activation guards,
+and smallest non-zero owner before changing source. No broad conversion sweep
+is implied by this checkpoint.

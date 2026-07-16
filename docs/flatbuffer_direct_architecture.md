@@ -7713,15 +7713,18 @@ and float32, float16, tensor-correspondence, schema, and generated-schema
 artifacts are byte-identical across extraction. Positive production ownership
 is not claimed; the synthetic cases remain the semantic authority.
 
-The adjacent Conv/Pool output passthrough compatibility helper remains a raw
-owner in `lower_from_onnx2tf.py` at its single production position. Its former
-sole giant direct-builder fixture has moved to
+Conv/Pool output passthrough compatibility is now owned by
+`convpool_output_passthrough_compat.py`. The complete corrected 556-line helper
+moved with a function-name-normalized AST identical to its prior lowerer
+implementation. The lowerer retains one private wrapper at the unchanged
+single production position. Its former sole giant direct-builder fixture moved to
 `test_flatbuffer_direct_convpool_output_passthrough_layout.py`, where a compact
 contract now covers the elementwise region, retained legacy NCHW adapter,
 rank-four external-runtime adapter, keepdims Mean-axis absorption, and seven
-unsafe-boundary no-ops. The architecture gate explicitly records the current
-whole-graph maps, direct append/delete mutation, cleanup boundary, and one raw
-call so a later extraction cannot silently change ownership or order.
+unsafe-boundary no-ops. Every case compares the module owner and lowerer wrapper
+on complete ModelIR fingerprints. The architecture gate explicitly records the
+current whole-graph maps, direct append/delete mutation, cleanup boundary, one
+wrapper dispatch, and one production call.
 
 Characterization exposed and the following checkpoint corrected one unsafe
 rejection path. Every external runtime tensor and its projected NHWC shape are

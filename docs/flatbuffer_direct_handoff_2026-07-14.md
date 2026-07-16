@@ -9834,3 +9834,62 @@ preserve the single production call and private compatibility wrapper and do
 not mix in GraphIndex, LayoutState, or transactional redesign. Otherwise leave
 the helper central and move to the next evidence-backed family. Do not create a
 pull request.
+
+## Conv/Pool output passthrough extraction: completed state
+
+The complete corrected 556-line
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains` implementation is
+now owned by `passes/convpool_output_passthrough_compat.py`. The lowerer retains
+one signature-compatible private wrapper at the unchanged single production
+position. After normalizing only the function name, the corrected pre-move
+lowerer owner and new module owner have identical ASTs.
+
+The module preserves the exact forward elementwise closure, external runtime
+dependency discovery and prevalidation, channel-last hint accumulation, root
+rewiring, valid external NCHW-to-NHWC adapters, metadata permutation, legacy
+NHWC-to-NCHW boundary adapters, keepdims Mean-axis absorption, follow-up
+Reshape/Transpose/Squeeze adjustments, direct append/delete order, fixed-point
+restart, prune boundary, and historical statistic. It deliberately retains
+whole-graph producer/consumer maps and raw topology mutation; GraphIndex,
+LayoutState, and transactional redesign are separate future semantic work.
+
+All focused success and rejection cases now run the module owner and lowerer
+wrapper on deep copies and compare complete ModelIR fingerprints. This includes
+the two-op elementwise closure, seven unsafe no-ops, valid rank-four external
+runtime adaptation, keepdims Mean absorption, and the corrected multi-external-
+input atomic rejection. The architecture gate fixes the module as the only
+implementation owner, one wrapper dispatch, one production call, no reverse
+lowerer import, and the prevalidation-before-mutation ordering.
+
+Validation completed as follows:
+
+- full old/new owner AST comparison after function-name normalization: exact;
+- focused owner/wrapper plus architecture selector:
+  `12 passed, 242 deselected in 1.90s`;
+- changed-file branch regression collection: `544 passed in 25.25s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.36s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+FastestDet remains the strictly sequential zero-owner artifact control. Its
+single runtime result remains zero. The pre/post conversion-only runs completed
+in 0.788 and 0.807 seconds, both with process-tree SWAP zero. Float32, float16,
+tensor-correspondence, schema, and generated-schema outputs are byte-identical
+and retain the five established FastestDet hashes. The preceding accuracy
+checkpoint remains `max_abs=1.3113021850585938e-05`; duplicate inference was
+not run because the executed TFLite artifact is identical. Positive production
+ownership is not claimed.
+
+Changed files are the new compatibility owner, lowerer import/wrapper, focused
+owner/wrapper corpus, architecture ownership selector, and three branch
+documents. No public API, CLI, artifact name, pass order, statistic,
+TensorFlow boundary, dependency, corpus profile, exclusion policy, or ONNX
+operation-tier policy changed. PR #952 remains closed; work is commit/push
+only.
+
+At restart, inventory the next raw 381-line
+`_optimize_fold_conv_mul_add_affine_chains` compatibility fallback. Its indexed
+owner and focused corpus already exist, while the raw fixed-point fallback and
+three production positions remain central. Separate indexed and raw ownership,
+statistics, and cleanup boundaries; prove raw candidate order, constant
+copy-on-write, activation guards, and the smallest non-zero sequential owner
+before changing source. Do not create a pull request.
