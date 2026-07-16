@@ -7112,6 +7112,25 @@ owner retains an unbounded complete-map scan and in-place axes/constant updates
 without an immutable all-or-nothing plan; transactional hardening remains
 separate from this exact ownership checkpoint.
 
+The dual affine-input BatchMatMul compatibility rule is now isolated in
+`passes/batchmatmul_affine_input_layout.py`. Its complete 317-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves commutative Mul/Add inputs, exact exclusive
+branch matching, NCHW-to-NHWC channel-constant rotation, rank-three Reshape
+shape reversal, left post-Transpose removal, `adjY=True` conversion, metadata
+propagation, fixed-point restart, pruning, statistics, and both ordered
+production positions. The lowerer retains a one-call private wrapper.
+
+The former giant direct-builder dual-branch fixture is now a focused module and
+runs the pass owner and private wrapper on deep copies, comparing the complete
+ModelIR. LINEA supplies two measured zero-owner invocations before and after the
+move, records zero process-tree SWAP, and reproduces all five core artifacts
+byte for byte. Positive production ownership is therefore not claimed. The raw
+owner still mutates both branches sequentially before all shape constants are
+known valid, so a late rejection can leave partial input, metadata, and constant
+changes; transactional hardening remains separate from this exact ownership
+checkpoint.
+
 The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
 `passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
 moved with a function-name-normalized AST identical to the prior lowerer owner.

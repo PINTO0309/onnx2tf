@@ -9169,3 +9169,71 @@ inventory both input-side transpose/affine families, constant ownership,
 statistics, production positions, the existing direct fixture, and the
 smallest sequential zero-SWAP real-model control before changing source. Then
 commit and push one coherent unit without creating a pull request.
+
+## Dual affine-input BatchMatMul compatibility extraction: completed state
+
+The complete 317-line `_optimize_batchmatmul_affine_transpose_input_chains`
+helper is now owned by `passes/batchmatmul_affine_input_layout.py`. The lowerer
+retains one private one-call wrapper at both unchanged ordered production
+positions. After normalizing only the function name, the prior lowerer owner
+and new pass owner ASTs are identical.
+
+The owner preserves commutative Mul/Add inputs, exact exclusive branch
+matching, NCHW-to-NHWC channel-constant rotation, rank-three Reshape shape
+reversal for both branches, left post-Transpose removal, `adjY=True`
+conversion, tensor metadata propagation, exact mutation/removal order, fixed-
+point restart, sole prune/report boundary, and the historical statistic.
+
+The former direct-builder dual-branch fixture is removed from the giant test
+module and now lives in
+`test_flatbuffer_direct_batchmatmul_affine_input_layout.py`. It runs the module
+owner and lowerer wrapper on deep copies, compares the complete ModelIR, and
+fixes both affine branches, shape vectors, removed Transposes, and the adjoint
+flag. Together with the architecture owner/production selector it passes
+`2 passed in 1.94s`. The changed-file branch regression collection passes
+`514 passed in 27.20s`; the optional-TensorFlow import-blocked suite passes
+`11 passed in 9.27s`.
+
+Tier 2 `LINEA.onnx` is the strictly sequential zero-owner artifact control. Its
+two runtime counts remain `0,0` before and after extraction. The pre conversion
+completed in 7.827 seconds and the post conversion in 7.917 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential LINEA accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the module contract is fixed by the relocated public fixture. All
+actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risk is unchanged. It mutates both affine
+branches sequentially before every Reshape shape constant is known valid. A
+late failure can therefore leave input rewires, tensor metadata, and rotated
+constants from an earlier branch despite a zero statistic. Correcting that
+requires an immutable all-or-nothing transaction and independent semantic
+fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new BatchMatMul affine-input pass, lowerer import and
+wrapper, relocated focused fixture, giant-test import/removal, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary tracing and conversion
+outputs are removed before commit. PR #952 remains closed; work is commit/push
+only and no pull request is created.
+
+The next raw source-order implementation with an existing public fixture is the
+363-line `_optimize_batchmatmul_reshape_se_nhwc_chains`. At restart, inventory
+its Mean/Conv/gate branch, affine constants, statistics, production positions,
+the existing direct fixture, and the smallest sequential zero-SWAP real-model
+control before changing source. Then commit and push one coherent unit without
+creating a pull request.
