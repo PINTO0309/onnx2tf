@@ -10225,3 +10225,42 @@ pending rewrite is committed. Turn the final strict xfail green, retain all
 private-output success fingerprints/statistics and the existing zero-owner
 evidence, and repeat one strictly sequential zero-SWAP artifact control. Do not
 create a pull request.
+
+## QLinear Concat/Conv public-output safety: completed state
+
+The second QLinear semantic correction is complete. After planning all input
+rewrites and metadata updates but before axis validation or mutation, the helper
+now rejects any pending tensor-shape update whose tensor is a declared ModelIR
+output. Pattern 1 public Dequantize outputs therefore remain complete no-ops
+instead of changing from NCHW to NHWC. The guard is intentionally plan-based:
+an already physical NHWC public Dequantize output with no pending update still
+allows the safe singleton-Reshape optimization to proceed. Successful private-
+output behavior and statistics are unchanged. The explicit guard expands the
+raw owner from 607 to 612 lines.
+
+The focused owner contract and architecture selector pass `19 passed, 246
+deselected in 0.60s`; no strict xfail remains. The changed-file branch
+regression passes `590 passed in 24.47s`. The TensorFlow-import-blocked optional-
+boundary suite passes `11 passed in 9.27s`. Targeted test Ruff, Python
+compilation, and whitespace checks pass.
+
+YuNet INT8 was run strictly sequentially at commit `a4e4bff9` and with the
+public-output guard. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.426 and 5.259 seconds. Internal pass metrics are
+identical. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema,
+and generated-schema artifacts are byte-identical; the three JSON files differ
+only in output-directory and temporary-file paths.
+
+Changed files are the central raw helper, focused public-boundary fixtures,
+architecture source-order gate, and three branch documents. Public API, CLI,
+successful behavior/statistics, artifacts, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, the 612-line helper has a complete four-pattern positive/rejection
+contract and no known strict xfail. If moved, perform an exact mechanical
+extraction into a focused pass-family module, keep a thin private lowerer
+wrapper and the single syntactic call/two runtime boundaries, prove old/new AST
+identity after function-name normalization, and repeat focused, branch,
+optional-boundary, and one strictly sequential zero-SWAP artifact control. Do
+not create a pull request.

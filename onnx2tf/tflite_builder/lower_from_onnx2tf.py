@@ -4548,6 +4548,11 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
 
             if not convertible:
                 continue
+            if any(
+                str(tensor_name) in model_outputs
+                for tensor_name in pending_tensor_shape_updates
+            ):
+                continue
 
             concat_axis_old = int(concat_op.options.get("axis", 1))
             if concat_axis_old < 0 or concat_axis_old >= len(inv_nchw_to_nhwc):

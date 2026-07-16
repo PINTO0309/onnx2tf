@@ -332,10 +332,6 @@ def test_qlinear_concat_conv_missing_output_tensor_rejection_is_atomic(
     assert _fingerprint(model_ir) == _fingerprint(before)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a public Dequantize output is changed from NCHW to NHWC",
-)
 def test_qlinear_concat_conv_preserves_public_dequantize_output() -> None:
     model_ir = _build_qlinear_concat_conv_chain()
     model_ir.outputs.append("a_f_nchw")
@@ -350,7 +346,7 @@ def test_qlinear_concat_conv_preserves_public_dequantize_output() -> None:
 def test_qlinear_concat_propagates_nhwc_across_singleton_layout_reshape() -> None:
     model_ir = ModelIR("qlinear_concat_singleton_layout_reshape")
     model_ir.inputs = ["gap_f_nhwc", "pool_f_nhwc"]
-    model_ir.outputs = ["y"]
+    model_ir.outputs = ["y", "gap_dq_nhwc"]
 
     _tensor(model_ir, "gap_f_nhwc", [1, 1, 1, 8])
     _tensor(model_ir, "gap_q_nhwc", [1, 1, 1, 8], "INT8")

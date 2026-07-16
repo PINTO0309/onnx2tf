@@ -778,6 +778,9 @@ Latest checkpoint results:
   `18 passed, 1 xfailed`;
 - changed-file branch regression after required-output prevalidation:
   `589 passed, 1 xfailed`;
+- focused QLinear public Dequantize-output guard: `19 passed`;
+- changed-file branch regression after the public-output correction:
+  `590 passed`;
 - residual affine/PReLU direct owner plus architecture suite: `233 passed`;
 - complete indexed SiNet residual suite: `207 passed`;
 - final branch gate after residual affine/PReLU extraction: `713 passed`;
@@ -1183,21 +1186,27 @@ ordered runtime boundaries. A third strictly sequential YuNet INT8 before/
 after control passed with `max_abs=0`, zero SWAP, and durations of 6.290 and
 5.215 seconds. Pass metrics and all non-path artifact content remain identical.
 
-The now 607-line QLinear Concat/Conv propagation helper remains central while
+The now 612-line QLinear Concat/Conv propagation helper remains central while
 its contract is frozen. Dedicated tests now cover all four input adapter forms,
 multiple post-Quantize adapters, an additional direct Concat adapter, dynamic
 batch signatures, per-axis quantization-dimension remap, idempotence, and nine
 complete no-op guards. The former 119-line giant ModelIR fixture moved to the
 focused qlinear module with an identical AST. Required Concat and Quantize
-output tensors are now validated before the first candidate mutation, making
-both missing-tensor cases complete no-ops. One strict xfail remains because a
-public Dequantize output can be changed from NCHW to NHWC.
+output tensors are validated before the first candidate mutation, making both
+missing-tensor cases complete no-ops. A public tensor that would receive a
+pending layout metadata update now rejects before mutation, while an already-
+NHWC public Dequantize output remains eligible. No strict xfail remains.
 
 The required-output correction used YuNet INT8 as a strictly sequential before/
 after artifact control. Both runs passed with `max_abs=0`, zero process-tree
 SWAP, and durations of 6.329 and 5.291 seconds. Internal pass metrics and all
 non-path artifact content remain identical, including byte-identical float32
 and float16 TFLite files.
+
+The public-output correction repeated the YuNet INT8 control. Before and after
+runs passed with `max_abs=0`, zero process-tree SWAP, and durations of 6.426 and
+5.259 seconds. Internal pass metrics and all non-path artifact content remain
+identical.
 
 ## Scope and follow-up
 
@@ -1222,6 +1231,7 @@ wrapper signature, production call order, statistics, and artifact control
 preserved. Resume by inventorying and characterizing the next raw source-order
 owner before changing it. That owner is now identified as
 `_optimize_nhwc_propagation_qlinear_concat_conv`; required output prevalidation
-is complete, but its public Dequantize-output strict xfail must be corrected as
-a separate semantic checkpoint before any mechanical ownership move. No broad
-conversion sweep is implied by this checkpoint.
+and the public Dequantize-output guard are complete with no strict xfail. A
+mechanical ownership move may proceed only with exact body, wrapper, sequence,
+statistics, and zero-owner artifact preservation. No broad conversion sweep is
+implied by this checkpoint.

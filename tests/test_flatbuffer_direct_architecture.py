@@ -9538,7 +9538,12 @@ def test_qlinear_concat_conv_has_one_characterized_raw_owner() -> None:
     required_output_validation = owner_source.index(
         "if concat_out_tensor is None or q_out_tensor is None:"
     )
+    public_pending_tensor_guard = owner_source.index(
+        "str(tensor_name) in model_outputs\n"
+        "                for tensor_name in pending_tensor_shape_updates"
+    )
     first_input_mutation = owner_source.index("_set_operator_inputs(")
+    assert public_pending_tensor_guard < required_output_validation
     assert required_output_validation < first_input_mutation
 
     lowerer = next(
