@@ -8240,3 +8240,74 @@ constant ownership and mutation, graph-output contract, single production
 position, statistic, existing fixtures, and short zero-SWAP ownership before
 changing source. Keep inference strictly sequential and minimal, then commit
 and push one coherent unit without creating a pull request.
+
+## Terminal affine/Reshape/FullyConnected ownership extraction: completed state
+
+The complete 293-line
+`_optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains` implementation is
+now owned by `passes/terminal_affine_fc_layout.py`. The lowerer retains a
+one-call private compatibility wrapper at the unchanged single late production
+position. After normalizing only the function name, the prior lowerer function
+and new owner ASTs are identical.
+
+The owner preserves the exact exclusive
+Transpose→Mul→Add→Reshape→FullyConnected chain, all public intermediate guards,
+static positive NHWC/NCHW view relation, channel-constant rotation, shared
+constant copy-on-write, both `[O,I]` and `[I,O]` FullyConnected weight layouts,
+NHWC flatten-order permutation, metadata and quantization cloning, fixed-point
+restart, pruning, and statistic. No new dependency, index path, or semantic
+guard was introduced.
+
+The focused corpus covers both weight orientations, exclusive and shared Mul
+and FC constants, independent quantization clones, idempotence, public
+Transpose/Mul/Add/Reshape intermediates, wrong permutation, dynamic channel,
+weight-width mismatch, input fan-out, and module-owner/private-wrapper
+equality. The selector passes `14 passed, 229 deselected in 2.07s`; focused plus
+complete architecture passes `243 passed in 32.69s`; the branch-wide selection
+passes `692 passed in 34.75s`; and the complete optional-TensorFlow import-
+blocked suite passes `11 passed in 9.28s`.
+
+OSNet was characterized strictly sequentially and reached the helper once with
+zero rewrites before and after extraction. Its pre conversion completed in
+2.171 seconds and post conversion in 2.195 seconds; both recorded process-tree
+SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `ed63ef56007979e0f13d1e8e63cbfb590e58af1adee1d214595d03e57412c282`;
+- float16 TFLite:
+  `f22a25ab094217ea1ebc0844da8752c6b95b38b3d98be6cb58314b39e2029a7d`;
+- tensor correspondence:
+  `35a42832e43b2076b00399ba7b22a1ff5aff83795cd333474d6bf61bf7221677`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding OSNet accuracy checkpoint remains
+`max_abs=2.193450927734375e-05`; no redundant inference run was added because
+the executed TFLite artifact is identical. A read-only scan of every root ONNX
+file up to 50 MiB found no exact raw Transpose→Mul→Add→Reshape→Gemm/MatMul
+source chain. No non-zero production owner is claimed; positive behavior is
+fixed by the synthetic corpus.
+
+One existing transactional defect is recorded, not corrected. The helper can
+rotate an exclusive Mul side constant in place before attempting to materialize
+the Add side constant. If the latter is invalid, it returns a zero statistic
+after leaving the Mul constant changed. Fixing this requires immutable planning,
+full prevalidation, and an atomic negative fixture in a separate semantic
+checkpoint; mixing it into this mechanical move would obscure compatibility.
+
+Changed files are the new terminal affine/FC pass module, lowerer import and
+wrapper, focused corpus, architecture ownership test, and three branch
+documents. No dependency, public API, CLI, artifact name, TensorFlow boundary,
+corpus profile, exclusion policy, or ONNX tier policy changes. Temporary
+tracing and conversion outputs are removed before commit. PR #952 remains
+closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 263-line
+`_optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains`. At
+restart, inventory its PReLU-alpha remap, Reshape/BatchMatMul flatten-order
+permutation, shared-constant behavior, graph-output guards, conditional
+production position, statistic, fixtures, and short zero-SWAP ownership before
+changing source. Keep inference strictly sequential and minimal, then commit
+and push one coherent unit without creating a pull request.

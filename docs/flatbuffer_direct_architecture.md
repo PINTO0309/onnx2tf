@@ -7030,6 +7030,28 @@ producer, or visibility. This latent name-collision risk is recorded rather
 than changed in the mechanical checkpoint; hardening requires an independent
 compatibility fixture and artifact gate.
 
+The following terminal Transpose/Mul/Add/Reshape/FullyConnected rule is
+isolated in `passes/terminal_affine_fc_layout.py`. Its complete 293-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves exact chain exclusivity and public-boundary
+guards, NCHW-to-NHWC channel-constant rotation, shared constant copy-on-write,
+both FullyConnected weight orientations, flatten-order permutation, metadata
+and quantization cloning, fixed-point restart, pruning, statistic, and the
+single late production position. The lowerer retains a one-call private
+wrapper.
+
+Thirteen focused tests cover both weight orientations, shared affine and
+weight constants, independent quantization clones, idempotence, every public
+intermediate, wrong permutation, dynamic shape, weight-width mismatch, input
+fan-out, and direct-owner/private-wrapper equality. OSNet supplies a measured
+zero-owner artifact control with zero process-tree SWAP and five byte-identical
+core artifacts. A read-only scan of root ONNX files up to 50 MiB found no raw
+Transpose/Mul/Add/Reshape/Gemm-or-MatMul chain, so non-zero production ownership
+is not claimed. The historical helper can rotate an exclusive Mul constant
+before discovering that the Add constant is invalid, leaving a partial change
+on a zero-stat result. This transactional defect is recorded without changing
+compatibility in the mechanical ownership checkpoint.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`

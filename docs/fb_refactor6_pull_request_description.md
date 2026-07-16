@@ -2,7 +2,7 @@
 
 ## Summary
 
-This branch continues the staged `flatbuffer_direct` refactor by moving fourteen
+This branch continues the staged `flatbuffer_direct` refactor by moving fifteen
 fully characterized compatibility rules out of the central ONNX-to-ModelIR
 lowerer and into focused pass modules:
 
@@ -19,7 +19,8 @@ lowerer and into focused pass modules:
 - strict rank-four Transpose/Slice/inverse-Transpose passthrough;
 - Shape-extraction layout recovery for Gather and Slice consumers;
 - the complete indexed-first pre-Add compatibility composite;
-- late dual-pre-Add to single-post adapter recovery.
+- late dual-pre-Add to single-post adapter recovery;
+- terminal affine/Reshape/FullyConnected layout recovery.
 
 The change reduces the amount of mutable implementation embedded in
 `lower_from_onnx2tf.py` while preserving its private compatibility entry
@@ -231,6 +232,22 @@ producer, or graph visibility; that latent collision risk requires a separate
 semantic hardening checkpoint rather than being folded into this ownership
 move.
 
+### Terminal affine/Reshape/FullyConnected recovery
+
+`passes/terminal_affine_fc_layout.py` owns the former 293-line late helper for
+NHWC-to-NCHW Transpose, Mul, Add, Reshape, and FullyConnected. It preserves
+chain exclusivity and public-boundary checks, channel-constant rotation,
+shared-constant copy-on-write, both FullyConnected weight orientations,
+flatten-order permutation, shape/dtype/quantization metadata, fixed-point
+restart, pruning, statistic, and the single production position. The lowerer
+retains a one-call private wrapper, and the complete owner AST is identical
+after function-name normalization.
+
+One historical transactional risk remains explicit: an exclusive Mul constant
+can be rotated in place before the Add constant is found invalid, leaving a
+partial mutation with a zero statistic. Correcting this requires a separate
+plan/revalidation checkpoint and is not mixed into the mechanical move.
+
 ### Dependency metadata
 
 `uv.lock` now reports the repository version as 2.6.4, matching the current
@@ -284,6 +301,9 @@ The new focused tests cover:
   QLinear, stale-plan, bounded-dispatch, and cleanup-boundary behavior;
 - dual-pre-Add positive rewrite, quantization clone, idempotence, public,
   permutation, rank, fan-out, existing-post guards, and owner/wrapper equality;
+- terminal affine/FC weight-axis variants, shared affine/weight copy-on-write,
+  quantization cloning, idempotence, boundary/permutation/shape/weight/fan-out
+  guards, and owner/wrapper equality;
 - one-owner/no-import-cycle architecture boundaries and unchanged production
   call counts.
 
@@ -316,6 +336,8 @@ Latest checkpoint results:
 - final branch gate after pre-Add composite extraction: `668 passed`;
 - focused dual-pre-Add owner plus architecture suite: `238 passed`;
 - final branch gate after dual-pre-Add extraction: `678 passed`;
+- focused terminal affine/FC owner plus architecture suite: `243 passed`;
+- final branch gate after terminal affine/FC extraction: `692 passed`;
 - old helper versus new owner differential comparison: 250 generated ModelIR
   cases matched in both statistics and every tensor shape signature;
 - boundary realigner differential comparison: 250 generated maps matched in
@@ -427,6 +449,16 @@ schema outputs. Its immediately preceding sequential `-cotof` checkpoint had
 already passed at `max_abs=1.3113021850585938e-05`; no redundant inference run
 was added because the executed TFLite artifact is byte-identical.
 
+The terminal affine/FC extraction used OSNet as its single short artifact
+control. Its late helper call remained zero before and after extraction, both
+conversion-only runs recorded process-tree SWAP zero, and durations were 2.171
+and 2.195 seconds. Float32, float16, tensor-correspondence, schema, and
+generated-schema outputs are byte-identical. The immediately preceding OSNet
+accuracy baseline remains `max_abs=2.193450927734375e-05`; no redundant
+inference run was added because the executed TFLite artifact is unchanged. A
+read-only topology scan of root ONNX files up to 50 MiB found no complete raw
+source chain, so positive behavior is fixed synthetically.
+
 ## Scope and follow-up
 
 This branch deliberately avoids semantic generalization and does not claim a
@@ -435,9 +467,9 @@ mechanical ownership is established first. A future differential-index rewrite
 must independently prove candidate order, restart behavior, pruning behavior,
 and non-zero ownership before replacing the current insertion logic.
 
-The next raw source-order boundary is the 293-line
-`_optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains` helper. Its
-terminal affine/Reshape/FullyConnected contract, constant ownership, output
-boundary, statistic, single production position, and short-model ownership
-must be characterized before extraction; no broad conversion sweep is implied
-by this mechanical checkpoint.
+The next raw source-order boundary is the 263-line
+`_optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains` helper.
+Its PReLU-alpha remap, Reshape/BatchMatMul flatten ordering, shared constants,
+output boundaries, statistic, conditional production position, and short-model
+ownership must be characterized before extraction; no broad conversion sweep
+is implied by this mechanical checkpoint.
