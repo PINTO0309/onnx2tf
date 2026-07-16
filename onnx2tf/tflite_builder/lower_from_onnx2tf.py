@@ -198,6 +198,9 @@ from onnx2tf.tflite_builder.passes.pre_add_mulconst_reshape_suffix_layout import
 from onnx2tf.tflite_builder.passes.pre_unary_reshape_suffix_layout import (
     optimize_transpose_pre_swish_reshape_transpose_suffix_nhwc_chains as _optimize_transpose_pre_swish_reshape_transpose_suffix_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.expanddims_reshape_layout import (
+    optimize_transpose_factorized_expanddims_nhwc_chains as _optimize_transpose_factorized_expanddims_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.slice_logistic_concat_reshape_tail_layout import (
     optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains as _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains_pass,
 )
@@ -13757,6 +13760,8 @@ def _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir:
 
 def _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Collapse NHWC->NCHW->RESHAPE->N?HWC wrappers into a single RESHAPE.
@@ -13772,7 +13777,22 @@ def _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
     This pattern appears in some YOLO heads where layout wrappers are only used
     to insert a singleton anchor axis before 5D decode operations.
     """
-    rewritten = 0
+    indexed_stats = _optimize_transpose_factorized_expanddims_nhwc_chains_pass(
+        model_ir,
+        graph_index=ModelIRGraphIndex(model_ir),
+        layout_state=layout_state,
+    )
+    rewritten = int(
+        indexed_stats.get(
+            "optimized_transpose_reshape_transpose_to_expanddims_nhwc_chains",
+            0,
+        )
+    )
+    tensors_before_fallback_prune = (
+        set(str(name) for name in model_ir.tensors)
+        if layout_state is not None
+        else set()
+    )
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_n1chw_to_n1hwc = [0, 1, 3, 4, 2]
     perm_nchw1_to_nhwc1 = [0, 2, 3, 1, 4]
@@ -13925,10 +13945,52 @@ def _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
                 target_reshape_shape = [int(n), int(h), int(w), int(a), int(b)]
                 if len(reshape_op.inputs) < 2:
                     continue
-                reshape_shape_tensor = model_ir.tensors.get(str(reshape_op.inputs[1]), None)
-                if _read_const_ints_from_tensor(reshape_shape_tensor) is None:
+                reshape_shape_name = str(reshape_op.inputs[1])
+                if (
+                    reshape_shape_name in model_outputs
+                    or set(
+                        int(value)
+                        for value in consumers.get(reshape_shape_name, [])
+                    )
+                    != {int(reshape_idx)}
+                ):
                     continue
-                if not _write_const_ints_to_tensor(reshape_shape_tensor, target_reshape_shape):
+                reshape_shape_tensor = model_ir.tensors.get(
+                    reshape_shape_name,
+                    None,
+                )
+                reshape_shape_values = _read_const_ints_from_tensor(
+                    reshape_shape_tensor
+                )
+                if (
+                    reshape_shape_values is None
+                    or reshape_shape_values == target_reshape_shape
+                ):
+                    continue
+                if len(post_op.inputs) < 2:
+                    continue
+                post_perm_name = str(post_op.inputs[1])
+                if (
+                    post_perm_name in model_outputs
+                    or set(
+                        int(value)
+                        for value in consumers.get(post_perm_name, [])
+                    )
+                    != {int(post_idx)}
+                ):
+                    continue
+                post_perm_tensor = model_ir.tensors.get(post_perm_name, None)
+                post_perm_values = _read_const_ints_from_tensor(post_perm_tensor)
+                if (
+                    post_perm_values is None
+                    or post_perm_values == perm_nhwab_to_nahwb
+                ):
+                    continue
+
+                if not _write_const_ints_to_tensor(
+                    reshape_shape_tensor,
+                    target_reshape_shape,
+                ):
                     continue
 
                 if isinstance(reshape_op.options, dict):
@@ -13938,11 +14000,6 @@ def _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
                             reshape_opts[key] = [int(v) for v in target_reshape_shape]
                     reshape_op.options = reshape_opts
 
-                if len(post_op.inputs) < 2:
-                    continue
-                post_perm_tensor = model_ir.tensors.get(str(post_op.inputs[1]), None)
-                if _read_const_ints_from_tensor(post_perm_tensor) is None:
-                    continue
                 if not _write_const_ints_to_tensor(post_perm_tensor, perm_nhwab_to_nahwb):
                     continue
 
@@ -13965,6 +14022,10 @@ def _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
             break
 
     _prune_unused_tensors(model_ir)
+    if layout_state is not None:
+        layout_state.remove(
+            tensors_before_fallback_prune - set(str(name) for name in model_ir.tensors)
+        )
     return {
         "optimized_transpose_reshape_transpose_to_expanddims_nhwc_chains": int(rewritten)
     }
@@ -26066,7 +26127,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
+        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
         _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
         _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
@@ -26836,7 +26900,10 @@ def lower_onnx_to_ir(
     )
     if optimize_layout_transpose_chains:
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-    _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
+    _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
     _run_channel_shuffle_gather_layout_pass_cluster(

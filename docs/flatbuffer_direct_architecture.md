@@ -6858,6 +6858,27 @@ source label restored all artifacts byte-for-byte. The sequential accuracy
 gate passes with maximum absolute error `0.002297189086675644` and zero
 process-tree SWAP.
 
+The factorized rank-four to rank-five detection-head reshape now has a strict
+indexed Case B owner in `expanddims_reshape_layout.py`. The owner dispatches
+each indexed Transpose candidate once and accepts only
+`NHWC -> NCHW -> [N,A,B,H,W] -> [N,A,H,W,B]` when `A > 1`, `C=A*B`, both
+typed permutations, both exclusively owned mutable constants, exact static
+views and signatures, dtype/quantization, layouts, operator order, and graph
+boundaries agree. The immutable plan is re-resolved before apply; graph edges
+and removal use differential index updates and Session layout state is
+reconciled explicitly. Singleton Case A and every strict reject remain on the
+raw fallback. The wrapper retains one prune/report boundary and now also
+rejects shared shape or permutation constants before its legacy in-place
+mutation.
+
+`yolov7-tiny.onnx` and `yolo_test.onnx` each record indexed counts 3, 0, 0,
+and 0 at the four production invocations. A first focused implementation
+mistakenly used a rank-four-only typed permutation helper for the rank-five
+post edge; the problem was recorded before adding the bounded length-aware
+reader. Both models then retained byte-identical float32, float16, and
+correspondence artifacts. The sequential yolo_test accuracy gate passes with
+maximum absolute error `2.4437904357910156e-06` and zero process-tree SWAP.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

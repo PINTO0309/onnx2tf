@@ -6100,3 +6100,159 @@ its unchanged production boundary. Establish a real non-zero family before
 source work, record any problem before correction, and retain strict rejects
 on the compatibility path. Continue with minimal sequential zero-SWAP model
 checks and coherent commit/push units only; do not create a pull request.
+
+## YOLO factorized expand-dims extraction: pre-change observation
+
+The raw `_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains`
+helper was instrumented at all four unchanged production invocations before
+source modification. Fourteen conversion-only models ran sequentially under
+`uv` with subprocess-tree `VmSwap` monitoring. Every conversion exited zero
+and every model recorded `peak_swap_kib=0`. Twelve models recorded zero
+rewrites throughout. `yolov7-tiny.onnx` and `yolo_test.onnx` each recorded
+3, 0, 0, and 0 rewrites.
+
+All six non-zero chains are the generic factorized YOLO Case B:
+
+```text
+NHWC -> TRANSPOSE [0,3,1,2] -> NCHW
+     -> RESHAPE [N,A,B,H,W]
+     -> TRANSPOSE [0,1,3,4,2] -> [N,A,H,W,B]
+
+NHWC -> RESHAPE [N,H,W,A,B]
+     -> TRANSPOSE [0,3,1,2,4] -> [N,A,H,W,B]
+```
+
+Both models use `A=3` at spatial sizes 80, 40, and 20. YOLOv7-tiny uses
+`B=85`; yolo_test uses `B=8`. The first invocation removes three pre-layout
+Transposes, rewrites three Reshape inputs, shapes, and options, and remaps the
+three retained post-Transpose permutations. The next three invocations own no
+additional chain.
+
+The current raw Case B implementation lacks an explicit transactional
+contract. It checks the post permutation value early enough that its normal
+single-threaded path does not leave the Reshape half-written, but it mutates
+both the Reshape shape and post-permutation constants in place without
+checking exclusive ownership. A shared constant can therefore change an
+unrelated consumer. The helper also rebuilds full consumer maps and scans all
+Transposes seven times for a three-chain model: four fixed-point scans in the
+first invocation plus one no-op scan at each later invocation. Constant type
+and ownership, layouts, dtype, quantization, operator ordering, and graph
+boundaries are not validated as one immutable contract.
+
+The exact pre-change artifacts are:
+
+- yolo_test float32:
+  `439d9a8b893bf6bfbd92aa0155bd15a4185b5fcdb6e65ddb48f718a41b75bdfc`;
+- yolo_test float16:
+  `7b1ef8b13de65068b3fe8166d5481553e2e41194c0cfe9ee48f4be5ad3417eff`;
+- yolo_test correspondence:
+  `36d728e9294f1d4f1319c45306a088bced6b54ad393f71f4925f3178f0d9c1ca`;
+- YOLOv7-tiny float32:
+  `4738ec36f18f3ccfcf3d53e7b43a59091ea75b88a9620460e95c724bf363326e`;
+- YOLOv7-tiny float16:
+  `1675ba6a669e22f0e7cf24941c421c9d3241c837c681d7a97c465a5665a536bd`;
+- YOLOv7-tiny correspondence:
+  `c6667fcef416fafe7eed113ac43a6df4cab85c6c475006bbd86a0ad01de4ffb8`.
+
+The pre-change sequential yolo_test `-cotof` gate passes in 10.489 seconds
+with maximum absolute error `2.4437904357910156e-06`, converter exit code 0,
+and zero SWAP. The safe extraction scope is only Case B. It must validate both
+typed constants and all tensor/operator/layout contracts before any mutation,
+use an immutable revalidated plan and one differential graph index, update
+Session layout state, preserve the single wrapper prune/report boundary, and
+leave singleton Case A plus every strict reject on the raw compatibility
+fallback. No production fix has been applied at this point.
+
+### First indexed Case B implementation guard finding
+
+The first focused owner run rejected four valid synthetic Case B expectations;
+the two historical Case A fallback fixtures and shared-constant atomicity still
+passed. This was recorded before correction. The cause is bounded and does not
+affect the raw production result: the initial owner reused a typed permutation
+utility whose contract is deliberately rank four, so the valid rank-five post
+permutation `[0,1,3,4,2]` could never pass its guard. The indexed owner
+therefore returned zero and the unchanged fallback continued to own real
+models. The correction is a local typed permutation reader parameterized by
+the exact expected vector length, while retaining the stricter exclusive
+mutable-vector guard for the post constant before apply.
+
+## YOLO factorized expand-dims extraction: final checkpoint
+
+The strict generic Case B owner is implemented in
+`expanddims_reshape_layout.py` and connected at both historical call sites,
+which execute at four production boundaries. It builds one
+`ModelIRGraphIndex` per invocation and dispatches each indexed Transpose
+candidate at most once. Resolution validates the exact factorized topology,
+typed rank-four and rank-five permutations, positive static rank-four and
+rank-five views/signatures, `A > 1`, `C=A*B`, dtype and per-tensor
+quantization, graph boundaries and order, exclusive edges, and exclusive
+typed mutable constants. The immutable plan records all tensor/operator
+contracts and is fully re-resolved before differential apply. Session layout
+state is updated, while pruning and report grouping remain at the single raw
+wrapper boundary.
+
+The raw compatibility path still owns singleton Case A and all relaxed
+rejects. Its Case B mutation now validates both constant values and rejects a
+shared Reshape-shape or post-permutation constant before any write, preventing
+an unrelated consumer from observing a layout-specific in-place update. The
+two historical Case A fixtures remain unchanged.
+
+Both production models record all accepted rewrites in the indexed owner:
+3, 0, 0, and 0 for `yolo_test.onnx`, and 3, 0, 0, and 0 for
+`yolov7-tiny.onnx`. The raw fallback adds zero for those accepted candidates.
+All six fixed artifacts remain exact:
+
+- yolo_test float32:
+  `439d9a8b893bf6bfbd92aa0155bd15a4185b5fcdb6e65ddb48f718a41b75bdfc`;
+- yolo_test float16:
+  `7b1ef8b13de65068b3fe8166d5481553e2e41194c0cfe9ee48f4be5ad3417eff`;
+- yolo_test correspondence:
+  `36d728e9294f1d4f1319c45306a088bced6b54ad393f71f4925f3178f0d9c1ca`;
+- YOLOv7-tiny float32:
+  `4738ec36f18f3ccfcf3d53e7b43a59091ea75b88a9620460e95c724bf363326e`;
+- YOLOv7-tiny float16:
+  `1675ba6a669e22f0e7cf24941c421c9d3241c837c681d7a97c465a5665a536bd`;
+- YOLOv7-tiny correspondence:
+  `c6667fcef416fafe7eed113ac43a6df4cab85c6c475006bbd86a0ad01de4ffb8`.
+
+The final single sequential yolo_test `-cotof` gate passes in 11.264 seconds
+with maximum absolute error `2.4437904357910156e-06`, converter exit code 0,
+and `peak_swap_kib=0`. The three indexed suffix owners, active compatibility
+fixtures, and complete architecture suite pass 241 tests in 44.41 seconds.
+The final dedicated Case B plus Case A compatibility suite passes 9 tests in
+0.74 seconds. TensorFlow-import-blocked explicit direct, default direct, and
+direct `-cotof` pass 3 tests in 4.48 seconds. Scoped Ruff, Python syntax
+compilation, and `git diff --check` pass; the same ten inherited lowerer F841
+findings remain unchanged.
+
+### Changed files and restart instruction
+
+- `onnx2tf/tflite_builder/passes/expanddims_reshape_layout.py` owns strict
+  factorized Case B resolution, immutable revalidation, differential mutation,
+  constant ownership, bounded dispatch, and layout reconciliation.
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py` invokes the owner at the two
+  existing call sites, passes Session layout state, retains singleton Case A,
+  and protects shared constants before the compatibility mutation.
+- `tests/test_flatbuffer_direct_indexed_expanddims_reshape_layout.py` covers
+  capability, Case A rejection/fallback, shared constants, atomic stale-plan
+  rejection, candidate bounds, determinism, exact lineage, graph-index/layout
+  consistency, and wrapper cleanup.
+- `tests/test_flatbuffer_direct_architecture.py` fixes indexed-first ownership,
+  single-pass bounded dispatch, no internal prune/full-map build, and both
+  production layout-state boundaries.
+- `docs/flatbuffer_direct_architecture.md` and this handoff record the
+  characterization, pre-change ownership issue, first implementation guard
+  finding before correction, final design, evidence, and restart order.
+
+No public API, CLI behavior, dependency, managed profile/exclusion, timeout
+policy, ONNX corpus model, or optional TensorFlow exporter changed. No broad
+Tier run was repeated because the fixed 49-model checkpoint already reports
+zero new regressions and this extraction used the only two established
+non-zero, short, zero-SWAP models.
+
+After confirming the branch is clean and synchronized, characterize the next
+raw `_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains` helper at
+all unchanged production boundaries. Record real non-zero ownership and any
+problem before source work, keep strict rejects on the compatibility path,
+and use only the smallest sequential zero-SWAP model gate. Continue with
+coherent commit/push units only; do not create a pull request.
