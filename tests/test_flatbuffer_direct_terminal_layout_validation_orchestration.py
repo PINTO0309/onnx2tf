@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -859,6 +862,76 @@ def test_primary_path_stages_final_broadcast_reconciliation() -> None:
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_mixed_singleton_concat_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="final InstanceNorm reconciliation result is discarded",
+)
+def test_primary_path_stages_final_instancenorm_reconciliation() -> None:
+    body = _lowerer_body()
+    stats_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "final_instancenorm_repair_stats"
+    )
+
+    result_name = "_final_instancenorm_static_shape_stats"
+    default_stats = body[stats_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == result_name
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(default_stats.value.keys, default_stats.value.values)
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = body[stats_index + 2]
+    assert isinstance(guard, ast.If)
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert len(get_calls) == 1
+    assert isinstance(get_calls[0].args[0], ast.Constant)
+    assert get_calls[0].args[0].value == (
+        "repaired_decomposed_instance_normalization_layouts"
+    )
+    assert len(guard.body) == 3
+
+    reconciliation = guard.body[0]
+    assert isinstance(reconciliation, ast.Assign)
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == result_name
+    assert isinstance(reconciliation.value, ast.Call)
+    assert isinstance(reconciliation.value.func, ast.Name)
+    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+    assert _call_name(_statement_call(guard.body[1])) == (
+        "_topologically_sort_operators"
+    )
+    assert _call_name(_statement_call(guard.body[2])) == (
+        "infer_model_ir_logical_layouts"
+    )
+
+    following = body[stats_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "final_broadcast_repair_stats"
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

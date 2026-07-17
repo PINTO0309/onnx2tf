@@ -10707,3 +10707,11 @@ The primary caller now initializes that stable result and replaces it with the
 opt-in complete reconciliation dictionary as the unchanged first statement of
 the positive guard. Topological sort and layout inference retain their exact
 positions, and no scan is added.
+
+The preceding final decomposed-InstanceNorm owner prevalidates every constant
+and tensor-shape plan, counts each candidate only after at least one planned
+write is applied, performs no pruning or topology mutation, and synchronizes
+layout only after a positive count. Strict characterization preserves its
+single-counter guard and reconciliation→sort→layout-inference order while
+requiring stable two-key `_final_instancenorm_static_shape_stats` evidence. The
+following broadcast owner remains adjacent.

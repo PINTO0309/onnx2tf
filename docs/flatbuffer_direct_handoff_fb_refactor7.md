@@ -4079,3 +4079,36 @@ At resume, audit the preceding `final_instancenorm_repair_stats` owner and its
 reconciliation/sort/layout-inference block before retaining complete evidence.
 Keep the following broadcast repair boundary fixed. Commit and push only; do
 not create or update a pull request.
+
+## Primary final InstanceNorm reconciliation characterization checkpoint
+
+The indexed decomposed-InstanceNorm owner constructs and validates all axes,
+constant, and tensor-shape plans for a candidate before applying them. It
+increments its exact counter only when at least one plan changes ModelIR,
+performs no pruning or topology mutation, and synchronizes layout only after a
+positive count. Missing markers, unsafe fan-out/boundaries, invalid constants,
+plan failure, already-correct, and second-run zero results are transactional
+ModelIR no-ops.
+
+A strict expected-failure orchestration contract now requires stable two-key
+`_final_instancenorm_static_shape_stats` evidence and assigns the opt-in
+complete result as the existing first statement of the positive guard. The
+following sort, layout inference, and `final_broadcast_repair_stats` boundary
+remain exact.
+
+At implementation, add only caller-side result plumbing. Do not change the
+owner, plan validation/application, counter schema, constant/tensor metadata,
+layout sync, guard, reconcile/sort/infer order, dependencies, following owner,
+or TensorFlow behavior. Validate the indexed InstanceNorm owner, terminal
+orchestration, and architecture sequentially, then commit and push only; do not
+create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed InstanceNorm owner, terminal orchestration, and architecture:
+  `309 passed, 1 xfailed in 18.50s`
+- expanded broad related gate: `1251 passed, 1 xfailed in 29.99s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final InstanceNorm
+reconciliation-result contract; there are no unexpected failures.
