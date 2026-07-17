@@ -9710,3 +9710,10 @@ all-zero result, unchanged ModelIR, skipped diagnostic, and absence of pass-stat
 construction. Production still reconciles unconditionally at this checkpoint;
 a strict architecture expectation requires one immediate guard over all three
 counters before that call may change.
+
+The terminal consecutive-Reshape result is now assigned, and the existing
+immediate reconciliation is guarded by the sum of those three exact mutation
+counters. The runner remains in its original position with the same Session
+LayoutState and diagnostics. A lowerer-level fixture proves the zero path and
+each individual positive counter; the complete runner suite retains both
+rewrite behavior and its state-free no-candidate fast path.

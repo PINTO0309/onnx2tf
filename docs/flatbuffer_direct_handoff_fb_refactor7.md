@@ -285,3 +285,25 @@ diagnostics. Add zero-counter and one-counter-per-key lowerer wiring coverage,
 then run the consecutive-Reshape, core, pass-efficiency, architecture, and
 TensorFlow-import-blocked suites sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Consecutive-Reshape reconciliation implementation checkpoint
+
+The absolute-final `run_consecutive_reshape_cleanup()` remains in place with
+the same Session LayoutState and diagnostic ledger. Its result is now assigned,
+and the immediately following static-shape reconciliation runs only when the
+sum of its three exact mutation counters is positive. No reshape matching,
+rewriting, pruning, diagnostics, ordering, or neighboring pass changed.
+
+The strict architecture expectation is green. A synthetic lowerer fixture
+establishes the all-zero baseline and proves that each individual positive
+counter adds exactly one reconciliation. Sequential validation across the
+complete consecutive-Reshape, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked suites is `337 passed in 25.69s`; the focused runner
+suite is `3 passed`.
+
+At resume, leave the absolute-final PReLU reconciliation unchanged until its
+zero-rewrite tensor-pruning side effect has explicit mutation accounting. The
+SE/FC/Gather cluster likewise needs an aggregate result contract before its
+reconciliation can be guarded. Inventory another bounded scan or allocation
+with a complete owner contract, characterize it first, then commit and push
+only. Do not create or update a pull request.

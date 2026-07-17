@@ -5465,12 +5465,32 @@ def lower_onnx_to_ir(
     # Absolute-final reshape cleanup:
     # very late repair/reconciliation passes above can still recreate trivial
     # singleton-growth RESHAPE chains (e.g. 2D->3D->4D Conv1D input shims).
-    run_consecutive_reshape_cleanup(
+    final_consecutive_reshape_stats = run_consecutive_reshape_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    if (
+        int(
+            final_consecutive_reshape_stats.get(
+                "removed_noop_reshape_chains",
+                0,
+            )
+        )
+        + int(
+            final_consecutive_reshape_stats.get(
+                "rewritten_consecutive_reshape_passthrough_chains",
+                0,
+            )
+        )
+        + int(
+            final_consecutive_reshape_stats.get(
+                "rewritten_fanout_bypass_reshape_passthrough_chains",
+                0,
+            )
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
     # Keep this after the final shape reconciliation: earlier than this,
     # SiNet-specific residual branches are not yet in their terminal form and
     # the strict matcher can fire on upstream blocks instead.

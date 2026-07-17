@@ -1398,6 +1398,54 @@ def test_final_mixed_singleton_concat_counter_gates_shape_reconciliation(
     assert run_with_changed_counter(True) == unchanged_count + 1
 
 
+def test_final_consecutive_reshape_counters_gate_shape_reconciliation(
+    monkeypatch,
+) -> None:
+    counter_names = {
+        "removed_noop_reshape_chains",
+        "rewritten_consecutive_reshape_passthrough_chains",
+        "rewritten_fanout_bypass_reshape_passthrough_chains",
+    }
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+
+    def counted_reconcile(*args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        return original_reconcile(*args, **kwargs)
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_changed_counter(changed_counter: str | None) -> int:
+        nonlocal reconcile_count
+
+        def pass_result(*args, **kwargs):
+            return {
+                counter_name: int(counter_name == changed_counter)
+                for counter_name in counter_names
+            }
+
+        monkeypatch.setattr(
+            lowering_module,
+            "run_consecutive_reshape_cleanup",
+            pass_result,
+        )
+        reconcile_count = 0
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"reshape_reconcile_{changed_counter or 'none'}",
+        )
+        return reconcile_count
+
+    unchanged_count = run_with_changed_counter(None)
+    for counter_name in counter_names:
+        assert run_with_changed_counter(counter_name) == unchanged_count + 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod
