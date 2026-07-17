@@ -3504,3 +3504,29 @@ At resume, audit `final_concat_layout_stats` for zero-rewrite cleanup before
 retaining its guarded reconciliation result. Keep the following Concat-axis
 owner boundary fixed. Commit and push only; do not create or update a pull
 request.
+
+## Primary final mixed-Concat reconciliation characterization checkpoint
+
+`final_concat_layout_stats` uses the same mixed-NHWC-input repair for NCHW
+Concat already characterized in the recursive fallback. Its exact counter
+covers the input adapter/rewire and output metadata mutation; the zero path has
+no pruning or cleanup.
+
+A strict expected-failure primary-path contract requires a stable
+`_final_mixed_concat_static_shape_stats` zero dictionary and assigns the opt-in
+complete reconciliation result under the unchanged positive guard. The
+guarded sort and following `final_concat_axis_stats` owner remain fixed.
+
+At implementation, add only result plumbing. Do not change matching, adapter
+insertion, rewiring, metadata, result schema, guard, sort, Concat-axis boundary,
+dependencies, or TensorFlow behavior. Validate sequentially, then commit and
+push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal orchestration and mixed-Concat owner: `15 passed, 1 xfailed`
+- expanded broad related gate: `572 passed, 1 xfailed in 28.34s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final mixed-Concat
+reconciliation contract; there are no unexpected failures.
