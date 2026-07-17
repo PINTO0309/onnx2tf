@@ -10172,3 +10172,9 @@ rewrite, so its one counter is complete evidence. Two direct production calls
 surround the second terminal affine recovery. Strict characterization selects
 only the second call and requires `_terminal_slice_pad_concat_stats` between
 that recovery and `late_spp_results`; the first call remains an expression.
+
+The second call now assigns its unchanged result to
+`_terminal_slice_pad_concat_stats`. Boundary contracts distinguish the first
+expression from the second assignment while resolving both to the same owner.
+No tensor-count proxy is added, and the staged counter remains unused by a
+reconciliation guard.

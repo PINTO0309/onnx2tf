@@ -1435,3 +1435,30 @@ terminal-affine, and architecture boundary tests. Validate the complete bridge
 owner suite and adjacent terminal orchestration, core, pass efficiency,
 architecture, and TensorFlow import blocker sequentially. Commit and push only;
 do not create or update a pull request.
+
+## Second terminal slice/pad/concat evidence implementation checkpoint
+
+Only the second direct strided-slice/pad/concat invocation now assigns its
+unchanged counter to `_terminal_slice_pad_concat_stats`; the first direct call
+remains an expression. The terminal affine boundary contracts distinguish the
+two positions while confirming that both still invoke the same owner with only
+ModelIR.
+
+The first expanded gate found one stale architecture expectation that still
+required an expression before late SPP (`693 passed, 1 failed`). Updating that
+specific boundary produced `694 passed in 27.88s`; a focused three-test check
+also confirmed that the unrelated very-late boundary stayed unchanged. The
+staged result is observation-only and no reconciliation behavior changes.
+
+Focused bridge, terminal-affine, and late-SPP coverage is `107 passed in
+1.04s`. The final sequential bridge-owner, terminal-affine, complete SPP,
+concat-unary-conv, late-SPP, shape-extract, QKV, split/conv bridge,
+Hardswish-SE, late hard-activation, SINet terminal, Expand/Squeeze,
+late-layout, constant-fold/cast, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `694 passed in 27.88s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the second terminal affine recovery's ordered child results.
+Its current result is discarded and several child owners may prune, so
+characterize complete mutation evidence before extending the terminal
+aggregate. Commit and push only; do not create or update a pull request.

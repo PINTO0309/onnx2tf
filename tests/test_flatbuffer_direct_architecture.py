@@ -1831,16 +1831,24 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     assert len(invocation_indexes) == 2
     previous_call_names = []
     next_call_names = []
-    for index in invocation_indexes:
+    for position, index in enumerate(invocation_indexes):
         invocation = lowerer.body[index].value
         assert invocation.args == []
         assert invocation.keywords == []
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
-            assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
+        assert isinstance(previous, ast.Expr)
+        assert isinstance(previous.value, ast.Call)
+        assert isinstance(previous.value.func, ast.Name)
+        if position == 0:
+            assert isinstance(following, ast.Expr)
+        else:
+            assert isinstance(following, ast.Assign)
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            assert following.targets[0].id == "_terminal_slice_pad_concat_stats"
+        assert isinstance(following.value, ast.Call)
+        assert isinstance(following.value.func, ast.Name)
         previous_call_names.append(previous.value.func.id)
         next_call_names.append(following.value.func.id)
     assert previous_call_names == [
@@ -5415,7 +5423,10 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_terminal_slice_pad_concat_stats"
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (

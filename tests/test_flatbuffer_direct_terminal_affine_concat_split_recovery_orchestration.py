@@ -202,13 +202,21 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
 
     assert len(invocation_indexes) == 2
     observed: list[tuple[str, str]] = []
-    for index in invocation_indexes:
+    for position, index in enumerate(invocation_indexes):
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
-            assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
+        assert isinstance(previous, ast.Expr)
+        assert isinstance(previous.value, ast.Call)
+        assert isinstance(previous.value.func, ast.Name)
+        if position == 0:
+            assert isinstance(following, ast.Expr)
+        else:
+            assert isinstance(following, ast.Assign)
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            assert following.targets[0].id == "_terminal_slice_pad_concat_stats"
+        assert isinstance(following.value, ast.Call)
+        assert isinstance(following.value.func, ast.Name)
         observed.append((previous.value.func.id, following.value.func.id))
 
     assert observed == [

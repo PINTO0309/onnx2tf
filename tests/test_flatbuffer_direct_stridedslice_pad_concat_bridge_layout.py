@@ -1209,10 +1209,6 @@ def test_slice_pad_concat_keeps_owner_wrapper_and_ordered_calls() -> None:
         assert call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the second terminal slice/pad/concat result is still discarded",
-)
 def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() -> None:
     lowering_tree = ast.parse(
         (

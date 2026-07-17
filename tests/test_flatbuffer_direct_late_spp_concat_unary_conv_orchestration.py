@@ -173,7 +173,10 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 2]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_terminal_slice_pad_concat_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (
@@ -320,7 +323,10 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
     )
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_terminal_slice_pad_concat_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (

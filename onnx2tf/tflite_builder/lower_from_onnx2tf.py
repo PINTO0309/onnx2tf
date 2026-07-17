@@ -5141,7 +5141,11 @@ def lower_onnx_to_ir(
     # Keep this after pre_add/slice/pad strict rewrites: those passes can
     # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
     _run_terminal_affine_concat_split_recovery_sequence()
-    _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
+    _terminal_slice_pad_concat_stats = (
+        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
+            model_ir
+        )
+    )
     late_spp_results = _run_late_spp_concat_unary_conv_pass_pair()
     _late_spp_stats = summarize_late_spp_concat_unary_conv_mutations(
         late_spp_results
