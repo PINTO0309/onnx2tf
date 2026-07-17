@@ -86,3 +86,26 @@ inventory. Select another non-context unit only when it has an explicit
 ownership or measurable scan/allocation cost, and characterize its behavior
 before production changes. Continue with coherent commits and pushes only; do
 not create or update a pull request.
+
+## Cross-group diagnostic-ledger characterization checkpoint
+
+The first implementation removes repeated history scans inside one pass group,
+but an ordinary diagnostics list must still be scanned once at the start of
+every group. That safe fallback is required for arbitrary caller-owned lists,
+which may have changed between calls. Production is different:
+`ConversionSession` owns one diagnostics object for the complete conversion and
+only appends through the pass runner or `record_diagnostic()`.
+
+A new strict expected-failure contract requires the Session-owned object to
+retain its ModelIR-pass event count, maximum group, and per-pass invocation
+counts across group calls. The fixture deliberately performs slice assignment
+first, proving that arbitrary list mutation invalidates the ledger and causes
+exactly one lazy rebuild. Two subsequent groups must reuse the rebuilt state
+while preserving sequences `2, 3`, invocations `2, 3`, and groups `5, 6`.
+
+No production source changed. At implementation, introduce a private
+list-compatible diagnostic ledger owned only by `ConversionSession`. Normal
+append/extend/insert operations may update valid counters incrementally;
+replacement or removal operations must invalidate them. Arbitrary external
+lists passed to `run_model_ir_pass_group()` must retain the existing one-scan
+fallback. Do not expose the internal type through the public core API.

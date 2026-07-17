@@ -9638,3 +9638,14 @@ local counters as new events are appended. The caller-owned diagnostic list,
 non-pass records, event schema, append order, group semantics, failure path,
 and summary remain unchanged. The strict scan-count fixture is green, reducing
 one group with `P` results from `P + 1` full history iterations to one.
+
+Cross-group numbering is the adjacent characterized boundary. The ordinary
+list-compatible API must retain its one-scan fallback because callers may
+mutate an arbitrary list between invocations. The production
+`ConversionSession`, however, owns the same append-only diagnostics object for
+the complete conversion. A strict expected-failure contract now requires that
+Session-owned diagnostics retain numbering state across groups, lazily rebuild
+that state once after an arbitrary list mutation, and keep subsequent group
+numbering at constant bookkeeping cost. It also freezes list compatibility and
+the same sequence, invocation, and group values across two repeated pass
+groups. Production remains unchanged at this characterization checkpoint.

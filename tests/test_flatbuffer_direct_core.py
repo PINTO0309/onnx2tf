@@ -1143,6 +1143,57 @@ def test_model_ir_pass_diagnostic_numbering_scans_existing_history_once() -> Non
     assert diagnostics.iteration_count == 1
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="ConversionSession diagnostics do not retain numbering state across groups",
+)
+def test_conversion_session_reuses_pass_diagnostic_ledger_across_groups(
+    monkeypatch,
+) -> None:
+    session = ConversionSession(
+        onnx_model=_add_onnx_model(),
+        model_ir=_add_model_ir(),
+        shape_map={},
+        dtype_map={},
+        constants={},
+    )
+    diagnostics = session.diagnostics
+    ledger_type = type(diagnostics)
+    original_rebuild = getattr(ledger_type, "_rebuild_model_ir_numbering")
+    rebuild_count = 0
+
+    def counted_rebuild(ledger) -> None:
+        nonlocal rebuild_count
+        rebuild_count += 1
+        original_rebuild(ledger)
+
+    monkeypatch.setattr(
+        ledger_type,
+        "_rebuild_model_ir_numbering",
+        counted_rebuild,
+    )
+    diagnostics[:] = [
+        {
+            "stage": "model_ir_pass",
+            "code": "cleanup.repeated",
+            "group_sequence": 4,
+        }
+    ]
+    spec = PassSpec(
+        pass_id="cleanup.repeated",
+        phase=PassPhase.POST_LOWERING_CLEANUP,
+        callback=lambda state: {"changed": False},
+    )
+
+    run_model_ir_pass_group(session.model_ir, specs=[spec], diagnostics=diagnostics)
+    run_model_ir_pass_group(session.model_ir, specs=[spec], diagnostics=diagnostics)
+
+    assert rebuild_count == 1
+    assert [event["sequence"] for event in diagnostics[1:]] == [2, 3]
+    assert [event["invocation"] for event in diagnostics[1:]] == [2, 3]
+    assert [event["group_sequence"] for event in diagnostics[1:]] == [5, 6]
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod
