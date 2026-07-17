@@ -1004,3 +1004,26 @@ all participating owners return complete mutation and prune evidence. Select a
 smaller orchestration cluster inside that interval and characterize its result
 propagation before changing the phase barrier. Commit and push only; do not
 create or update a pull request.
+
+## Late layout cluster result propagation characterization checkpoint
+
+The broad terminal phase before its unconditional reconciliation still lacks a
+complete mutation aggregate. Its final composite cluster is a bounded first
+step: late layout/mean/SPP/gather/constant-fold/cast builds five required
+invocations and an optional generic-layout invocation. The shared recovery
+utility returns all results in order, but the public orchestrator and private
+lowerer helper currently discard them.
+
+Strict expected-failure coverage requires the exact five- or six-result tuple
+to pass unchanged through both layers. Result order, shared state scope,
+optional policy, diagnostics, exceptions, and the production call site remain
+unchanged. No phase reconciliation is guarded in this checkpoint. The optional
+generic-layout result includes `iterations`; a later aggregate must filter that
+execution count and use only mutation keys.
+
+At implementation, annotate and return the raw ordered tuple from the
+orchestrator, then return it from the lowerer helper. Keep the existing call
+site as an ignored expression so ModelIR behavior is mechanical and identical.
+Validate both optional policies, state reuse, orchestration structure, core,
+architecture, pass efficiency, and TensorFlow import blocking sequentially.
+Commit and push only; do not create or update a pull request.

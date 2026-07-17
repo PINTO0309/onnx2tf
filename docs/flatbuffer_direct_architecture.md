@@ -10003,3 +10003,18 @@ and dispatches. The target set, raw-shape rules, constant exclusion, and nested
 predicate are no longer duplicated there. Dedicated tests cover every target
 op, all four no-op classes, the integration trigger before dispatch, and the
 one-owner architecture contract.
+
+The broad terminal phase still cannot drive its final reconciliation from a
+complete aggregate, but its last composite cluster is now isolated as the next
+result-propagation boundary. The late layout/mean/SPP/gather/constant-fold/cast
+orchestrator builds five required invocations and one optional generic-layout
+invocation. `run_recovery_invocations()` already returns their ordered values;
+both the orchestrator and its private lowerer helper currently discard them.
+
+Strict expected-failure cases require the exact five- or six-element tuple to
+pass through both layers without reordering, filtering, or copying. This unit
+does not capture the result at the production call site and does not change the
+unconditional phase reconciliation. In particular, the optional layout result
+still contains a non-mutating `iterations` field that must not later be treated
+as mutation evidence. Production remains unchanged at this characterization
+checkpoint.

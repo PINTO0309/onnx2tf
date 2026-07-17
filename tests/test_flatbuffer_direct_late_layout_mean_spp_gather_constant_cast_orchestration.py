@@ -248,6 +248,62 @@ def test_late_layout_runner_preserves_both_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the late layout runner and lowerer helper still discard ordered "
+        "pass results"
+    ),
+)
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_late_layout_returns_ordered_results_through_lowerer_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    context = _context(use_layout_state=True)
+    expected_ids = (
+        LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS
+        if include_layout_transpose
+        else LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_REQUIRED_PASS_IDS
+    )
+    expected_results = tuple(
+        {f"mutation_{index}": index + 1}
+        for index in range(len(expected_ids))
+    )
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(invocation.pass_id for invocation in invocations) == tuple(
+            expected_ids
+        )
+        assert tuple(expected_pass_ids) == tuple(expected_ids)
+        assert phase_name == (
+            "late layout/mean/SPP/gather/constant-fold/cast"
+        )
+        return expected_results
+
+    monkeypatch.setattr(
+        late_layout_mean_spp_gather_constant_cast_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    result = run_late_layout_mean_spp_gather_constant_cast(
+        context,
+        include_layout_transpose=include_layout_transpose,
+    )
+
+    assert result == expected_results
+    _, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+    assert isinstance(helper.body[0].value.func, ast.Name)
+    assert (
+        helper.body[0].value.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast"
+    )
+
+
 def test_late_layout_has_one_required_policy_production_call() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [
