@@ -10394,3 +10394,9 @@ counter is zero. Strict characterization therefore requires a starting tensor
 count and a dictionary containing the unchanged two counters plus clamped net
 `pruned_unused_tensors` at the direct very-late call. The independently consumed
 `fallback_conv_input_stats` occurrence remains unchanged.
+
+The direct call now records `very_late_conv_input_tensor_count` and builds
+`_very_late_conv_input_stats` from the unchanged two counters plus clamped net
+tensor reduction. The fallback call and its reconciliation guard remain
+unchanged. The direct summary is observation-only and is followed by the same
+stale channel-shuffle repair.

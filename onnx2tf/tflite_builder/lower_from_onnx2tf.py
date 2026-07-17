@@ -5306,7 +5306,14 @@ def lower_onnx_to_ir(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
     )
-    _run_indexed_conv_input_adapter_repairs(model_ir)
+    very_late_conv_input_tensor_count = len(model_ir.tensors)
+    _very_late_conv_input_stats = {
+        **_run_indexed_conv_input_adapter_repairs(model_ir),
+        "pruned_unused_tensors": max(
+            0,
+            int(very_late_conv_input_tensor_count - len(model_ir.tensors)),
+        ),
+    }
     run_stale_nchw_channel_shuffle_repair(
         model_ir,
         layout_state=session.layout_state,

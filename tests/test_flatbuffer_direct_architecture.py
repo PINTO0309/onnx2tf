@@ -5006,6 +5006,15 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert isinstance(resolve_boundary.value, ast.Call)
     assert isinstance(resolve_boundary.value.func, ast.Name)
     assert resolve_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"
+    conv_input_count = lowerer.body[invocation_index + 3]
+    assert isinstance(conv_input_count, ast.Assign)
+    assert isinstance(conv_input_count.targets[0], ast.Name)
+    assert conv_input_count.targets[0].id == "very_late_conv_input_tensor_count"
+    conv_input_stats = lowerer.body[invocation_index + 4]
+    assert isinstance(conv_input_stats, ast.Assign)
+    assert isinstance(conv_input_stats.targets[0], ast.Name)
+    assert conv_input_stats.targets[0].id == "_very_late_conv_input_stats"
+    assert isinstance(conv_input_stats.value, ast.Dict)
 
 
 def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:

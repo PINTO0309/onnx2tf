@@ -2191,3 +2191,27 @@ following stale-channel-shuffle owner, or reconciliation decisions. Validate
 indexed Conv-input repairs, very-late orchestration, dynamic-Reshape, core,
 pass-efficiency, architecture, and TensorFlow import blocking sequentially.
 Commit and push only; do not create or update a pull request.
+
+## Very-late indexed Conv-input repair implementation checkpoint
+
+The direct call now records `very_late_conv_input_tensor_count` and builds
+`_very_late_conv_input_stats` by spreading the runner's unchanged two counters
+and adding clamped `pruned_unused_tensors`.
+
+This captures cleanup-only pruning from both child owners without rerunning
+either repair. The fallback-path `fallback_conv_input_stats` assignment and its
+existing reconciliation decision are unchanged. The direct summary remains
+observation-only between `_very_late_dynamic_reshape_stats` and the stale NCHW
+channel-shuffle repair.
+
+Focused indexed-owner, legacy-compatibility, dynamic-Reshape, very-late, and
+architecture coverage is `42 passed, 255 deselected`. The expanded sequential
+gate, explicitly including indexed Conv-input and legacy Conv-layout suites, is
+`1265 passed in 30.75s`. Ruff, Python bytecode compilation, and whitespace
+validation pass.
+
+At resume, inspect the immediately following
+`run_stale_nchw_channel_shuffle_repair()` owner. Confirm its result schema,
+pruning behavior, and production occurrence count before selecting the
+very-late call for an independent observation point. Commit and push only; do
+not create or update a pull request.

@@ -429,10 +429,10 @@ def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None
     assert isinstance(previous.targets[0], ast.Name)
     assert previous.targets[0].id == "_very_late_normalization_stats"
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Expr)
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_run_indexed_conv_input_adapter_repairs"
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "very_late_conv_input_tensor_count"
 
     direct_statements = [
         statement
@@ -450,10 +450,6 @@ def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None
     assert direct_statements[1] is invocation
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the very-late Conv-input repair result is discarded",
-)
 def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     dynamic_index = next(
