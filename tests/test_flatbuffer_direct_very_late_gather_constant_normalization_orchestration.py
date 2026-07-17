@@ -506,6 +506,60 @@ def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> No
     assert fallback.value.func.id == "_run_indexed_conv_input_adapter_repairs"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late stale channel-shuffle result is discarded",
+)
+def test_very_late_stale_channel_shuffle_captures_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    conv_stats_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_very_late_conv_input_stats"
+    )
+    invocation = lowerer.body[conv_stats_index + 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_very_late_stale_channel_shuffle_stats"
+    )
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == "run_stale_nchw_channel_shuffle_repair"
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 2
+    keyword_paths = {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in invocation.value.keywords
+    }
+    assert keyword_paths == {
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+    following = lowerer.body[conv_stats_index + 2]
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == "_repair_nchw_concat_transpose_conv_axes"
+
+    occurrences = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_stale_nchw_channel_shuffle_repair"
+    ]
+    assert len(occurrences) == 1
+    assert occurrences[0] is invocation.value
+
+
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = [

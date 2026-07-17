@@ -10400,3 +10400,10 @@ The direct call now records `very_late_conv_input_tensor_count` and builds
 tensor reduction. The fallback call and its reconciliation guard remain
 unchanged. The direct summary is observation-only and is followed by the same
 stale channel-shuffle repair.
+
+That following stale NCHW channel-shuffle owner has one production occurrence
+and one fixed repair counter. It changes only Concat axis and associated tensor
+metadata, counts each repair, and performs neither pruning nor topology
+mutation. Strict characterization therefore selects the direct call for a
+future `_very_late_stale_channel_shuffle_stats` assignment without a proxy or
+summary adapter.

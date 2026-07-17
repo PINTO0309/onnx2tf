@@ -2215,3 +2215,23 @@ At resume, inspect the immediately following
 pruning behavior, and production occurrence count before selecting the
 very-late call for an independent observation point. Commit and push only; do
 not create or update a pull request.
+
+## Very-late stale channel-shuffle characterization checkpoint
+
+`run_stale_nchw_channel_shuffle_repair()` has one production occurrence. Its
+single `repaired_nchw_channel_shuffle_concat_gathers` counter covers all
+changes to the Concat axis and related tensor metadata. The owner performs no
+pruning and removes no operators, so the raw result is complete mutation
+evidence.
+
+Strict expected-failure coverage requires
+`_very_late_stale_channel_shuffle_stats` immediately after
+`_very_late_conv_input_stats`, preserves ModelIR/LayoutState/diagnostics
+forwarding, and freezes the following NCHW Concat/Transpose/Conv axis repair.
+Focused shuffle-owner and very-late coverage is `21 passed, 1 xfailed`.
+
+At implementation, replace only the direct expression with the assignment. Do
+not add a tensor-count proxy, summary adapter, reconciliation consumer, or
+second pass invocation. Validate shuffle layout, very-late orchestration, core,
+pass-efficiency, architecture, and TensorFlow import blocking sequentially.
+Commit and push only; do not create or update a pull request.
