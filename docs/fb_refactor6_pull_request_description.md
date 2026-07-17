@@ -1793,4 +1793,11 @@ and one indexed removal turn all 27 former xfails green. Focused coverage now
 has 50 green cases, including scalar-bias and single-index contracts, while
 both production calls remain unchanged. Resume by mechanically extracting the
 corrected owner with exact AST and owner/wrapper equality; do not create a pull
-request.
+request. That extraction is now complete in
+`passes/attention_preproj_ranklift_layout.py`. Its 563-line function AST is
+exact to checkpoint `727c19c6`, the lowerer retains a one-return compatibility
+wrapper, and both production calls are unchanged. Sixteen direct owner/wrapper
+families produce identical statistics and complete normalized ModelIR state.
+Resume by inventorying the existing focused coverage for the next unextracted
+raw owner, `_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` (209
+lines), before semantic or ownership changes. Do not create a pull request.

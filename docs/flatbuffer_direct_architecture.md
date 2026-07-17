@@ -8757,6 +8757,23 @@ valid statistics, NumPy-exact outputs, fixed point, or both production calls.
 The 563-line count is descriptive only; 2,000 remains the ONNX operation-count
 tier threshold.
 
+Ownership now resides in
+`passes/attention_preproj_ranklift_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `727c19c6` are each 563 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias,
+retains the historical private name as a one-return compatibility wrapper, and
+keeps both production calls unchanged. The focused module does not import the
+lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary and multiple branches,
+reversed SUB, scalar and dynamic metadata, per-axis quantization, leading/tail
+shape ownership, zero-match no-prune, rank-sensitive bias rejection,
+BatchMatMul flags, missing bias/output metadata, reverse topology, a public
+internal alias, and duplicate source producers. Statistics and complete
+normalized ModelIR state are identical in every case. The mechanical move does
+not alter public APIs, artifacts, dependencies, corpus policy, ordered runtime
+behavior, or TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

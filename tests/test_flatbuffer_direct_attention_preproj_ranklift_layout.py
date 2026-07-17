@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains,
 )
+from onnx2tf.tflite_builder.passes.attention_preproj_ranklift_layout import (
+    _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains as _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains_owner,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -223,6 +226,65 @@ def _append_identity_consumer(
     _tensor(model_ir, output_name, list(source.shape))
     model_ir.outputs.append(output_name)
     model_ir.operators.append(OperatorIR("IDENTITY", [input_name], [output_name]))
+
+
+def _owner_wrapper_case(case: str) -> ModelIR:
+    if case == "multiple":
+        return _model(branches=2, binary_ops=["ADD", "MUL"])
+    if case == "reversed-sub":
+        return _model(binary_ops=["SUB"], reverse_binary_inputs={0})
+
+    model_ir = _model()
+    if case == "scalar-bias":
+        bias = model_ir.tensors["branch0_bias"]
+        bias.shape = []
+        bias.shape_signature = []
+        bias.data = np.asarray(0.25, dtype=np.float32)
+    elif case == "dynamic":
+        model_ir.tensors["x"].shape_signature = [1, 1, -1, 4]
+        model_ir.tensors["lead"].shape_signature = [-1, 1, 4]
+        model_ir.tensors["branch0_bmm"].shape_signature = [-1, 1, 8]
+        model_ir.tensors["branch0_binary"].shape_signature = [-1, 1, 8]
+    elif case == "per-axis":
+        for name in ("branch0_bmm", "branch0_binary"):
+            model_ir.tensors[name].quantization = QuantParamIR(
+                scale=[0.1] * 8,
+                zero_point=[0] * 8,
+                quantized_dimension=2,
+            )
+    elif case == "variable-lead-shape":
+        model_ir.tensors["lead_shape"].is_variable = True
+    elif case == "public-tail-shape":
+        model_ir.inputs.append("branch0_tail_shape")
+    elif case == "unmatched":
+        _tensor(model_ir, "unused", [1])
+        model_ir.tensors["lead_shape"].data = np.asarray([3, 2, 4], dtype=np.int32)
+    elif case == "rank-sensitive-bias":
+        bias = model_ir.tensors["branch0_bias"]
+        bias.shape = [3, 1, 8]
+        bias.shape_signature = [3, 1, 8]
+        bias.data = np.ones([3, 1, 8], dtype=np.float32)
+    elif case == "adj-x":
+        model_ir.operators[1].options["adjX"] = True
+    elif case == "missing-bias":
+        del model_ir.tensors["branch0_bias"]
+    elif case == "missing-output":
+        del model_ir.tensors["branch0_output"]
+    elif case == "reverse-topology":
+        model_ir.operators[0], model_ir.operators[1] = (
+            model_ir.operators[1],
+            model_ir.operators[0],
+        )
+    elif case == "public-internal":
+        model_ir.inputs.append("lead")
+    elif case == "duplicate-source":
+        model_ir.operators.extend(
+            [
+                OperatorIR("IDENTITY", ["branch0_output"], ["x"]),
+                OperatorIR("IDENTITY", ["branch0_output"], ["x"]),
+            ]
+        )
+    return model_ir
 
 
 def test_attention_preproj_ranklift_rewrites_one_branch() -> None:
@@ -572,25 +634,107 @@ def test_attention_preproj_ranklift_reuses_one_graph_index(
     assert refresh_count == 1
 
 
-def test_attention_preproj_ranklift_keeps_raw_owner_and_calls() -> None:
-    lowering_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
-    lowering_source = lowering_path.read_text(encoding="utf-8")
-    lowering_tree = ast.parse(lowering_source)
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary",
+        "multiple",
+        "reversed-sub",
+        "scalar-bias",
+        "dynamic",
+        "per-axis",
+        "variable-lead-shape",
+        "public-tail-shape",
+        "unmatched",
+        "rank-sensitive-bias",
+        "adj-x",
+        "missing-bias",
+        "missing-output",
+        "reverse-topology",
+        "public-internal",
+        "duplicate-source",
+    ],
+)
+def test_attention_preproj_ranklift_owner_and_wrapper_are_identical(
+    case: str,
+) -> None:
+    owner_model = _owner_wrapper_case(case)
+    wrapper_model = copy.deepcopy(owner_model)
+
+    owner_stats = (
+        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains_owner(
+            owner_model
+        )
+    )
+    wrapper_stats = _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(
+        wrapper_model
+    )
+
+    assert wrapper_stats == owner_stats
+    assert _normalize(wrapper_model) == _normalize(owner_model)
+
+
+def test_attention_preproj_ranklift_keeps_owner_wrapper_and_calls() -> None:
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "attention_preproj_ranklift_layout.py"
+    )
+    pass_source = pass_path.read_text(encoding="utf-8")
+    pass_tree = ast.parse(pass_source)
     owner = next(
         node
-        for node in lowering_tree.body
+        for node in pass_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name
         == "_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains"
     )
     assert owner.end_lineno - owner.lineno + 1 == 563
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 1
-    owner_source = ast.get_source_segment(lowering_source, owner)
+    owner_source = ast.get_source_segment(pass_source, owner)
     assert owner_source is not None
     assert "graph_index = ModelIRGraphIndex(model_ir)" in owner_source
     assert "_build_tensor_consumer_map(model_ir)" not in owner_source
     assert "graph_index.remove_operator(int(reshape_idx))" in owner_source
     assert "_prune_unused_tensors(model_ir)" in owner_source
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and (
+            any(
+                alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+                for alias in node.names
+            )
+            if isinstance(node, ast.Import)
+            else node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        )
+        for node in pass_tree.body
+    )
+
+    lowering_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains"
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    wrapper_call = wrapper.body[0].value
+    assert isinstance(wrapper_call, ast.Call)
+    assert isinstance(wrapper_call.func, ast.Name)
+    assert (
+        wrapper_call.func.id
+        == "_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains_pass"
+    )
+    assert len(wrapper_call.args) == 1
+    assert isinstance(wrapper_call.args[0], ast.Name)
+    assert wrapper_call.args[0].id == "model_ir"
+    assert wrapper_call.keywords == []
 
     lowerer = next(
         node

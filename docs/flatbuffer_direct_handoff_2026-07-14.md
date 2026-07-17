@@ -12522,3 +12522,50 @@ AST identity and direct owner/wrapper equality for valid multiple/binary/scalar/
 dynamic/quantized cases plus constant, broadcast, flag, metadata, topology, and
 atomic rejection cases. Validate sequentially, commit and push, and do not
 create a pull request.
+
+## Attention pre-projection rank-lift ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/attention_preproj_ranklift_layout.py`. Its
+function and the corrected raw owner at checkpoint `727c19c6` are each 563
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains_pass` alias
+and keeps the historical private name as a one-return wrapper. Both production
+calls remain unchanged. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary and two-branch
+rewrites, reversed SUB, scalar bias, dynamic signatures, per-axis QDIM,
+variable leading and public-input tail shape rejection, zero-match no-prune,
+rank-sensitive bias, `adjX`, missing bias/output metadata, reverse topology, a
+public internal alias, and duplicate source producers. Deep-copied executions
+produce identical statistics and complete normalized ModelIR state, including
+buffers, quantization, options, provenance, topology, metadata, lineage, and
+diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 563 lines each;
+- focused safety plus owner/wrapper contract: `66 passed in 0.59s`;
+- focused contract, attention Gather cleanup, six adjacent extracted bridge/
+  collapse contracts, and ordered architecture suite:
+  `813 passed in 18.20s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.28s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. PR #952 remains closed;
+no pull request was created, reopened, or updated.
+
+At restart, inventory the next substantive unextracted raw owner before editing
+it: the 209-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`. Unlike the two
+attention owners, it already has the focused
+`test_flatbuffer_direct_elementwise_roundtrip_nchw_nhwc.py` fixture. First
+measure the existing positive/rejection/topology/metadata/quantization/pruning/
+fixed-point and production-call coverage, move or extend only missing focused
+contracts, and record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.
