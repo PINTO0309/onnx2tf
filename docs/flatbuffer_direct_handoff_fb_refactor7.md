@@ -1137,3 +1137,23 @@ propagate one small orchestration cluster's mutation/prune evidence. The broad
 phase barrier must remain unconditional until every intervening owner has
 complete accounting. Commit and push only; do not create or update a pull
 request.
+
+## Late hard-activation cluster evidence characterization checkpoint
+
+Moving backward through the terminal interval, the late hard-activation/layout
+pair is the next bounded cluster. The required hard-activation owner and
+optional generic-layout owner both may prune on zero rewrites; the layout result
+also contains non-mutating `iterations`. The orchestrator and private helper
+currently discard the recovery utility's ordered one- or two-result tuple.
+
+Strict expected-failure coverage requires raw tuple propagation, tuple-length
+validation, four fixed layout mutation keys, `iterations` filtering, required
+counter preservation, and net `pruned_unused_tensors`. The production call must
+capture count/results/summary in order while preserving its Hardswish-SE and
+pre-Concat boundaries. No reconciliation guard changes.
+
+At implementation, return the raw tuple through both runner layers, add a pure
+summary helper, and stage `_late_hard_activation_stats` at the existing call
+site. Validate both policies, malformed lengths, pruning, owner order, shared
+state, core, architecture, pass efficiency, and TensorFlow import blocking
+sequentially. Commit and push only; do not create or update a pull request.

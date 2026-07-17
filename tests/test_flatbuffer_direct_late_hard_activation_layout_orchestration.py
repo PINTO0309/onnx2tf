@@ -230,6 +230,141 @@ def test_late_hard_activation_layout_runner_preserves_both_instrumented_orders(
     assert events == list(expected_ids)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the late hard-activation runner still discards ordered results",
+)
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_late_hard_activation_returns_and_summarizes_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    context = _context()
+    expected_ids = active_late_hard_activation_layout_pass_ids(
+        include_layout_transpose=include_layout_transpose,
+    )
+    hard_result = {
+        "rewritten_hardsigmoid_transpose_passthrough_chains": 2,
+        "rewritten_hardsigmoid_mul_transpose_passthrough_chains": 3,
+    }
+    layout_result = {
+        "iterations": 8,
+        "removed_identity_transpose": 4,
+        "removed_inverse_transpose_pairs": 5,
+        "removed_inverse_transpose_fanout_branches": 6,
+        "composed_consecutive_transpose_pairs": 7,
+    }
+    expected_results = (
+        (hard_result, layout_result)
+        if include_layout_transpose
+        else (hard_result,)
+    )
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(invocation.pass_id for invocation in invocations) == tuple(
+            expected_ids
+        )
+        assert tuple(expected_pass_ids) == tuple(expected_ids)
+        assert phase_name == "late hard-activation/layout"
+        return expected_results
+
+    monkeypatch.setattr(
+        late_hard_activation_layout_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    results = run_late_hard_activation_layout(
+        context,
+        include_layout_transpose=include_layout_transpose,
+    )
+    summarize = getattr(
+        late_hard_activation_layout_orchestration,
+        "summarize_late_hard_activation_layout_mutations",
+    )
+    summary = summarize(
+        results,
+        include_layout_transpose=include_layout_transpose,
+        pruned_unused_tensors=9,
+    )
+
+    assert results == expected_results
+    assert summary == {
+        **hard_result,
+        "removed_identity_transpose": (
+            4 if include_layout_transpose else 0
+        ),
+        "removed_inverse_transpose_pairs": (
+            5 if include_layout_transpose else 0
+        ),
+        "removed_inverse_transpose_fanout_branches": (
+            6 if include_layout_transpose else 0
+        ),
+        "composed_consecutive_transpose_pairs": (
+            7 if include_layout_transpose else 0
+        ),
+        "pruned_unused_tensors": 9,
+    }
+    assert "iterations" not in summary
+    with pytest.raises(
+        ValueError,
+        match=r"late hard-activation mutation summary expected [12] pass results",
+    ):
+        summarize(
+            (),
+            include_layout_transpose=include_layout_transpose,
+            pruned_unused_tensors=0,
+        )
+
+    _, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the lowerer does not capture late hard-activation mutation evidence",
+)
+def test_lowerer_captures_late_hard_activation_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = (
+        "late_hard_activation_tensor_count",
+        "late_hard_activation_results",
+        "_late_hard_activation_stats",
+    )
+    assignment_indices = {}
+    assignments = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+        target_names[2]: first_index + 2,
+    }
+    result_call = assignments[target_names[1]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == LATE_HARD_ACTIVATION_LAYOUT
+    summary_call = assignments[target_names[2]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == (
+        "summarize_late_hard_activation_layout_mutations"
+    )
+    assert {keyword.arg for keyword in summary_call.keywords} == {
+        "include_layout_transpose",
+        "pruned_unused_tensors",
+    }
+
+
 def test_late_hard_activation_layout_preserves_required_invocation_option() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [

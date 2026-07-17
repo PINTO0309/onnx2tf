@@ -10072,3 +10072,15 @@ The terminal call now assigns its unchanged two-counter dictionary to
 after `_late_layout_cluster_stats`, and immediately following unconditional
 shape reconciliation are preserved. The underscored result is staged for a
 future complete phase aggregate and is not yet consumed.
+
+Moving backward, the late hard-activation/layout pair is the next complete
+cluster boundary. Its required hard-activation owner and optional generic
+layout owner both prune unused tensors even when rewrite counters are zero, and
+the layout result also contains non-mutating `iterations`. Both runner layers
+currently discard the ordered one- or two-result tuple.
+
+Strict expected-failure contracts require raw tuple propagation, a fixed
+mutation-only summary with four zero-default layout keys, and net tensor-prune
+accounting. The lowerer must capture count/results/summary in three adjacent
+statements between the existing Hardswish-SE rewrite and pre-Concat cleanup.
+No phase reconciliation consumes this evidence yet.
