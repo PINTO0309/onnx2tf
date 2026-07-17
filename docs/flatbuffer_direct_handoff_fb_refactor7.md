@@ -1750,3 +1750,23 @@ At resume, inspect the immediately preceding
 owner. Confirm its occurrence count, fixed result schema, and whether pruning
 can occur with a zero counter before staging evidence. Commit and push only; do
 not create or update a pull request.
+
+## Pre-terminal affine InstanceNorm dual-statistics characterization checkpoint
+
+The indexed dual-statistics InstanceNorm residual/add/resize owner has four
+production occurrences, three of them direct top-level calls. Its one fixed
+counter is complete mutation evidence because unused-tensor pruning occurs only
+after a positive rewrite; an explicit prune-hook test freezes that behavior.
+
+Strict expected-failure coverage selects only the last direct call, between the
+terminal residual/Mul/Concat/Conv owner and
+`pre_terminal_affine_tensor_count`, and requires
+`_pre_terminal_affine_instancenorm_dualstats_stats`. The two earlier direct
+calls and nested indexed-convergence occurrence remain unchanged.
+
+At implementation, replace only that exact direct expression, update the first
+terminal-affine boundary contracts, and preserve ModelIR and Session LayoutState
+forwarding. Validate the complete indexed dual-statistics owner,
+terminal-affine, pre-ADD, channel-slice, core, pass-efficiency, architecture,
+and TensorFlow import blocking sequentially. Commit and push only; do not create
+or update a pull request.

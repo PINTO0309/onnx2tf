@@ -10265,3 +10265,11 @@ The first recovery now stages those three assignments and reuses
 tensor-count delta. The second occurrence retains the separate
 `terminal_affine_*` targets. Both summaries remain observation-only and no
 reconciliation branch consumes either result.
+
+Immediately before the first terminal affine count, the indexed dual-statistics
+InstanceNorm residual/add/resize owner has the last of three direct production
+calls. It returns one fixed counter and prunes only after a positive rewrite,
+so its raw result is complete mutation evidence. Strict characterization
+selects only that last direct call for a future
+`_pre_terminal_affine_instancenorm_dualstats_stats` assignment; the earlier
+direct and nested occurrences remain unchanged.
