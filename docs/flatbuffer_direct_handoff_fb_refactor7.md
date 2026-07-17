@@ -1813,3 +1813,29 @@ dual-statistics and first terminal-affine boundary contracts. Validate the
 complete indexed residual/Mul/Concat owner, dual-statistics, terminal-affine,
 pre-ADD, core, pass-efficiency, architecture, and TensorFlow import blocking
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Pre-terminal affine InstanceNorm residual/Mul/Concat implementation checkpoint
+
+Only the last direct InstanceNorm residual/Mul/Concat/Conv call now assigns its
+unchanged result to
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`. The two earlier
+direct calls and nested indexed-convergence occurrence remain unchanged.
+
+The staged counter is complete because pruning remains positive-only. It is
+observation-only, and the following staged dual-statistics owner, first
+terminal-affine recovery, and all reconciliation decisions retain their order
+and behavior.
+
+Focused complete residual/Mul/Concat, dual-statistics, terminal-affine, and
+architecture coverage is `321 passed in 1.59s`. The sequential
+residual/Mul/Concat, dual-statistics, indexed/compatibility pre-ADD,
+channel-slice, pad, terminal-slice, callback, affine, bridge, SPP, QKV,
+hard-activation, SINet, late-layout, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `1117 passed in 29.74s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the immediately preceding
+`_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains` owner.
+Confirm its occurrence forms, fixed result schema, and prune behavior before
+selecting the last direct call for evidence. Commit and push only; do not create
+or update a pull request.

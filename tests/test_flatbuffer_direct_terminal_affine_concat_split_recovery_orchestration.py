@@ -598,7 +598,12 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
     assert layout_keyword.value.attr == "layout_state"
 
     previous = lowerer.body[affine_count_index - 2]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
@@ -627,10 +632,6 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
     assert direct_statements[2] is invocation
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal InstanceNorm residual/Mul/Concat result is discarded",
-)
 def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     dualstats_index = next(
