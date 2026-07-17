@@ -1416,3 +1416,22 @@ in 29.28s`. Ruff, Python bytecode compilation, and whitespace validation pass.
 At resume, inspect the immediately preceding terminal strided-slice/pad/concat
 raw owner. Confirm its return and prune contract before staging evidence.
 Commit and push only; do not create or update a pull request.
+
+## Second terminal slice/pad/concat evidence characterization checkpoint
+
+The strided-slice/pad/concat bridge owner prunes only after a positive rewrite,
+and its transactional rejection and idempotence coverage make the single
+counter complete mutation evidence. Two direct production calls use this owner,
+with the second terminal affine recovery between them.
+
+A strict expected-failure contract requires only the second call to assign
+`_terminal_slice_pad_concat_stats`. It freezes the preceding terminal affine
+recovery, following `late_spp_results`, direct-call count of two, and first call
+as an unchanged expression. No arguments, owner behavior, or reconciliation
+guard changes.
+
+At implementation, replace the exact second expression and update late-SPP,
+terminal-affine, and architecture boundary tests. Validate the complete bridge
+owner suite and adjacent terminal orchestration, core, pass efficiency,
+architecture, and TensorFlow import blocker sequentially. Commit and push only;
+do not create or update a pull request.

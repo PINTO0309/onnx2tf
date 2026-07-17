@@ -10166,3 +10166,9 @@ The runner and lowerer delegate now return the ordered pair. The pure
 results and maps them to the two declared keys. Production stages
 `late_spp_results` and `_late_spp_stats`; no unrelated fields or prune proxy are
 added, and the pair remains observation-only.
+
+The preceding strided-slice/pad/concat owner also prunes only after a positive
+rewrite, so its one counter is complete evidence. Two direct production calls
+surround the second terminal affine recovery. Strict characterization selects
+only the second call and requires `_terminal_slice_pad_concat_stats` between
+that recovery and `late_spp_results`; the first call remains an expression.
