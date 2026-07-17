@@ -2737,3 +2737,26 @@ GraphIndex, pruning, guard, or sort behavior. Validate dynamic Reshape,
 safety fallback, static reconciliation, core, pass efficiency, architecture,
 and TensorFlow import blocking sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Safety-fallback placeholder-MatMul implementation checkpoint
+
+The fallback owner now runs exactly once into
+`fallback_placeholder_matmul_stats`. The lowerer initializes
+`_fallback_placeholder_matmul_static_shape_stats` with both complete zero keys
+and replaces it with the opt-in reconciliation result only when
+`restored_placeholder_matmul_flattened_inputs` is positive.
+
+No matcher, GraphIndex edit, positive-only pruning, guard, reconciliation
+eligibility, or following topological sort changed. The former inline call is
+only made explicit and its two results are retained.
+
+Focused fallback placeholder-MatMul validation is `8 passed, 11 deselected`.
+The broader sequential fallback-owner, reconciliation, convergence, core,
+pass-efficiency, architecture, and TensorFlow import-blocking gate is `464
+passed in 26.93s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, audit the following fallback unbound-input repair owner and its
+guarded reconciliation. Confirm whether it performs cleanup or layout
+maintenance outside its rewrite counter before selecting that boundary. Commit
+and push only; do not create or update a pull request.

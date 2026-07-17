@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -265,16 +264,17 @@ def test_safety_fallback_stages_se_fc_gather_reconciliation_evidence() -> None:
     } == {"include_mutation_count": "True"}
 
     following = body[cluster_index + 3]
-    assert isinstance(following, ast.If)
-    assert "_restore_placeholder_matmul_flattened_inputs(fallback_ir)" in (
-        ast.unparse(following.test)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "fallback_placeholder_matmul_stats"
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == (
+        "_restore_placeholder_matmul_flattened_inputs"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback placeholder-MatMul owner and reconciliation results are discarded",
-)
 def test_safety_fallback_stages_placeholder_matmul_reconciliation_evidence() -> (
     None
 ):

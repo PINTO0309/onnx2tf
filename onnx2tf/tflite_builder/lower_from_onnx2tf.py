@@ -5479,13 +5479,25 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
+        fallback_placeholder_matmul_stats = (
+            _restore_placeholder_matmul_flattened_inputs(fallback_ir)
+        )
+        _fallback_placeholder_matmul_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
-            _restore_placeholder_matmul_flattened_inputs(fallback_ir).get(
+            fallback_placeholder_matmul_stats.get(
                 "restored_placeholder_matmul_flattened_inputs",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_placeholder_matmul_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         _topologically_sort_operators(fallback_ir)
         _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
         run_consecutive_mul_constants_cleanup(

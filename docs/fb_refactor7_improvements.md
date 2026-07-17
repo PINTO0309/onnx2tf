@@ -112,6 +112,11 @@ The fallback SINet-shuffle and SE/FC/Gather aggregate now stages the same
 complete reconciliation evidence. Its three rewrite counters, cleanup-only
 tensor delta, combined guard, and following fallback order are unchanged.
 
+The fallback placeholder-MatMul restore is no longer embedded in its guard.
+Its single invocation is staged, and a stable zero reconciliation value is
+replaced by opt-in complete evidence only after a positive restore. The
+positive-only pruning contract and following sort remain unchanged.
+
 ## Smaller internal owners
 
 - Typed ONNX `Constant` lowering is isolated in its op-family module while
@@ -148,7 +153,8 @@ The subsequent safety-fallback norm-evidence checkpoint extends that gate to
 `446 passed in 27.35s`; dynamic-rank-one result staging extends it to `447
 passed in 27.34s`; and broadcast reconciliation staging extends it to `451
 passed in 27.03s`. The SE/FC/Gather reconciliation checkpoint extends the
-current focused branch gate to `463 passed in 27.00s`.
+focused branch gate to `463 passed in 27.00s`; placeholder-MatMul staging
+extends it to `464 passed in 26.93s`.
 
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
@@ -161,6 +167,7 @@ unit should determine whether the fallback dynamic-rank-one evidence can safely
 guard either following refresh. If equivalence is not locally provable, it
 should leave both refreshes unchanged. The next local audit is the combined
 fallback placeholder-MatMul restore predicate plus its guarded reconciliation.
-Any new mutation evidence must preserve the recursive fallback boundary,
-current pass order, TensorFlow-free boundary, dependency set, and sequential
-validation policy.
+The next local audit is the fallback unbound-input repair and its guarded
+reconciliation. Any new mutation evidence must preserve the recursive fallback
+boundary, current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

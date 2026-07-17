@@ -2261,10 +2261,10 @@ opt-in complete result replace the discarded return inside the unchanged
 combined guard. No owner, predicate term, or pass order is altered.
 
 The fallback placeholder-MatMul restore has one complete counter: its tensor
-pruning executes only after a positive restore. Characterization separates the
-inline owner call from its guard and requires both the owner result and
-complete reconciliation result to be staged, while preserving the single
-invocation and following topological sort.
+pruning executes only after a positive restore. The inline owner call is
+separated from its guard, and both the owner result and complete reconciliation
+result are staged while preserving the single invocation and following
+topological sort.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
