@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -8432,6 +8434,64 @@ def test_absolute_final_mixed_singleton_concat_reconciles_only_after_change() ->
     assert len(get_calls) == 1
     assert isinstance(get_calls[0].args[0], ast.Constant)
     assert get_calls[0].args[0].value == counter_name
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert len(reconcile.value.args) == 1
+    assert isinstance(reconcile.value.args[0], ast.Name)
+    assert reconcile.value.args[0].id == "model_ir"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the absolute-final consecutive-Reshape runner reconciles shapes "
+        "even when all three complete mutation counters are zero"
+    ),
+)
+def test_absolute_final_consecutive_reshape_reconciles_only_after_change() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    expected_counters = {
+        "removed_noop_reshape_chains",
+        "rewritten_consecutive_reshape_passthrough_chains",
+        "rewritten_fanout_bypass_reshape_passthrough_chains",
+    }
+    assignment_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "run_consecutive_reshape_cleanup"
+    )
+
+    guard = lowerer.body[assignment_index + 1]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert {
+        str(call.args[0].value)
+        for call in get_calls
+        if len(call.args) >= 1 and isinstance(call.args[0], ast.Constant)
+    } == expected_counters
+    assert len(get_calls) == len(expected_counters)
     assert len(guard.body) == 1
     reconcile = guard.body[0]
     assert isinstance(reconcile, ast.Expr)

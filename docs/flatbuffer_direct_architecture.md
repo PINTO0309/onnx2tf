@@ -9700,3 +9700,13 @@ counter adds exactly one reconciliation over the zero-counter path, while the
 complete owner suite preserves positive and no-op behavior. The unrelated
 PReLU and SE/FC/Gather boundaries remain unconditional pending their separate
 mutation-accounting contracts.
+
+The absolute-final consecutive-Reshape runner is the next characterized scan
+boundary. Its three returned counters cover no-op removal, consecutive-chain
+bypass, and fan-out bypass. The fan-out path also increments the aggregate
+consecutive counter, and tensor pruning/LayoutState synchronization occur only
+after a positive mutation count. A no-candidate fixture freezes the exact
+all-zero result, unchanged ModelIR, skipped diagnostic, and absence of pass-state
+construction. Production still reconciles unconditionally at this checkpoint;
+a strict architecture expectation requires one immediate guard over all three
+counters before that call may change.

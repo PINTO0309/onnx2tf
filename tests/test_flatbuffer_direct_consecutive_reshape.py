@@ -118,3 +118,28 @@ def test_consecutive_reshape_runner_preserves_output_name_for_noop() -> None:
     assert model_ir.outputs == ["output"]
     assert diagnostics[0]["status"] == "changed"
     assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+def test_consecutive_reshape_runner_preserves_model_without_candidate() -> None:
+    model_ir = ModelIR("consecutive_reshape_no_candidate")
+    model_ir.inputs = ["input"]
+    model_ir.outputs = ["output"]
+    model_ir.tensors = {
+        "input": _tensor("input", [1, 2, 3]),
+        "output": _tensor("output", [1, 2, 3]),
+    }
+    model_ir.operators = [OperatorIR("RELU", ["input"], ["output"])]
+    before = repr(model_ir)
+    diagnostics: list[dict] = []
+
+    stats = run_consecutive_reshape_cleanup(model_ir, diagnostics=diagnostics)
+
+    assert stats == {
+        "removed_noop_reshape_chains": 0,
+        "rewritten_consecutive_reshape_passthrough_chains": 0,
+        "rewritten_fanout_bypass_reshape_passthrough_chains": 0,
+    }
+    assert repr(model_ir) == before
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "skipped"
+    assert diagnostics[0]["metrics"]["state_built"] is False

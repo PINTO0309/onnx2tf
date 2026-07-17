@@ -266,3 +266,22 @@ when their sum is positive. Characterize the exact terminal call before
 changing it. Do not guard the PReLU or SE/FC/Gather boundaries without first
 making their mutation accounting complete. Commit and push only; do not create
 or update a pull request.
+
+## Consecutive-Reshape reconciliation characterization checkpoint
+
+The absolute-final `run_consecutive_reshape_cleanup()` is now characterized as
+the next complete-counter boundary. Its three results cover no-op removal,
+consecutive-chain rewrites, and fan-out bypass rewrites. The fan-out path also
+increments the aggregate rewrite counter, and cleanup/synchronization only run
+after a positive mutation. A new no-candidate fixture freezes the exact
+all-zero result, byte-for-byte-equivalent ModelIR representation, skipped
+diagnostic, and no pass-state construction.
+
+Production remains unchanged. A strict expected-failure architecture contract
+requires the terminal runner result to be assigned and its immediately
+following shape reconciliation to be guarded by all three exact counters. At
+implementation, keep the runner in place with the same LayoutState and
+diagnostics. Add zero-counter and one-counter-per-key lowerer wiring coverage,
+then run the consecutive-Reshape, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked suites sequentially. Commit and push only; do not
+create or update a pull request.
