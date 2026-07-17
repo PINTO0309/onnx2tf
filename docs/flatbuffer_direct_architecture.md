@@ -10030,3 +10030,16 @@ so this checkpoint changes no reconciliation or ModelIR behavior. Focused tests
 verify both policies and both return boundaries. The next step must normalize
 the optional layout dictionary by mutation keys before it can participate in a
 phase aggregate; its `iterations` value is not a change counter.
+
+The next cluster-local contract is a normalized mutation summary. Strict
+expected-failure fixtures require a fixed schema for both policies: four
+generic-layout mutation keys initialized to zero when layout cleanup is
+disabled, every dictionary from the five required passes, and one
+`pruned_unused_tensors` count. The generic layout `iterations` key must never
+appear in the summary.
+
+The terminal call site is also required to record tensor count immediately
+before the cluster, capture the raw ordered results, and derive the summary from
+their exact net tensor reduction. This remains observation-only: the following
+Expand/Squeeze rewrite and unconditional phase reconciliation do not consume
+the summary at this checkpoint. Production is unchanged.

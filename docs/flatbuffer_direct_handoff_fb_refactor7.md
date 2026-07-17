@@ -1051,3 +1051,25 @@ without guarding the broad phase reconciliation yet. The aggregate must map
 the optional layout result to its four mutation keys, retain each required
 pass dictionary, and account for any zero-rewrite pruning performed by those
 owners. Commit and push only; do not create or update a pull request.
+
+## Late layout cluster mutation summary characterization checkpoint
+
+The raw five- or six-result tuple is now available, but it is not safe to pass
+directly to `_stats_have_positive_count()` because the optional layout result
+contains the non-mutating `iterations` field. Strict expected-failure coverage
+defines a fixed summary: the four layout mutation keys, all required-pass
+mutation dictionaries, and `pruned_unused_tensors` from the cluster's net
+tensor-count reduction. Layout keys are explicit zeros when the optional pass
+is disabled, and `iterations` is absent.
+
+The terminal call site must record tensor count, capture the ordered raw tuple,
+and compute this summary in three adjacent statements. The subsequent
+Expand/Squeeze owner and unconditional reconciliation remain unchanged and do
+not consume the summary yet.
+
+At implementation, add a pure validating summary function to the orchestration
+module and capture its result at the current production call. Preserve the raw
+runner/helper return contract and all owner order. Add no reconciliation guard.
+Validate both policies, malformed result length, net pruning, structure, core,
+architecture, pass efficiency, and TensorFlow import blocking sequentially.
+Commit and push only; do not create or update a pull request.
