@@ -291,6 +291,149 @@ def test_terminal_affine_concat_split_runner_preserves_instrumented_order(
     assert events == list(TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the terminal affine runner still discards ordered results",
+)
+def test_terminal_affine_returns_and_summarizes_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    result_keys = (
+        ("optimized_fold_mul_add_mul_affine_chains",),
+        ("optimized_transpose_mul_add_const_prepost_nhwc_chains",),
+        ("optimized_concat_mul_add_transpose_nhwc_bridge_chains",),
+        ("optimized_concat_mul_add_transpose_add_nhwc_bridge_chains",),
+        ("optimized_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",),
+        ("optimized_concat_tree_mul_add_transpose_nhwc_bridge_chains",),
+        ("optimized_singleton_gate_conv_concat_nhwc_bridge_blocks",),
+        ("optimized_transpose_unary_split_concat_single_post_nchw",),
+        ("optimized_transpose_split_channelwise_tail_to_single_post_nchw",),
+        ("optimized_transpose_binary_split_channelwise_tail_to_single_post_nchw",),
+        (
+            "sanitized_probable_nhwc_axis_sensitive_ops",
+            "inserted_probable_nhwc_terminal_transposes",
+        ),
+    )
+    value = 1
+    expected_results = []
+    expected_summary: dict[str, int] = {}
+    for keys in result_keys:
+        result: dict[str, int] = {}
+        for key in keys:
+            result[key] = value
+            expected_summary[key] = value
+            value += 1
+        expected_results.append(result)
+    expected_tuple = tuple(expected_results)
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(
+            invocation.pass_id for invocation in invocations
+        ) == TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS
+        assert (
+            tuple(expected_pass_ids)
+            == TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS
+        )
+        assert phase_name == "terminal affine/concat/split recovery"
+        return expected_tuple
+
+    monkeypatch.setattr(
+        terminal_affine_concat_split_recovery_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    results = run_terminal_affine_concat_split_recovery(context)
+    summarize = getattr(
+        terminal_affine_concat_split_recovery_orchestration,
+        "summarize_terminal_affine_concat_split_mutations",
+    )
+    summary = summarize(results, pruned_unused_tensors=13)
+
+    assert results == expected_tuple
+    assert summary == {**expected_summary, "pruned_unused_tensors": 13}
+    with pytest.raises(
+        ValueError,
+        match=r"terminal affine mutation summary expected 11 pass results",
+    ):
+        summarize((), pruned_unused_tensors=0)
+
+    _, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the second terminal affine call lacks mutation evidence capture",
+)
+def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = (
+        "terminal_affine_tensor_count",
+        "terminal_affine_results",
+        "_terminal_affine_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+        target_names[2]: first_index + 2,
+    }
+    result_call = assignments[target_names[1]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+    summary_call = assignments[target_names[2]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == (
+        "summarize_terminal_affine_concat_split_mutations"
+    )
+    assert {keyword.arg for keyword in summary_call.keywords} == {
+        "pruned_unused_tensors"
+    }
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+    )
+    following = lowerer.body[first_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_terminal_slice_pad_concat_stats"
+
+    recovery_statements = [
+        statement
+        for statement in lowerer.body
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(recovery_statements) == 2
+    assert isinstance(recovery_statements[0], ast.Expr)
+    assert recovery_statements[1] is lowerer.body[first_index + 1]
+
+
 def test_terminal_affine_concat_split_module_does_not_import_lowerer() -> None:
     module_path = (
         REPO_ROOT

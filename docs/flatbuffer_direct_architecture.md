@@ -10178,3 +10178,10 @@ The second call now assigns its unchanged result to
 expression from the second assignment while resolving both to the same owner.
 No tensor-count proxy is added, and the staged counter remains unused by a
 reconciliation guard.
+
+The preceding terminal affine recovery has eleven ordered child owners and
+twelve declared mutation keys; the final sanitizer owns two keys. Child prune
+conditions differ, so strict characterization requires raw tuple propagation,
+exact eleven-result validation, fixed-key extraction, and one cluster-wide net
+prune counter. Only the second of two production recovery calls may stage
+count/results/summary; the first remains an expression.

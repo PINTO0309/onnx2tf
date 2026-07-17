@@ -1462,3 +1462,25 @@ At resume, inspect the second terminal affine recovery's ordered child results.
 Its current result is discarded and several child owners may prune, so
 characterize complete mutation evidence before extending the terminal
 aggregate. Commit and push only; do not create or update a pull request.
+
+## Second terminal affine mutation evidence characterization checkpoint
+
+Runtime schema probing on an empty ModelIR confirms eleven ordered results and
+twelve declared mutation keys. The final probable-NHWC sanitizer contributes
+two keys; each other owner contributes one. Because child prune conditions
+differ, the cluster needs an explicit net tensor-reduction count in addition to
+its raw counters.
+
+Strict expected-failure coverage requires ordered tuple propagation through the
+orchestrator and lowerer delegate, exact eleven-result validation, fixed-key
+summary extraction, and clamped `pruned_unused_tensors`. Only the second of two
+production recovery calls must stage starting tensor count, raw results, and
+`_terminal_affine_stats`; the first stays an expression. The preceding first
+slice/pad/concat call and following staged second call remain exact boundaries.
+
+At implementation, add the pure summary, return raw results through both
+layers, and replace only the second call with three adjacent assignments.
+Validate malformed length, all twelve keys, net pruning, owner order, both
+production calls, complete recovery coverage, core, pass efficiency,
+architecture, and TensorFlow import blocking sequentially. Commit and push
+only; do not create or update a pull request.
