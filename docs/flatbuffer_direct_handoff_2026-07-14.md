@@ -14791,3 +14791,55 @@ middle pair is not duplicated. Preserve the historical zero-argument helper,
 fixed normalization flags, sole caller, and outer terminal boundaries as a
 delegate. Validate sequentially, commit and push, and do not create a pull
 request.
+
+## Explicit very-late gather/constant/normalization orchestration: completed state
+
+The characterized parent now delegates to
+`passes/very_late_gather_constant_normalization_orchestration.py`. A frozen
+`VeryLateGatherConstantNormalizationContext` contains only ModelIR, layout
+state, and diagnostics. The four canonical stable IDs name transpose-gather
+axis cleanup, constant-input folding, redundant-cast cleanup, and
+normalization-pad cleanup in their effective runtime order.
+
+Every builder creates one fresh `ModelIRPassStateScope`. It constructs the
+outer gather and fixed-policy normalization invocations locally, then composes
+the middle pair with `build_constant_fold_cast_invocations` while supplying
+that same scope. The existing constant-fold/cast builder therefore remains the
+single source of its two argument contracts; all four immutable invocations
+share ModelIR, layout, diagnostics, and scope by identity. The shared executor
+validates the flattened four-ID sequence before execution.
+
+The historical very-late helper is now a zero-argument delegate at the same
+sole terminal boundary. Its former call to the historical constant-fold/cast
+helper is replaced by builder composition; that helper retains its one
+remaining late-layout parent caller. Architecture accounting now records both
+constant-fold/cast executions explicitly, increasing the ordered runner total
+from 118 to 120 without changing runtime multiplicity. The efficiency fixture
+executes the explicit parent and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused very-late plus composed constant-fold/cast orchestration:
+  `17 passed in 0.70s`;
+- both focused files plus ordered architecture:
+  `265 passed in 16.65s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.25s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, fixed normalization policy, runtime order, terminal boundaries,
+invocation multiplicity, shared-scope efficiency, and TensorFlow isolation are
+unchanged. PR #952 remains closed, no branch PR is open, and no pull request
+was created, reopened, or updated.
+
+At restart, inventory the next small shared-scope helper. The positional
+target-ModelIR/target-layout SE-FC/gather-fanout pair is a likely candidate;
+freeze both target forms, diagnostics routing, shared scope, caller
+multiplicity, and boundaries before deciding how its context should be created.
+Validate sequentially, keep real-model conversion minimal, commit and push
+only, and do not create a pull request.

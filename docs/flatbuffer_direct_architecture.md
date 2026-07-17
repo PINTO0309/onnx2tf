@@ -9324,3 +9324,15 @@ order, `include_instance=False`, `include_flatten=True`, the sole terminal
 call, and both outer boundaries. The eventual phase should compose the existing
 constant-fold/cast builder with the parent scope and expose all four effective
 owner IDs without duplicating the middle pair's argument construction.
+
+That parent now uses `VeryLateGatherConstantNormalizationContext` and four
+flattened stable IDs in
+`passes/very_late_gather_constant_normalization_orchestration.py`. Each build
+creates one fresh scope, builds the outer gather and fixed-policy normalization
+steps locally, and splices in the existing constant-fold/cast builder with the
+same external scope. The historical helper remains a zero-argument delegate at
+the same terminal boundary. Constant-fold/cast now has one historical helper
+caller plus one explicit builder composition; multiplicity-aware architecture
+accounting records both executions and the efficiency fixture retains one
+graph-index build. Focused, architecture, pass-efficiency, core, and
+TensorFlow-import-blocked suites pass.

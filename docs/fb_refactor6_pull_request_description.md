@@ -2359,3 +2359,20 @@ architecture suite passed 252 tests, the 30 pass-efficiency tests and all 11
 TensorFlow-import-blocked tests passed, and targeted static checks passed.
 Runtime behavior and all public/dependency contracts remain unchanged. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+That parent is now implemented in
+`passes/very_late_gather_constant_normalization_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context and four flattened stable owner IDs. Every
+build creates one fresh pass-state scope, constructs the outer gather and
+fixed-policy normalization invocations, and composes the existing constant-
+fold/cast builder with the same scope. This preserves one source for the middle
+pair's contracts and one graph-index build across all four owners. The
+historical helper remains a zero-argument delegate with the same sole terminal
+call and outer boundaries. Its former constant-fold/cast helper call becomes
+explicit builder composition, leaving that helper's one late-layout caller
+unchanged. Multiplicity-aware architecture accounting now records both middle-
+pair executions. The 265-test focused/architecture set, 30 pass-efficiency
+tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests pass. No
+public API, artifact, dependency, fixed normalization policy, runtime order,
+terminal boundary, scope-sharing behavior, or TensorFlow isolation changed. PR
+#952 remains closed, and no pull request was created, reopened, or updated.

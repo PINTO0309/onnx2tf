@@ -257,6 +257,10 @@ from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
     ConstantFoldCastContext,
     run_constant_fold_cast,
 )
+from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
+    VeryLateGatherConstantNormalizationContext,
+    run_very_late_gather_constant_normalization,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4115,26 +4119,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_very_late_gather_constant_normalization_pass_cluster() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        _run_constant_fold_cast_cleanup_pass_cluster(
-            state_scope=state_scope,
-        )
-        run_normalization_pad_layout_cleanup(
-            model_ir,
-            include_instance=False,
-            include_flatten=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_very_late_gather_constant_normalization(
+            very_late_gather_constant_normalization_context
         )
 
     def _run_se_fc_gather_channel_fanout_pass_cluster(
@@ -4543,6 +4529,13 @@ def lower_onnx_to_ir(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+    )
+    very_late_gather_constant_normalization_context = (
+        VeryLateGatherConstantNormalizationContext(
+            model_ir=model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     layout_recovery_context = LayoutRecoveryContext(
         model_ir=model_ir,

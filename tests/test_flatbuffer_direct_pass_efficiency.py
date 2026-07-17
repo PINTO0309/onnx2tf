@@ -92,6 +92,10 @@ from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
     ConstantFoldCastContext,
     run_constant_fold_cast,
 )
+from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
+    VeryLateGatherConstantNormalizationContext,
+    run_very_late_gather_constant_normalization,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -618,29 +622,12 @@ def test_very_late_gather_constant_normalization_cluster_reuses_one_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_transpose_gather_axis_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_constant_input_fold_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_redundant_cast_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_normalization_pad_layout_cleanup(
-        model_ir,
-        include_instance=False,
-        include_flatten=True,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_very_late_gather_constant_normalization(
+        VeryLateGatherConstantNormalizationContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1

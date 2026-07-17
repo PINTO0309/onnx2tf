@@ -72,6 +72,9 @@ from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration impor
 from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
     CONSTANT_FOLD_CAST_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
+    VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -99,6 +102,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *QKV_ATTENTION_PASS_IDS,
     *DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
     *CONSTANT_FOLD_CAST_PASS_IDS,
+    *VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -4614,45 +4618,29 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_transpose_gather_axis_cleanup",
-        "_run_constant_fold_cast_cleanup_pass_cluster",
+        "run_constant_input_fold_cleanup",
+        "run_redundant_cast_cleanup",
         "run_normalization_pad_layout_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-    normalization_call = calls["run_normalization_pad_layout_cleanup"]
-    include_instance = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_instance"
     )
-    include_flatten = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_flatten"
+    assert VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS == expected_order
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert (
+        statement.value.func.id
+        == "run_very_late_gather_constant_normalization"
     )
-    assert isinstance(include_instance.value, ast.Constant)
-    assert include_instance.value.value is False
-    assert isinstance(include_flatten.value, ast.Constant)
-    assert include_flatten.value.value is True
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert (
+        statement.value.args[0].id
+        == "very_late_gather_constant_normalization_context"
+    )
+    assert statement.value.keywords == []
 
     invocation_index = next(
         index
@@ -4720,13 +4708,13 @@ def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) == 1
     external_scope_invocations = [
         call
         for call in helper_invocations
         if any(keyword.arg == "state_scope" for keyword in call.keywords)
     ]
-    assert len(external_scope_invocations) == 2
+    assert len(external_scope_invocations) == 1
     for call in external_scope_invocations:
         scope_keyword = next(
             keyword
@@ -11857,6 +11845,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_quantized_prelu_cleanup",
         "run_constant_input_fold_cleanup",
         "run_redundant_cast_cleanup",
+        "run_transpose_gather_axis_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -11865,7 +11854,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert (
         len(calls)
         + sum(_orchestrated_pass_count(name) for name in runner_names)
-        == 118
+        == 120
     )
     for call in calls:
         diagnostics_keywords = [
@@ -12047,7 +12036,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_gather_axis_cleanup"
     ]
-    assert len(transpose_gather_axis_calls) == 3
+    assert (
+        len(transpose_gather_axis_calls)
+        + _orchestrated_pass_count("run_transpose_gather_axis_cleanup")
+        == 3
+    )
 
     transpose_gather_channel_fanout_calls = [
         call
