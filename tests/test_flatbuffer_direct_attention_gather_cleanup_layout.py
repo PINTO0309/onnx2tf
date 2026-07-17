@@ -25,6 +25,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.attention_gather_cleanup_layout import (
     _optimize_attention_gather_transpose_reshape_cleanup_chains as _optimize_attention_gather_transpose_reshape_cleanup_chains_owner,
 )
+from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
+    ATTENTION_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1014,7 +1017,13 @@ def test_attention_gather_cleanup_keeps_owner_wrapper_and_calls() -> None:
         and node.func.id
         == "_optimize_attention_gather_transpose_reshape_cleanup_chains"
     ]
-    assert len(calls) == 2
+    assert (
+        len(calls)
+        + ATTENTION_RECOVERY_PASS_IDS.count(
+            "_optimize_attention_gather_transpose_reshape_cleanup_chains"
+        )
+        == 2
+    )
     for call in calls:
         assert len(call.args) == 1
         assert isinstance(call.args[0], ast.Name)

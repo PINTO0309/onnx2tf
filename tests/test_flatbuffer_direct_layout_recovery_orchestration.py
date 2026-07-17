@@ -4,6 +4,20 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import layout_recovery_orchestration
+from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
+    ATTENTION_RECOVERY_PASS_IDS,
+    LAYOUT_RECOVERY_PASS_IDS,
+    LayoutRecoveryContext,
+    build_attention_recovery_invocations,
+    build_layout_recovery_invocations,
+    run_layout_reshape_attention_recovery_prefix,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -65,10 +79,43 @@ def _model_layout_contract(
     return ("model_ir",), keywords
 
 
+def _context() -> LayoutRecoveryContext:
+    model_ir = ModelIR("layout_recovery_orchestration_test")
+    return LayoutRecoveryContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+        boundary_batchmatmul_unary_cluster=lambda: None,
+        pre_concat_cleanup=lambda *args, **kwargs: None,
+        channel_shuffle_gather_cluster=lambda: None,
+    )
+
+
+def _normalize_new_contract(
+    invocation: layout_recovery_orchestration.RecoveryInvocation,
+    context: LayoutRecoveryContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context:
+            return "context"
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "session.layout_state"
+        if value is context.diagnostics:
+            return "session.diagnostics"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
+
+
 def test_layout_recovery_helpers_are_straight_line_closures() -> None:
     expected_lines = {
-        LAYOUT_PREFIX: 66,
-        ATTENTION_PREFIX: 51,
+        LAYOUT_PREFIX: 2,
+        ATTENTION_PREFIX: 4,
     }
     control_flow_nodes = (
         ast.AsyncFor,
@@ -102,8 +149,11 @@ def test_layout_recovery_helpers_are_straight_line_closures() -> None:
 
 
 def test_layout_recovery_prefix_preserves_exact_argument_contracts() -> None:
-    _, helper = _lowerer_and_helper(LAYOUT_PREFIX)
-    contracts = _call_contracts(helper)
+    context = _context()
+    contracts = {
+        step.pass_id: _normalize_new_contract(step, context)
+        for step in build_layout_recovery_invocations(context)
+    }
     model_only = (("model_ir",), {})
     no_arguments = ((), {})
     model_layout = _model_layout_contract()
@@ -133,13 +183,16 @@ def test_layout_recovery_prefix_preserves_exact_argument_contracts() -> None:
 
 
 def test_attention_recovery_prefix_preserves_exact_argument_contracts() -> None:
-    _, helper = _lowerer_and_helper(ATTENTION_PREFIX)
-    contracts = _call_contracts(helper)
+    context = _context()
+    contracts = {
+        step.pass_id: _normalize_new_contract(step, context)
+        for step in build_attention_recovery_invocations(context)
+    }
     model_only = (("model_ir",), {})
     model_layout = _model_layout_contract()
 
     assert contracts == {
-        LAYOUT_PREFIX: ((), {}),
+        LAYOUT_PREFIX: (("context",), {}),
         "_optimize_transpose_pre_add_nhwc_chains": model_layout,
         "_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains": model_layout,
         "_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains": model_layout,
@@ -164,7 +217,7 @@ def test_attention_recovery_prefix_preserves_exact_argument_contracts() -> None:
     }
 
 
-def test_layout_recovery_helpers_only_capture_model_and_session_state() -> None:
+def test_layout_recovery_wrappers_only_capture_explicit_context() -> None:
     for helper_name in (LAYOUT_PREFIX, ATTENTION_PREFIX):
         _, helper = _lowerer_and_helper(helper_name)
         called_names = {
@@ -180,4 +233,108 @@ def test_layout_recovery_helpers_only_capture_model_and_session_state() -> None:
             and node.id not in called_names
         }
 
-        assert loaded_data_names == {"model_ir", "session"}
+        assert loaded_data_names == {"layout_recovery_context"}
+
+
+def test_new_phase_specs_match_characterized_order_and_arguments() -> None:
+    context = _context()
+    lowerer, layout_helper = _lowerer_and_helper(LAYOUT_PREFIX)
+    _, attention_helper = _lowerer_and_helper(ATTENTION_PREFIX)
+    layout_invocations = build_layout_recovery_invocations(context)
+    attention_invocations = build_attention_recovery_invocations(context)
+
+    assert (
+        tuple(step.pass_id for step in layout_invocations) == LAYOUT_RECOVERY_PASS_IDS
+    )
+    assert (
+        tuple(step.pass_id for step in attention_invocations)
+        == ATTENTION_RECOVERY_PASS_IDS
+    )
+    assert _call_contracts(layout_helper) == {
+        "run_layout_recovery_prefix": (("layout_recovery_context",), {}),
+    }
+    assert _call_contracts(attention_helper) == {
+        "run_layout_reshape_attention_recovery_prefix": (
+            ("layout_recovery_context",),
+            {},
+        ),
+    }
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "layout_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert context_assignment.value.func.id == "LayoutRecoveryContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+        "boundary_batchmatmul_unary_cluster": (
+            "_run_boundary_batchmatmul_unary_layout_pass_cluster"
+        ),
+        "pre_concat_cleanup": "_optimize_transpose_pre_concat_nhwc_chains",
+        "channel_shuffle_gather_cluster": (
+            "_run_channel_shuffle_gather_layout_pass_cluster"
+        ),
+    }
+
+
+def test_new_attention_runner_executes_the_same_flattened_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_context = _context()
+    probe_steps = (
+        *build_layout_recovery_invocations(probe_context),
+        *build_attention_recovery_invocations(probe_context)[1:],
+    )
+    events: list[str] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append(pass_id)
+
+        return record
+
+    context_callbacks = {
+        probe_context.boundary_batchmatmul_unary_cluster,
+        probe_context.pre_concat_cleanup,
+        probe_context.channel_shuffle_gather_cluster,
+    }
+    for step in probe_steps:
+        if step.callback in context_callbacks:
+            continue
+        module_name = next(
+            name
+            for name, value in vars(layout_recovery_orchestration).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            layout_recovery_orchestration,
+            module_name,
+            recorder(step.pass_id),
+        )
+
+    context = LayoutRecoveryContext(
+        model_ir=probe_context.model_ir,
+        layout_state=probe_context.layout_state,
+        diagnostics=probe_context.diagnostics,
+        boundary_batchmatmul_unary_cluster=recorder(LAYOUT_RECOVERY_PASS_IDS[1]),
+        pre_concat_cleanup=recorder(LAYOUT_RECOVERY_PASS_IDS[12]),
+        channel_shuffle_gather_cluster=recorder(LAYOUT_RECOVERY_PASS_IDS[18]),
+    )
+
+    run_layout_reshape_attention_recovery_prefix(context)
+
+    assert events == [
+        *LAYOUT_RECOVERY_PASS_IDS,
+        *ATTENTION_RECOVERY_PASS_IDS[1:],
+    ]

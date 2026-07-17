@@ -8868,3 +8868,34 @@ new execution-order plus argument equality before switching production calls.
    native op and encoder-stage codegen boundaries.
 5. Measure warm-run conversion time and peak RSS on the active Tier 0-4 set,
    then document improvements and remaining normalized failures.
+
+## Layout-recovery orchestration boundary
+
+The repeated layout-recovery prefixes are now represented by the explicit
+`passes/layout_recovery_orchestration.py` phase boundary. Its frozen
+`LayoutRecoveryContext` carries the shared ModelIR, `LayoutState`, diagnostics,
+and exactly three lowerer-local composite callbacks. Thirty pass owners are
+imported directly from focused modules, so the phase module never imports or
+captures the central lowerer.
+
+`LAYOUT_RECOVERY_PASS_IDS` defines the nineteen-step layout prefix and
+`ATTENTION_RECOVERY_PASS_IDS` defines the fifteen-step attention prefix. Each
+step is an immutable `RecoveryInvocation` containing its stable ID, callable,
+positional arguments, and keyword arguments. Builders verify that their
+constructed order exactly matches the declared IDs before runners execute the
+steps. The attention runner nests the complete layout runner as its first
+explicit invocation, preserving the former closure structure and repetition.
+
+The lowerer constructs one context after defining the three injected
+composites. Its historical zero-argument helpers remain compatibility and
+call-site boundaries, but now delegate to the phase runners and capture only
+that context. Layout state and diagnostics are shared references by design;
+the frozen context prevents rebinding while allowing each pass to mutate the
+same validated conversion state as before.
+
+Tests own both sides of this boundary. The focused orchestration fixture fixes
+all stable IDs, argument routing, context capture, wrapper wiring, and
+instrumented flattened execution order. Architecture and individual pass
+fixtures count a stable orchestrated ID together with any remaining direct
+lowerer call, retaining the former total execution-count guarantee without
+depending on every call being visible in the lowerer AST.

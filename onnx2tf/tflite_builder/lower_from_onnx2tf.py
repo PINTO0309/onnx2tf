@@ -170,6 +170,11 @@ from onnx2tf.tflite_builder.passes.attention_preproj_ranklift_layout import (
 from onnx2tf.tflite_builder.passes.elementwise_roundtrip_nchw_nhwc_layout import (
     _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains as _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
+    LayoutRecoveryContext,
+    run_layout_recovery_prefix,
+    run_layout_reshape_attention_recovery_prefix,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4635,123 +4640,25 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    layout_recovery_context = LayoutRecoveryContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+        boundary_batchmatmul_unary_cluster=(
+            _run_boundary_batchmatmul_unary_layout_pass_cluster
+        ),
+        pre_concat_cleanup=_optimize_transpose_pre_concat_nhwc_chains,
+        channel_shuffle_gather_cluster=(
+            _run_channel_shuffle_gather_layout_pass_cluster
+        ),
+    )
+
     def _run_layout_recovery_prefix_pass_sequence() -> None:
-        _optimize_transpose_quant_dequant_bridges(model_ir)
-        _run_boundary_batchmatmul_unary_layout_pass_cluster()
-        _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        run_hard_activation_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_swish_transpose_passthrough_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_gelu_tanh_transpose_passthrough_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_center_size_offset_terminal_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_leakyrelu_transpose_passthrough_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_prelu_transpose_passthrough_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_elementwise_concat_conv_nhwc_groups(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_ndhwc_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _run_channel_shuffle_gather_layout_pass_cluster()
+        run_layout_recovery_prefix(layout_recovery_context)
 
     def _run_layout_reshape_attention_recovery_prefix() -> None:
-        _run_layout_recovery_prefix_pass_sequence()
-        _optimize_transpose_pre_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-        _optimize_gather_axis0_singleton_to_reshape_input_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
-        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            include_unary_passthrough=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        run_layout_reshape_attention_recovery_prefix(
+            layout_recovery_context
         )
 
     def _run_preadd_mean_attention_recovery_sequence() -> None:

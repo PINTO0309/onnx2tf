@@ -25,6 +25,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.reshape_transpose_collapse_layout import (
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains as _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains_owner,
 )
+from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
+    ATTENTION_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -748,7 +751,13 @@ def test_reshape_transpose_collapse_keeps_owner_wrapper_and_calls() -> None:
         and node.func.id
         == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
     ]
-    assert len(calls) == 2
+    assert (
+        len(calls)
+        + ATTENTION_RECOVERY_PASS_IDS.count(
+            "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+        )
+        == 2
+    )
     for call in calls:
         assert len(call.args) == 1
         assert isinstance(call.args[0], ast.Name)

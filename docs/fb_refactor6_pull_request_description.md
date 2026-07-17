@@ -1841,3 +1841,28 @@ flow. Resume by mapping every target to its module owner, preserving the three
 nested lowerer dependencies as explicit callbacks, and designing stable
 declarative phase IDs with old/new order and argument-equivalence tests. Do not
 create a pull request.
+
+That explicit orchestration boundary is now implemented in
+`passes/layout_recovery_orchestration.py`. A frozen context carries ModelIR,
+layout state, diagnostics, and exactly three injected lowerer-local composite
+callbacks. The remaining thirty extracted owners are imported directly. The
+module declares nineteen layout-recovery and fifteen attention-recovery stable
+IDs, represents every call as an immutable invocation specification, checks ID
+order for drift, and preserves the characterized positional/keyword arguments
+and flattened execution order.
+
+The central lowerer's historical nested helpers and outer call sites remain,
+but the helpers now delegate through the single explicit context, shrinking
+from 66 to 2 lines and from 51 to 4 lines. Focused contracts verify all IDs,
+arguments, context capture, wrapper wiring, and instrumented execution order;
+architecture and adjacent owner fixtures retain module ownership, compatibility
+wrappers, repetition boundaries, and total call-count guarantees across the new
+phase boundary. Sequential validation passed 6 focused orchestration tests, 32
+lowerer synthetic smoke tests, 248 architecture tests, the combined 900-test
+related suite, and all 11 TensorFlow-import-blocked optional-boundary tests.
+
+This mechanical extraction changes no public API, CLI behavior, artifacts,
+dependencies, corpus policy, exclusion policy, operation tier, pass order, or
+TensorFlow isolation. It does not add a real-model conversion or broad direct
+suite run. PR #952 remains closed, and this branch summary is documentation
+only; no pull request was created, reopened, or updated.

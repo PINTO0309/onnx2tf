@@ -12771,3 +12771,57 @@ and no lambda closure over mutable lowerer locals, then add direct old/new
 execution-order and argument-equivalence tests before changing production call
 sites. Keep the change mechanical, validate sequentially, commit and push, and
 do not create a pull request.
+
+## Explicit layout-recovery orchestration: completed state
+
+The two characterized nested sequences now delegate to
+`passes/layout_recovery_orchestration.py`. A frozen `LayoutRecoveryContext`
+owns the explicit ModelIR, layout-state, diagnostics, and three unavoidable
+lowerer-local callback dependencies. The phase module imports the other thirty
+pass owners directly; it does not import the central lowerer and uses no lambda
+closure over mutable lowerer locals.
+
+The module exposes nineteen stable layout-recovery IDs and fifteen stable
+layout/reshape/attention-recovery IDs. Immutable `RecoveryInvocation` values
+preserve every positional and keyword argument and execute in the characterized
+order. The attention sequence invokes the complete layout sequence as its
+first explicit step. Runtime assertions reject accidental drift between the
+declared IDs and constructed invocation order.
+
+The historical nested helper names and all outer call sites remain in place.
+Their bodies shrink from 66 to 2 lines and from 51 to 4 lines respectively,
+each capturing only the single explicit context. The three injected callbacks
+remain lowerer-local because they compose nested pass clusters; all other work
+is owned by the new phase module. Existing pass return values continue to be
+ignored exactly as before.
+
+Focused tests prove the stable ID lists, all thirty-four argument contracts,
+wrapper/context wiring, and identical flattened execution order under
+instrumented callbacks. The ordered architecture suite now treats stable phase
+IDs as first-class execution boundaries while retaining module-owner,
+compatibility-wrapper, repetition, and total-call-count checks. Four adjacent
+owner fixtures were adjusted to count one moved stable phase boundary in
+addition to the remaining direct lowerer calls; their owner and call-argument
+checks remain intact.
+
+Validation completed sequentially as follows:
+
+- focused orchestration contract: `6 passed in 0.58s`;
+- central lowerer synthetic smoke: `32 passed in 0.59s`;
+- ordered architecture suite: `248 passed in 18.11s`;
+- focused orchestration, nine adjacent extracted pass contracts, and ordered
+  architecture suite: `900 passed in 18.10s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.49s`.
+
+No real-model conversion or broad direct-suite repeat was added. This is a
+mechanical orchestration extraction: public API, CLI, artifacts, dependencies,
+corpus profiles, exclusions, operation tiers, pass order, repetition, and
+TensorFlow isolation are unchanged. PR #952 remains closed; no pull request
+was created, reopened, or updated.
+
+At restart, inventory and characterize the next self-contained orchestration
+cluster before moving it. Prefer a small focused fixture and stable phase IDs,
+retain lowerer-local composites as explicitly injected callbacks, and prove
+old/new order and argument equality before changing production wiring. Keep
+real-model conversions minimal and sequential, commit and push coherent
+checkpoints, and do not create a pull request.

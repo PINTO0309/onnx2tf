@@ -26,6 +26,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.elementwise_roundtrip_nchw_nhwc_layout import (
     _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains as _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains_owner,
 )
+from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
+    LAYOUT_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -726,11 +729,18 @@ def test_elementwise_roundtrip_nchw_nhwc_keeps_owner_wrapper_and_call() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains"
     ]
-    assert len(calls) == 1
-    assert len(calls[0].args) == 1
-    assert isinstance(calls[0].args[0], ast.Name)
-    assert calls[0].args[0].id == "model_ir"
-    assert calls[0].keywords == []
+    assert (
+        len(calls)
+        + LAYOUT_RECOVERY_PASS_IDS.count(
+            "_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains"
+        )
+        == 1
+    )
+    for call in calls:
+        assert len(call.args) == 1
+        assert isinstance(call.args[0], ast.Name)
+        assert call.args[0].id == "model_ir"
+        assert call.keywords == []
 
 
 def test_elementwise_roundtrip_nchw_nhwc_does_not_prune_unmatched_graph() -> None:
