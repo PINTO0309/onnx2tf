@@ -5628,7 +5628,9 @@ def lower_onnx_to_ir(
                 )
             )
             _topologically_sort_operators(fallback_ir)
-        _run_indexed_binary_layout_convergence(fallback_ir)
+        _fallback_binary_layout_convergence_stats = (
+            _run_indexed_binary_layout_convergence(fallback_ir)
+        )
         _topologically_sort_operators(fallback_ir)
         fallback_layout_problems = validate_model_ir_layout_annotations(
             fallback_ir

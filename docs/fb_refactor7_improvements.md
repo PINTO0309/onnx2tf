@@ -201,6 +201,11 @@ and the fallback now retains a stable complete reconciliation result without
 changing compression eligibility, reshape construction, pruning, sorting, or
 the following convergence owner.
 
+The fallback now also retains the complete indexed binary-layout convergence
+dictionary, extending the gate to `541 passed in 27.89s`. No extra
+reconciliation or scan is added: the owner already aggregates every broadcast,
+stale-Transpose, and shape mutation across its bounded rounds.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -208,7 +213,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next
-characterized unit should audit the fallback indexed binary-layout convergence
-result and its terminal sort/validation boundary. Any new mutation evidence
-must preserve the recursive fallback boundary, current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+characterized unit should audit the corresponding primary-path terminal layout
+validation and indexed binary-convergence boundary. Any new mutation evidence
+must preserve current pass order, TensorFlow-free boundary, dependency set,
+and sequential validation policy.

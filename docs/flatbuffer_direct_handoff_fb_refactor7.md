@@ -3204,3 +3204,26 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet result-capture contract; there
 are no unexpected failures.
+
+## Safety-fallback indexed binary-convergence implementation checkpoint
+
+Only the recursive fallback occurrence now assigns the complete convergence
+dictionary to `_fallback_binary_layout_convergence_stats`. The owner call
+remains single and retains its three-round cap, stable-round exit, owner order,
+single GraphIndex, and aggregate three-key schema.
+
+No additional reconciliation, sort, scan, or dependency is added. The
+following terminal sort and validation retain their order and now identify the
+result-capture assignment as the preceding owner boundary.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused convergence/high-rank/terminal-layout selection:
+  `15 passed, 13 deselected`
+- broad related gate plus rank-6 structure/numeric parity:
+  `541 passed in 27.89s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the corresponding primary-path terminal layout-validation and
+indexed binary-convergence boundary. Commit and push only; do not create or
+update a pull request.

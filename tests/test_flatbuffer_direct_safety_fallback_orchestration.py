@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -737,7 +736,11 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
     )
 
     convergence = body[stats_index + 3]
-    assert isinstance(convergence, ast.Expr)
+    assert isinstance(convergence, ast.Assign)
+    assert isinstance(convergence.targets[0], ast.Name)
+    assert convergence.targets[0].id == (
+        "_fallback_binary_layout_convergence_stats"
+    )
     assert ast.unparse(convergence.value) == (
         "_run_indexed_binary_layout_convergence(fallback_ir)"
     )
@@ -858,16 +861,16 @@ def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
     )
 
     following = body[stats_index + 3]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_fallback_binary_layout_convergence_stats"
+    )
     assert ast.unparse(following.value) == (
         "_run_indexed_binary_layout_convergence(fallback_ir)"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback indexed binary convergence result is discarded",
-)
 def test_safety_fallback_retains_indexed_binary_convergence_result() -> None:
     body = _safety_fallback_body(_lowerer())
     owner_index = next(

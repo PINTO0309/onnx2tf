@@ -2319,8 +2319,8 @@ boundary remain fixed.
 Indexed binary-layout convergence already aggregates the complete broadcast,
 stale-Transpose, and static-shape mutation counts for up to three rounds and
 stops after a stable round. Its fallback caller requires no additional
-reconciliation; characterization requires only retaining that complete result
-before the unchanged terminal sort and layout validation.
+reconciliation and retains that complete result before the unchanged terminal
+sort and layout validation.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
