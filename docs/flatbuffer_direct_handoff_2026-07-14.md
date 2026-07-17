@@ -15079,3 +15079,61 @@ and transfer its production accounting to the new parent IDs without changing
 the pair's effective multiplicity. Move the efficiency fixture to the full
 explicit policy, validate sequentially, commit and push only, and do not create
 or reopen a pull request.
+
+## Explicit late layout/mean/SPP/gather/constant-fold/cast orchestration: completed state
+
+The characterized parent now delegates to
+`passes/late_layout_mean_spp_gather_constant_cast_orchestration.py`. A frozen
+`LateLayoutMeanSPPGatherConstantCastContext` contains the main ModelIR, its
+optional layout state, and session diagnostics. The module exposes a five-ID
+required sequence and a six-ID full sequence. The full policy prepends layout-
+transpose cleanup; both policies then run mean/MUL/ADD/CONV layout cleanup,
+SPP cleanup, transpose-gather-axis cleanup, constant-input folding, and
+redundant-cast cleanup in the original order.
+
+Each builder creates one fresh `ModelIRPassStateScope`. It constructs the
+optional layout invocation and three fixed direct invocations locally, then
+composes `build_constant_fold_cast_invocations` with that exact external scope.
+All effective invocations therefore share the same ModelIR, layout state,
+diagnostics, and scope. The phase runner selects and validates the complete
+expected five- or six-ID sequence before executing it.
+
+The historical parent helper keeps its required keyword-only policy and is now
+a one-line delegate to a frozen main-model context. Its sole caller continues
+to forward `optimize_layout_transpose_chains`, and both outer boundaries are
+unchanged. The extraction removed the last lowerer caller of the standalone
+constant-fold/cast helper, so that dead helper, its context, and both imports
+were removed. Constant-fold/cast remains one reusable child builder shared by
+this parent and the very-late normalization parent.
+
+Architecture accounting replaces four direct owner calls and the standalone
+two-ID child accounting with the six full parent IDs. The effective ordered
+total remains 120, and constant-fold/cast remains represented twice across its
+two parent compositions. The efficiency fixture now calls the explicit full
+policy and still observes one graph-index build and nine diagnostics events.
+
+Sequential validation completed as follows:
+
+- focused late parent, constant-fold/cast child, and ordered architecture:
+  `267 passed in 18.21s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.24s` (`32` plus `11`);
+- targeted Ruff, formatting, Python compilation, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, optional policy, runtime order, caller multiplicity, boundaries,
+shared-scope efficiency, and TensorFlow isolation are unchanged. PR #952
+remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, characterize the smaller positional
+`_run_singleton_consecutive_reshape_pass_cluster`. Freeze its three owner
+contracts, fresh target-specific scope, both main-model callers, conditional
+fallback caller, target/layout forms, and every boundary before extraction.
+Validate sequentially, keep real-model conversion minimal, make separate
+characterization and implementation checkpoints, commit and push only, and do
+not create or reopen a pull request.

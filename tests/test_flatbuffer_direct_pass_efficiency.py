@@ -104,6 +104,10 @@ from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import
     TerminalBoundaryLayoutContext,
     run_terminal_boundary_layout,
 )
+from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
+    LateLayoutMeanSPPGatherConstantCastContext,
+    run_late_layout_mean_spp_gather_constant_cast,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1041,21 +1045,14 @@ def test_late_layout_mean_spp_gather_constant_cast_cluster_reuses_one_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_layout_transpose_cleanup,
-        run_mean_mul_add_conv_layout_cleanup,
-        run_spp_layout_cleanup,
-        run_transpose_gather_axis_cleanup,
-        run_constant_input_fold_cleanup,
-        run_redundant_cast_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_late_layout_mean_spp_gather_constant_cast(
+        LateLayoutMeanSPPGatherConstantCastContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_layout_transpose=True,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 9

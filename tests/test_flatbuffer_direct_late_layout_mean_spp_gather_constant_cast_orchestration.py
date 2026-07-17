@@ -4,29 +4,38 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import constant_fold_cast_orchestration
+from onnx2tf.tflite_builder.passes import (
+    late_layout_mean_spp_gather_constant_cast_orchestration,
+)
 from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
     CONSTANT_FOLD_CAST_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
+    LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS,
+    LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_REQUIRED_PASS_IDS,
+    LateLayoutMeanSPPGatherConstantCastContext,
+    build_late_layout_mean_spp_gather_constant_cast_invocations,
+    run_late_layout_mean_spp_gather_constant_cast,
 )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+PHASE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_layout_mean_spp_gather_constant_cast_orchestration.py"
+)
 LATE_LAYOUT = "_run_late_layout_mean_spp_gather_constant_cast_pass_cluster"
 CONSTANT_FOLD_CAST = "_run_constant_fold_cast_cleanup_pass_cluster"
-DIRECT_OWNER_IDS = (
-    "run_layout_transpose_cleanup",
-    "run_mean_mul_add_conv_layout_cleanup",
-    "run_spp_layout_cleanup",
-    "run_transpose_gather_axis_cleanup",
-)
-REQUIRED_OWNER_IDS = (
-    *DIRECT_OWNER_IDS[1:],
-    *CONSTANT_FOLD_CAST_PASS_IDS,
-)
-FULL_OWNER_IDS = (
-    DIRECT_OWNER_IDS[0],
-    *REQUIRED_OWNER_IDS,
-)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -54,19 +63,40 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected expression: {ast.dump(node)}")
 
 
-def _ordered_owner_calls(helper: ast.FunctionDef) -> list[ast.Call]:
-    calls = [
-        node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in {*DIRECT_OWNER_IDS, CONSTANT_FOLD_CAST}
-    ]
-    return sorted(calls, key=lambda call: call.lineno)
+def _context(*, use_layout_state: bool) -> LateLayoutMeanSPPGatherConstantCastContext:
+    model_ir = ModelIR("late_layout_mean_spp_gather_constant_cast_test")
+    return LateLayoutMeanSPPGatherConstantCastContext(
+        model_ir=model_ir,
+        layout_state=(
+            LayoutState.from_model_ir(model_ir) if use_layout_state else None
+        ),
+        diagnostics=[],
+    )
 
 
-def test_late_layout_signature_and_scope_are_explicit() -> None:
-    _, helper = _lowerer_and_helper()
+def _normalize_contract(
+    invocation: late_layout_mean_spp_gather_constant_cast_orchestration.RecoveryInvocation,
+    context: LateLayoutMeanSPPGatherConstantCastContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "layout_state"
+        if value is context.diagnostics:
+            return "diagnostics"
+        if isinstance(value, ModelIRPassStateScope):
+            return "state_scope"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
+
+
+def test_late_layout_context_and_delegate_are_explicit() -> None:
+    lowerer, helper = _lowerer_and_helper()
 
     assert helper.args.posonlyargs == []
     assert helper.args.args == []
@@ -77,6 +107,7 @@ def test_late_layout_signature_and_scope_are_explicit() -> None:
     assert helper.args.defaults == []
     assert helper.args.vararg is None
     assert helper.args.kwarg is None
+    assert len(helper.body) == 1
     assert not any(
         isinstance(
             node,
@@ -84,6 +115,7 @@ def test_late_layout_signature_and_scope_are_explicit() -> None:
                 ast.AsyncFor,
                 ast.AsyncWith,
                 ast.For,
+                ast.If,
                 ast.Match,
                 ast.Try,
                 ast.While,
@@ -92,86 +124,139 @@ def test_late_layout_signature_and_scope_are_explicit() -> None:
         )
         for node in ast.walk(helper)
     )
-
-    scope_calls = [
-        node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "ModelIRPassStateScope"
-    ]
-    assert len(scope_calls) == 1
-    assert tuple(_expression_path(argument) for argument in scope_calls[0].args) == (
-        "model_ir",
+        for node in ast.walk(helper)
+    )
+
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "run_late_layout_mean_spp_gather_constant_cast"
+    assert tuple(_expression_path(argument) for argument in call.args) == (
+        "late_layout_mean_spp_gather_constant_cast_context",
+    )
+    assert {
+        str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
+    } == {"include_layout_transpose": "include_layout_transpose"}
+
+    context_assignment = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "late_layout_mean_spp_gather_constant_cast_context"
+            for target in node.targets
+        )
+    )
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert (
+        context_assignment.value.func.id == "LateLayoutMeanSPPGatherConstantCastContext"
     )
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in scope_calls[0].keywords
-    } == {"layout_state": "session.layout_state"}
-
-
-def test_late_layout_preserves_flattened_owner_order_and_contracts() -> None:
-    _, helper = _lowerer_and_helper()
-    calls = _ordered_owner_calls(helper)
-
-    assert tuple(call.func.id for call in calls) == (
-        *DIRECT_OWNER_IDS,
-        CONSTANT_FOLD_CAST,
-    )
-    shared_contract = {
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
         "layout_state": "session.layout_state",
         "diagnostics": "session.diagnostics",
-        "state_scope": "state_scope",
     }
-    for call in calls[:-1]:
-        assert tuple(_expression_path(argument) for argument in call.args) == (
-            "model_ir",
-        )
-        assert {
-            str(keyword.arg): _expression_path(keyword.value)
-            for keyword in call.keywords
-        } == shared_contract
 
-    child_call = calls[-1]
-    assert child_call.args == []
+
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+@pytest.mark.parametrize("use_layout_state", [False, True])
+def test_late_layout_preserves_both_policy_contracts(
+    include_layout_transpose: bool,
+    use_layout_state: bool,
+) -> None:
+    context = _context(use_layout_state=use_layout_state)
+    invocations = build_late_layout_mean_spp_gather_constant_cast_invocations(
+        context,
+        include_layout_transpose=include_layout_transpose,
+    )
+    expected_ids = (
+        LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS
+        if include_layout_transpose
+        else LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_REQUIRED_PASS_IDS
+    )
+
+    assert tuple(invocation.pass_id for invocation in invocations) == expected_ids
+    shared_contract = (
+        ("model_ir",),
+        {
+            "layout_state": "layout_state",
+            "diagnostics": "diagnostics",
+            "state_scope": "state_scope",
+        },
+    )
     assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in child_call.keywords
-    } == {"state_scope": "state_scope"}
-    assert REQUIRED_OWNER_IDS == (
-        "run_mean_mul_add_conv_layout_cleanup",
-        "run_spp_layout_cleanup",
-        "run_transpose_gather_axis_cleanup",
-        "run_constant_input_fold_cleanup",
-        "run_redundant_cast_cleanup",
-    )
-    assert FULL_OWNER_IDS == (
-        "run_layout_transpose_cleanup",
-        *REQUIRED_OWNER_IDS,
-    )
+        invocation.pass_id: _normalize_contract(invocation, context)
+        for invocation in invocations
+    } == {pass_id: shared_contract for pass_id in expected_ids}
 
-
-def test_late_layout_optional_owner_has_one_exact_guard() -> None:
-    _, helper = _lowerer_and_helper()
-    conditionals = [
-        statement for statement in helper.body if isinstance(statement, ast.If)
+    scopes = [
+        dict(invocation.keyword_args)["state_scope"] for invocation in invocations
     ]
+    assert all(scope is scopes[0] for scope in scopes)
+    assert isinstance(scopes[0], ModelIRPassStateScope)
+    assert scopes[0].model_ir is context.model_ir
+    assert scopes[0].layout_state is context.layout_state
+    rebuilt_scope = dict(
+        build_late_layout_mean_spp_gather_constant_cast_invocations(
+            context,
+            include_layout_transpose=include_layout_transpose,
+        )[0].keyword_args
+    )["state_scope"]
+    assert rebuilt_scope is not scopes[0]
 
-    assert len(conditionals) == 1
-    conditional = conditionals[0]
-    assert isinstance(conditional.test, ast.Name)
-    assert conditional.test.id == "include_layout_transpose"
-    assert conditional.orelse == []
-    assert len(conditional.body) == 1
-    statement = conditional.body[0]
-    assert isinstance(statement, ast.Expr)
-    assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
-    assert statement.value.func.id == DIRECT_OWNER_IDS[0]
-    assert all(
-        call not in [node for node in ast.walk(conditional)]
-        for call in _ordered_owner_calls(helper)[1:]
+
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_late_layout_runner_preserves_both_instrumented_orders(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    context = _context(use_layout_state=True)
+    expected_ids = (
+        LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS
+        if include_layout_transpose
+        else LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_REQUIRED_PASS_IDS
     )
+    events: list[tuple[str, ModelIRPassStateScope]] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append((pass_id, kwargs["state_scope"]))
+
+        return record
+
+    for pass_id in LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS[
+        : -len(CONSTANT_FOLD_CAST_PASS_IDS)
+    ]:
+        monkeypatch.setattr(
+            late_layout_mean_spp_gather_constant_cast_orchestration,
+            pass_id,
+            recorder(pass_id),
+        )
+    for pass_id in CONSTANT_FOLD_CAST_PASS_IDS:
+        monkeypatch.setattr(
+            constant_fold_cast_orchestration,
+            pass_id,
+            recorder(pass_id),
+        )
+
+    run_late_layout_mean_spp_gather_constant_cast(
+        context,
+        include_layout_transpose=include_layout_transpose,
+    )
+
+    assert [pass_id for pass_id, _ in events] == list(expected_ids)
+    assert all(scope is events[0][1] for _, scope in events)
 
 
 def test_late_layout_has_one_required_policy_production_call() -> None:
@@ -214,3 +299,61 @@ def test_late_layout_preserves_outer_boundaries() -> None:
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
     assert following.value.func.id == "_replace_expand_dims_and_squeeze_with_reshape"
+
+
+def test_late_layout_composes_child_builder_without_lowerer_import() -> None:
+    tree = ast.parse(PHASE_PATH.read_text(encoding="utf-8"))
+    builder = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "build_late_layout_mean_spp_gather_constant_cast_invocations"
+    )
+    child_calls = [
+        node
+        for node in ast.walk(builder)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "build_constant_fold_cast_invocations"
+    ]
+
+    assert len(child_calls) == 1
+    child_call = child_calls[0]
+    assert len(child_call.args) == 1
+    assert isinstance(child_call.args[0], ast.Call)
+    assert isinstance(child_call.args[0].func, ast.Name)
+    assert child_call.args[0].func.id == "ConstantFoldCastContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in child_call.args[0].keywords
+    } == {
+        "model_ir": "context.model_ir",
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+    }
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in child_call.keywords
+    } == {"state_scope": "state_scope"}
+
+    imported_modules = {
+        str(node.module)
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    assert "onnx2tf.tflite_builder.lower_from_onnx2tf" not in imported_modules
+
+
+def test_late_layout_removes_dead_constant_fold_cast_lowerer_state() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    nested_function_names = {
+        node.name for node in lowerer.body if isinstance(node, ast.FunctionDef)
+    }
+    lowerer_names = {
+        node.id for node in ast.walk(lowerer) if isinstance(node, ast.Name)
+    }
+
+    assert CONSTANT_FOLD_CAST not in nested_function_names
+    assert "constant_fold_cast_context" not in lowerer_names
+    assert "run_constant_fold_cast" not in lowerer_names
+    assert "ConstantFoldCastContext" not in lowerer_names

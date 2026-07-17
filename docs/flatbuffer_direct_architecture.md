@@ -9389,3 +9389,17 @@ squeeze canonicalization. The eventual phase should compose the existing
 constant-fold/cast builder with its parent scope; after extraction, its dead
 lowerer delegate/context/imports can be removed while preserving two effective
 production executions of the constant-fold/cast pair.
+
+That parent now uses `LateLayoutMeanSPPGatherConstantCastContext`, five
+required IDs, and six full-policy IDs in
+`passes/late_layout_mean_spp_gather_constant_cast_orchestration.py`. Every
+build creates one fresh scope, conditionally prepends layout cleanup, builds
+three fixed direct owners, and composes the existing constant-fold/cast builder
+with the same scope. The historical helper is a required keyword-only delegate
+at the same sole caller and boundaries. Its extraction retires the now-dead
+lowerer constant-fold/cast helper, context, and imports. Production accounting
+replaces those two child IDs plus four direct calls with the six full parent
+IDs, retaining 120 effective ordered calls and two constant-fold/cast
+compositions. The full-policy efficiency fixture retains one graph-index build.
+Focused parent/child, architecture, pass-efficiency, core, and TensorFlow-
+import-blocked suites pass.

@@ -2437,3 +2437,19 @@ boundaries. The 253-test focused/architecture set, 30 pass-efficiency tests,
 and all 11 TensorFlow-import-blocked tests pass. Runtime behavior and all
 public/dependency contracts remain unchanged. PR #952 remains closed, and no
 pull request was created, reopened, or updated.
+
+That late parent now delegates to a dedicated phase with a frozen main ModelIR/
+layout/diagnostics context, five required IDs, and six full-policy IDs. Every
+build creates one fresh scope, conditionally prepends layout-transpose cleanup,
+constructs the three fixed owners, and composes the existing constant-fold/cast
+builder with the same scope. The required keyword-only helper, sole policy-
+forwarding caller, and outer boundaries are unchanged. Because the standalone
+constant-fold/cast lowerer helper then had no caller, its dead helper, context,
+and imports were removed; the reusable builder remains shared by two parents.
+Architecture accounting retains 120 effective calls and two executions of the
+child pair, while the full-policy efficiency fixture retains one graph-index
+build. The 267-test focused parent/child/architecture set, 30 pass-efficiency
+tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests pass. No
+public API, artifact, dependency, policy, runtime-order, boundary, scope-
+sharing, or TensorFlow-isolation contract changed. PR #952 remains closed, and
+no pull request was created, reopened, or updated.

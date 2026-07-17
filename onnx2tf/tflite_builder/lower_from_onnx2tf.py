@@ -253,10 +253,6 @@ from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration impor
     DuplicateQuantizedPReLUContext,
     run_duplicate_quantized_prelu,
 )
-from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
-    ConstantFoldCastContext,
-    run_constant_fold_cast,
-)
 from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
     VeryLateGatherConstantNormalizationContext,
     run_very_late_gather_constant_normalization,
@@ -268,6 +264,10 @@ from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration imp
 from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
     TerminalBoundaryLayoutContext,
     run_terminal_boundary_layout,
+)
+from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
+    LateLayoutMeanSPPGatherConstantCastContext,
+    run_late_layout_mean_spp_gather_constant_cast,
 )
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
@@ -4116,15 +4116,6 @@ def lower_onnx_to_ir(
             include_transpose=include_transpose,
         )
 
-    def _run_constant_fold_cast_cleanup_pass_cluster(
-        *,
-        state_scope: ModelIRPassStateScope | None = None,
-    ) -> None:
-        run_constant_fold_cast(
-            constant_fold_cast_context,
-            state_scope=state_scope,
-        )
-
     def _run_very_late_gather_constant_normalization_pass_cluster() -> None:
         run_very_late_gather_constant_normalization(
             very_late_gather_constant_normalization_context
@@ -4289,37 +4280,9 @@ def lower_onnx_to_ir(
         *,
         include_layout_transpose: bool,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        if include_layout_transpose:
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_mean_mul_add_conv_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        _run_constant_fold_cast_cleanup_pass_cluster(
-            state_scope=state_scope,
+        run_late_layout_mean_spp_gather_constant_cast(
+            late_layout_mean_spp_gather_constant_cast_context,
+            include_layout_transpose=include_layout_transpose,
         )
 
     def _run_late_spp_concat_unary_conv_pass_pair() -> None:
@@ -4488,11 +4451,6 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    constant_fold_cast_context = ConstantFoldCastContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
     very_late_gather_constant_normalization_context = (
         VeryLateGatherConstantNormalizationContext(
             model_ir=model_ir,
@@ -4504,6 +4462,13 @@ def lower_onnx_to_ir(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+    )
+    late_layout_mean_spp_gather_constant_cast_context = (
+        LateLayoutMeanSPPGatherConstantCastContext(
+            model_ir=model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     layout_recovery_context = LayoutRecoveryContext(
         model_ir=model_ir,

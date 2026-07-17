@@ -21,7 +21,13 @@ from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 CONSTANT_FOLD_CAST = "_run_constant_fold_cast_cleanup_pass_cluster"
-LATE_LAYOUT_PARENT = "_run_late_layout_mean_spp_gather_constant_cast_pass_cluster"
+LATE_LAYOUT_MODULE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_layout_mean_spp_gather_constant_cast_orchestration.py"
+)
 VERY_LATE_MODULE_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -31,19 +37,13 @@ VERY_LATE_MODULE_PATH = (
 )
 
 
-def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
+def _lowerer() -> ast.FunctionDef:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
-    lowerer = next(
+    return next(
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef) and node.name == CONSTANT_FOLD_CAST
-    )
-    return lowerer, helper
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -54,32 +54,6 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected expression: {ast.dump(node)}")
-
-
-def _direct_call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, ast.Expr)
-    assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
-    return statement.value.func.id
-
-
-def _parent(lowerer: ast.FunctionDef, name: str) -> ast.FunctionDef:
-    return next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef) and node.name == name
-    )
-
-
-def _direct_invocation_index(parent: ast.FunctionDef) -> int:
-    return next(
-        index
-        for index, statement in enumerate(parent.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == CONSTANT_FOLD_CAST
-    )
 
 
 def _context() -> ConstantFoldCastContext:
@@ -112,51 +86,19 @@ def _normalize_new_contract(
     )
 
 
-def test_constant_fold_cast_signature_and_delegate_are_explicit() -> None:
-    _, helper = _lowerer_and_helper()
+def test_constant_fold_cast_lowerer_delegate_and_context_are_retired() -> None:
+    lowerer = _lowerer()
+    nested_function_names = {
+        node.name for node in lowerer.body if isinstance(node, ast.FunctionDef)
+    }
+    lowerer_names = {
+        node.id for node in ast.walk(lowerer) if isinstance(node, ast.Name)
+    }
 
-    assert helper.args.args == []
-    assert helper.args.posonlyargs == []
-    assert [arg.arg for arg in helper.args.kwonlyargs] == ["state_scope"]
-    assert [_expression_path(value) for value in helper.args.kw_defaults] == [None]
-    assert helper.args.vararg is None
-    assert helper.args.kwarg is None
-    assert len(helper.body) == 1
-    assert not any(
-        isinstance(
-            node,
-            (
-                ast.AsyncFor,
-                ast.AsyncWith,
-                ast.For,
-                ast.If,
-                ast.Match,
-                ast.Try,
-                ast.While,
-                ast.With,
-            ),
-        )
-        for node in ast.walk(helper)
-    )
-    assert not any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "ModelIRPassStateScope"
-        for node in ast.walk(helper)
-    )
-
-    statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == "run_constant_fold_cast"
-    assert tuple(_expression_path(arg) for arg in call.args) == (
-        "constant_fold_cast_context",
-    )
-    assert {
-        str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
-    } == {"state_scope": "state_scope"}
+    assert CONSTANT_FOLD_CAST not in nested_function_names
+    assert "constant_fold_cast_context" not in lowerer_names
+    assert "run_constant_fold_cast" not in lowerer_names
+    assert "ConstantFoldCastContext" not in lowerer_names
 
 
 @pytest.mark.parametrize("use_external_scope", [False, True])
@@ -246,29 +188,39 @@ def test_constant_fold_cast_runner_preserves_both_instrumented_orders(
         assert isinstance(events[0][1], ModelIRPassStateScope)
 
 
-def test_constant_fold_cast_has_one_remaining_external_scope_delegate_call() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    owners: list[tuple[str, ast.Call]] = []
-    for parent in lowerer.body:
-        if not isinstance(parent, ast.FunctionDef):
-            continue
-        for statement in parent.body:
-            if not (
-                isinstance(statement, ast.Expr)
-                and isinstance(statement.value, ast.Call)
-                and isinstance(statement.value.func, ast.Name)
-                and statement.value.func.id == CONSTANT_FOLD_CAST
-            ):
-                continue
-            owners.append((parent.name, statement.value))
+def test_constant_fold_cast_builder_is_composed_by_late_layout_phase() -> None:
+    tree = ast.parse(LATE_LAYOUT_MODULE_PATH.read_text(encoding="utf-8"))
+    builder = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "build_late_layout_mean_spp_gather_constant_cast_invocations"
+    )
+    calls = [
+        node
+        for node in ast.walk(builder)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "build_constant_fold_cast_invocations"
+    ]
 
-    assert [name for name, _ in owners] == [LATE_LAYOUT_PARENT]
-    for _, invocation in owners:
-        assert invocation.args == []
-        assert {
-            str(keyword.arg): _expression_path(keyword.value)
-            for keyword in invocation.keywords
-        } == {"state_scope": "state_scope"}
+    assert len(calls) == 1
+    call = calls[0]
+    assert len(call.args) == 1
+    assert isinstance(call.args[0], ast.Call)
+    assert isinstance(call.args[0].func, ast.Name)
+    assert call.args[0].func.id == "ConstantFoldCastContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in call.args[0].keywords
+    } == {
+        "model_ir": "context.model_ir",
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+    }
+    assert {
+        str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
+    } == {"state_scope": "state_scope"}
 
 
 def test_constant_fold_cast_builder_is_composed_by_very_late_phase() -> None:
@@ -304,42 +256,6 @@ def test_constant_fold_cast_builder_is_composed_by_very_late_phase() -> None:
     assert {
         str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
     } == {"state_scope": "state_scope"}
-
-
-def test_constant_fold_cast_preserves_late_layout_parent_boundary() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    parent = _parent(lowerer, LATE_LAYOUT_PARENT)
-    invocation_index = _direct_invocation_index(parent)
-
-    assert invocation_index == len(parent.body) - 1
-    assert _direct_call_name(parent.body[invocation_index - 1]) == (
-        "run_transpose_gather_axis_cleanup"
-    )
-
-
-def test_constant_fold_cast_context_is_explicit() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    context_assignment = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "constant_fold_cast_context"
-            for target in statement.targets
-        )
-    )
-
-    assert isinstance(context_assignment.value, ast.Call)
-    assert isinstance(context_assignment.value.func, ast.Name)
-    assert context_assignment.value.func.id == "ConstantFoldCastContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in context_assignment.value.keywords
-    } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
 
 
 def test_constant_fold_cast_module_does_not_import_lowerer() -> None:

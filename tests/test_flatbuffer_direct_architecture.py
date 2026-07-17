@@ -81,6 +81,9 @@ from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration imp
 from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
     TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
+    LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -107,7 +110,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
     *QKV_ATTENTION_PASS_IDS,
     *DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
-    *CONSTANT_FOLD_CAST_PASS_IDS,
+    *LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS,
     *VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
     *SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
     *TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
@@ -4684,53 +4687,23 @@ def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
     helper_name = "_run_constant_fold_cast_cleanup_pass_cluster"
-    helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
-    )
     expected_order = (
         "run_constant_input_fold_cleanup",
         "run_redundant_cast_cleanup",
     )
     assert CONSTANT_FOLD_CAST_PASS_IDS == expected_order
-    assert len(helper.body) == 1
-    statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
-    assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
-    assert statement.value.func.id == "run_constant_fold_cast"
-    assert len(statement.value.args) == 1
-    assert isinstance(statement.value.args[0], ast.Name)
-    assert statement.value.args[0].id == "constant_fold_cast_context"
-    assert len(statement.value.keywords) == 1
-    scope_keyword = statement.value.keywords[0]
-    assert scope_keyword.arg == "state_scope"
-    assert isinstance(scope_keyword.value, ast.Name)
-    assert scope_keyword.value.id == "state_scope"
-
-    helper_invocations = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == helper_name
-    ]
-    assert len(helper_invocations) == 1
-    external_scope_invocations = [
-        call
-        for call in helper_invocations
-        if any(keyword.arg == "state_scope" for keyword in call.keywords)
-    ]
-    assert len(external_scope_invocations) == 1
-    for call in external_scope_invocations:
-        scope_keyword = next(
-            keyword
-            for keyword in call.keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    nested_function_names = {
+        node.name for node in lowerer.body if isinstance(node, ast.FunctionDef)
+    }
+    lowerer_names = {
+        node.id for node in ast.walk(lowerer) if isinstance(node, ast.Name)
+    }
+    assert helper_name not in nested_function_names
+    assert "constant_fold_cast_context" not in lowerer_names
+    assert "run_constant_fold_cast" not in lowerer_names
+    assert "ConstantFoldCastContext" not in lowerer_names
+    assert _orchestrated_pass_count("run_constant_input_fold_cleanup") == 2
+    assert _orchestrated_pass_count("run_redundant_cast_cleanup") == 2
 
 
 def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
@@ -5075,44 +5048,36 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_layout_transpose_cleanup",
         "run_mean_mul_add_conv_layout_cleanup",
         "run_spp_layout_cleanup",
         "run_transpose_gather_axis_cleanup",
-        "_run_constant_fold_cast_cleanup_pass_cluster",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-
-    conditional = next(
-        statement
-        for statement in helper.body
-        if isinstance(statement, ast.If)
+        *CONSTANT_FOLD_CAST_PASS_IDS,
     )
-    assert isinstance(conditional.test, ast.Name)
-    assert conditional.test.id == "include_layout_transpose"
-    assert calls["run_layout_transpose_cleanup"] in [
-        node for node in ast.walk(conditional)
-    ]
+    assert LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS == expected_order
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert (
+        statement.value.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast"
+    )
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert (
+        statement.value.args[0].id
+        == "late_layout_mean_spp_gather_constant_cast_context"
+    )
+    include_delegate = next(
+        keyword
+        for keyword in statement.value.keywords
+        if keyword.arg == "include_layout_transpose"
+    )
+    assert isinstance(include_delegate.value, ast.Name)
+    assert include_delegate.value.id == "include_layout_transpose"
 
     invocation_index = next(
         index
@@ -11850,6 +11815,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_dual_mul_concat_layout_cleanup",
         "run_boundary_input_layout_cleanup",
         "run_pad_layout_cleanup",
+        "run_mean_mul_add_conv_layout_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12156,7 +12122,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_mean_mul_add_conv_layout_cleanup"
     ]
-    assert len(mean_mul_add_conv_calls) == 2
+    assert (
+        len(mean_mul_add_conv_calls)
+        + _orchestrated_pass_count("run_mean_mul_add_conv_layout_cleanup")
+        == 2
+    )
 
     layernorm_statistics_calls = [
         call
