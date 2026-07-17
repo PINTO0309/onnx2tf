@@ -4117,8 +4117,8 @@ def lower_onnx_to_ir(
     def _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
         *,
         include_layout_transpose: bool,
-    ) -> None:
-        run_late_layout_mean_spp_gather_constant_cast(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_late_layout_mean_spp_gather_constant_cast(
             late_layout_mean_spp_gather_constant_cast_context,
             include_layout_transpose=include_layout_transpose,
         )

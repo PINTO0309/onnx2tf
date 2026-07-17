@@ -132,7 +132,7 @@ def test_late_layout_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -248,13 +248,6 @@ def test_late_layout_runner_preserves_both_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the late layout runner and lowerer helper still discard ordered "
-        "pass results"
-    ),
-)
 @pytest.mark.parametrize("include_layout_transpose", [False, True])
 def test_late_layout_returns_ordered_results_through_lowerer_helper(
     monkeypatch: pytest.MonkeyPatch,

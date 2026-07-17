@@ -5301,7 +5301,7 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     assert LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS == expected_order
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert (

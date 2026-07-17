@@ -1027,3 +1027,27 @@ site as an ignored expression so ModelIR behavior is mechanical and identical.
 Validate both optional policies, state reuse, orchestration structure, core,
 architecture, pass efficiency, and TensorFlow import blocking sequentially.
 Commit and push only; do not create or update a pull request.
+
+## Late layout cluster result propagation implementation checkpoint
+
+`run_late_layout_mean_spp_gather_constant_cast()` now returns the exact raw
+tuple produced by `run_recovery_invocations()`. The lowerer's private helper
+returns that tuple unchanged. Required-only execution therefore exposes five
+ordered dictionaries, while layout-enabled execution exposes six, with the
+same invocation order, state scope, diagnostics, and exception semantics.
+
+The terminal production call remains an ignored expression. No result is yet
+captured, no mutation aggregate is formed, and the unconditional phase
+reconciliation is unchanged. The optional layout dictionary still carries the
+non-mutating `iterations` field and must be normalized before any future guard.
+
+Focused orchestration and structural coverage is `15 passed in 2.20s`. The
+sequential late-cluster, child constant-fold/cast, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `376 passed in 26.14s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, characterize a normalized mutation aggregate for this one cluster
+without guarding the broad phase reconciliation yet. The aggregate must map
+the optional layout result to its four mutation keys, retain each required
+pass dictionary, and account for any zero-rewrite pruning performed by those
+owners. Commit and push only; do not create or update a pull request.

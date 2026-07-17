@@ -10018,3 +10018,15 @@ unconditional phase reconciliation. In particular, the optional layout result
 still contains a non-mutating `iterations` field that must not later be treated
 as mutation evidence. Production remains unchanged at this characterization
 checkpoint.
+
+`run_late_layout_mean_spp_gather_constant_cast()` now returns the raw ordered
+tuple from `run_recovery_invocations()`, and its private lowerer helper returns
+the same object. The required policy yields five dictionaries and the optional
+layout policy yields six. Invocation order, one shared state scope, diagnostics,
+and exception propagation remain unchanged.
+
+The terminal production call is intentionally still an expression statement,
+so this checkpoint changes no reconciliation or ModelIR behavior. Focused tests
+verify both policies and both return boundaries. The next step must normalize
+the optional layout dictionary by mutation keys before it can participate in a
+phase aggregate; its `iterations` value is not a change counter.

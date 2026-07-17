@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -95,13 +95,13 @@ def run_late_layout_mean_spp_gather_constant_cast(
     context: LateLayoutMeanSPPGatherConstantCastContext,
     *,
     include_layout_transpose: bool,
-) -> None:
+) -> Tuple[Dict[str, int], ...]:
     expected_pass_ids = (
         LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS
         if include_layout_transpose
         else LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_REQUIRED_PASS_IDS
     )
-    run_recovery_invocations(
+    return run_recovery_invocations(
         build_late_layout_mean_spp_gather_constant_cast_invocations(
             context,
             include_layout_transpose=include_layout_transpose,
