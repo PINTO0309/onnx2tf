@@ -9834,3 +9834,12 @@ three-round cap. Immediate and second-round convergence fixtures are green,
 the always-changing fixture still executes three rounds, and the original
 multi-repair graph produces the same aggregate statistics and complete ModelIR
 as the fixed three-round sequence.
+
+The indexed dead-prune/shape/Reshape convergence helper is the next stable-scan
+target. Its final reconciliation currently runs even when dead pruning, the
+first reconciliation, and dynamic-Reshape resolution all return zero mutation
+counters. A strict expected-failure fixture requires that complete zero path to
+perform only the first reconciliation while retaining the one shared index.
+Separate passing cases require the final reconciliation after a mutation from
+each of the three owners, preserving possible second-order shape convergence.
+Production remains unchanged at this characterization checkpoint.

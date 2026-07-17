@@ -608,3 +608,24 @@ Choose a boundary only when all mutations since the preceding reconciliation
 are represented by returned counters or explicit prune accounting. Preserve
 phase order, characterize before production changes, and commit/push only. Do
 not create or update a pull request.
+
+## Indexed shape-convergence stable-scan characterization checkpoint
+
+`_run_indexed_shape_convergence_cleanup()` owns dead-operator pruning, an
+initial static-shape reconciliation, dynamic-Reshape resolution, and a final
+static-shape reconciliation under one `ModelIRGraphIndex`. The final scan still
+runs when all three preceding mutation dictionaries are zero.
+
+A strict expected-failure fixture now requires that complete stable path to
+execute only one reconciliation. Three passing fixtures preserve the final
+reconciliation independently after a prune mutation, a first-reconciliation
+metadata mutation, or a dynamic-Reshape mutation. This deliberately does not
+assume that one changing reconciliation is already a fixed point.
+
+At implementation, initialize the final result to the exact zero dictionary
+and invoke the second reconciliation only when one of the three preceding pure
+mutation dictionaries is positive. Preserve aggregate statistics, the shared
+index, LayoutState forwarding, and both production call boundaries. Validate
+dynamic Reshape, shape reconciliation, final convergence, core, architecture,
+pass-efficiency, and TensorFlow-import-blocked suites sequentially. Commit and
+push only; do not create or update a pull request.
