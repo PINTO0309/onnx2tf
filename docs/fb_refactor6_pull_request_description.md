@@ -2077,3 +2077,14 @@ architecture/efficiency set, 32 core smoke tests, and all 11 TensorFlow-import-
 blocked tests pass. No public API, artifact, dependency, runtime order, scope-
 sharing behavior, or TensorFlow boundary changed. PR #952 remains closed, and
 no pull request was created, reopened, or updated.
+
+The neighboring terminal singleton-maxpool/reshape pair is now characterized
+without production changes. Four focused tests freeze its one shared
+`ModelIRPassStateScope`, both full ModelIR/layout/diagnostics contracts, its
+single zero-argument invocation, and the surrounding layout-gated blocks. The
+existing efficiency fixture continues to prove one graph-index build across
+both runners. The focused plus architecture suite passed 252 tests, the 30
+pass-efficiency tests and all 11 TensorFlow-import-blocked tests passed, and
+targeted static checks passed. Runtime behavior and all public/dependency
+contracts remain unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.

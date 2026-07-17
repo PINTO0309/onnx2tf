@@ -13699,3 +13699,47 @@ code. Freeze both cleanup calls, their shared per-invocation
 `ModelIRPassStateScope`, all ModelIR/layout/diagnostics arguments, repetition,
 and outer boundaries. Validate sequentially, commit and push, and do not create
 a pull request.
+
+## Terminal singleton-maxpool/reshape orchestration characterization: completed state
+
+The 19-line `_run_terminal_singleton_maxpool_reshape_pass_pair` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, has no control flow, and is invoked exactly once. It
+creates one `ModelIRPassStateScope` from ModelIR and layout state, then routes
+that same scope, ModelIR, layout state, and diagnostics first to singleton-
+maxpool layout cleanup and then to consecutive-reshape cleanup. The retained
+comment documents why the second cleanup must follow boundary cleanup.
+
+The focused
+`test_flatbuffer_direct_terminal_singleton_maxpool_reshape_orchestration.py`
+freezes the single scope-construction contract, both complete runner argument
+contracts, their exact order and shared `state_scope` name, the sole zero-
+argument invocation, and its location between two layout-gated blocks. The
+existing pass-efficiency fixture continues to prove that the pair builds the
+graph index once and reuses it for the second runner.
+
+Validation completed sequentially as follows:
+
+- focused terminal singleton-maxpool/reshape characterization:
+  `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.69s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.02s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `singleton_maxpool_layout` and
+`graph_cleanup`. Construct exactly one fresh `ModelIRPassStateScope` per phase
+invocation and attach the same object to both immutable invocations. Preserve
+the historical helper, its sole zero-argument call, both layout-gated outer
+boundaries, and the canonicalization-order comment. Prove builder arguments,
+scope identity, and instrumented order before switching to a delegate,
+validate sequentially, commit and push, and do not create a pull request.

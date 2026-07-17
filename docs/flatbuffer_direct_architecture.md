@@ -9099,3 +9099,12 @@ unchanged. The efficiency fixture now drives the explicit runner and still
 observes one graph-index build. Focused, architecture, pass-efficiency, core,
 and TensorFlow-import-blocked suites pass. Characterize the neighboring
 terminal singleton-maxpool/reshape pair and its shared scope next.
+
+That neighboring terminal singleton-maxpool/reshape pair is now characterized
+without production changes. It contains two ordered cleanup runners and
+constructs exactly one `ModelIRPassStateScope`, shared with the same ModelIR,
+layout, and diagnostics values. Its sole zero-argument invocation remains
+between two layout-gated blocks. Focused contracts freeze every argument and
+boundary, while the existing efficiency fixture proves one graph-index build.
+The eventual phase needs a frozen ModelIR/layout/diagnostics context, two
+stable IDs, and one fresh shared scope per invocation.
