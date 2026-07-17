@@ -1066,6 +1066,87 @@ def test_model_ir_pass_diagnostics_number_repeated_invocations() -> None:
     }
 
 
+def test_model_ir_pass_diagnostics_preserve_existing_numbering_contract() -> None:
+    model_ir = _add_model_ir()
+    diagnostics = [
+        {"stage": "lowering", "code": "unrelated"},
+        {
+            "stage": "model_ir_pass",
+            "code": "cleanup.first",
+            "group_sequence": 4,
+        },
+        {
+            "stage": "model_ir_pass",
+            "code": "cleanup.other",
+            "group_sequence": 7,
+        },
+    ]
+    specs = [
+        PassSpec(
+            pass_id="cleanup.first",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=lambda state: {"changed": False},
+        ),
+        PassSpec(
+            pass_id="cleanup.second",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=lambda state: {"changed": False},
+        ),
+    ]
+
+    run_model_ir_pass_group(model_ir, specs=specs, diagnostics=diagnostics)
+
+    first, second = diagnostics[-2:]
+    assert (first["sequence"], first["invocation"], first["group_sequence"]) == (
+        3,
+        2,
+        8,
+    )
+    assert (
+        second["sequence"],
+        second["invocation"],
+        second["group_sequence"],
+    ) == (4, 1, 8)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="diagnostic numbering currently rescans the full history per pass event",
+)
+def test_model_ir_pass_diagnostic_numbering_scans_existing_history_once() -> None:
+    class CountingDiagnostics(list):
+        def __init__(self, values) -> None:
+            super().__init__(values)
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            return super().__iter__()
+
+    model_ir = _add_model_ir()
+    diagnostics = CountingDiagnostics(
+        [
+            {
+                "stage": "model_ir_pass",
+                "code": "cleanup.first",
+                "group_sequence": 5,
+            }
+        ]
+    )
+    specs = [
+        PassSpec(
+            pass_id=pass_id,
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=lambda state: {"changed": False},
+        )
+        for pass_id in ["cleanup.first", "cleanup.second", "cleanup.third"]
+    ]
+
+    run_model_ir_pass_group(model_ir, specs=specs, diagnostics=diagnostics)
+
+    assert diagnostics.iteration_count == 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod

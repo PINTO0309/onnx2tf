@@ -9615,3 +9615,18 @@ context or an explicit callback composition around it; no orchestration
 dataclass independently repeats ModelIR, LayoutState, or diagnostics. QLinear's
 five argument contracts and SINet's three invocation/callback contracts remain
 unchanged.
+
+The next non-context efficiency boundary is ModelIR pass diagnostic numbering.
+`run_model_ir_pass_group()` currently scans the complete diagnostic history to
+select the next group number, then scans the growing history again for every
+pass result to calculate global `sequence` and per-pass `invocation` values.
+This preserves correct numbering but makes bookkeeping quadratic in the number
+of recorded pass events. The frozen contract ignores non-`model_ir_pass`
+events, assigns the next group after the maximum existing `group_sequence`,
+numbers new events after the existing ModelIR-pass event count, and advances
+each pass ID independently. A strict expected-failure efficiency fixture proves
+that the current implementation performs four history iterations for a
+three-result group where one initialization scan is sufficient. The next
+bounded implementation step may cache those three counters from one initial
+scan, but must preserve the exact event schema, append order, caller-owned list,
+failure diagnostics, and summary output.
