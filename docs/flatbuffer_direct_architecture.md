@@ -10681,3 +10681,11 @@ restore, it stores the complete first result and builds the one-key legacy guard
 input from that in-memory dictionary. The unchanged inner guard stores the
 complete second result when it already reconciles. No complete-only key can
 trigger the second scan.
+
+The preceding final mixed-singleton Concat owner counts every successfully
+applied adapter/rewire plan and performs pruning plus optional layout-state sync
+only after a positive count. All zero-result paths are true ModelIR no-ops.
+Strict characterization preserves its single-counter guard and requires a
+stable two-key `_final_mixed_singleton_concat_static_shape_stats` value that
+receives the opt-in complete reconciliation result only inside that guard. The
+following placeholder-MatMul block remains adjacent.

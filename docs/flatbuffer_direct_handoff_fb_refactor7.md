@@ -3968,3 +3968,33 @@ At resume, audit the preceding `final_mixed_singleton_concat_stats` owner and
 guard before retaining its reconciliation result. Keep the following
 placeholder-MatMul block fixed. Commit and push only; do not create or update a
 pull request.
+
+## Primary final mixed-singleton Concat characterization checkpoint
+
+The indexed mixed-singleton Concat owner builds all plans before applying them,
+then increments its single counter for every successfully inserted Reshape
+adapter and Concat rewire plan. Unused-tensor pruning and optional layout-state
+sync run only after a positive count. No-Concat, already-NHWC, unsafe/dynamic,
+clone-failure, unbound, and second-run zero results are true ModelIR no-ops.
+
+A strict expected-failure orchestration contract now requires stable two-key
+`_final_mixed_singleton_concat_static_shape_stats` evidence and assigns the
+opt-in complete reconciliation result under the unchanged single-counter guard.
+It also fixes the following `final_placeholder_matmul_stats` boundary.
+
+At implementation, add only caller-side result plumbing. Do not change the
+owner, counter schema, planning/application, adapter construction, rewiring,
+pruning, layout sync, guard, ordering, dependencies, placeholder block, or
+TensorFlow behavior. Validate the indexed owner, terminal orchestration, core
+runtime guard, and architecture sequentially, then commit and push only; do not
+create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed owner, terminal orchestration, core guard, and architecture:
+  `356 passed, 1 xfailed in 17.83s`
+- expanded broad related gate: `1212 passed, 1 xfailed in 29.97s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final mixed-singleton result
+contract; there are no unexpected failures.
