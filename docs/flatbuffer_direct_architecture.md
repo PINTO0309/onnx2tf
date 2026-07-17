@@ -10413,3 +10413,11 @@ The call now assigns its unchanged raw result to
 between `_very_late_conv_input_stats` and the NCHW
 Concat/Transpose/Conv-axis repair. ModelIR/LayoutState/diagnostics forwarding
 and the single invocation are unchanged.
+
+The following NCHW Concat/Transpose/Conv-axis owner has three production
+occurrences and one fixed repair counter. It changes only Concat options and
+tensor shape metadata, counts each applied plan, and performs neither pruning
+nor topology mutation. Strict characterization selects only the direct
+very-late call for a future
+`_very_late_concat_transpose_conv_axis_stats` assignment; the fallback and
+final result assignments remain unchanged.
