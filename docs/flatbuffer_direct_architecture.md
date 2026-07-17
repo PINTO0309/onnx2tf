@@ -8840,6 +8840,21 @@ repetitions, layout-state and diagnostic propagation, and conditional gates.
 Use that evidence to introduce an explicit phase-runner contract without
 changing the current sequence.
 
+That nested-orchestration characterization is now complete without production
+changes. Existing tests already froze both complete call orders and repetition
+boundaries. A separate focused fixture now freezes exact positional/keyword
+contracts for all thirty-four calls, including model/layout/diagnostic routing
+and the unary-passthrough flag. Both helpers are straight-line zero-argument
+closures with no local state scope or control flow; their only captured data
+names are `model_ir` and `session`.
+
+Before extraction, resolve each call to its module owner. The two lowerer-local
+pass clusters used by the layout prefix and the nested layout-prefix dependency
+used by the attention prefix must become explicit callbacks. All other calls
+should receive an immutable explicit phase context instead of capturing the
+lowerer. The next implementation should define stable pass IDs and prove old/
+new execution-order plus argument equality before switching production calls.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

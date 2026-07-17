@@ -12726,3 +12726,48 @@ then design the smallest explicit phase-runner contract that can move them out
 of the 2,634-line lowerer without changing pass order or behavior. Record unsafe
 or implicit coupling before correction, validate sequentially, commit and push,
 and do not create a pull request.
+
+## Nested layout-recovery orchestration characterization: completed state
+
+The 66-line `_run_layout_recovery_prefix_pass_sequence`, the adjacent 51-line
+`_run_layout_reshape_attention_recovery_prefix`, and all production call sites
+remain unchanged. Existing architecture coverage already fixed the nineteen-
+call and fifteen-call order, the three attention-prefix repetitions and their
+immediate boundaries, the nested layout-prefix invocation, and the direct final
+layout-prefix recovery call.
+
+The new focused `test_flatbuffer_direct_layout_recovery_orchestration.py`
+fixture fills the remaining extraction-contract gaps without extending the
+large architecture test. It freezes every positional and keyword argument,
+including which calls receive only `model_ir`, which receive
+`session.layout_state`, which also receive `session.diagnostics`, and the final
+`include_unary_passthrough=True`. Both helpers are proven to have no parameters,
+branch/loop/try/context-manager control flow, or local
+`ModelIRPassStateScope`; after excluding their call targets, their only captured
+data names are `model_ir` and `session`.
+
+Validation completed sequentially as follows:
+
+- focused orchestration contract: `4 passed in 0.22s`;
+- focused orchestration plus ordered architecture suite:
+  `252 passed in 16.81s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.23s`;
+- focused-test Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, pass order, real-model conversion, or broad direct suite
+changed or ran. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, map each of the thirty-four call targets to its extracted module
+owner before moving either helper. Three dependencies are still nested lowerer
+clusters (`_run_boundary_batchmatmul_unary_layout_pass_cluster`,
+`_run_channel_shuffle_gather_layout_pass_cluster`, and the layout-prefix call
+from the attention prefix); preserve those as explicit injected callbacks while
+direct module owners receive an explicit `model_ir`/layout-state/diagnostics
+context. Design a declarative ordered phase specification with stable pass IDs
+and no lambda closure over mutable lowerer locals, then add direct old/new
+execution-order and argument-equivalence tests before changing production call
+sites. Keep the change mechanical, validate sequentially, commit and push, and
+do not create a pull request.

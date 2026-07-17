@@ -1832,3 +1832,12 @@ construction. No substantive top-level pass owner now remains in the lowerer.
 Resume by characterizing the nested 66-line layout-recovery prefix and adjacent
 51-line layout/reshape/attention prefix before designing an explicit phase-
 runner boundary; do not create a pull request.
+That characterization is now complete without production changes. A focused
+fixture freezes exact positional/keyword contracts for all 34 calls while the
+existing architecture suite retains full order and repetition boundaries. Both
+helpers are straight-line zero-argument closures whose only captured data is
+`model_ir` and `session`; they contain no state-scope construction or control
+flow. Resume by mapping every target to its module owner, preserving the three
+nested lowerer dependencies as explicit callbacks, and designing stable
+declarative phase IDs with old/new order and argument-equivalence tests. Do not
+create a pull request.
