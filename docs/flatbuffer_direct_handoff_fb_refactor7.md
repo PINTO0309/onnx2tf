@@ -3028,3 +3028,46 @@ iterator item as the generic class `type[In]`, which hides the concrete
 with `typing.cast(onnx.ValueInfoProto, ...)`. This is a static-analysis-only
 clarification: graph traversal, input filtering, names, shapes, and runtime
 behavior are unchanged.
+
+## Safety-fallback terminal layout-validation characterization checkpoint
+
+`validate_model_ir_layout_annotations()` is a pure read-only query, but its
+fallback call currently precedes high-rank BatchMatMul compression and indexed
+binary convergence. It therefore describes a non-terminal graph. In addition,
+an empty result leaves `logical_layout_validation_errors` inherited from the
+recursive lower in metadata.
+
+A passing purity fixture records an invalid annotation without modifying the
+ModelIR. A strict expected-failure orchestration contract requires validation
+after high-rank compression, its guarded reconciliation/sort, indexed binary
+convergence, and the final sort. A non-empty result keeps the existing list
+schema; an empty result removes only the stale validation-error key. The
+`layout_optimize_fallback` metadata assignment remains before the high-rank
+owner, and finalization remains the terminal operation.
+
+At implementation, move only the pure validation/metadata block and add the
+empty-result removal. Do not change either mutation owner, its guard, sorting,
+fallback reason/samples, finalization, dependencies, or TensorFlow boundary.
+Validate sequentially, then commit and push only; do not create or update a
+pull request.
+
+The first attempt to add the two existing rank-6 BatchMatMul tests to the broad
+gate stopped during collection: `tests/test_tflite_builder_direct.py` imports
+`run_elementwise_gate_layout_cleanup` from the lowerer, while commit
+`5c4f72ae` removed that compatibility re-export during orchestration
+extraction. An AST/runtime audit of all 115 names imported from the lowerer by
+that test file found this as the sole missing name. The implementation remains
+owned by `passes/elementwise_gate_layout.py`; restoring an explicitly marked
+compatibility import is sufficient and does not reconnect it to lowerer
+orchestration. Record and repair this independently before using that file as a
+gate.
+
+Characterization validation completed sequentially under `uv` after isolating
+that collection issue:
+
+- focused layout/binary fallback selection: `3 passed, 10 deselected, 1 xfailed`
+- broad related regression gate: `535 passed, 1 xfailed in 27.37s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet terminal-validation contract;
+the broad gate has no unexpected failure.

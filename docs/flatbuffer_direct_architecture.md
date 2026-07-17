@@ -2297,6 +2297,13 @@ result. The existing repair-only guard assigns the opt-in reconciliation
 result, while the following topological sort remains unchanged; cleanup alone
 does not require shape propagation.
 
+The recursive safety fallback currently computes layout-validation metadata
+before its high-rank BatchMatMul and indexed binary-convergence owners. The
+validator is pure, so characterization fixes the intended boundary at the
+terminal graph and requires an empty terminal result to remove validation
+errors inherited from the recursive lower. This changes diagnostics only; the
+mutation owners and their ordering remain fixed.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

@@ -4,8 +4,13 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    TensorIR,
+    validate_model_ir_layout_annotations,
+)
 from onnx2tf.tflite_builder.passes import pad_layout
 from onnx2tf.tflite_builder.passes import stale_binary_adapter_repair
 
@@ -681,3 +686,94 @@ def test_safety_fallback_stages_complete_binary_layout_evidence() -> None:
     assert ast.unparse(following.value) == (
         "_topologically_sort_operators(fallback_ir)"
     )
+
+
+def test_layout_annotation_validator_is_pure() -> None:
+    model_ir = ModelIR("layout_validation_purity")
+    model_ir.metadata["sentinel"] = {"unchanged": True}
+    model_ir.tensors["value"] = TensorIR(
+        name="value",
+        dtype="FLOAT32",
+        shape=[1, 2, 3],
+        shape_signature=[1, 2, 3],
+        logical_layout="NCHW",
+        physical_layout="NCHW",
+    )
+    metadata_before = dict(model_ir.metadata)
+    tensor_before = repr(model_ir.tensors["value"])
+
+    problems = validate_model_ir_layout_annotations(model_ir)
+
+    assert problems == [
+        "tensor=value shape=[1, 2, 3] logical_layout=NCHW",
+    ]
+    assert model_ir.metadata == metadata_before
+    assert repr(model_ir.tensors["value"]) == tensor_before
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="fallback layout validation precedes terminal graph mutations",
+)
+def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> None:
+    body = _safety_fallback_body(_lowerer())
+    stats_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_high_rank_bmm_stats"
+    )
+
+    metadata = body[stats_index - 1]
+    assert isinstance(metadata, ast.Assign)
+    assert ast.unparse(metadata.targets[0]) == (
+        "fallback_ir.metadata['layout_optimize_fallback']"
+    )
+
+    guard = body[stats_index + 1]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "int(fallback_high_rank_bmm_stats.get("
+        "'compressed_static_high_rank_batch_matmul', 0)) > 0"
+    )
+
+    convergence = body[stats_index + 2]
+    assert isinstance(convergence, ast.Expr)
+    assert ast.unparse(convergence.value) == (
+        "_run_indexed_binary_layout_convergence(fallback_ir)"
+    )
+
+    final_sort = body[stats_index + 3]
+    assert isinstance(final_sort, ast.Expr)
+    assert ast.unparse(final_sort.value) == (
+        "_topologically_sort_operators(fallback_ir)"
+    )
+
+    validation = body[stats_index + 4]
+    assert isinstance(validation, ast.Assign)
+    assert isinstance(validation.targets[0], ast.Name)
+    assert validation.targets[0].id == "fallback_layout_problems"
+    assert ast.unparse(validation.value) == (
+        "validate_model_ir_layout_annotations(fallback_ir)"
+    )
+
+    validation_guard = body[stats_index + 5]
+    assert isinstance(validation_guard, ast.If)
+    assert ast.unparse(validation_guard.test) == (
+        "len(fallback_layout_problems) > 0"
+    )
+    assert len(validation_guard.body) == 1
+    assert ast.unparse(validation_guard.body[0]) == (
+        "fallback_ir.metadata['logical_layout_validation_errors'] = "
+        "list(fallback_layout_problems)"
+    )
+    assert len(validation_guard.orelse) == 1
+    assert ast.unparse(validation_guard.orelse[0]) == (
+        "fallback_ir.metadata.pop('logical_layout_validation_errors', None)"
+    )
+
+    terminal = body[stats_index + 6]
+    assert isinstance(terminal, ast.Return)
+    assert ast.unparse(terminal.value) == "_finalize_model_ir(fallback_ir)"
