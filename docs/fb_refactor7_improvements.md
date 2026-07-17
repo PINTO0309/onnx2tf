@@ -123,6 +123,11 @@ after a positive indexed repair and reuses the live GraphIndex; the caller now
 continues directly to Conv-input repair, eliminating one full-graph scan on
 that positive fallback path.
 
+Fallback Conv-input repair now merges cleanup-only tensor pruning into its two
+existing rewrite counters. The stale-Transpose-only reconciliation guard is
+unchanged, but its result is retained with the complete opt-in schema instead
+of being discarded.
+
 ## Smaller internal owners
 
 - Typed ONNX `Constant` lowering is isolated in its op-family module while
@@ -161,7 +166,8 @@ passed in 27.34s`; and broadcast reconciliation staging extends it to `451
 passed in 27.03s`. The SE/FC/Gather reconciliation checkpoint extends the
 focused branch gate to `463 passed in 27.00s`; placeholder-MatMul staging
 extends it to `464 passed in 26.93s`; duplicate unbound reconciliation removal
-extends it to `470 passed in 27.49s`.
+extends it to `470 passed in 27.49s`; and complete fallback Conv-input evidence
+extends it to `480 passed in 27.81s`.
 
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
@@ -175,7 +181,6 @@ guard either following refresh. If equivalence is not locally provable, it
 should leave both refreshes unchanged. The next local audit is the combined
 fallback placeholder-MatMul restore predicate plus its guarded reconciliation.
 The next local audit is the fallback unbound-input repair and its guarded
-reconciliation, followed by the cleanup-capable Conv-input aggregate. Any new
-mutation evidence must preserve the recursive fallback boundary, current pass
-order, TensorFlow-free boundary, dependency set, and sequential validation
-policy.
+reconciliation, followed by the mixed-Concat repair boundary. Any new mutation
+evidence must preserve the recursive fallback boundary, current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

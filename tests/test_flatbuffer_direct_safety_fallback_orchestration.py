@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -373,13 +372,13 @@ def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "fallback_conv_input_stats"
+    assert following.targets[0].id == "fallback_conv_input_tensor_count"
+    stats = body[owner_index + 2]
+    assert isinstance(stats, ast.Assign)
+    assert isinstance(stats.targets[0], ast.Name)
+    assert stats.targets[0].id == "fallback_conv_input_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback Conv-input stats omit cleanup and reconciliation evidence",
-)
 def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
     stats_index = next(

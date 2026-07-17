@@ -2844,3 +2844,27 @@ guard, or following fallback order. Validate indexed Conv-input repair, safety
 fallback, static reconciliation, core, pass efficiency, architecture, and
 TensorFlow import blocking sequentially. Commit and push only; do not create or
 update a pull request.
+
+## Safety-fallback Conv-input evidence implementation checkpoint
+
+The fallback runner now samples `fallback_conv_input_tensor_count` and merges a
+clamped `pruned_unused_tensors` delta with its unchanged singleton-Reshape and
+stale-Transpose counters. This captures both child owners' zero-rewrite cleanup
+without rerunning either owner or scanning the graph.
+
+`_fallback_conv_input_static_shape_stats` supplies the stable complete zero
+schema and receives the opt-in reconciliation result only under the unchanged
+stale-Transpose predicate. Singleton repair continues to update Conv output
+metadata directly, and cleanup-only pruning does not broaden the guard. The
+following mixed-Concat owner remains adjacent.
+
+Focused Conv-input, safety-fallback, and occurrence validation is `18 passed,
+22 deselected`. The broader sequential indexed-owner, fallback-owner,
+reconciliation, convergence, core, pass-efficiency, architecture, and
+TensorFlow import-blocking gate is `480 passed in 27.81s`. Ruff, Python
+bytecode compilation, and whitespace validation pass.
+
+At resume, audit `fallback_concat_layout_stats` and its guarded reconciliation.
+Confirm its counter and absence or presence of cleanup-only mutation before
+changing that boundary. Commit and push only; do not create or update a pull
+request.

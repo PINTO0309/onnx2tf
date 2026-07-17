@@ -2273,8 +2273,8 @@ one-call contract remains intact, and only the duplicate caller-side full-graph
 scan is removed.
 
 The fallback Conv-input runner has two rewrite counters, but both indexed child
-owners prune unused tensors even on zero. Characterization therefore requires
-a clamped tensor-count delta plus a stable complete reconciliation result. The
+owners prune unused tensors even on zero. A clamped tensor-count delta plus a
+stable complete reconciliation result now preserve that cleanup evidence. The
 existing stale-Transpose-only reconciliation predicate remains unchanged;
 singleton repair updates its output metadata directly, and pruning alone does
 not require shape propagation.

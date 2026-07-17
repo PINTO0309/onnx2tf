@@ -504,9 +504,11 @@ def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> No
     ]
     assert len(fallback_assignments) == 1
     fallback = fallback_assignments[0]
-    assert isinstance(fallback.value, ast.Call)
-    assert isinstance(fallback.value.func, ast.Name)
-    assert fallback.value.func.id == "_run_indexed_conv_input_adapter_repairs"
+    assert isinstance(fallback.value, ast.Dict)
+    fallback_owner = fallback.value.values[0]
+    assert isinstance(fallback_owner, ast.Call)
+    assert isinstance(fallback_owner.func, ast.Name)
+    assert fallback_owner.func.id == "_run_indexed_conv_input_adapter_repairs"
 
 
 def test_very_late_stale_channel_shuffle_captures_mutation_evidence() -> None:
