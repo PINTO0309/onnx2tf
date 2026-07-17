@@ -14172,3 +14172,46 @@ different keyword contracts, callback-only ownership in the terminal
 slice/concat phase, stable neighbors, and existing efficiency behavior.
 Validate sequentially, keep real-model conversion minimal, commit and push
 only, and do not create a pull request.
+
+## Channel-slice/pad-mul orchestration characterization: completed state
+
+The 17-line `_run_channel_slice_pad_mul_layout_pass_cluster` remains unchanged
+in production. It is a parameterless straight-line closure over ModelIR and
+session. Every invocation creates one `ModelIRPassStateScope` from ModelIR and
+layout state, then passes the identical scope, ModelIR, layout state, and
+diagnostics first to channel-slice merge cleanup and then to pad/mul cleanup.
+
+The helper has two runtime boundaries. It is the first callback in
+`TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS`, immediately before affine post-add
+recovery, and it also has one zero-argument late-terminal direct call between
+pre-add recovery and the same affine post-add owner. The focused
+`test_flatbuffer_direct_channel_slice_pad_mul_orchestration.py` freezes both
+complete cleanup contracts, the shared scope, direct invocation, callback
+identity, stable-list position, and direct neighbors. The existing efficiency
+fixture continues to prove one graph-index build per pair invocation.
+
+Sequential validation completed as follows:
+
+- focused channel-slice/pad-mul characterization: `5 passed in 0.61s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.96s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.62s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `channel_slice_layout` and `pad_layout`.
+Build one fresh `ModelIRPassStateScope` per phase invocation and attach the same
+object to both immutable invocations. Preserve the historical zero-argument
+helper as the terminal-slice/concat callback, its additional direct call, and
+both kinds of boundaries. Prove builder arguments, fresh/shared scope identity,
+instrumented order, callback identity, and two total executions before
+switching to a delegate; validate sequentially, commit and push, and do not
+create a pull request.

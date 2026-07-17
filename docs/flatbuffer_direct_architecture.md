@@ -9193,3 +9193,12 @@ helper remains the same zero-argument `LayoutRecoveryContext` callback as a
 four-line delegate, with unchanged stable neighbors. The efficiency fixture
 now exercises the explicit runner and retains one graph-index build. Focused,
 architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The channel-slice/pad-mul pair is now characterized without production
+changes. It has two ordered owners and one fresh shared pass-state scope. The
+helper executes twice: first as the leading callback in the terminal-slice/
+concat recovery phase and later as one direct zero-argument call between pre-
+add and affine post-add recovery. Focused contracts freeze all ModelIR/layout/
+diagnostics/scope arguments, callback identity, and both boundary forms. The
+eventual phase should use a frozen ModelIR/layout/diagnostics context, two
+direct owner imports, two stable IDs, and a fresh shared scope per execution.
