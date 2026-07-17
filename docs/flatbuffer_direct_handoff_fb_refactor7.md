@@ -3450,3 +3450,33 @@ At resume, audit `final_conv_input_stats` for zero-rewrite cleanup/pruning
 before retaining its guarded reconciliation result. Keep the following mixed-
 Concat owner boundary fixed. Commit and push only; do not create or update a
 pull request.
+
+## Primary final Conv-input evidence characterization checkpoint
+
+The standalone stale NCHW-to-NHWC Conv-input owner unconditionally prunes
+unused tensors after its indexed rewrite loop. A focused real-tensor fixture
+removes an unrelated unused constant while returning a zero rewrite counter,
+proving that `final_conv_input_stats` is incomplete mutation evidence today.
+
+A strict expected-failure primary-path contract requires
+`final_conv_input_tensor_count`, a clamped `pruned_unused_tensors` delta, and a
+stable `_final_conv_input_static_shape_stats` zero dictionary. The existing
+rewrite-only guard assigns the opt-in complete reconciliation result but does
+not run for cleanup-only evidence. Its guarded sort and the following mixed-
+Concat owner remain fixed.
+
+At implementation, add only this evidence plumbing. Do not change indexed
+matching, rewiring, output metadata, pruning, raw owner schema, guard, sort,
+mixed-Concat boundary, dependencies, or TensorFlow behavior. Validate
+sequentially, then commit and push only; do not create or update a pull
+request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused final/prune/convergence selection:
+  `4 passed, 10 deselected, 1 xfailed`
+- expanded broad related gate: `571 passed, 1 xfailed in 28.23s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet complete Conv-input evidence
+contract; there are no unexpected failures.

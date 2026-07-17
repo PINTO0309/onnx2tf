@@ -2345,6 +2345,12 @@ when its exact adapter-insertion counter increments. Its zero path performs no
 cleanup. The caller retains stable complete shape evidence under the existing
 guard, with its sort and following Conv-input repair boundary fixed.
 
+The standalone final stale Conv-input owner always prunes unused tensors, even
+when its rewrite counter is zero. Characterization therefore requires a
+clamped tensor-count delta in the caller plus a stable complete shape result.
+Cleanup-only evidence does not broaden the existing rewrite-only guard, and
+the following mixed-Concat boundary remains fixed.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

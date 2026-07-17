@@ -237,6 +237,24 @@ def test_indexed_conv_input_adapter_runner_can_prune_without_rewrites(
     assert prune_calls == [model_ir, model_ir]
 
 
+def test_stale_conv_input_owner_can_prune_without_a_rewrite() -> None:
+    model_ir = ModelIR("zero_rewrite_stale_conv_input_prune")
+    model_ir.tensors["unused"] = TensorIR(
+        name="unused",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+    )
+
+    stats = _repair_stale_nchw_to_nhwc_conv_input_transposes_owner(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": 0,
+    }
+    assert "unused" not in model_ir.tensors
+
+
 @pytest.mark.parametrize(
     ("owner", "wrapper"),
     [
