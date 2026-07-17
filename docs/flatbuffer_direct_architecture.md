@@ -10199,3 +10199,10 @@ Strict characterization requires it to assign
 `_pre_terminal_affine_slice_pad_concat_stats` between the preceding raw
 transpose/Mul/Add owner and `terminal_affine_tensor_count`. The second direct
 call retains its distinct staged target.
+
+That first direct invocation now assigns its unchanged result to
+`_pre_terminal_affine_slice_pad_concat_stats`. The later invocation continues
+to assign `_terminal_slice_pad_concat_stats`, so the two observation points are
+unambiguous while both still invoke the same owner with only ModelIR. Neither
+counter is consumed by reconciliation, and execution order, rewrite guards,
+pruning behavior, and generated artifacts remain unchanged.

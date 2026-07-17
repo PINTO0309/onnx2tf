@@ -5136,7 +5136,11 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
+    _pre_terminal_affine_slice_pad_concat_stats = (
+        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
+            model_ir
+        )
+    )
     # Strict slice/merge cleanup above can recreate simple affine bridge tails:
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
     # Keep this after pre_add/slice/pad strict rewrites: those passes can

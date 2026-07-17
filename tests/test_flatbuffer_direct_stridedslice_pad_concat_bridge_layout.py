@@ -1271,14 +1271,13 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
         )
     ]
     assert len(direct_statements) == 2
-    assert isinstance(direct_statements[0], ast.Expr)
+    assert isinstance(direct_statements[0], ast.Assign)
+    first_target = direct_statements[0].targets[0]
+    assert isinstance(first_target, ast.Name)
+    assert first_target.id == "_pre_terminal_affine_slice_pad_concat_stats"
     assert direct_statements[1] is invocation
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the first terminal slice/pad/concat result is still discarded",
-)
 def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -> None:
     lowering_tree = ast.parse(
         (

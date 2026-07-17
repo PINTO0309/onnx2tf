@@ -1532,3 +1532,29 @@ terminal-affine and bridge-owner boundary contracts. Validate both occurrence
 targets, the complete bridge suite, terminal affine recovery, core, pass
 efficiency, architecture, and TensorFlow import blocking sequentially. Commit
 and push only; do not create or update a pull request.
+
+## First terminal slice/pad/concat evidence implementation checkpoint
+
+The first direct strided-slice/pad/concat invocation now assigns its unchanged
+counter to `_pre_terminal_affine_slice_pad_concat_stats`. The second direct
+invocation retains the distinct `_terminal_slice_pad_concat_stats` target, and
+the architecture contracts verify both exact positions and the shared owner.
+
+This is observation-only staging. The owner still receives only ModelIR, its
+transactional guards and positive-only pruning contract are unchanged, the
+earlier terminal affine recovery remains untouched, and no reconciliation
+decision consumes either staged dictionary.
+
+Focused bridge-owner, terminal-affine, and architecture coverage is `102
+passed in 0.87s`. The sequential bridge-owner, terminal-affine, complete SPP,
+concat-unary-conv, late-SPP, shape-extract, QKV, split/conv bridge,
+Hardswish-SE, late hard-activation, SINet terminal, Expand/Squeeze,
+late-layout, constant-fold/cast, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `697 passed in 28.25s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the raw transpose/Mul/Add owner immediately before this
+first direct call, or the preceding channel-slice cluster if that owner cannot
+provide complete mutation evidence. Characterize its return and prune contract
+before changing production. Commit and push only; do not create or update a
+pull request.

@@ -1850,7 +1850,14 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         assert isinstance(invocation, ast.Call)
         assert invocation.args == []
         assert invocation.keywords == []
-        assert isinstance(previous, ast.Expr)
+        assert isinstance(previous, (ast.Expr, ast.Assign))
+        if position == 1:
+            assert isinstance(previous, ast.Assign)
+            assert len(previous.targets) == 1
+            assert isinstance(previous.targets[0], ast.Name)
+            assert previous.targets[0].id == (
+                "_pre_terminal_affine_slice_pad_concat_stats"
+            )
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
         assert isinstance(following, (ast.Expr, ast.Assign))

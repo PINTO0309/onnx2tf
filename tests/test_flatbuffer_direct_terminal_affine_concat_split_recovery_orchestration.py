@@ -218,7 +218,14 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
             assert invocation.targets[0].id == "terminal_affine_results"
             previous = lowerer.body[index - 2]
             following = lowerer.body[index + 2]
-        assert isinstance(previous, ast.Expr)
+        assert isinstance(previous, (ast.Expr, ast.Assign))
+        if position == 1:
+            assert isinstance(previous, ast.Assign)
+            assert len(previous.targets) == 1
+            assert isinstance(previous.targets[0], ast.Name)
+            assert previous.targets[0].id == (
+                "_pre_terminal_affine_slice_pad_concat_stats"
+            )
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
         assert isinstance(following, (ast.Expr, ast.Assign))
@@ -406,7 +413,12 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
     }
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_slice_pad_concat_stats"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
