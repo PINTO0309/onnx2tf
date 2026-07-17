@@ -6730,6 +6730,11 @@ def test_absolute_final_sinet_reconciles_only_after_changed_passes() -> None:
             "optimized_sinet_concat_resize_affine_transpose_chains"
         ),
     }
+    complete_result_names = {
+        "_optimize_sinet_concat_resize_affine_transpose_chains": (
+            "_final_sinet_concat_resize_static_shape_stats"
+        ),
+    }
 
     for pass_name, stats_key in expected_stats.items():
         assignment_index = next(
@@ -6740,7 +6745,28 @@ def test_absolute_final_sinet_reconciles_only_after_changed_passes() -> None:
             and isinstance(statement.value.func, ast.Name)
             and statement.value.func.id == pass_name
         )
-        guard = lowerer.body[assignment_index + 1]
+        result_name = complete_result_names.get(pass_name)
+        guard_offset = 1
+        if result_name is not None:
+            default_stats = lowerer.body[assignment_index + 1]
+            assert isinstance(default_stats, ast.Assign)
+            assert isinstance(default_stats.targets[0], ast.Name)
+            assert default_stats.targets[0].id == result_name
+            assert isinstance(default_stats.value, ast.Dict)
+            assert {
+                key.value: value.value
+                for key, value in zip(
+                    default_stats.value.keys,
+                    default_stats.value.values,
+                )
+                if isinstance(key, ast.Constant)
+                and isinstance(value, ast.Constant)
+            } == {
+                "reconciled_static_tensor_shapes": 0,
+                "reconciled_static_shape_mutations": 0,
+            }
+            guard_offset = 2
+        guard = lowerer.body[assignment_index + guard_offset]
         assert isinstance(guard, ast.If)
         assert guard.orelse == []
         get_calls = [
@@ -6755,13 +6781,27 @@ def test_absolute_final_sinet_reconciles_only_after_changed_passes() -> None:
         assert get_calls[0].args[0].value == stats_key
         assert len(guard.body) == 1
         reconcile = guard.body[0]
-        assert isinstance(reconcile, ast.Expr)
+        assert isinstance(reconcile, (ast.Assign, ast.Expr))
+        if result_name is None:
+            assert isinstance(reconcile, ast.Expr)
+        else:
+            assert isinstance(reconcile, ast.Assign)
+            assert isinstance(reconcile.targets[0], ast.Name)
+            assert reconcile.targets[0].id == result_name
         assert isinstance(reconcile.value, ast.Call)
         assert isinstance(reconcile.value.func, ast.Name)
         assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
         assert len(reconcile.value.args) == 1
         assert isinstance(reconcile.value.args[0], ast.Name)
         assert reconcile.value.args[0].id == "model_ir"
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in reconcile.value.keywords
+        } == (
+            {"include_mutation_count": "True"}
+            if result_name is not None
+            else {}
+        )
 
 
 def test_indexed_sinet_tail_concat_owner_reuses_indexed_branch_contracts() -> None:

@@ -242,6 +242,11 @@ passed in 28.45s`. Concat-axis retains its complete guarded shape result, while
 stale-binary cleanup-only pruning is recorded explicitly without broadening
 its rewrite-only guard or moving the progress boundary.
 
+Primary final SiNet Concat/Resize reconciliation staging extends the expanded
+gate to `633 passed in 28.54s`. Its transactional counter controls the same
+guard, which now retains complete shape evidence without changing matching,
+rewiring, pruning, layout sync, or the following high-rank BMM owner.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -251,6 +256,6 @@ full model-corpus run for this observation and accounting unit.
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
 reconciliation inventory immediately before `final_high_rank_bmm_stats`,
-starting with `final_sinet_concat_resize_stats`. Any new mutation evidence must
+continuing with `final_sinet_deep_skip_stats`. Any new mutation evidence must
 preserve current pass order, TensorFlow-free boundary, dependency set, and
 sequential validation policy.

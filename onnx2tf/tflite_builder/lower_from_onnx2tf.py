@@ -5933,13 +5933,22 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
+    _final_sinet_concat_resize_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_sinet_concat_resize_stats.get(
             "optimized_sinet_concat_resize_affine_transpose_chains",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_sinet_concat_resize_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     final_high_rank_bmm_stats = _compress_static_high_rank_batch_matmul(
         model_ir,
         layout_state=session.layout_state,

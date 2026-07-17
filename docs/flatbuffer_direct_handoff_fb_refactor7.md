@@ -3638,3 +3638,30 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final SiNet Concat/Resize
 reconciliation contract; there are no unexpected failures.
+
+## Primary final SiNet Concat/Resize implementation checkpoint
+
+The primary path now initializes
+`_final_sinet_concat_resize_static_shape_stats` with both stable zero keys and
+stores the opt-in complete result under the unchanged positive rewrite guard.
+No sort is added, and the following high-rank BatchMatMul owner retains its
+position.
+
+Matching, transactional plan application, rewiring, metadata, pruning,
+layout-state sync, raw result schema, dependencies, and TensorFlow-free
+behavior are unchanged. The first broad run exposed one stale architecture
+assumption that all six final SiNet guards immediately follow stats and discard
+reconciliation results; that contract now distinguishes only this completed
+owner while retaining the legacy shape for the other five.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal orchestration and indexed owner: `66 passed`
+- targeted owner/architecture contract: `68 passed, 256 deselected`
+- expanded broad related gate: `633 passed in 28.54s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit `final_sinet_deep_skip_stats` for counter/cleanup completeness
+before retaining its guarded reconciliation result. Keep the following SiNet
+Concat/Resize owner boundary fixed. Commit and push only; do not create or
+update a pull request.
