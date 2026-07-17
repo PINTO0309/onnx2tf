@@ -179,6 +179,12 @@ def _run_instrumented_final_convergence(
     changed_owner: str | None,
 ) -> tuple[list[str], list[ModelIRGraphIndex | None], dict[str, int]]:
     model_ir = ModelIR("instrumented_final_shape_activation_convergence")
+    model_ir.tensors["unused_probe"] = TensorIR(
+        name="unused_probe",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
     events: list[str] = []
     graph_indexes: list[ModelIRGraphIndex | None] = []
 
@@ -213,11 +219,16 @@ def _run_instrumented_final_convergence(
     def reconcile_probe(target_model_ir, *, graph_index=None):
         assert target_model_ir is model_ir
         is_first_reconcile = "reshape" not in events
+        is_second_reconcile = "reshape" in events and "fusion" not in events
         events.append("reconcile")
         graph_indexes.append(graph_index)
         return {
             "reconciled_static_tensor_shapes": int(
-                changed_owner == "first_reconcile" and is_first_reconcile
+                (changed_owner == "first_reconcile" and is_first_reconcile)
+                or (
+                    changed_owner == "second_reconcile"
+                    and is_second_reconcile
+                )
             ),
         }
 
@@ -227,7 +238,7 @@ def _run_instrumented_final_convergence(
         graph_indexes.append(graph_index)
         return {
             "resolved_dynamic_reshape_shapes": int(
-                changed_owner == "reshape"
+                changed_owner in {"reshape", "second_reconcile"}
             ),
         }
 
@@ -241,7 +252,11 @@ def _run_instrumented_final_convergence(
         assert layout_state is None
         events.append("fusion")
         graph_indexes.append(graph_index)
-        return {"fused_conv_activation_chains": 0}
+        if changed_owner == "fusion_prune":
+            assert model_ir.tensors.pop("unused_probe", None) is not None
+        return {
+            "fused_conv_activation_chains": int(changed_owner == "fusion"),
+        }
 
     monkeypatch.setattr(
         lowering_module,
@@ -417,6 +432,56 @@ def test_indexed_final_convergence_keeps_second_reconcile_after_mutation(
     )
     assert stats["reconciled_static_tensor_shapes"] == int(
         changed_owner == "first_reconcile"
+    )
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the final convergence coordinator still reconciles after zero "
+        "second-reconcile and fusion results without pruning"
+    ),
+)
+def test_indexed_final_convergence_skips_post_fusion_reconcile_when_stable(
+    monkeypatch,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=None,
+    )
+
+    assert events == ["convergence", "hardswish", "reshape", "fusion"]
+    assert stats["reconciled_static_tensor_shapes"] == 0
+    assert stats["fused_conv_activation_chains"] == 0
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+@pytest.mark.parametrize(
+    "changed_owner",
+    ["second_reconcile", "fusion", "fusion_prune"],
+)
+def test_indexed_final_convergence_keeps_post_fusion_reconcile_after_mutation(
+    monkeypatch,
+    changed_owner: str,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=changed_owner,
+    )
+
+    expected_events = ["convergence", "hardswish", "reshape"]
+    if changed_owner == "second_reconcile":
+        expected_events.append("reconcile")
+    expected_events.extend(["fusion", "reconcile"])
+    assert events == expected_events
+    assert stats["reconciled_static_tensor_shapes"] == int(
+        changed_owner == "second_reconcile"
+    )
+    assert stats["fused_conv_activation_chains"] == int(
+        changed_owner == "fusion"
     )
     assert graph_indexes[0] is not None
     assert all(index is graph_indexes[0] for index in graph_indexes)

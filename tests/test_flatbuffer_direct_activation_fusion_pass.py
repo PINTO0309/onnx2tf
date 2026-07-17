@@ -217,6 +217,27 @@ def test_activation_fusion_guards_are_atomic_noops(guard: str) -> None:
     assert _fingerprint(model_ir) == before
 
 
+def test_zero_fusion_still_prunes_unused_tensors_and_layout() -> None:
+    model_ir = _make_chain()
+    model_ir.operators[1].op_type = "LOGISTIC"
+    model_ir.tensors["unused"] = _tensor("unused")
+    layout_state = LayoutState.from_model_ir(model_ir)
+    operators_before = deepcopy(model_ir.operators)
+
+    assert optimize_fuse_activation_chains(
+        model_ir,
+        layout_state=layout_state,
+    ) == _stats()
+
+    assert model_ir.operators == operators_before
+    assert "unused" not in model_ir.tensors
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert model_ir.metadata["tensor_lineage_events"][-1] == {
+        "kind": "prune_unused_tensors",
+        "removed_names": ["unused"],
+    }
+
+
 def test_compatibility_wrapper_matches_module_and_reconciles_layout() -> None:
     direct = _make_chain("ADD", "RELU6")
     wrapped = deepcopy(direct)

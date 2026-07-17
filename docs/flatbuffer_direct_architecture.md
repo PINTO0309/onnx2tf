@@ -9885,3 +9885,13 @@ directly to fusion; first-reconciliation metadata changes and Reshape rewrites
 retain the scan. The final post-fusion reconciliation, aggregate return schema,
 one-index ownership, and LayoutState forwarding remain unchanged. The complete
 legacy fixture still produces identical ModelIR and aggregate statistics.
+
+The final post-fusion reconciliation cannot use fusion counters alone.
+Activation fusion returns complete per-family and aggregate rewrite counts but
+unconditionally prunes unused tensors, including on a zero-rewrite call. A new
+owner fixture freezes that prune-only path and LayoutState synchronization. A
+strict expected-failure final-coordinator fixture requires the scan to be
+skipped only when the second reconciliation and all fusion counters are zero
+and the tensor table did not shrink. Passing paths retain it after a second
+reconciliation change, fusion rewrite, or prune-only mutation. Production
+remains unchanged at this characterization checkpoint.

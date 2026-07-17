@@ -752,3 +752,26 @@ so metadata changes from the second scan retain one convergence opportunity
 even when fusion is a no-op. Characterize fusion counter completeness and any
 zero-count prune behavior before changing production. Commit and push only; do
 not create or update a pull request.
+
+## Post-fusion reconciliation characterization checkpoint
+
+The final scan in `_run_indexed_final_shape_activation_convergence()` follows
+the optional second reconciliation and activation fusion. Fusion exposes
+complete rewrite counters, but its owner unconditionally calls
+`_prune_unused_tensors()` even when every counter is zero.
+
+A new owner fixture freezes zero-fusion pruning, its lineage event, and
+LayoutState synchronization. A strict expected-failure event-order fixture
+requires the final scan to be skipped only for zero second-reconciliation and
+fusion results with no tensor-count reduction. Passing fixtures preserve it
+after a second-reconciliation metadata change, a fusion rewrite, and a
+zero-rewrite prune-only mutation.
+
+At implementation, record tensor count immediately before fusion, initialize
+`final_reconcile_stats` with the exact zero counter, and guard the final scan
+with `second_reconcile_stats`, every fusion counter through
+`_stats_have_positive_count()`, or a tensor-count decrease. Extend the
+structural contract to a third ordered guard. Validate activation fusion,
+indexed final convergence, dynamic Reshape, shape reconciliation, core,
+architecture, pass-efficiency, and TensorFlow-import-blocked suites
+sequentially. Commit and push only; do not create or update a pull request.
