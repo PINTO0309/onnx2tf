@@ -10387,3 +10387,10 @@ That selected call now assigns its unchanged raw result to
 `_very_late_normalization_stats` and the indexed Conv-input adapter repair.
 The earlier direct expression and both convergence-helper uses are unchanged;
 no summary, tensor-count proxy, or reconciliation consumer is added.
+
+The following indexed Conv-input adapter runner returns two fixed repair
+counters, but both child owners invoke unused-tensor pruning even when their
+counter is zero. Strict characterization therefore requires a starting tensor
+count and a dictionary containing the unchanged two counters plus clamped net
+`pruned_unused_tensors` at the direct very-late call. The independently consumed
+`fallback_conv_input_stats` occurrence remains unchanged.

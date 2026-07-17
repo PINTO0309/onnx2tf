@@ -2164,3 +2164,30 @@ fallback-path `fallback_conv_input_stats` occurrence, confirm its result schema
 and pruning behavior, and characterize only the direct very-late call if its
 raw result is complete. Commit and push only; do not create or update a pull
 request.
+
+## Very-late indexed Conv-input repair characterization checkpoint
+
+The indexed Conv-input adapter runner returns two fixed counters for singleton
+Reshape and stale Transpose repairs. Both child owners unconditionally invoke
+unused-tensor pruning, including zero-rewrite calls. A prune-hook contract now
+freezes the two cleanup opportunities, so the raw counters alone are not
+complete mutation evidence.
+
+Strict expected-failure coverage requires
+`very_late_conv_input_tensor_count` followed by
+`_very_late_conv_input_stats`, which spreads the unchanged runner result and
+adds clamped `pruned_unused_tensors`. It selects only the direct call after
+`_very_late_dynamic_reshape_stats`; the fallback-path
+`fallback_conv_input_stats` assignment remains unchanged.
+
+Focused indexed-owner and very-late coverage is `25 passed, 1 xfailed`. The
+focused run also exposed a stale test assumption that legacy lowerer map-builder
+attributes still existed. The sentinel monkeypatch now uses `raising=False`,
+which preserves detection if either legacy builder is reintroduced and called.
+
+At implementation, measure the tensor delta only around the direct call and
+build the fixed dictionary in place. Do not alter the runner, fallback path,
+following stale-channel-shuffle owner, or reconciliation decisions. Validate
+indexed Conv-input repairs, very-late orchestration, dynamic-Reshape, core,
+pass-efficiency, architecture, and TensorFlow import blocking sequentially.
+Commit and push only; do not create or update a pull request.

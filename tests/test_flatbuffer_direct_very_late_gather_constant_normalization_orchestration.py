@@ -450,6 +450,66 @@ def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None
     assert direct_statements[1] is invocation
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late Conv-input repair result is discarded",
+)
+def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    dynamic_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_very_late_dynamic_reshape_stats"
+    )
+    tensor_count = lowerer.body[dynamic_index + 1]
+    stats = lowerer.body[dynamic_index + 2]
+    following = lowerer.body[dynamic_index + 3]
+
+    assert isinstance(tensor_count, ast.Assign)
+    assert len(tensor_count.targets) == 1
+    assert isinstance(tensor_count.targets[0], ast.Name)
+    assert tensor_count.targets[0].id == "very_late_conv_input_tensor_count"
+    assert isinstance(stats, ast.Assign)
+    assert len(stats.targets) == 1
+    assert isinstance(stats.targets[0], ast.Name)
+    assert stats.targets[0].id == "_very_late_conv_input_stats"
+    assert isinstance(stats.value, ast.Dict)
+    owner = stats.value.values[0]
+    assert isinstance(owner, ast.Call)
+    assert isinstance(owner.func, ast.Name)
+    assert owner.func.id == "_run_indexed_conv_input_adapter_repairs"
+    assert len(owner.args) == 1
+    assert isinstance(owner.args[0], ast.Name)
+    assert owner.args[0].id == "model_ir"
+    assert owner.keywords == []
+    assert len(stats.value.keys) == 2
+    prune_key = stats.value.keys[1]
+    assert isinstance(prune_key, ast.Constant)
+    assert prune_key.value == "pruned_unused_tensors"
+
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == "run_stale_nchw_channel_shuffle_repair"
+
+    fallback_assignments = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "fallback_conv_input_stats"
+    ]
+    assert len(fallback_assignments) == 1
+    fallback = fallback_assignments[0]
+    assert isinstance(fallback.value, ast.Call)
+    assert isinstance(fallback.value.func, ast.Name)
+    assert fallback.value.func.id == "_run_indexed_conv_input_adapter_repairs"
+
+
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = [
