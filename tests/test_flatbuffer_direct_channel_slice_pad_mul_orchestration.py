@@ -389,6 +389,85 @@ def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
     assert helper.body[0].value.func.id == "run_channel_slice_pad_mul"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the pre-terminal pre-ADD owner still lacks net-prune evidence",
+)
+def test_pre_terminal_pre_add_captures_zero_rewrite_pruning_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = (
+        "pre_terminal_pre_add_tensor_count",
+        "_pre_terminal_pre_add_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+    }
+    tensor_count = assignments[target_names[0]]
+    assert isinstance(tensor_count, ast.Call)
+    assert isinstance(tensor_count.func, ast.Name)
+    assert tensor_count.func.id == "len"
+    assert len(tensor_count.args) == 1
+    assert isinstance(tensor_count.args[0], ast.Attribute)
+    assert isinstance(tensor_count.args[0].value, ast.Name)
+    assert tensor_count.args[0].value.id == "model_ir"
+    assert tensor_count.args[0].attr == "tensors"
+
+    summary = assignments[target_names[1]]
+    assert isinstance(summary, ast.Dict)
+    assert len(summary.keys) == 2
+    assert summary.keys[0] is None
+    owner_call = summary.values[0]
+    assert isinstance(owner_call, ast.Call)
+    assert isinstance(owner_call.func, ast.Name)
+    assert owner_call.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert len(owner_call.args) == 1
+    assert isinstance(owner_call.args[0], ast.Name)
+    assert owner_call.args[0].id == "model_ir"
+    assert len(owner_call.keywords) == 1
+    assert owner_call.keywords[0].arg == "layout_state"
+    prune_key = summary.keys[1]
+    assert isinstance(prune_key, ast.Constant)
+    assert prune_key.value == "pruned_unused_tensors"
+    prune_call = summary.values[1]
+    assert isinstance(prune_call, ast.Call)
+    assert isinstance(prune_call.func, ast.Name)
+    assert prune_call.func.id == "max"
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_run_terminal_affine_concat_split_recovery_sequence"
+    )
+    following = lowerer.body[first_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "channel_slice_pad_mul_results"
+
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    ]
+    assert len(production_calls) == 1
+
+
 def test_channel_slice_pad_mul_module_does_not_import_lowerer() -> None:
     module_path = (
         REPO_ROOT

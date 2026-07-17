@@ -373,6 +373,20 @@ def test_compatibility_wrapper_keeps_pruning_at_legacy_boundary() -> None:
     }.issubset(set(prune_events[0]["removed_names"]))
 
 
+def test_compatibility_wrapper_can_prune_with_zero_rewrite_counter() -> None:
+    model = ModelIR("pre_add_zero_rewrite_prune")
+    model.tensors["unused"] = _tensor(
+        "unused",
+        [1],
+        LOGICAL_LAYOUT_NHWC,
+    )
+
+    stats = _optimize_transpose_pre_add_nhwc_chains(model)
+
+    assert stats == {"optimized_transpose_pre_add_nhwc_chains": 0}
+    assert "unused" not in model.tensors
+
+
 def test_stale_plan_is_revalidated_before_mutation() -> None:
     model = _model()
     graph_index = ModelIRGraphIndex(model)

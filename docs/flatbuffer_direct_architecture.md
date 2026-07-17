@@ -10237,3 +10237,11 @@ before extracting only the four declared counters. Production stages
 `_pre_terminal_channel_slice_pad_mul_stats` at the direct terminal call. The
 terminal-slice callback still ignores the returned pair, and no reconciliation
 consumer or tensor-count proxy is added.
+
+The preceding composite pre-ADD owner has one direct production call, but it
+unconditionally prunes unused tensors even when its rewrite counter is zero.
+Its raw dictionary is therefore insufficient mutation evidence. Strict
+characterization requires a starting tensor count followed by a dictionary
+containing the unchanged owner counter and clamped net
+`pruned_unused_tensors`, between terminal affine recovery and the staged
+channel-slice results.

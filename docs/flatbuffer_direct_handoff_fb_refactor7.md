@@ -1655,3 +1655,26 @@ At resume, inspect the preceding `_optimize_transpose_pre_add_nhwc_chains`
 owner. Establish its production occurrence count, return schema, and pruning
 contract before choosing an unambiguous evidence target. Commit and push only;
 do not create or update a pull request.
+
+## Pre-terminal pre-ADD evidence characterization checkpoint
+
+The composite pre-ADD owner has exactly one direct lowerer call. Its indexed
+and compatibility rewrites report one aggregate
+`optimized_transpose_pre_add_nhwc_chains` counter, but the compatibility owner
+unconditionally prunes at exit. A dedicated zero-rewrite test confirms that an
+unused tensor can be removed while the returned counter remains zero.
+
+Strict expected-failure coverage therefore requires adjacent
+`pre_terminal_pre_add_tensor_count` and `_pre_terminal_pre_add_stats`
+assignments. The summary must preserve the raw counter and add clamped net
+`pruned_unused_tensors`. Terminal affine recovery and
+`channel_slice_pad_mul_results` are fixed outer boundaries; ModelIR and Session
+LayoutState forwarding remain unchanged.
+
+At implementation, replace the unique direct expression with count plus merged
+stats assignments. Update the channel-slice and downstream bridge boundary
+contracts, but leave the three orchestration-owned occurrences unchanged.
+Validate zero-rewrite pruning, the complete indexed/compatibility owner,
+channel-slice, terminal-affine, core, pass-efficiency, architecture, and
+TensorFlow import blocking sequentially. Commit and push only; do not create or
+update a pull request.
