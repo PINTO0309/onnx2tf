@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -105,10 +102,6 @@ def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> Non
     assert ast.unparse(terminal.value) == "_finalize_model_ir(model_ir)"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="primary terminal owner results are discarded",
-)
 def test_primary_path_retains_terminal_mutation_results() -> None:
     body = _lowerer_body()
     convergence_index = _call_index(

@@ -2332,9 +2332,8 @@ diagnostic-only change.
 All three terminal mutation owners already return complete evidence: indexed
 binary convergence aggregates its bounded-round counters, high-rank binary
 coalescing returns an exact rewrite count, and boundary-signature realignment
-returns its update count. Characterization requires the primary caller to
-retain those dictionaries without adding reconciliation, scans, or changing
-the final sort/validation boundary.
+returns its update count. The primary caller retains those dictionaries without
+adding reconciliation, scans, or changing the final sort/validation boundary.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to

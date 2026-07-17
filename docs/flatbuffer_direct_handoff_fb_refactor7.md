@@ -3315,3 +3315,29 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet three-result capture contract;
 there are no unexpected failures.
+
+## Primary terminal mutation-result implementation checkpoint
+
+The primary path now assigns the complete terminal dictionaries to
+`_final_binary_layout_convergence_stats`,
+`_final_high_rank_binary_stats`, and
+`_final_dynamic_boundary_signature_stats`. All three calls, arguments,
+layout-state handoff, order, and result schemas are unchanged.
+
+No reconciliation, scan, sort, or dependency is added. The terminal sort,
+layout validation, stale-error removal, finalization, and TensorFlow-free
+boundary remain unchanged. The strict characterization contract is now a
+normal passing test.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused terminal/convergence/high-rank/signature selection:
+  `23 passed, 11 deselected`
+- expanded broad related gate plus rank-6 structure/numeric parity:
+  `564 passed in 28.36s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, continue the primary final-pass reconciliation inventory with
+`final_high_rank_bmm_stats`. Confirm counter/cleanup completeness before
+retaining its guarded reconciliation result. Commit and push only; do not
+create or update a pull request.

@@ -212,6 +212,11 @@ high-rank binary coalescing, boundary-signature realignment, and the final
 topological sort. Valid terminal graphs clear only a stale validation-error
 key; progress reporting and artifact behavior are unchanged.
 
+The three primary terminal mutation dictionaries are now retained, extending
+the expanded gate to `564 passed in 28.36s`. This adds no scans or
+reconciliation: bounded binary convergence, high-rank binary coalescing, and
+boundary-signature realignment already return complete evidence.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -219,8 +224,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next
-characterized unit should audit result capture for the primary terminal
-indexed convergence, high-rank binary coalescing, and boundary-signature
-realignment owners. Any new mutation evidence must preserve current pass
-order, TensorFlow-free boundary, dependency set, and sequential validation
-policy.
+characterized unit should continue the primary final-pass reconciliation
+inventory, beginning with `final_high_rank_bmm_stats` and its guarded static-
+shape result. Any new mutation evidence must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

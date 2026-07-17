@@ -6013,12 +6013,16 @@ def lower_onnx_to_ir(
 
     # Terminal layout cleanup can expose stale direct-NCHW fallback bridges
     # that were not identifiable before the final annotations were available.
-    _run_indexed_binary_layout_convergence(model_ir)
-    coalesce_static_high_rank_binary_operators(
+    _final_binary_layout_convergence_stats = (
+        _run_indexed_binary_layout_convergence(model_ir)
+    )
+    _final_high_rank_binary_stats = coalesce_static_high_rank_binary_operators(
         model_ir,
         layout_state=session.layout_state,
     )
-    _realign_dynamic_boundary_shape_signature_map(model_ir)
+    _final_dynamic_boundary_signature_stats = (
+        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    )
     _topologically_sort_operators(model_ir)
     layout_problems = validate_model_ir_layout_annotations(model_ir)
     if len(layout_problems) > 0:
