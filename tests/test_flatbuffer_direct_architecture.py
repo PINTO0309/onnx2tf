@@ -2818,6 +2818,7 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         if isinstance(statement, (ast.Assign, ast.AnnAssign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id != "len"
     ]
     assert [call.func.id for call in direct_calls] == [
         "ModelIRGraphIndex",
@@ -2825,15 +2826,14 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         "_sanitize_hardswish_tensor_shapes",
         "_resolve_dynamic_reshape_shapes",
         "_optimize_fuse_conv_activation_chains",
-        "_reconcile_static_tensor_shapes",
     ]
     guards = [
         statement for statement in helper.body if isinstance(statement, ast.If)
     ]
-    assert len(guards) == 2
+    assert len(guards) == 3
     guarded_calls = []
     for guard, expected_arguments in zip(
-        guards,
+        guards[:2],
         [
             ["convergence_stats", "hardswish_stats"],
             ["first_reconcile_stats", "reshape_stats"],
@@ -2856,6 +2856,31 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         assert isinstance(guarded_call.func, ast.Name)
         assert guarded_call.func.id == "_reconcile_static_tensor_shapes"
         guarded_calls.append(guarded_call)
+    final_guard = guards[2]
+    assert isinstance(final_guard.test, ast.BoolOp)
+    assert isinstance(final_guard.test.op, ast.Or)
+    assert len(final_guard.test.values) == 2
+    final_predicate = final_guard.test.values[0]
+    assert isinstance(final_predicate, ast.Call)
+    assert isinstance(final_predicate.func, ast.Name)
+    assert final_predicate.func.id == "_stats_have_positive_count"
+    assert [
+        argument.id
+        for argument in final_predicate.args
+        if isinstance(argument, ast.Name)
+    ] == ["second_reconcile_stats", "fusion_stats"]
+    prune_comparison = final_guard.test.values[1]
+    assert ast.unparse(prune_comparison) == (
+        "len(model_ir.tensors) < fusion_tensor_count"
+    )
+    assert len(final_guard.body) == 1
+    final_guarded_assignment = final_guard.body[0]
+    assert isinstance(final_guarded_assignment, ast.Assign)
+    final_guarded_call = final_guarded_assignment.value
+    assert isinstance(final_guarded_call, ast.Call)
+    assert isinstance(final_guarded_call.func, ast.Name)
+    assert final_guarded_call.func.id == "_reconcile_static_tensor_shapes"
+    guarded_calls.append(final_guarded_call)
     reshape_call = next(
         call
         for call in direct_calls
@@ -2870,6 +2895,18 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     )
     assert direct_calls[2].lineno < guards[0].lineno < reshape_call.lineno
     assert reshape_call.lineno < guards[1].lineno < fusion_call.lineno
+    tensor_count_assignment = next(
+        statement
+        for statement in helper.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "fusion_tensor_count"
+            for target in statement.targets
+        )
+    )
+    assert guards[1].lineno < tensor_count_assignment.lineno < fusion_call.lineno
+    assert fusion_call.lineno < final_guard.lineno
     for call in [*direct_calls[1:], *guarded_calls]:
         graph_index_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "graph_index"

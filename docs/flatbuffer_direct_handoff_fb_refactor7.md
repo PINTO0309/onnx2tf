@@ -775,3 +775,30 @@ structural contract to a third ordered guard. Validate activation fusion,
 indexed final convergence, dynamic Reshape, shape reconciliation, core,
 architecture, pass-efficiency, and TensorFlow-import-blocked suites
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Post-fusion reconciliation implementation checkpoint
+
+The coordinator now records `fusion_tensor_count` immediately before
+activation fusion and initializes `final_reconcile_stats` with the exact zero
+counter. The final scan runs only when `second_reconcile_stats` or any fusion
+counter is positive, or when zero-rewrite pruning reduces the tensor table.
+
+The complete stable path now ends after fusion. A changing second
+reconciliation, fusion rewrite, and prune-only mutation each preserve the scan
+with the same `ModelIRGraphIndex`. The architecture contract verifies all three
+guards in source order, the tensor-count boundary, and index forwarding. The
+activation-fusion owner fixture confirms zero-count pruning and LayoutState
+synchronization.
+
+Sequential validation across activation fusion, indexed final convergence,
+dynamic Reshape, shape reconciliation, graph cleanup, HardSwish/SE layout,
+core, pass-efficiency, architecture, and TensorFlow-import-blocked suites is
+`414 passed in 26.42s`. Focused final-coordinator, prune-only, structure, and
+legacy-equivalence coverage is `13 passed in 2.27s`.
+
+At resume, return to the larger lowerer reconciliation inventory. The three
+indexed final-convergence scans now have explicit mutation contracts; do not
+merge their guards unless tests can still distinguish each convergence
+opportunity. Select the next boundary only when every mutation since the prior
+scan has a returned counter or prune accounting. Commit and push only; do not
+create or update a pull request.

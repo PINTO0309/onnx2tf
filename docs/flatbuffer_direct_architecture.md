@@ -9895,3 +9895,11 @@ skipped only when the second reconciliation and all fusion counters are zero
 and the tensor table did not shrink. Passing paths retain it after a second
 reconciliation change, fusion rewrite, or prune-only mutation. Production
 remains unchanged at this characterization checkpoint.
+
+The coordinator now records tensor count immediately before fusion,
+initializes the final reconciliation result with the exact zero counter, and
+guards the scan with `second_reconcile_stats`, every fusion counter, or a
+tensor-count decrease. The stable path ends after fusion; second-scan metadata
+changes, fusion rewrites, and zero-rewrite pruning each retain the final scan.
+All three reconciliation guards remain ordered under one index, and the
+complete legacy fixture preserves ModelIR and aggregate statistics.

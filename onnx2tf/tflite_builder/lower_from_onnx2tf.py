@@ -1322,15 +1322,24 @@ def _run_indexed_final_shape_activation_convergence(
             model_ir,
             graph_index=graph_index,
         )
+    fusion_tensor_count = len(model_ir.tensors)
     fusion_stats = _optimize_fuse_conv_activation_chains(
         model_ir,
         graph_index=graph_index,
         layout_state=layout_state,
     )
-    final_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    final_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if (
+        _stats_have_positive_count(
+            second_reconcile_stats,
+            fusion_stats,
+        )
+        or len(model_ir.tensors) < fusion_tensor_count
+    ):
+        final_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
     return {
         **convergence_stats,
         "sanitized_hardswish_tensor_shapes": int(

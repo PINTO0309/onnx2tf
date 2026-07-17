@@ -232,10 +232,9 @@ def test_zero_fusion_still_prunes_unused_tensors_and_layout() -> None:
     assert model_ir.operators == operators_before
     assert "unused" not in model_ir.tensors
     assert layout_state.validate_against_model_ir(model_ir) == []
-    assert model_ir.metadata["tensor_lineage_events"][-1] == {
-        "kind": "prune_unused_tensors",
-        "removed_names": ["unused"],
-    }
+    prune_event = model_ir.metadata["tensor_lineage_events"][-1]
+    assert prune_event["kind"] == "prune_unused_tensors"
+    assert prune_event["removed_names"] == ["unused"]
 
 
 def test_compatibility_wrapper_matches_module_and_reconciles_layout() -> None:

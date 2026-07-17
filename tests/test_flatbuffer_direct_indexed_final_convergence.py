@@ -345,7 +345,6 @@ def test_indexed_final_convergence_skips_first_reconcile_when_stable(
         "hardswish",
         "reshape",
         "fusion",
-        "reconcile",
     ]
     assert stats == {
         "removed_dead_operators": 0,
@@ -374,7 +373,6 @@ def test_indexed_final_convergence_keeps_first_reconcile_after_mutation(
         "reconcile",
         "reshape",
         "fusion",
-        "reconcile",
     ]
     assert stats["removed_dead_operators"] == int(
         changed_owner == "convergence"
@@ -394,13 +392,7 @@ def test_indexed_final_convergence_skips_second_reconcile_when_stable(
         changed_owner=None,
     )
 
-    assert events == [
-        "convergence",
-        "hardswish",
-        "reshape",
-        "fusion",
-        "reconcile",
-    ]
+    assert events == ["convergence", "hardswish", "reshape", "fusion"]
     assert stats["resolved_dynamic_reshape_shapes"] == 0
     assert stats["reconciled_static_tensor_shapes"] == 0
     assert graph_indexes[0] is not None
@@ -425,7 +417,6 @@ def test_indexed_final_convergence_keeps_second_reconcile_after_mutation(
         "reshape",
         "reconcile",
         "fusion",
-        "reconcile",
     ]
     assert stats["resolved_dynamic_reshape_shapes"] == int(
         changed_owner == "reshape"
@@ -437,13 +428,6 @@ def test_indexed_final_convergence_keeps_second_reconcile_after_mutation(
     assert all(index is graph_indexes[0] for index in graph_indexes)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the final convergence coordinator still reconciles after zero "
-        "second-reconcile and fusion results without pruning"
-    ),
-)
 def test_indexed_final_convergence_skips_post_fusion_reconcile_when_stable(
     monkeypatch,
 ) -> None:
