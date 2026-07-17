@@ -1903,3 +1903,26 @@ the nested safe-binary final step, three total safe-binary invocations, and two
 quantized runner invocations. The focused plus architecture suite passed 252
 tests and all 11 TensorFlow-import-blocked tests passed. No pull request was
 created, reopened, or updated.
+
+That nested boundary is now implemented in
+`passes/quantized_recovery_orchestration.py`. A frozen context carries ModelIR
+and layout state, and the phase module directly owns one stable safe-binary ID
+plus six stable quantized activation/binary IDs. The quantized sequence nests
+the safe-binary runner as its final immutable invocation. No lowerer-local
+callback is needed, and the phase module does not import the central lowerer.
+
+Both historical helper names, all outer call sites, exact arguments, runtime
+order, and invocation multiplicity remain unchanged. The lowerer helpers now
+capture only the explicit context and delegate to shared pre-execution ID-
+validated runners. Multiplicity-aware architecture accounting preserves three
+total safe-binary invocations and two quantized invocations across the nested
+boundary.
+
+Validation passed 8 focused orchestration tests, 248 architecture tests, the
+combined 703-test related safe-binary/quantized family, 32 central lowerer
+smoke tests, and all 11 TensorFlow-import-blocked optional-boundary tests.
+Stale logistic-gate and softmax canonicalization fixtures were updated to use
+their actual module owner and stable phase boundary. No public API, CLI,
+artifact, dependency, corpus policy, operation tier, pass order, or TensorFlow
+isolation behavior changed. PR #952 remains closed and no pull request was
+created, reopened, or updated.

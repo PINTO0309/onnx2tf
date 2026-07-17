@@ -180,6 +180,11 @@ from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     run_attention_gate_qdq_recovery,
     run_preadd_mean_attention_recovery,
 )
+from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
+    QuantizedRecoveryContext,
+    run_quantized_activation_binary_recovery,
+    run_safe_binary_recovery,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -187,7 +192,6 @@ from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_mixed_fanout_bridges_safe as _optimize_transpose_binary_mixed_fanout_bridges_safe_pass,
     optimize_transpose_binary_single_post_bridges_safe as _optimize_transpose_binary_single_post_bridges_safe_pass,
     optimize_transpose_binary_symmetric_legacy_only_bridges_safe as _optimize_transpose_binary_symmetric_legacy_only_bridges_safe_pass,
-    run_safe_binary_bridge_recovery as _run_safe_binary_bridge_recovery_pass,
 )
 from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     repair_rank4_channelwise_broadcast_constants_to_runtime_layout as _repair_rank4_channelwise_broadcast_constants_to_runtime_layout_pass,
@@ -4667,6 +4671,10 @@ def lower_onnx_to_ir(
             _run_transpose_unary_fanout_layout_pass_cluster
         ),
     )
+    quantized_recovery_context = QuantizedRecoveryContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+    )
 
     def _run_layout_recovery_prefix_pass_sequence() -> None:
         run_layout_recovery_prefix(layout_recovery_context)
@@ -4683,30 +4691,12 @@ def lower_onnx_to_ir(
         run_attention_gate_qdq_recovery(attention_recovery_context)
 
     def _run_safe_binary_bridge_recovery_sequence() -> None:
-        _run_safe_binary_bridge_recovery_pass(
-            model_ir,
-            layout_state=session.layout_state,
-        )
+        run_safe_binary_recovery(quantized_recovery_context)
 
     def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
-        _optimize_dequant_hardsigmoid_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        run_quantized_activation_binary_recovery(
+            quantized_recovery_context
         )
-        _optimize_dequant_maxpool_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_dequant_softmax_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_dequant_logistic_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _canonicalize_softmax_transpose_chains(model_ir)
-        _run_safe_binary_bridge_recovery_sequence()
 
     def _run_qlinear_mean_concat_recovery_sequence() -> None:
         _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir)

@@ -14,6 +14,10 @@ from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     ATTENTION_GATE_QDQ_PASS_IDS,
     PREADD_MEAN_ATTENTION_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
+    QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
+    SAFE_BINARY_RECOVERY_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -21,6 +25,8 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *ATTENTION_RECOVERY_PASS_IDS,
     *PREADD_MEAN_ATTENTION_PASS_IDS,
     *ATTENTION_GATE_QDQ_PASS_IDS,
+    *SAFE_BINARY_RECOVERY_PASS_IDS,
+    *QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -677,14 +683,15 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_optimize_dequant_hardsigmoid_quantize_chains",
         "_optimize_dequant_maxpool_quantize_chains",
         "_optimize_dequant_softmax_quantize_chains",
         "_optimize_dequant_logistic_quantize_chains",
         "_canonicalize_softmax_transpose_chains",
         "_run_safe_binary_bridge_recovery_sequence",
-    ]
+    )
+    assert QUANTIZED_ACTIVATION_BINARY_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -692,7 +699,13 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert [call.func.id for call in helper_calls] == [
+        "run_quantized_activation_binary_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "quantized_recovery_context"
+    assert helper_calls[0].keywords == []
 
     direct_boundaries = []
     for statement in lowerer.body:
@@ -798,6 +811,9 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
     assert "_build_tensor_consumer_map" not in owner_source
     assert "_build_tensor_producer_map" not in owner_source
     assert "while True" not in owner_source
+    assert SAFE_BINARY_RECOVERY_PASS_IDS == (
+        "_run_safe_binary_bridge_recovery_pass",
+    )
 
     helper_calls = [
         statement.value
@@ -807,15 +823,12 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value.func, ast.Name)
     ]
     assert [call.func.id for call in helper_calls] == [
-        "_run_safe_binary_bridge_recovery_pass"
+        "run_safe_binary_recovery"
     ]
-    layout_keyword = next(
-        keyword
-        for keyword in helper_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "quantized_recovery_context"
+    assert helper_calls[0].keywords == []
 
     compatibility_dispatchers = {
         "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe":
@@ -850,13 +863,7 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
             "candidate",
         }
 
-    quantized_helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_quantized_activation_binary_bridge_recovery_sequence"
-    )
-    assert quantized_helper.body[-1].value.func.id == helper_name
+    assert QUANTIZED_ACTIVATION_BINARY_PASS_IDS[-1] == helper_name
 
     direct_boundaries = []
     for statement in lowerer.body:
@@ -889,7 +896,7 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(all_invocations) == 3
+    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 3
 
 
 def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:

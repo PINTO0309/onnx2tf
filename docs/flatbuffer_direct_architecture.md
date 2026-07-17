@@ -8929,3 +8929,25 @@ layout state. Focused contracts fix the three total safe-binary invocations,
 two quantized runner invocations, all ModelIR/layout arguments, the model-only
 softmax canonicalization, and the nested final-step relationship before
 production extraction.
+
+That boundary now uses a frozen `QuantizedRecoveryContext` and the explicit
+stable-ID specifications in
+`passes/quantized_recovery_orchestration.py`. The one-step safe-binary phase
+and six-step quantized activation/binary phase import all six existing module
+owners directly; no lowerer-local callback or lowerer import is required. The
+quantized phase nests the safe-binary runner as its final immutable invocation,
+and the shared executor rejects ID-order drift before any callback runs.
+
+The central lowerer constructs one context and retains both historical helper
+names and all outer zero-argument call sites as compatibility/order boundaries.
+Those helpers now delegate to the explicit runners. Ordered stable-ID
+multiplicity accounts for the nested safe-binary invocation, so architecture
+tests continue to prove three total safe-binary and two total quantized phase
+executions while all characterized arguments and runtime order remain exact.
+
+Focused, architecture, central lowerer, related quantized/binary family, and
+TensorFlow-import-blocked suites pass. This mechanical extraction changes no
+public API, CLI behavior, artifact, dependency, corpus/exclusion policy,
+operation tier, pass semantics, or TensorFlow boundary. The next candidate is
+the adjacent five-step qlinear mean/concat recovery sequence; characterize its
+arguments and repetition boundaries before introducing another phase runner.

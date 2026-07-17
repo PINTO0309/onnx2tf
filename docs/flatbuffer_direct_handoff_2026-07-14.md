@@ -12968,3 +12968,78 @@ sufficient. Preserve the historical helper names, both outer invocation
 counts, and the three total safe-binary invocations. Prove instrumented order
 and arguments before switching production wiring, validate sequentially,
 commit and push, and do not create a pull request.
+
+## Explicit quantized activation/binary recovery orchestration: completed state
+
+The characterized nested boundary now delegates to
+`passes/quantized_recovery_orchestration.py`. A frozen
+`QuantizedRecoveryContext` carries the shared ModelIR and `LayoutState`; this
+boundary needs no injected lowerer-local callback. The new module imports the
+safe-binary, quantized hard-sigmoid, max-pool, softmax, logistic, and softmax-
+transpose canonicalization owners directly and does not import the central
+lowerer.
+
+`SAFE_BINARY_RECOVERY_PASS_IDS` declares the one-step safe-binary phase, while
+`QUANTIZED_ACTIVATION_BINARY_PASS_IDS` declares the six-step quantized phase.
+The latter invokes the complete safe-binary runner as its final stable step.
+Both use the shared immutable `RecoveryInvocation` executor, which verifies
+the exact ID order before executing a callback. The characterized positional
+and keyword arguments, nested structure, and ignored return values are
+unchanged.
+
+The historical lowerer helper names and every zero-argument outer call remain
+in place. Their bodies shrink from five to two lines and from nineteen to four
+lines and capture only the explicit context. Architecture accounting includes
+the ordered stable-ID multiplicity, preserving three total safe-binary helper
+invocations and two total quantized helper invocations even though one nested
+call is no longer visible in the lowerer AST. The obsolete lowerer import of
+the safe-binary owner was removed.
+
+Focused contracts verify both stable ID sequences, every argument, explicit
+context and wrapper wiring, instrumented order, outer invocation counts, and
+lowerer-import isolation. The softmax canonicalization architecture fixture
+now checks its moved boundary through the stable quantized sequence while
+retaining the remaining direct lowerer boundary. The indexed logistic-gate
+expected builder now imports graph mutation helpers from their actual owner,
+`core.model_ir_utils`, rather than an already-absent private lowerer re-export.
+
+Sequential validation completed as follows:
+
+- focused quantized orchestration: `8 passed in 0.57s`;
+- focused orchestration plus ordered architecture: `256 passed in 17.91s`;
+- affected logistic/softmax/orchestration/architecture set:
+  `324 passed in 17.41s`;
+- related safe-binary and quantized pass-family set:
+  `703 passed in 17.36s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 9.92s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+One diagnostic broad direct-suite run before the two fixture-owner updates
+reported `1436 passed, 8 failed`. Two failures were the stale logistic-gate and
+softmax AST contracts corrected above. Four require the intentionally absent
+TensorFlow optional extra:
+`test_tflite_backend_matrix_add`,
+`test_tflite_backend_matrix_hardswish_rewrite_on_off`,
+`test_tf_converter_resize_cubic_avoids_flex_resize_bicubic`, and
+`test_tf_converter_resize_cubic_honors_cubic_coeff_a`. One is the documented
+incompatible local Torch binary failure in
+`test_flatbuffer_direct_group_norm_alias_builtin_conversion`. The remaining
+unrelated existing failure is
+`test_flatbuffer_direct_sinet_concat_resize_affine_transpose_chain_optimized`,
+whose direct pass statistic is zero instead of one; this extraction neither
+calls nor changes that owner. No real-model conversion was added.
+
+Public APIs, CLI behavior, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, runtime pass order, invocation multiplicity, and
+TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR is
+open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent five-step
+`_run_qlinear_mean_concat_recovery_sequence` before moving production code.
+Freeze every argument and all outer repetition/boundary contracts first, then
+introduce another explicit stable-ID phase only if direct module ownership can
+preserve the exact flattened sequence. Keep verification sequential and
+minimal, commit and push a coherent checkpoint, and do not create a pull
+request.

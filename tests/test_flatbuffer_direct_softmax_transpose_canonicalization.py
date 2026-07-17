@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.softmax_transpose_canonicalization import (
     _canonicalize_softmax_transpose_chains as _canonicalize_softmax_transpose_chains_owner,
 )
+from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
+    QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.terminal_softmax_layout import (
     _SOFTMAX_NHWC_PROPAGATED_MARKER,
 )
@@ -711,11 +714,18 @@ def test_softmax_transpose_canonicalization_keeps_ordered_boundaries() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
+    canonicalization_index = QUANTIZED_ACTIVATION_BINARY_PASS_IDS.index(
+        "_canonicalize_softmax_transpose_chains"
+    )
+    assert (
+        QUANTIZED_ACTIVATION_BINARY_PASS_IDS[canonicalization_index - 1],
+        QUANTIZED_ACTIVATION_BINARY_PASS_IDS[canonicalization_index + 1],
+    ) == (
+        "_optimize_dequant_logistic_quantize_chains",
+        "_run_safe_binary_bridge_recovery_sequence",
+    )
+
     expected = {
-        "_run_quantized_activation_binary_bridge_recovery_sequence": (
-            "_optimize_dequant_logistic_quantize_chains",
-            "_run_safe_binary_bridge_recovery_sequence",
-        ),
         "_run_layout_attention_quantized_recovery_suffix": (
             "_optimize_dequant_logistic_quantize_chains",
             None,
