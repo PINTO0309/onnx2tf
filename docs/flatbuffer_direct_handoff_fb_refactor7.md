@@ -492,3 +492,21 @@ private helper. Existing call sites may continue ignoring it. Validate every
 orchestration suite and the core/architecture/TensorFlow boundary before
 changing the shared reconciliation. Commit and push only; do not create or
 update a pull request.
+
+## Singleton/consecutive-Reshape result implementation checkpoint
+
+`run_singleton_consecutive_reshape()` now returns the ordered result
+dictionaries for singleton-channel transpose, duplicate fan-out, and
+consecutive Reshape. The lowerer's private helper forwards the typed triple.
+All three existing call sites continue ignoring it, so ModelIR and
+reconciliation behavior remain unchanged in this checkpoint.
+
+Sequential validation across every orchestration suite is
+`294 passed in 3.93s`. The core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gate is `339 passed in 25.88s`. Focused helper,
+ordered-result, target-form, and shared-state-scope contracts pass.
+
+At resume, characterize the earlier shared reconciliation using all preceding
+sanitizer/repair results, the three cluster result dictionaries, and tensor-count
+prune accounting. Do not use an incomplete subset of cluster counters. Commit
+and push only; do not create or update a pull request.

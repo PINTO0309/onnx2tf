@@ -4175,8 +4175,8 @@ def lower_onnx_to_ir(
     def _run_singleton_consecutive_reshape_pass_cluster(
         target_model_ir: ModelIR,
         target_layout_state: LayoutState | None,
-    ) -> None:
-        run_singleton_consecutive_reshape(
+    ) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int]]:
+        return run_singleton_consecutive_reshape(
             ModelIRPassContext(
                 model_ir=target_model_ir,
                 layout_state=target_layout_state,

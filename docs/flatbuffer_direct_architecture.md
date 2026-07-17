@@ -9789,3 +9789,9 @@ and the lowerer's private helper still discard them. A strict expected-failure
 contract requires the ordered three-dictionary tuple without changing owner
 order, shared state scope, arguments, diagnostics, or any call site. Production
 remains unchanged at this characterization checkpoint.
+
+`run_singleton_consecutive_reshape()` now forwards its three ordered result
+dictionaries, and the lowerer's private helper preserves that tuple. All three
+production call sites continue ignoring it, so this checkpoint changes neither
+ModelIR nor reconciliation behavior. The complete orchestration corpus confirms
+that tuple propagation is additive to the existing shared-state contract.

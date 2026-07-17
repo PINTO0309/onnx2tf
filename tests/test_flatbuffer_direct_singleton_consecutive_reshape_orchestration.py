@@ -144,7 +144,7 @@ def test_singleton_consecutive_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -242,13 +242,6 @@ def test_singleton_consecutive_runner_preserves_both_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the singleton/consecutive-Reshape runner currently discards all "
-        "three ordered pass result dictionaries"
-    ),
-)
 def test_singleton_consecutive_runner_returns_three_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

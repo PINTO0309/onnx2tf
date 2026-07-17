@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple, cast
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -66,9 +66,12 @@ def build_singleton_consecutive_reshape_invocations(
 
 def run_singleton_consecutive_reshape(
     context: SingletonConsecutiveReshapeContext,
-) -> None:
-    run_recovery_invocations(
-        build_singleton_consecutive_reshape_invocations(context),
-        expected_pass_ids=SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
-        phase_name="singleton-channel/consecutive-reshape",
+) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int]]:
+    return cast(
+        Tuple[Dict[str, int], Dict[str, int], Dict[str, int]],
+        run_recovery_invocations(
+            build_singleton_consecutive_reshape_invocations(context),
+            expected_pass_ids=SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
+            phase_name="singleton-channel/consecutive-reshape",
+        ),
     )

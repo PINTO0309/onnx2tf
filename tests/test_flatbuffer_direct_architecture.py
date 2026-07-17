@@ -7349,7 +7349,7 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     ]
     assert len(short_helper.body) == 1
     short_statement = short_helper.body[0]
-    assert isinstance(short_statement, ast.Expr)
+    assert isinstance(short_statement, ast.Return)
     assert isinstance(short_statement.value, ast.Call)
     assert isinstance(short_statement.value.func, ast.Name)
     assert short_statement.value.func.id == "run_singleton_consecutive_reshape"
