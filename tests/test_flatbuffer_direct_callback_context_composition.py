@@ -9,6 +9,7 @@ from typing import Any, Callable
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     AttentionRecoveryContext,
@@ -129,29 +130,31 @@ def test_callback_contexts_share_one_frozen_base_identity_contract(
     model_ir = ModelIR(f"callback_context_{module_name}")
     layout_state = LayoutState.from_model_ir(model_ir)
     diagnostics: list[dict] = []
+    pass_context = ModelIRPassContext(model_ir, layout_state, diagnostics)
     callbacks = {name: _callback(name) for name in callback_fields}
 
     assert is_dataclass(context_type)
     assert tuple(field.name for field in fields(context_type)) == (
-        "model_ir",
-        "layout_state",
-        "diagnostics",
+        "pass_context",
         *callback_fields,
     )
     context = context_type(
-        model_ir=model_ir,
-        layout_state=layout_state,
-        diagnostics=diagnostics,
+        pass_context=pass_context,
         **callbacks,
     )
-    assert context.model_ir is model_ir
-    assert context.layout_state is layout_state
-    assert context.diagnostics is diagnostics
+    assert context.pass_context is pass_context
+    assert context.pass_context.model_ir is model_ir
+    assert context.pass_context.layout_state is layout_state
+    assert context.pass_context.diagnostics is diagnostics
     assert all(
         getattr(context, name) is callback for name, callback in callbacks.items()
     )
     with pytest.raises(FrozenInstanceError):
-        context.model_ir = ModelIR("replacement")
+        context.pass_context = ModelIRPassContext(
+            ModelIR("replacement"),
+            None,
+            [],
+        )
 
 
 def test_lowerer_callback_context_wiring_is_explicit() -> None:
@@ -180,9 +183,7 @@ def test_lowerer_callback_context_wiring_is_explicit() -> None:
             for keyword in call.keywords
         }
         assert contract == {
-            "model_ir": "model_ir",
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
+            "pass_context": "session.model_ir_pass_context",
             **LOWERER_CALLBACK_CONTRACTS[call.func.id],
         }
 
@@ -191,6 +192,7 @@ def test_callback_invocation_argument_contracts_are_preserved() -> None:
     model_ir = ModelIR("callback_invocation_contracts")
     layout_state = LayoutState.from_model_ir(model_ir)
     diagnostics: list[dict] = []
+    pass_context = ModelIRPassContext(model_ir, layout_state, diagnostics)
     mean = _callback("mean")
     gate = _callback("gate")
     unary = _callback("unary")
@@ -202,9 +204,7 @@ def test_callback_invocation_argument_contracts_are_preserved() -> None:
     channel_slice = _callback("channel_slice")
 
     attention_context = AttentionRecoveryContext(
-        model_ir=model_ir,
-        layout_state=layout_state,
-        diagnostics=diagnostics,
+        pass_context=pass_context,
         mean_attention_cluster=mean,
         gate_layout_cluster=gate,
         transpose_unary_fanout_cluster=unary,
@@ -217,9 +217,7 @@ def test_callback_invocation_argument_contracts_are_preserved() -> None:
 
     suffix = build_layout_attention_quantized_suffix_invocations(
         LayoutAttentionQuantizedSuffixContext(
-            model_ir=model_ir,
-            layout_state=layout_state,
-            diagnostics=diagnostics,
+            pass_context=pass_context,
             mean_attention_cluster=mean,
             attention_gate_qdq_recovery=attention_gate,
             duplicate_quantized_prelu_cluster=duplicate,
@@ -234,9 +232,7 @@ def test_callback_invocation_argument_contracts_are_preserved() -> None:
 
     layout = build_layout_recovery_invocations(
         LayoutRecoveryContext(
-            model_ir=model_ir,
-            layout_state=layout_state,
-            diagnostics=diagnostics,
+            pass_context=pass_context,
             boundary_batchmatmul_unary_cluster=boundary,
             pre_concat_cleanup=pre_concat,
             channel_shuffle_gather_cluster=channel_shuffle,
@@ -253,9 +249,7 @@ def test_callback_invocation_argument_contracts_are_preserved() -> None:
 
     terminal = build_terminal_slice_concat_recovery_invocations(
         TerminalSliceConcatRecoveryContext(
-            model_ir=model_ir,
-            layout_state=layout_state,
-            diagnostics=diagnostics,
+            pass_context=pass_context,
             channel_slice_pad_mul_cluster=channel_slice,
         )
     )

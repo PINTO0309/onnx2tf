@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import channel_shuffle_gather_orchestration
@@ -425,10 +426,13 @@ def test_channel_shuffle_gather_preserves_argument_free_default_callback() -> No
     def callback() -> None:
         return None
 
+    model_ir = ModelIR("channel_shuffle_gather_callback_test")
     context = LayoutRecoveryContext(
-        model_ir=ModelIR("channel_shuffle_gather_callback_test"),
-        layout_state=None,
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=[],
+        ),
         boundary_batchmatmul_unary_cluster=lambda: None,
         pre_concat_cleanup=lambda *args, **kwargs: None,
         channel_shuffle_gather_cluster=callback,

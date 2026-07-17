@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import mean_attention_orchestration
@@ -424,10 +425,13 @@ def test_mean_attention_preserves_both_argument_free_default_callbacks() -> None
     def callback() -> None:
         return None
 
-    attention_context = AttentionRecoveryContext(
+    pass_context = ModelIRPassContext(
         model_ir=ModelIR("mean_attention_callback_test"),
         layout_state=None,
         diagnostics=[],
+    )
+    attention_context = AttentionRecoveryContext(
+        pass_context=pass_context,
         mean_attention_cluster=callback,
         gate_layout_cluster=lambda: None,
         transpose_unary_fanout_cluster=lambda: None,
@@ -436,9 +440,7 @@ def test_mean_attention_preserves_both_argument_free_default_callbacks() -> None
         -1
     ]
     suffix_context = LayoutAttentionQuantizedSuffixContext(
-        model_ir=attention_context.model_ir,
-        layout_state=None,
-        diagnostics=[],
+        pass_context=pass_context,
         mean_attention_cluster=callback,
         attention_gate_qdq_recovery=lambda: None,
         duplicate_quantized_prelu_cluster=lambda **kwargs: None,

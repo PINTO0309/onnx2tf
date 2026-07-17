@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.passes.affine_prepost_layout import (
     optimize_transpose_mul_add_const_prepost_nhwc_chains,
 )
@@ -60,9 +59,7 @@ LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS = (
 
 @dataclass(frozen=True)
 class LayoutAttentionQuantizedSuffixContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
-    diagnostics: List[Dict[str, Any]]
+    pass_context: ModelIRPassContext
     mean_attention_cluster: Callable[[], Any]
     attention_gate_qdq_recovery: Callable[[], Any]
     duplicate_quantized_prelu_cluster: Callable[..., Any]
@@ -78,13 +75,13 @@ def _model_invocation(
 ) -> RecoveryInvocation:
     keyword_args = []
     if include_layout:
-        keyword_args.append(("layout_state", context.layout_state))
+        keyword_args.append(("layout_state", context.pass_context.layout_state))
     if include_diagnostics:
-        keyword_args.append(("diagnostics", context.diagnostics))
+        keyword_args.append(("diagnostics", context.pass_context.diagnostics))
     return RecoveryInvocation(
         pass_id=pass_id,
         callback=callback,
-        args=(context.model_ir,),
+        args=(context.pass_context.model_ir,),
         keyword_args=tuple(keyword_args),
     )
 

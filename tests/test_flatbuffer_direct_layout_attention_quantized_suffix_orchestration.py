@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import (
     layout_attention_quantized_suffix_orchestration,
@@ -56,9 +57,11 @@ def _context() -> LayoutAttentionQuantizedSuffixContext:
         return None
 
     return LayoutAttentionQuantizedSuffixContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         mean_attention_cluster=no_op,
         attention_gate_qdq_recovery=no_op,
         duplicate_quantized_prelu_cluster=no_op,
@@ -71,11 +74,11 @@ def _normalize_new_contract(
     include_duplicate_transpose: Any,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     def normalize(value: Any) -> Any:
-        if value is context.model_ir:
+        if value is context.pass_context.model_ir:
             return "model_ir"
-        if value is context.layout_state:
+        if value is context.pass_context.layout_state:
             return "session.layout_state"
-        if value is context.diagnostics:
+        if value is context.pass_context.diagnostics:
             return "session.diagnostics"
         if value is include_duplicate_transpose:
             return "include_duplicate_transpose"
@@ -299,9 +302,7 @@ def test_layout_attention_quantized_suffix_context_and_wrapper_are_explicit() ->
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in context_assignment.value.keywords
     } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
+        "pass_context": "session.model_ir_pass_context",
         "mean_attention_cluster": "_run_mean_attention_layout_pass_cluster",
         "attention_gate_qdq_recovery": ("_run_attention_gate_qdq_recovery_sequence"),
         "duplicate_quantized_prelu_cluster": (
@@ -323,9 +324,11 @@ def test_layout_attention_quantized_suffix_runner_preserves_instrumented_order(
 
     model_ir = ModelIR("layout_attention_quantized_suffix_order_test")
     context = LayoutAttentionQuantizedSuffixContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         mean_attention_cluster=recorder("_run_mean_attention_layout_pass_cluster"),
         attention_gate_qdq_recovery=recorder(
             "_run_attention_gate_qdq_recovery_sequence"

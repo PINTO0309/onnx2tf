@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import layout_recovery_orchestration
 from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
@@ -82,9 +83,11 @@ def _model_layout_contract(
 def _context() -> LayoutRecoveryContext:
     model_ir = ModelIR("layout_recovery_orchestration_test")
     return LayoutRecoveryContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         boundary_batchmatmul_unary_cluster=lambda: None,
         pre_concat_cleanup=lambda *args, **kwargs: None,
         channel_shuffle_gather_cluster=lambda: None,
@@ -98,11 +101,11 @@ def _normalize_new_contract(
     def normalize(value: Any) -> Any:
         if value is context:
             return "context"
-        if value is context.model_ir:
+        if value is context.pass_context.model_ir:
             return "model_ir"
-        if value is context.layout_state:
+        if value is context.pass_context.layout_state:
             return "session.layout_state"
-        if value is context.diagnostics:
+        if value is context.pass_context.diagnostics:
             return "session.diagnostics"
         return value
 
@@ -275,9 +278,7 @@ def test_new_phase_specs_match_characterized_order_and_arguments() -> None:
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in context_assignment.value.keywords
     } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
+        "pass_context": "session.model_ir_pass_context",
         "boundary_batchmatmul_unary_cluster": (
             "_run_boundary_batchmatmul_unary_layout_pass_cluster"
         ),
@@ -324,9 +325,7 @@ def test_new_attention_runner_executes_the_same_flattened_order(
         )
 
     context = LayoutRecoveryContext(
-        model_ir=probe_context.model_ir,
-        layout_state=probe_context.layout_state,
-        diagnostics=probe_context.diagnostics,
+        pass_context=probe_context.pass_context,
         boundary_batchmatmul_unary_cluster=recorder(LAYOUT_RECOVERY_PASS_IDS[1]),
         pre_concat_cleanup=recorder(LAYOUT_RECOVERY_PASS_IDS[12]),
         channel_shuffle_gather_cluster=recorder(LAYOUT_RECOVERY_PASS_IDS[18]),

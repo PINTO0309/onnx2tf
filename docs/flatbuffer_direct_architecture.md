@@ -9565,3 +9565,13 @@ Focused contracts preserve the three callback invocation forms: argument-free
 cluster callbacks, the pre-Concat callback receiving ModelIR plus layout and
 diagnostics, and duplicate/PReLU receiving its Boolean keyword policy. The
 diagnostics-free SINet terminal context remains outside this boundary.
+
+The callback-bearing context boundary is now composed around the Session-owned
+`ModelIRPassContext`. The four recovery dataclasses each contain one explicit
+`pass_context` followed by their existing callback fields, and every invocation
+builder reads ModelIR, LayoutState, and diagnostics through that common object.
+All four lowerer constructors receive the exact
+`session.model_ir_pass_context` identity. The ten callbacks, their invocation
+arguments, stable pass IDs, execution order, and fresh pass-state-scope behavior
+are unchanged. `SINetTerminalLayoutRecoveryContext` remains independent because
+its diagnostics-free identity contract is intentionally different.

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import (
     terminal_slice_concat_recovery_orchestration,
@@ -56,9 +57,11 @@ def _context() -> TerminalSliceConcatRecoveryContext:
         return None
 
     return TerminalSliceConcatRecoveryContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         channel_slice_pad_mul_cluster=no_op,
     )
 
@@ -68,11 +71,11 @@ def _normalize_new_contract(
     context: TerminalSliceConcatRecoveryContext,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     def normalize(value: Any) -> Any:
-        if value is context.model_ir:
+        if value is context.pass_context.model_ir:
             return "model_ir"
-        if value is context.layout_state:
+        if value is context.pass_context.layout_state:
             return "session.layout_state"
-        if value is context.diagnostics:
+        if value is context.pass_context.diagnostics:
             return "session.diagnostics"
         return value
 
@@ -284,9 +287,7 @@ def test_terminal_slice_concat_recovery_context_and_wrapper_are_explicit() -> No
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in context_assignment.value.keywords
     } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
+        "pass_context": "session.model_ir_pass_context",
         "channel_slice_pad_mul_cluster": (
             "_run_channel_slice_pad_mul_layout_pass_cluster"
         ),
@@ -306,9 +307,11 @@ def test_terminal_slice_concat_recovery_runner_preserves_instrumented_order(
 
     model_ir = ModelIR("terminal_slice_concat_recovery_order_test")
     context = TerminalSliceConcatRecoveryContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         channel_slice_pad_mul_cluster=recorder(
             "_run_channel_slice_pad_mul_layout_pass_cluster"
         ),

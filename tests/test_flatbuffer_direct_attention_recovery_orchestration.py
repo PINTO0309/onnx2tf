@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import attention_recovery_orchestration
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
@@ -61,9 +62,11 @@ def _expression_path(node: ast.expr) -> Any:
 def _context() -> AttentionRecoveryContext:
     model_ir = ModelIR("attention_recovery_orchestration_test")
     return AttentionRecoveryContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         mean_attention_cluster=lambda: None,
         gate_layout_cluster=lambda: None,
         transpose_unary_fanout_cluster=lambda: None,
@@ -75,11 +78,11 @@ def _normalize_new_contract(
     context: AttentionRecoveryContext,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     def normalize(value: Any) -> Any:
-        if value is context.model_ir:
+        if value is context.pass_context.model_ir:
             return "model_ir"
-        if value is context.layout_state:
+        if value is context.pass_context.layout_state:
             return "session.layout_state"
-        if value is context.diagnostics:
+        if value is context.pass_context.diagnostics:
             return "session.diagnostics"
         return value
 
@@ -292,9 +295,7 @@ def test_attention_recovery_context_and_wrappers_are_explicit() -> None:
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in context_assignment.value.keywords
     } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
+        "pass_context": "session.model_ir_pass_context",
         "mean_attention_cluster": "_run_mean_attention_layout_pass_cluster",
         "gate_layout_cluster": "_run_gate_layout_pass_cluster",
         "transpose_unary_fanout_cluster": (
@@ -392,9 +393,7 @@ def test_attention_recovery_runners_preserve_instrumented_order(
         )
 
     context = AttentionRecoveryContext(
-        model_ir=probe_context.model_ir,
-        layout_state=probe_context.layout_state,
-        diagnostics=probe_context.diagnostics,
+        pass_context=probe_context.pass_context,
         mean_attention_cluster=callback_by_id.get(
             "_run_mean_attention_layout_pass_cluster",
             lambda: None,

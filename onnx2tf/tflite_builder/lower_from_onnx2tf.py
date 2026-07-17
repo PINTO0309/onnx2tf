@@ -4203,9 +4203,7 @@ def lower_onnx_to_ir(
     singleton_reshape_context = shared_model_ir_pass_context
     late_layout_mean_spp_gather_constant_cast_context = shared_model_ir_pass_context
     layout_recovery_context = LayoutRecoveryContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+        pass_context=session.model_ir_pass_context,
         boundary_batchmatmul_unary_cluster=(
             _run_boundary_batchmatmul_unary_layout_pass_cluster
         ),
@@ -4215,9 +4213,7 @@ def lower_onnx_to_ir(
         ),
     )
     attention_recovery_context = AttentionRecoveryContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+        pass_context=session.model_ir_pass_context,
         mean_attention_cluster=_run_mean_attention_layout_pass_cluster,
         gate_layout_cluster=_run_gate_layout_pass_cluster,
         transpose_unary_fanout_cluster=(
@@ -4230,9 +4226,7 @@ def lower_onnx_to_ir(
     )
     qlinear_recovery_context = QLinearRecoveryContext(model_ir=model_ir)
     terminal_slice_concat_recovery_context = TerminalSliceConcatRecoveryContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+        pass_context=session.model_ir_pass_context,
         channel_slice_pad_mul_cluster=(
             _run_channel_slice_pad_mul_layout_pass_cluster
         ),
@@ -4280,9 +4274,7 @@ def lower_onnx_to_ir(
 
     layout_attention_quantized_suffix_context = (
         LayoutAttentionQuantizedSuffixContext(
-            model_ir=model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+            pass_context=session.model_ir_pass_context,
             mean_attention_cluster=_run_mean_attention_layout_pass_cluster,
             attention_gate_qdq_recovery=(
                 _run_attention_gate_qdq_recovery_sequence

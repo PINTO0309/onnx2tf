@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import duplicate_quantized_prelu_orchestration
@@ -274,9 +275,11 @@ def test_duplicate_quantized_prelu_suffix_callback_forwards_required_option() ->
         return None
 
     context = LayoutAttentionQuantizedSuffixContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         mean_attention_cluster=no_op,
         attention_gate_qdq_recovery=no_op,
         duplicate_quantized_prelu_cluster=no_op,

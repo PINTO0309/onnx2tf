@@ -2627,3 +2627,21 @@ efficiency tests, and all 11 TensorFlow-import-blocked tests pass. No runtime,
 API, artifact, dependency, pass-order, scope, callback, or TensorFlow boundary
 changed. PR #952 remains closed, and no pull request was created, reopened, or
 updated.
+
+The callback-bearing context composition is now implemented for exactly four
+recovery contexts. Their repeated ModelIR/LayoutState/diagnostics fields are
+replaced by one explicit `ModelIRPassContext`, and all four lowerer constructors
+receive the Session-owned object directly. Builders resolve the three shared
+identities through that object while retaining all ten callback identities and
+their argument contracts. The diagnostics-free SINet terminal context remains
+unchanged. This reduces the production diff by twenty lines without changing
+runtime order, pass IDs, scope lifetime, diagnostics, or public behavior.
+
+The 100-test focused parent/child callback set, 317-test related orchestration/
+shared-context/architecture set, 31 pass-efficiency tests, 11 TensorFlow-import-
+blocked tests, and 32 central lowerer core smoke tests pass. Focused formatting,
+lint, Python compilation, and whitespace checks pass; the lowerer retains only
+its two pre-existing F401 findings. No real-model conversion or broad corpus
+suite ran. No public API, CLI, artifact, dependency, corpus exclusion,
+operation-count tier, pass policy, callback, or TensorFlow boundary changed. PR
+#952 remains closed, and no pull request was created, reopened, or updated.

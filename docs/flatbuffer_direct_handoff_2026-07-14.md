@@ -15789,3 +15789,54 @@ boundaries, and every builder's existing scope behavior. Leave the
 diagnostics-free SINet terminal context unchanged. Validate the four complete
 parent suites sequentially, commit and push only, and do not create or update a
 pull request.
+
+## Callback-bearing context composition: implemented state
+
+The characterized boundary is implemented for exactly four dataclasses:
+
+- `AttentionRecoveryContext`;
+- `LayoutRecoveryContext`;
+- `LayoutAttentionQuantizedSuffixContext`;
+- `TerminalSliceConcatRecoveryContext`.
+
+Each now stores one `pass_context: ModelIRPassContext` followed by its existing
+callbacks. Their invocation builders resolve ModelIR, LayoutState, and
+diagnostics through that common object. All four lowerer constructors receive
+the exact `session.model_ir_pass_context` identity, eliminating eight repeated
+dataclass base fields and eight repeated constructor keywords. The production
+diff is a net reduction of twenty lines.
+
+All ten callback objects and all three invocation forms remain unchanged:
+cluster callbacks are argument-free; pre-Concat receives ModelIR positionally
+and LayoutState/diagnostics by keyword; duplicate/quantized-PReLU receives only
+the forwarded `include_transpose` keyword. Stable pass IDs, execution order,
+caller boundaries, diagnostics identity, and fresh scope-per-builder behavior
+also remain unchanged. `SINetTerminalLayoutRecoveryContext` is still separate
+because it intentionally has no diagnostics field.
+
+Sequential validation completed as follows:
+
+- focused four parents, four callback-owning children, the composition
+  contract, and the excluded SINet boundary: `100 passed in 1.68s`;
+- callback composition, four parents, SINet exclusion, shared context, and
+  ordered architecture: `317 passed in 17.57s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 9.96s` (`31` plus `11`);
+- central lowerer core smoke: `32 passed in 0.59s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The central lowerer retains exactly its two pre-existing F401
+  findings and has no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, runtime
+policies, callback behavior, pass ordering, scope lifetime, and TensorFlow
+isolation remain unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, inventory the remaining context shapes after this composition and
+select one coherent boundary whose identity and callback/target contracts can
+be characterized independently. Add the characterization checkpoint before
+changing production code. Continue to keep the diagnostics-free SINet terminal
+context separate unless a broader invariant is first proved. Run validation
+sequentially, keep real-model conversions minimal, commit and push coherent
+units only, and do not create or update a pull request.

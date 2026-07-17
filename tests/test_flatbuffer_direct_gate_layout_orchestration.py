@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import gate_layout_orchestration
@@ -309,10 +310,13 @@ def test_gate_layout_preserves_argument_free_full_policy_callback() -> None:
     def callback() -> None:
         return None
 
+    model_ir = ModelIR("gate_layout_callback_test")
     context = AttentionRecoveryContext(
-        model_ir=ModelIR("gate_layout_callback_test"),
-        layout_state=None,
-        diagnostics=[],
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=[],
+        ),
         mean_attention_cluster=lambda: None,
         gate_layout_cluster=callback,
         transpose_unary_fanout_cluster=lambda: None,
