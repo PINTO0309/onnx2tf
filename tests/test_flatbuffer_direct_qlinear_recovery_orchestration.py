@@ -4,6 +4,17 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import qlinear_recovery_orchestration
+from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
+    QLINEAR_MEAN_CONCAT_PASS_IDS,
+    QLinearRecoveryContext,
+    build_qlinear_mean_concat_invocations,
+    run_qlinear_mean_concat_recovery,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -35,26 +46,23 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _ordered_call_contracts(
-    helper: ast.FunctionDef,
-) -> list[tuple[str, tuple[Any, ...], dict[str, Any]]]:
-    contracts: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-    for statement in helper.body:
-        assert isinstance(statement, ast.Expr)
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        contracts.append(
-            (
-                call.func.id,
-                tuple(_expression_path(argument) for argument in call.args),
-                {
-                    str(keyword.arg): _expression_path(keyword.value)
-                    for keyword in call.keywords
-                },
-            )
-        )
-    return contracts
+def _context() -> QLinearRecoveryContext:
+    return QLinearRecoveryContext(model_ir=ModelIR("qlinear_recovery_test"))
+
+
+def _normalize_new_contract(
+    invocation: qlinear_recovery_orchestration.RecoveryInvocation,
+    context: QLinearRecoveryContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
 
 
 def test_qlinear_recovery_sequence_is_a_straight_line_closure() -> None:
@@ -71,7 +79,7 @@ def test_qlinear_recovery_sequence_is_a_straight_line_closure() -> None:
     )
 
     assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 6
+    assert helper.end_lineno - helper.lineno + 1 == 2
     assert helper.args.args == []
     assert helper.args.posonlyargs == []
     assert helper.args.kwonlyargs == []
@@ -97,31 +105,17 @@ def test_qlinear_recovery_sequence_is_a_straight_line_closure() -> None:
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
     }
-    assert loaded_data_names == {"model_ir"}
+    assert loaded_data_names == {"qlinear_recovery_context"}
 
 
 def test_qlinear_recovery_preserves_exact_order_and_arguments() -> None:
-    _, helper = _lowerer_and_helper()
+    context = _context()
+    invocations = build_qlinear_mean_concat_invocations(context)
 
-    assert _ordered_call_contracts(helper) == [
-        (
-            "_optimize_transpose_mean_hardsigmoid_muladd_chains",
-            ("model_ir",),
-            {},
-        ),
-        ("_optimize_nhwc_prefix_qlinear_silu_chains", ("model_ir",), {}),
-        (
-            "_optimize_nhwc_propagation_qlinear_concat_conv",
-            ("model_ir",),
-            {},
-        ),
-        ("_optimize_concat_pre_quantize_dequantize", ("model_ir",), {}),
-        (
-            "_optimize_transpose_mean_maxpool_concat_conv_chains",
-            ("model_ir",),
-            {},
-        ),
-    ]
+    assert tuple(step.pass_id for step in invocations) == QLINEAR_MEAN_CONCAT_PASS_IDS
+    assert {
+        step.pass_id: _normalize_new_contract(step, context) for step in invocations
+    } == {pass_id: (("model_ir",), {}) for pass_id in QLINEAR_MEAN_CONCAT_PASS_IDS}
 
 
 def test_qlinear_recovery_invocations_remain_zero_argument() -> None:
@@ -173,3 +167,89 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
             "_run_layout_recovery_prefix_pass_sequence",
         ),
     ]
+
+
+def test_qlinear_recovery_context_and_wrapper_are_explicit() -> None:
+    lowerer, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "run_qlinear_mean_concat_recovery"
+    assert len(call.args) == 1
+    assert isinstance(call.args[0], ast.Name)
+    assert call.args[0].id == "qlinear_recovery_context"
+    assert call.keywords == []
+
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "qlinear_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert context_assignment.value.func.id == "QLinearRecoveryContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {"model_ir": "model_ir"}
+
+
+def test_qlinear_recovery_runner_preserves_instrumented_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    probe_steps = build_qlinear_mean_concat_invocations(context)
+    events: list[str] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append(pass_id)
+
+        return record
+
+    for step in probe_steps:
+        module_name = next(
+            name
+            for name, value in vars(qlinear_recovery_orchestration).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            qlinear_recovery_orchestration,
+            module_name,
+            recorder(step.pass_id),
+        )
+
+    run_qlinear_mean_concat_recovery(context)
+
+    assert events == list(QLINEAR_MEAN_CONCAT_PASS_IDS)
+
+
+def test_qlinear_recovery_module_does_not_import_the_lowerer() -> None:
+    module_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "qlinear_recovery_orchestration.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        for node in tree.body
+    )
+    assert not any(
+        isinstance(node, ast.Import)
+        and any(
+            alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+            for alias in node.names
+        )
+        for node in tree.body
+    )

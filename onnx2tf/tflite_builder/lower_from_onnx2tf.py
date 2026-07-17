@@ -185,6 +185,10 @@ from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
     run_quantized_activation_binary_recovery,
     run_safe_binary_recovery,
 )
+from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
+    QLinearRecoveryContext,
+    run_qlinear_mean_concat_recovery,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4675,6 +4679,7 @@ def lower_onnx_to_ir(
         model_ir=model_ir,
         layout_state=session.layout_state,
     )
+    qlinear_recovery_context = QLinearRecoveryContext(model_ir=model_ir)
 
     def _run_layout_recovery_prefix_pass_sequence() -> None:
         run_layout_recovery_prefix(layout_recovery_context)
@@ -4699,11 +4704,7 @@ def lower_onnx_to_ir(
         )
 
     def _run_qlinear_mean_concat_recovery_sequence() -> None:
-        _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir)
-        _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)
-        _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
-        _optimize_concat_pre_quantize_dequantize(model_ir)
-        _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
+        run_qlinear_mean_concat_recovery(qlinear_recovery_context)
 
     def _run_layout_attention_quantized_recovery_suffix(
         *,

@@ -8961,3 +8961,15 @@ layout state, diagnostics, or conversion option needs to enter the eventual
 phase context. The next change should introduce a frozen ModelIR-only context
 and five stable IDs, then prove instrumented order before switching the
 historical helper to a delegate.
+
+That sequence now uses `QLinearRecoveryContext` and five stable IDs in
+`passes/qlinear_recovery_orchestration.py`. The module imports all existing
+owners directly and uses the shared immutable invocation executor, with no
+lowerer import or callback dependency. The historical lowerer helper remains a
+zero-argument order boundary but now captures only the context and delegates to
+the runner; both outer calls and their neighbors are unchanged. Focused,
+architecture, all five owner-family, core, and TensorFlow-import-blocked suites
+pass. The next orchestration candidate is the mixed layout/attention/quantized
+suffix, which must first be characterized because it carries layout,
+diagnostics, nested phase runners, local composite callbacks, and an option
+flag.

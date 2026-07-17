@@ -1935,3 +1935,14 @@ module owners, and no lowerer-local callback, layout state, diagnostics, or
 option flag is required. The focused plus architecture suite passed 252 tests,
 and all 11 TensorFlow-import-blocked tests passed. No pull request was created,
 reopened, or updated.
+
+That sequence is now implemented in
+`passes/qlinear_recovery_orchestration.py` with a frozen ModelIR-only context,
+five stable IDs, direct imports of all existing owners, and shared immutable
+invocation execution. The lowerer retains its historical helper, both outer
+calls, and both ordering boundaries as a two-line delegate. Focused and
+architecture contracts verify exact arguments, multiplicity, context wiring,
+instrumented order, and lowerer-import isolation. The 394-test related owner
+set, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests pass. No
+public API, artifact, dependency, runtime order, or TensorFlow boundary
+changed, and no pull request was created, reopened, or updated.

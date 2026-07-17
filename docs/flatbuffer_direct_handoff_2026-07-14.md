@@ -13083,3 +13083,52 @@ historical helper name, its two outer calls and boundaries, and the exact
 argument/order contract. Prove direct builder arguments and instrumented order
 before changing the lowerer delegate, validate sequentially, commit and push,
 and do not create a pull request.
+
+## Explicit QLinear mean/concat recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/qlinear_recovery_orchestration.py`. A frozen
+`QLinearRecoveryContext` contains only the shared ModelIR. The phase module
+imports all five existing owners directly and does not import or capture the
+central lowerer.
+
+`QLINEAR_MEAN_CONCAT_PASS_IDS` declares the exact five-step order. Immutable
+`RecoveryInvocation` values pass the same single ModelIR positional argument
+with no keyword arguments, and the shared executor validates the complete ID
+sequence before executing any callback. Existing pass return values remain
+ignored exactly as before.
+
+The historical lowerer helper and both zero-argument outer calls remain in
+place. Its body shrinks from six to two lines and captures only the explicit
+context. The two neighboring boundaries are unchanged. Architecture tests
+account for moved direct calls through ordered stable-ID multiplicity while
+retaining each module owner and compatibility-wrapper contract.
+
+Focused tests prove all five IDs and argument contracts, context construction,
+wrapper wiring, both outer boundaries and invocation counts, instrumented
+execution order, and lowerer-import isolation. Sequential validation completed
+as follows:
+
+- focused qlinear orchestration: `7 passed in 0.60s`;
+- focused orchestration plus ordered architecture: `255 passed in 18.05s`;
+- five owner-focused suites plus orchestration and architecture:
+  `394 passed in 17.69s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.81s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_layout_attention_quantized_recovery_suffix` before changing production
+code. It combines direct owners, already-extracted phase runners, lowerer-local
+clusters, layout/diagnostic routing, and the
+`include_duplicate_transpose` option, so freeze its exact flattened order,
+arguments, repetition, and conditional boundary first. Keep verification
+sequential and minimal, commit and push coherent checkpoints, and do not
+create a pull request.
