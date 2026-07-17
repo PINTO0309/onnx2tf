@@ -5390,13 +5390,20 @@ def lower_onnx_to_ir(
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
             protected_boundary_tensor_names=protected_boundary_tensor_names,
         )
-        fallback_norm_stats = run_pad_layout_cleanup(
-            fallback_ir,
-            include_pad=False,
-            include_unary=False,
-            include_norm=True,
-            diagnostics=session.diagnostics,
-        )
+        fallback_norm_tensor_count = len(fallback_ir.tensors)
+        fallback_norm_stats = {
+            **run_pad_layout_cleanup(
+                fallback_ir,
+                include_pad=False,
+                include_unary=False,
+                include_norm=True,
+                diagnostics=session.diagnostics,
+            ),
+            "pruned_unused_tensors": max(
+                0,
+                fallback_norm_tensor_count - len(fallback_ir.tensors),
+            ),
+        }
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
             _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)

@@ -2532,3 +2532,29 @@ alone does not require shape reconciliation. Validate the direct norm owner,
 Pad orchestration, safety-fallback AST contract, pass efficiency, architecture,
 core, and TensorFlow import blocking sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Safety-fallback norm evidence implementation checkpoint
+
+The norm-only fallback call now samples `fallback_norm_tensor_count` and
+merges a clamped `pruned_unused_tensors` delta into the unchanged owner result.
+This makes `fallback_norm_stats` complete for both rewrite and cleanup-only
+ModelIR mutations without rerunning the owner or scanning the graph.
+
+The following guard still reads only
+`optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains`. Consequently a
+prune-only result remains observation-only and does not start binary repairs,
+singleton/Reshape cleanup, shape reconciliation, or topological sorting. Pass
+order, recursive relowering, diagnostics, and all later fallback work are
+unchanged.
+
+Focused safety-fallback and singleton/Reshape orchestration coverage is `13
+passed`. The broader sequential fallback-owner, reconciliation, convergence,
+core, pass-efficiency, architecture, and TensorFlow import-blocking gate is
+`446 passed in 27.35s`. Ruff, Python bytecode compilation, and whitespace
+validation pass.
+
+At resume, inspect the immediately following fallback dynamic rank-one
+Unsqueeze/Reshape-shape call. Characterize its result and the unconditional
+topological/layout refresh separately; do not skip either refresh until the
+recursive return-state and all preceding fallback mutation evidence are proven
+complete. Commit and push only; do not create or update a pull request.

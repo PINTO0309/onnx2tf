@@ -92,6 +92,12 @@ rewrite and cleanup path, so the existing positive guard remains unchanged.
 The no-rewrite path exposes a stable two-key zero value; the rewrite path
 stages the opt-in result as `_post_split_fallback_static_shape_stats`.
 
+Safety-fallback norm cleanup now reports cleanup-only tensor pruning alongside
+its legacy rewrite counter. A before/after tensor count is sampled around the
+existing owner, and the clamped delta is stored as `pruned_unused_tensors`.
+The established rewrite-only reconciliation guard remains unchanged because
+unused-tensor deletion alone does not require shape propagation.
+
 ## Smaller internal owners
 
 - Typed ONNX `Constant` lowering is isolated in its op-family module while
@@ -124,6 +130,9 @@ constraints, and the optional TensorFlow import boundary. Result: `1339
 passed`. The dedicated reconciliation/convergence gate was repeated for the
 current post-Split checkpoint and produced `433 passed in 26.91s`.
 
+The subsequent safety-fallback norm-evidence checkpoint extends that gate to
+`446 passed in 27.35s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -131,7 +140,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the split-fallback result and conditional reconciliation
-immediately after the newly staged complete static-shape evidence. Any new
-mutation evidence must preserve the current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+unit should audit the fallback-only dynamic rank-one Reshape result and the
+following topological/layout refresh. Any new mutation evidence must preserve
+the recursive fallback boundary, current pass order, TensorFlow-free boundary,
+dependency set, and sequential validation policy.

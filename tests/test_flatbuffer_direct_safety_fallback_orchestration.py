@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -54,10 +53,6 @@ def test_fallback_norm_owner_can_prune_without_a_rewrite() -> None:
     assert "unused" not in model_ir.tensors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback norm stats omit cleanup-only tensor pruning",
-)
 def test_safety_fallback_stages_complete_norm_mutation_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
     stats_index = next(

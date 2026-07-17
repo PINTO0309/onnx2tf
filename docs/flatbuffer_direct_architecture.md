@@ -2235,9 +2235,10 @@ Split result schema, or pass order.
 
 The safety-fallback norm-only Pad cleanup has a different mutation contract.
 Its raw rewrite counter is incomplete because the child owner prunes unused
-tensors even after a zero rewrite. Characterization therefore requires the
-fallback call to add a clamped before/after tensor-count delta while retaining
-the existing norm-rewrite guard and recursive relowering order.
+tensors even after a zero rewrite. The fallback call therefore adds a clamped
+before/after tensor-count delta while retaining the existing norm-rewrite guard
+and recursive relowering order. The extra evidence remains observation-only;
+cleanup alone does not trigger shape reconciliation.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
