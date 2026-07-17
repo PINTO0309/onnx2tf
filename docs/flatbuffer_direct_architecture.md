@@ -10708,6 +10708,16 @@ opt-in complete reconciliation dictionary as the unchanged first statement of
 the positive guard. Topological sort and layout inference retain their exact
 positions, and no scan is added.
 
+The preceding final ConvInteger owner can propagate channel-last provenance as
+a self-contained metadata/layout update without structurally repairing a
+Transpose. The existing follow-up guard intentionally uses only
+`repaired_channel_last_convinteger_input_transposes`, which counts every input
+rewire, Transpose removal, associated tensor metadata update, prune, and layout
+sync requiring reconciliation/sort/inference. Strict characterization keeps
+the provenance counter outside that guard and requires stable two-key
+`_final_convinteger_static_shape_stats` evidence only for the existing
+repair-positive path. The following InstanceNorm owner remains adjacent.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

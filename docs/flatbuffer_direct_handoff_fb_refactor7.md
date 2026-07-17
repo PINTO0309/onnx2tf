@@ -4136,3 +4136,36 @@ At resume, audit the preceding `final_convinteger_layout_stats` owner and its
 reconciliation/sort/layout-inference block before retaining complete evidence.
 Keep the following InstanceNorm boundary fixed. Commit and push only; do not
 create or update a pull request.
+
+## Primary final ConvInteger reconciliation characterization checkpoint
+
+The ConvInteger owner returns two semantically distinct counters. Channel-last
+hint propagation updates provenance metadata and tensor layout annotations but
+is self-contained and does not require shape reconciliation or sorting. The
+structural repair counter increments for every Conv input rewire and stale
+Transpose removal; its positive path also updates chain shapes/layouts, prunes,
+and synchronizes `LayoutState`. The existing repair-only guard is therefore the
+correct boundary for reconciliation→sort→layout inference and must not be
+broadened to hint-only changes.
+
+A strict expected-failure orchestration contract now requires stable two-key
+`_final_convinteger_static_shape_stats` evidence under that unchanged repair-
+only guard. It explicitly rejects the propagation counter from the condition
+and fixes the following `final_instancenorm_repair_stats` boundary.
+
+At implementation, add only caller-side reconciliation result plumbing. Do not
+change hint propagation, metadata/layout writes, structural repair, counter
+schema, pruning, layout sync, guard, reconcile/sort/infer order, dependencies,
+following owner, or TensorFlow behavior. Validate the quantized-layout owner,
+terminal orchestration, and architecture sequentially, then commit and push
+only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- quantized-layout owner, terminal orchestration, and architecture:
+  `276 passed, 1 xfailed in 17.49s`
+- expanded broad related gate: `1255 passed, 1 xfailed in 30.17s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final ConvInteger
+reconciliation-result contract; there are no unexpected failures.
