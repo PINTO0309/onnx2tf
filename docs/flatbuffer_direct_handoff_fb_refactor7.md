@@ -52,3 +52,37 @@ strict xfail only after the efficiency fixture passes, then run the complete
 core, pass-efficiency, architecture, and TensorFlow-import-blocked gates. Keep
 real-model conversion minimal because this unit cannot affect ModelIR or
 artifacts. Commit and push only; do not create or update a pull request.
+
+## Diagnostic-numbering implementation checkpoint
+
+`run_model_ir_pass_group()` now scans an existing diagnostics list exactly
+once. That scan initializes the total ModelIR-pass event count, maximum group
+sequence, and a per-pass invocation-count map. `_record_event()` increments
+those local counters while appending, rather than iterating over the complete
+and growing history again for every pass result.
+
+The implementation preserves the characterized behavior for unrelated
+diagnostics, missing or negative legacy group values, repeated pass IDs,
+multiple results in one group, skipped passes, cycles, and invariant failures.
+It does not change pass execution, ModelIR, LayoutState, GraphIndex, result
+details, diagnostic fields, summary schema, or the identity of the caller's
+list.
+
+Sequential validation completed as follows:
+
+- focused numbering and pass-group contracts: `7 passed`;
+- complete core, pass-efficiency, architecture, and TensorFlow-import-blocked
+  gate: `324 passed in 27.74s`;
+- the scan-count fixture changed from one strict xfail to pass and observes one
+  history iteration for a three-result group;
+- focused Ruff, Python compilation, and whitespace checks: passed.
+
+No real-model conversion was run because this unit cannot change ModelIR or an
+artifact. No public API, CLI behavior, dependency, pass order, corpus policy,
+inference concurrency, or TensorFlow boundary changed.
+
+At resume, return to the remaining direct lowerer-to-pass and core contract
+inventory. Select another non-context unit only when it has an explicit
+ownership or measurable scan/allocation cost, and characterize its behavior
+before production changes. Continue with coherent commits and pushes only; do
+not create or update a pull request.

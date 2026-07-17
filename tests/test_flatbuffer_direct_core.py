@@ -1109,10 +1109,6 @@ def test_model_ir_pass_diagnostics_preserve_existing_numbering_contract() -> Non
     ) == (4, 1, 8)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="diagnostic numbering currently rescans the full history per pass event",
-)
 def test_model_ir_pass_diagnostic_numbering_scans_existing_history_once() -> None:
     class CountingDiagnostics(list):
         def __init__(self, values) -> None:

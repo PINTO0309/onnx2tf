@@ -9630,3 +9630,11 @@ three-result group where one initialization scan is sufficient. The next
 bounded implementation step may cache those three counters from one initial
 scan, but must preserve the exact event schema, append order, caller-owned list,
 failure diagnostics, and summary output.
+
+The diagnostic-numbering boundary now performs exactly that one initialization
+scan. It derives the existing ModelIR-pass event count, the maximum existing
+group sequence, and per-pass invocation counts together, then advances the
+local counters as new events are appended. The caller-owned diagnostic list,
+non-pass records, event schema, append order, group semantics, failure path,
+and summary remain unchanged. The strict scan-count fixture is green, reducing
+one group with `P` results from `P + 1` full history iterations to one.

@@ -396,16 +396,27 @@ def run_model_ir_pass_group(
 
     preflight_operators_visited = 0
     state_built = False
-    group_sequence = 1
+    diagnostic_sequence = 0
+    diagnostic_invocations: Dict[str, int] = {}
+    maximum_group_sequence: Optional[int] = None
     if diagnostics is not None:
-        group_sequence += max(
-            (
-                int(event.get("group_sequence", 0))
-                for event in diagnostics
-                if str(event.get("stage", "")) == "model_ir_pass"
-            ),
-            default=0,
-        )
+        for event in diagnostics:
+            if str(event.get("stage", "")) != "model_ir_pass":
+                continue
+            diagnostic_sequence += 1
+            code = str(event.get("code", ""))
+            diagnostic_invocations[code] = int(
+                diagnostic_invocations.get(code, 0) + 1
+            )
+            event_group_sequence = int(event.get("group_sequence", 0))
+            if (
+                maximum_group_sequence is None
+                or event_group_sequence > maximum_group_sequence
+            ):
+                maximum_group_sequence = event_group_sequence
+    group_sequence = int(
+        1 + (maximum_group_sequence if maximum_group_sequence is not None else 0)
+    )
 
     def _record_event(
         event: Dict[str, Any],
@@ -413,21 +424,17 @@ def run_model_ir_pass_group(
         snapshot_count: int = 0,
         fingerprint_count: int = 0,
     ) -> None:
+        nonlocal diagnostic_sequence
         if diagnostics is None:
             return
         code = str(event.get("code", ""))
-        sequence = 1
-        invocation = 1
-        for existing in diagnostics:
-            if str(existing.get("stage", "")) != "model_ir_pass":
-                continue
-            sequence += 1
-            if str(existing.get("code", "")) == code:
-                invocation += 1
+        diagnostic_sequence += 1
+        invocation = int(diagnostic_invocations.get(code, 0) + 1)
+        diagnostic_invocations[code] = invocation
         diagnostics.append(
             {
                 **event,
-                "sequence": sequence,
+                "sequence": diagnostic_sequence,
                 "invocation": invocation,
                 "group_sequence": group_sequence,
                 "metrics": {
