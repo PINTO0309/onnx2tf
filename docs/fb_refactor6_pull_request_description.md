@@ -2588,3 +2588,15 @@ broad corpus suite ran. No public API, artifact, dependency, policy, runtime
 order, caller, boundary, scope-sharing, or TensorFlow-isolation contract
 changed. PR #952 remains closed, and no pull request was created, reopened, or
 updated.
+
+The next shared-context boundary is characterized without production changes.
+Twenty-one orchestration context types have the same frozen three-field
+identity contract, and all twenty-two constructors pass only ModelIR,
+LayoutState, and the session diagnostics list. The inventory distinguishes
+eighteen main-session constructions, two target-specific constructions, and
+two child constant-fold/cast compositions; callback-bearing parent contexts
+are intentionally outside the boundary. The 23 focused tests, 271-test focused/
+architecture set, 31 pass-efficiency tests, and all 11 TensorFlow-import-
+blocked tests pass. Focused static checks pass. No runtime, API, artifact,
+dependency, pass-order, or TensorFlow boundary changed. PR #952 remains closed,
+and no pull request was created, reopened, or updated.

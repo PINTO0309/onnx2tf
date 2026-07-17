@@ -9527,3 +9527,13 @@ one graph-index build and thirteen diagnostic events. An AST audit now finds no
 nested lowerer helper that directly executes more than one conversion pass;
 every `_run_*` conversion cluster delegates to a dedicated orchestration
 module.
+
+The next context-consolidation boundary is characterized without production
+changes. Twenty-one dedicated orchestration context classes expose the exact
+same frozen `model_ir`, `layout_state`, and `diagnostics` identity contract.
+Their twenty-two construction sites consist of eighteen main-session contexts,
+two target-specific helper contexts, and two child constant-fold/cast contexts.
+No site stores an option, callback, or other hidden policy in these types, and
+none of the owner modules imports the lowerer. This makes a single core
+ModelIR-pass context owned by `ConversionSession` a mechanical next step while
+keeping callback-bearing parent contexts separate.

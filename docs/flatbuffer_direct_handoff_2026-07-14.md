@@ -15644,3 +15644,44 @@ the next bounded boundary that advances the fixed ConversionSession/GraphIndex/
 ordered-pass contract. Preserve sequential validation and minimal real-model
 conversion, commit and push each coherent unit, and do not create, reopen, or
 update a pull request.
+
+## Shared ModelIR-pass context characterization: completed state
+
+The first boundary after completing nested helper extraction is the repeated
+three-field orchestration context. Twenty-one dedicated frozen dataclasses all
+store only `model_ir`, `layout_state`, and `diagnostics` with identity semantics.
+There are twenty-two production constructors: eighteen long-lived main-model/
+session-layout/session-diagnostics contexts in the lowerer, two per-call target-
+specific contexts for primary/fallback routing, and two child
+`ConstantFoldCastContext` constructions inside composed phases. No constructor
+has positional arguments or hidden option/callback state. Callback-bearing
+parent recovery contexts remain structurally distinct and are outside this
+boundary. None of the twenty-one owner modules imports the lowerer.
+
+Sequential characterization validation completed as follows:
+
+- focused shared-context identity, construction-site, and import contracts:
+  `23 passed in 0.58s`;
+- focused shared-context plus ordered architecture: `271 passed in 17.63s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.86s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, runtime pass order, caller policies, target routing,
+scope construction, diagnostics identity, and TensorFlow isolation remain
+unchanged. PR #952 remains closed, and no pull request was created, reopened,
+or updated.
+
+At restart, introduce one frozen core `ModelIRPassContext` owned by
+`ConversionSession`. Preserve the twenty-one existing context names as internal
+aliases while moving their builders/runners to the common type. Reuse the
+session-owned instance for all eighteen main-model consumers, construct fresh
+common contexts for the two target-specific helper calls, and pass the parent
+context directly into both constant-fold/cast child builders. Do not merge the
+callback-bearing parent contexts. Keep every pass ID, policy argument, fresh
+scope-per-build rule, diagnostic list identity, and caller boundary unchanged;
+validate the complete focused orchestration set sequentially before committing
+and pushing, and do not create or update a pull request.
