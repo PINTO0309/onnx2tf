@@ -10066,3 +10066,9 @@ A strict expected-failure structural contract requires that call to be assigned
 to staged `_terminal_expand_squeeze_stats` while preserving its LayoutState and
 the immediate reconciliation statement. This checkpoint does not use either
 terminal evidence dictionary as a guard. Production remains unchanged.
+
+The terminal call now assigns its unchanged two-counter dictionary to
+`_terminal_expand_squeeze_stats`. The Session LayoutState argument, position
+after `_late_layout_cluster_stats`, and immediately following unconditional
+shape reconciliation are preserved. The underscored result is staged for a
+future complete phase aggregate and is not yet consumed.

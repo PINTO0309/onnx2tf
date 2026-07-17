@@ -5,7 +5,6 @@ import copy
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -142,10 +141,6 @@ def test_compatibility_wrapper_matches_owner_and_result_is_idempotent() -> None:
     assert _snapshot(direct_model) == before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal Expand/Squeeze result is still discarded",
-)
 def test_terminal_expand_squeeze_result_is_captured_before_reconciliation() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

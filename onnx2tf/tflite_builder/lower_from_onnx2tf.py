@@ -5182,7 +5182,7 @@ def lower_onnx_to_ir(
             ),
         )
     )
-    _replace_expand_dims_and_squeeze_with_reshape(
+    _terminal_expand_squeeze_stats = _replace_expand_dims_and_squeeze_with_reshape(
         model_ir,
         layout_state=session.layout_state,
     )

@@ -5353,7 +5353,7 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
     next_boundary = lowerer.body[invocation_index + 2]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (

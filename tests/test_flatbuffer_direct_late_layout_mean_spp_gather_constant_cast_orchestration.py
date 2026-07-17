@@ -444,15 +444,20 @@ def test_late_layout_preserves_outer_boundaries() -> None:
 
     previous = lowerer.body[invocation_index - 2]
     following = lowerer.body[invocation_index + 2]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    assert following.value.func.id == "_replace_expand_dims_and_squeeze_with_reshape"
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert (
+        following.value.func.id
+        == "_replace_expand_dims_and_squeeze_with_reshape"
+    )
 
 
 def test_late_layout_composes_child_builder_without_lowerer_import() -> None:

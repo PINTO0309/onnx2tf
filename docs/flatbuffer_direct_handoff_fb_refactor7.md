@@ -1117,3 +1117,23 @@ assignment and update the two surrounding boundary contracts. Validate the
 complete Expand/Squeeze owner suite, late-layout orchestration, core,
 architecture, pass efficiency, and TensorFlow import blocking sequentially.
 Commit and push only; do not create or update a pull request.
+
+## Terminal Expand/Squeeze result capture implementation checkpoint
+
+The terminal `_replace_expand_dims_and_squeeze_with_reshape()` call now assigns
+its unchanged result dictionary to `_terminal_expand_squeeze_stats`. Its
+Session LayoutState, ordering after the late-layout summary, and immediately
+following unconditional static reconciliation are unchanged. The staged result
+is not consumed by a guard.
+
+Focused owner, boundary, summary, and orchestration coverage is `20 passed in
+2.33s`. The sequential Expand/Squeeze, late-layout, child constant-fold/cast,
+core, pass-efficiency, architecture, and TensorFlow-import-blocked gate is `382
+passed in 27.09s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, continue moving backward through the same terminal interval and
+propagate one small orchestration cluster's mutation/prune evidence. The broad
+phase barrier must remain unconditional until every intervening owner has
+complete accounting. Commit and push only; do not create or update a pull
+request.
