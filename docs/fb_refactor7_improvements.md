@@ -103,6 +103,11 @@ staged instead of discarded. Its following topological and logical-layout
 refreshes remain unconditional, preserving the recursive fallback contract
 while making later scan-elision analysis evidence-based.
 
+The fallback broadcast repair now exposes a stable zero reconciliation result
+and replaces it with complete opt-in evidence only after a positive rewrite.
+Its complete owner counter, guard, topological refresh, and layout inference
+remain unchanged.
+
 ## Smaller internal owners
 
 - Typed ONNX `Constant` lowering is isolated in its op-family module while
@@ -137,7 +142,8 @@ current post-Split checkpoint and produced `433 passed in 26.91s`.
 
 The subsequent safety-fallback norm-evidence checkpoint extends that gate to
 `446 passed in 27.35s`; dynamic-rank-one result staging extends it to `447
-passed in 27.34s`.
+passed in 27.34s`; and broadcast reconciliation staging extends it to `451
+passed in 27.03s`.
 
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
@@ -148,7 +154,8 @@ full model-corpus run for this observation and accounting unit.
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should determine whether the fallback dynamic-rank-one evidence can safely
 guard either following refresh. If equivalence is not locally provable, it
-should leave both refreshes unchanged and audit the guarded broadcast repair.
-Any new mutation evidence must preserve the recursive fallback boundary,
-current pass order, TensorFlow-free boundary, dependency set, and sequential
-validation policy.
+should leave both refreshes unchanged. The next local audit is the combined
+fallback SINet-shuffle and SE/FC/Gather predicate plus its guarded
+reconciliation. Any new mutation evidence must preserve the recursive fallback
+boundary, current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

@@ -2636,3 +2636,30 @@ guard, or refresh calls. Validate binary layout, safety fallback, static
 reconciliation, convergence, core, pass efficiency, architecture, and
 TensorFlow import blocking sequentially. Commit and push only; do not create or
 update a pull request.
+
+## Safety-fallback broadcast reconciliation implementation checkpoint
+
+The fallback broadcast owner, its exact one-key result, and its positive guard
+are unchanged. The lowerer initializes
+`_fallback_broadcast_static_shape_stats` with both complete reconciliation keys
+set to zero. A positive broadcast rewrite replaces that default with
+`_reconcile_static_tensor_shapes(fallback_ir,
+include_mutation_count=True)` before the unchanged topological sort and
+logical-layout inference.
+
+This result plumbing adds no graph scan, fingerprint, copy, rewrite, cleanup,
+dependency, or unconditional work. The broadcast matcher, shared-constant
+clone path, convergence owner, and all later fallback processing retain their
+existing behavior.
+
+Focused safety-fallback/broadcast/convergence validation is `18 passed`. The
+broader sequential fallback-owner, reconciliation, convergence, core,
+pass-efficiency, architecture, and TensorFlow import-blocking gate is `451
+passed in 27.03s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, audit the following fallback SINet-shuffle plus SE/FC/Gather
+aggregate. Confirm that its existing tensor-count delta covers cleanup-only
+paths and characterize the guarded reconciliation result without changing the
+combined predicate. Commit and push only; do not create or update a pull
+request.

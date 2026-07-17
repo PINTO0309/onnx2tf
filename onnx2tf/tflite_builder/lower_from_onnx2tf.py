@@ -5421,8 +5421,17 @@ def lower_onnx_to_ir(
         fallback_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             fallback_ir
         )
+        _fallback_broadcast_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(fallback_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_broadcast_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
             _topologically_sort_operators(fallback_ir)
             infer_model_ir_logical_layouts(fallback_ir)
         fallback_se_fc_gather_tensor_count = len(fallback_ir.tensors)
