@@ -2080,3 +2080,34 @@ do not add reconciliation or alter the shared pass-state scope. Validate
 very-late orchestration, constant-fold/Cast, normalization-Pad, shared-context,
 core, pass-efficiency, architecture, and TensorFlow import blocking
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Very-late normalization mutation implementation checkpoint
+
+`run_very_late_gather_constant_normalization()` now returns the existing
+ordered four-result tuple from `run_recovery_invocations()`. It does not rebuild
+the invocation list or rerun an owner.
+
+The pure
+`summarize_very_late_gather_constant_normalization_mutations()` helper requires
+exactly four results, extracts only the eight declared mutation keys, defaults
+missing keys to zero, and adds clamped `pruned_unused_tensors`. Wrong result
+counts raise `ValueError`.
+
+The lowerer records `very_late_normalization_tensor_count`, stages
+`very_late_normalization_results`, and builds `_very_late_normalization_stats`
+from the cluster-wide tensor delta. The summary is observation-only. The same
+shared `ModelIRPassStateScope`, child order, ModelIR/LayoutState/diagnostics
+objects, and following dynamic-Reshape resolution are preserved.
+
+Focused runner, summary, cleanup-only pruning, lowerer, architecture, and
+pass-state coverage is `17 passed`. The expanded sequential indexed-owner,
+late/terminal orchestration, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `1216 passed in 30.03s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the immediately following
+`_resolve_dynamic_reshape_shapes(...,
+prefer_runtime_inferable_from_onnx_raw=True)` owner. Confirm its fixed result
+schema, occurrence count, and cleanup behavior before selecting this very-late
+call for an independent observation point. Commit and push only; do not create
+or update a pull request.

@@ -118,7 +118,7 @@ def test_very_late_is_a_straight_line_delegate() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -223,10 +223,6 @@ def test_very_late_runner_preserves_instrumented_effective_order(
     assert all(scope is events[0][1] for _, scope in events)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the very-late runner discards its ordered pass results",
-)
 def test_very_late_runner_returns_ordered_mutation_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -272,10 +268,6 @@ def test_very_late_runner_returns_ordered_mutation_evidence(
     assert run_very_late_gather_constant_normalization(context) == expected
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the very-late mutation summary is not implemented",
-)
 def test_very_late_mutation_summary_has_fixed_schema_and_net_pruning() -> None:
     summarize = getattr(
         very_late_gather_constant_normalization_orchestration,
@@ -309,6 +301,26 @@ def test_very_late_mutation_summary_has_fixed_schema_and_net_pruning() -> None:
         "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 7,
         "pruned_unused_tensors": 8,
     }
+    assert summarize(results, pruned_unused_tensors=-8)["pruned_unused_tensors"] == 0
+
+
+@pytest.mark.parametrize("result_count", [0, 3, 5])
+def test_very_late_mutation_summary_rejects_wrong_result_count(
+    result_count: int,
+) -> None:
+    summarize = getattr(
+        very_late_gather_constant_normalization_orchestration,
+        "summarize_very_late_gather_constant_normalization_mutations",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"expected 4 pass results, got {result_count}",
+    ):
+        summarize(
+            tuple({} for _ in range(result_count)),
+            pruned_unused_tensors=0,
+        )
 
 
 def test_very_late_flatten_owner_can_prune_without_a_rewrite(
@@ -336,10 +348,6 @@ def test_very_late_flatten_owner_can_prune_without_a_rewrite(
     assert prune_calls == [(model_ir, None)]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the lowerer discards very-late cluster mutation evidence",
-)
 def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     resolve_index = next(
@@ -385,7 +393,10 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "very_late_normalization_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == VERY_LATE
@@ -394,7 +405,7 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     assert len(invocation_indexes) == 1
     invocation_index = invocation_indexes[0]
     invocation = lowerer.body[invocation_index]
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert invocation.value.keywords == []
@@ -404,17 +415,25 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_very_late_affine_post_add_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
-    )
-    assert isinstance(following, ast.Expr)
+    assert previous.targets[0].id == "very_late_normalization_tensor_count"
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_very_late_normalization_stats"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_resolve_dynamic_reshape_shapes"
+    assert following.value.func.id == (
+        "summarize_very_late_gather_constant_normalization_mutations"
+    )
+    affine = lowerer.body[invocation_index - 2]
+    assert isinstance(affine, ast.Assign)
+    assert isinstance(affine.targets[0], ast.Name)
+    assert affine.targets[0].id == "_very_late_affine_post_add_stats"
+    resolve = lowerer.body[invocation_index + 2]
+    assert isinstance(resolve, ast.Expr)
+    assert isinstance(resolve.value, ast.Call)
+    assert isinstance(resolve.value.func, ast.Name)
+    assert resolve.value.func.id == "_resolve_dynamic_reshape_shapes"
 
 
 def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None:
@@ -422,12 +441,15 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "very_late_normalization_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == VERY_LATE
     )
-    invocation = lowerer.body[invocation_index - 1]
+    invocation = lowerer.body[invocation_index - 2]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
@@ -448,7 +470,7 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
     assert layout_keyword.value.value.id == "session"
     assert layout_keyword.value.attr == "layout_state"
 
-    previous = lowerer.body[invocation_index - 2]
+    previous = lowerer.body[invocation_index - 3]
     assert isinstance(previous, ast.Expr)
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
@@ -456,8 +478,12 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
         previous.value.func.id
         == "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
     )
+    tensor_count = lowerer.body[invocation_index - 1]
+    assert isinstance(tensor_count, ast.Assign)
+    assert isinstance(tensor_count.targets[0], ast.Name)
+    assert tensor_count.targets[0].id == "very_late_normalization_tensor_count"
     following = lowerer.body[invocation_index]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == VERY_LATE

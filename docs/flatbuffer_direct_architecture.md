@@ -10363,3 +10363,12 @@ zero, so the raw tuple alone is incomplete. Strict characterization requires
 tuple propagation, a fixed eight-key mutation summary plus clamped net tensor
 reduction, and distinct lowerer tensor-count/result/summary assignments before
 the final dynamic-Reshape resolution.
+
+The runner now returns its existing four-result tuple. The pure
+`summarize_very_late_gather_constant_normalization_mutations()` helper validates
+that cardinality, extracts only the eight declared mutation counters, and adds
+clamped `pruned_unused_tensors`. The lowerer stages
+`very_late_normalization_tensor_count`,
+`very_late_normalization_results`, and `_very_late_normalization_stats` around
+the cluster. The summary remains observation-only and shares the existing pass
+state; no owner is invoked twice.

@@ -108,7 +108,7 @@ new full model-corpus run for this final observation-only unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit result propagation from the very-late Gather/Constant
-normalization cluster. Any new mutation evidence must account for cleanup-only
-paths conservatively and preserve the current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+unit should inspect the very-late dynamic-Reshape resolution immediately after
+the newly staged normalization summary. Any new mutation evidence must preserve
+the current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.
