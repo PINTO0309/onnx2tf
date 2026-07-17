@@ -10718,6 +10718,11 @@ the provenance counter outside that guard and requires stable two-key
 `_final_convinteger_static_shape_stats` evidence only for the existing
 repair-positive path. The following InstanceNorm owner remains adjacent.
 
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary as the unchanged first statement of
+the structural-repair guard. Hint-only propagation still does not enter the
+guard, and sort/layout inference retain their positions.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

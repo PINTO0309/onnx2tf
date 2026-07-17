@@ -318,6 +318,15 @@ This checkpoint extends the expanded related gate to `1252 passed in 30.10s`;
 the focused indexed-InstanceNorm, terminal, and architecture gate is
 `310 passed in 18.35s`.
 
+The preceding final ConvInteger structural-repair path now retains complete
+reconciliation evidence without broadening its guard to self-contained channel-
+last hint propagation. The repair-only reconciliation→sort→layout-inference
+order remains unchanged.
+
+This checkpoint extends the expanded related gate to `1256 passed in 30.30s`;
+the focused quantized-layout, terminal, and architecture gate is
+`277 passed in 17.28s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -327,6 +336,7 @@ full model-corpus run for this observation and accounting unit.
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
 reconciliation inventory immediately before the completed final PReLU boundary,
-beginning with `final_convinteger_layout_stats`. Any new mutation evidence must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+beginning with the absolute-final dynamic rank-one rewrite immediately before
+`final_convinteger_layout_stats`. Any new mutation evidence must preserve current
+pass order, TensorFlow-free boundary, dependency set, and sequential validation
+policy.

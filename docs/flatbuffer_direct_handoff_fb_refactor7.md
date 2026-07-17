@@ -4169,3 +4169,28 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final ConvInteger
 reconciliation-result contract; there are no unexpected failures.
+
+## Primary final ConvInteger reconciliation implementation checkpoint
+
+The primary path now initializes `_final_convinteger_static_shape_stats` with
+the stable two-key schema and replaces it with the opt-in complete
+reconciliation dictionary only under the unchanged structural-repair counter
+guard. Channel-last hint propagation remains outside that condition.
+
+The owner, both raw counters, hint metadata/layout writes, structural chain
+metadata/rewire/removal, positive-only pruning/layout synchronization, guard,
+following sort and layout inference, InstanceNorm boundary, dependencies, and
+TensorFlow-free behavior are unchanged. No reconciliation or scan is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- quantized-layout owner, terminal orchestration, and architecture:
+  `277 passed in 17.28s`
+- expanded broad related gate: `1256 passed in 30.30s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the absolute-final
+`_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs()` expression immediately
+before the unconditional sort/layout inference and final ConvInteger owner.
+Determine whether its exact raw result can be retained without adding a guard
+or reconciliation. Commit and push only; do not create or update a pull request.

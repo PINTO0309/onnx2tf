@@ -5704,13 +5704,20 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_convinteger_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_convinteger_layout_stats.get(
             "repaired_channel_last_convinteger_input_transposes",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_convinteger_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
     final_instancenorm_repair_stats = _repair_decomposed_instance_normalization_layouts(
