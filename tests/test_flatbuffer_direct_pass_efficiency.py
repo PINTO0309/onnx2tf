@@ -68,6 +68,10 @@ from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration impo
     BoundaryBatchMatMulUnaryContext,
     run_boundary_batchmatmul_unary,
 )
+from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
+    ChannelSlicePadMulContext,
+    run_channel_slice_pad_mul,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1438,17 +1442,12 @@ def test_channel_slice_pad_mul_pair_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_channel_slice_merge_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_pad_mul_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_channel_slice_pad_mul(
+        ChannelSlicePadMulContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1

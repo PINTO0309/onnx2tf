@@ -14215,3 +14215,53 @@ both kinds of boundaries. Prove builder arguments, fresh/shared scope identity,
 instrumented order, callback identity, and two total executions before
 switching to a delegate; validate sequentially, commit and push, and do not
 create a pull request.
+
+## Explicit channel-slice/pad-mul orchestration: completed state
+
+The characterized pair now delegates to
+`passes/channel_slice_pad_mul_orchestration.py`. A frozen
+`ChannelSlicePadMulContext` contains only ModelIR, layout state, and
+diagnostics. Both cleanup owners are imported directly from
+`channel_slice_layout` and `pad_layout`; the phase module does not import the
+central lowerer.
+
+`CHANNEL_SLICE_PAD_MUL_PASS_IDS` declares the exact two-step order. Every
+builder call creates one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope, ModelIR, layout, and
+diagnostics values to both immutable invocations. The shared executor validates
+both IDs before execution.
+
+The historical helper is now a four-line zero-argument delegate. It remains
+both the leading terminal-slice/concat callback and the same additional late-
+terminal direct call between pre-add and affine post-add recovery. The two
+direct runner imports were removed from the central lowerer. Architecture
+accounting combines stable owner IDs with one direct helper invocation and one
+callback phase slot, preserving both runtime executions. The efficiency
+fixture now executes the explicit runner and still observes one graph-index
+build across the pair.
+
+Sequential validation completed as follows:
+
+- focused channel-slice/pad-mul orchestration: `8 passed in 0.60s`;
+- focused orchestration plus ordered architecture:
+  `256 passed in 19.52s`;
+- pass-efficiency: `30 passed in 0.55s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.68s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, callback identity, runtime pass order, invocation multiplicity, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory the next small still-central shared-scope cluster. The
+late hard-activation/layout-transpose pair is a likely option-dependent
+candidate; freeze its required option, active runner sequence, scope sharing,
+sole direct boundary, and all arguments before editing production. Validate
+sequentially, keep real-model conversion minimal, commit and push only, and do
+not create a pull request.

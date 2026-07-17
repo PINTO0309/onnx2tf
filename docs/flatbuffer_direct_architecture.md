@@ -9202,3 +9202,13 @@ add and affine post-add recovery. Focused contracts freeze all ModelIR/layout/
 diagnostics/scope arguments, callback identity, and both boundary forms. The
 eventual phase should use a frozen ModelIR/layout/diagnostics context, two
 direct owner imports, two stable IDs, and a fresh shared scope per execution.
+
+That pair now uses `ChannelSlicePadMulContext` and two stable IDs in
+`passes/channel_slice_pad_mul_orchestration.py`. Both owners are direct
+imports, every builder creates one fresh scope shared by the two immutable
+invocations, and the lowerer no longer imports either runner. The historical
+helper remains both the leading terminal-slice/concat callback and the
+additional late-terminal direct call as a four-line delegate. Stable helper
+multiplicity preserves two executions, and the efficiency fixture now
+exercises the explicit runner while retaining one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.

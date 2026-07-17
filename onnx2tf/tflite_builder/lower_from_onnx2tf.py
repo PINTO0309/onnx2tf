@@ -233,6 +233,10 @@ from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration impo
     BoundaryBatchMatMulUnaryContext,
     run_boundary_batchmatmul_unary,
 )
+from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
+    ChannelSlicePadMulContext,
+    run_channel_slice_pad_mul,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -553,7 +557,6 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
     repair_channel_last_inputs_for_channel_first_pad,
     run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
-    run_pad_mul_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.quantized_layout import (
     repair_channel_last_convinteger_input_transposes,
@@ -717,7 +720,6 @@ from onnx2tf.tflite_builder.passes.channel_slice_layout import (
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains as _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains_pass,
     _optimize_transpose_slice_muladd_conv_mergeadd_strict as _optimize_transpose_slice_muladd_conv_mergeadd_strict_pass,
     _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict as _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict_pass,
-    run_channel_slice_merge_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_mul_square_anchor_constant_chains as _optimize_yolo_decode_mul_square_anchor_chains_pass,
@@ -4460,21 +4462,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_channel_slice_pad_mul_layout_pass_cluster() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_channel_slice_merge_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_pad_mul_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_channel_slice_pad_mul(
+            channel_slice_pad_mul_context
         )
 
     def _run_singleton_reshape_layout_pass_cluster(
@@ -4583,6 +4572,11 @@ def lower_onnx_to_ir(
         )
 
     boundary_batchmatmul_unary_context = BoundaryBatchMatMulUnaryContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    channel_slice_pad_mul_context = ChannelSlicePadMulContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
