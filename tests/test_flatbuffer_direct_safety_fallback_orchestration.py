@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -105,10 +104,6 @@ def test_safety_fallback_stages_complete_norm_mutation_evidence() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the fallback dynamic rank-one rewrite result is discarded",
-)
 def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
     invocation_index = next(
@@ -125,7 +120,7 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "fallback_dynamic_rank1_stats"
+    assert invocation.targets[0].id == "_fallback_dynamic_rank1_stats"
     assert isinstance(invocation.value, ast.Call)
     assert [ast.unparse(argument) for argument in invocation.value.args] == [
         "fallback_ir"

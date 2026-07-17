@@ -5413,7 +5413,9 @@ def lower_onnx_to_ir(
             )
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
-        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
+        _fallback_dynamic_rank1_stats = (
+            _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
+        )
         _topologically_sort_operators(fallback_ir)
         infer_model_ir_logical_layouts(fallback_ir)
         fallback_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(

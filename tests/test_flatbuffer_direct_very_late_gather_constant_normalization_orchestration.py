@@ -727,14 +727,14 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
         and node.value.func.id
         == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
     ]
-    assert len(remaining_expressions) == 2
+    assert len(remaining_expressions) == 1
     remaining_inputs = []
     for expression in remaining_expressions:
         assert len(expression.value.args) == 1
         argument = expression.value.args[0]
         assert isinstance(argument, ast.Name)
         remaining_inputs.append(argument.id)
-    assert sorted(remaining_inputs) == ["fallback_ir", "model_ir"]
+    assert remaining_inputs == ["model_ir"]
 
 
 def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -> (

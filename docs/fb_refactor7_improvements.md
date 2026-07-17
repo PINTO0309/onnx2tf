@@ -98,6 +98,11 @@ existing owner, and the clamped delta is stored as `pruned_unused_tensors`.
 The established rewrite-only reconciliation guard remains unchanged because
 unused-tensor deletion alone does not require shape propagation.
 
+The fallback-only dynamic rank-one Unsqueeze/Reshape-shape result is also
+staged instead of discarded. Its following topological and logical-layout
+refreshes remain unconditional, preserving the recursive fallback contract
+while making later scan-elision analysis evidence-based.
+
 ## Smaller internal owners
 
 - Typed ONNX `Constant` lowering is isolated in its op-family module while
@@ -131,7 +136,8 @@ passed`. The dedicated reconciliation/convergence gate was repeated for the
 current post-Split checkpoint and produced `433 passed in 26.91s`.
 
 The subsequent safety-fallback norm-evidence checkpoint extends that gate to
-`446 passed in 27.35s`.
+`446 passed in 27.35s`; dynamic-rank-one result staging extends it to `447
+passed in 27.34s`.
 
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
@@ -140,7 +146,9 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the fallback-only dynamic rank-one Reshape result and the
-following topological/layout refresh. Any new mutation evidence must preserve
-the recursive fallback boundary, current pass order, TensorFlow-free boundary,
-dependency set, and sequential validation policy.
+unit should determine whether the fallback dynamic-rank-one evidence can safely
+guard either following refresh. If equivalence is not locally provable, it
+should leave both refreshes unchanged and audit the guarded broadcast repair.
+Any new mutation evidence must preserve the recursive fallback boundary,
+current pass order, TensorFlow-free boundary, dependency set, and sequential
+validation policy.

@@ -2567,7 +2567,7 @@ indexed runtime SHAPE/CONCAT insertion path, synchronizes layout only after a
 positive rewrite, and performs no tensor or operator cleanup on zero.
 
 The fallback call still discards that result. A strict expected-failure AST
-contract requires `fallback_dynamic_rank1_stats` while preserving its sole
+contract requires `_fallback_dynamic_rank1_stats` while preserving its sole
 `fallback_ir` argument and the immediately following unconditional
 `_topologically_sort_operators()` and `infer_model_ir_logical_layouts()` calls.
 No refresh is skipped in this unit because recursive relowering and earlier
@@ -2585,3 +2585,26 @@ sole expression. Validate dynamic Reshape, safety fallback, very-late
 orchestration, core, pass efficiency, architecture, and TensorFlow import
 blocking sequentially. Commit and push only; do not create or update a pull
 request.
+
+## Safety-fallback dynamic rank-one implementation checkpoint
+
+The fallback-only call now assigns its unchanged one-key result to
+`_fallback_dynamic_rank1_stats`. The immediately following topological sort and
+logical-layout inference remain unconditional and in their original order.
+The very-late main-path result remains `_very_late_dynamic_rank1_reshape_stats`,
+and the absolute-final `model_ir` call remains the sole discarded expression.
+
+This is observation-only plumbing: no matcher, metadata write, GraphIndex
+operation, LayoutState behavior, recursive relowering, refresh, or return path
+changed.
+
+Focused dynamic-rank-one validation is `5 passed, 34 deselected`. The broader
+sequential fallback-owner, reconciliation, convergence, core, pass-efficiency,
+architecture, and TensorFlow import-blocking gate is `447 passed in 27.34s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, determine whether the recursive fallback return state plus complete
+norm and dynamic-rank-one evidence is sufficient to guard either refresh. If
+that equivalence cannot be proven locally, leave both unconditional and audit
+the following `fallback_broadcast_repair_stats` reconciliation result instead.
+Commit and push only; do not create or update a pull request.
