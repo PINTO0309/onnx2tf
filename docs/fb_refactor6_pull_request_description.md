@@ -1784,4 +1784,13 @@ BatchMatMul flags, dynamic-signature/QDIM loss, nonpositive tail shapes,
 incomplete metadata, and invalid topology. Resume by building one indexed
 all-branch topology/metadata/constant/broadcast/quantization/removal plan before
 mutation and turning all 27 xfails green without changing valid behavior or
-either production call. Do not create a pull request.
+either production call. Do not create a pull request. That transactional
+correction is now complete in the 563-line raw owner. One differential
+`ModelIRGraphIndex`, strict all-branch topology/metadata preflight, immutable
+leading/tail INT32 shape contracts, false BatchMatMul flag checks, old/new
+broadcast equivalence, dynamic-signature and QDIM rank lifting, indexed setters,
+and one indexed removal turn all 27 former xfails green. Focused coverage now
+has 50 green cases, including scalar-bias and single-index contracts, while
+both production calls remain unchanged. Resume by mechanically extracting the
+corrected owner with exact AST and owner/wrapper equality; do not create a pull
+request.

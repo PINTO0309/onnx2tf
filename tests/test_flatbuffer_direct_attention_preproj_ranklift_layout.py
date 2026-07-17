@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -300,6 +301,23 @@ def test_attention_preproj_ranklift_rewrites_multiple_and_fixed_point() -> None:
     ]
 
 
+def test_attention_preproj_ranklift_preserves_scalar_bias() -> None:
+    model_ir = _model()
+    bias = model_ir.tensors["branch0_bias"]
+    bias.shape = []
+    bias.shape_signature = []
+    bias.data = np.asarray(0.25, dtype=np.float32)
+    before = copy.deepcopy(model_ir)
+    feed = np.arange(12, dtype=np.float32).reshape(1, 1, 3, 4) + 1.0
+    expected = _evaluate(before, {"x": feed})
+
+    stats = _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
+    actual = _evaluate(model_ir, {"x": feed})
+
+    assert stats == _STATS
+    assert np.array_equal(actual["branch0_output"], expected["branch0_output"])
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -373,10 +391,6 @@ def test_attention_preproj_ranklift_preserves_existing_rejections(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="no-match execution prunes tensors instead of remaining a no-op",
-)
 def test_attention_preproj_ranklift_does_not_prune_unmatched_graph() -> None:
     model_ir = _model()
     _tensor(model_ir, "unused", [1])
@@ -385,10 +399,6 @@ def test_attention_preproj_ranklift_does_not_prune_unmatched_graph() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="matched shape constants lack immutable ownership and typing",
-)
 @pytest.mark.parametrize("role", ["lead", "tail"])
 @pytest.mark.parametrize(
     "condition",
@@ -420,10 +430,6 @@ def test_attention_preproj_ranklift_rejects_unsafe_shape_constant(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="rank-lifted dynamic signatures are replaced with static values",
-)
 def test_attention_preproj_ranklift_preserves_dynamic_signature() -> None:
     model_ir = _model()
     model_ir.tensors["x"].shape_signature = [1, 1, -1, 4]
@@ -438,10 +444,6 @@ def test_attention_preproj_ranklift_preserves_dynamic_signature() -> None:
     assert model_ir.tensors["branch0_binary"].shape_signature == [1, 1, -1, 8]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="rank-lifted per-axis quantized dimensions are not remapped",
-)
 def test_attention_preproj_ranklift_remaps_per_axis_quantization() -> None:
     model_ir = _model()
     for name in ("branch0_bmm", "branch0_binary"):
@@ -460,10 +462,6 @@ def test_attention_preproj_ranklift_remaps_per_axis_quantization() -> None:
         assert quantization.quantized_dimension == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="binary broadcast compatibility is not revalidated after rank lift",
-)
 def test_attention_preproj_ranklift_rejects_rank_sensitive_bias() -> None:
     model_ir = _model()
     bias = model_ir.tensors["branch0_bias"]
@@ -474,10 +472,6 @@ def test_attention_preproj_ranklift_rejects_rank_sensitive_bias() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BatchMatMul transpose flags are ignored by the matcher",
-)
 @pytest.mark.parametrize("flag", ["adjX", "adjY"])
 def test_attention_preproj_ranklift_rejects_transposed_bmm(flag: str) -> None:
     model_ir = _model()
@@ -486,10 +480,6 @@ def test_attention_preproj_ranklift_rejects_transposed_bmm(flag: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="nonpositive tail dimensions are accepted by product alone",
-)
 def test_attention_preproj_ranklift_rejects_nonpositive_tail_shape() -> None:
     model_ir = _model()
     model_ir.tensors["branch0_tail_shape"].data = np.asarray(
@@ -499,10 +489,6 @@ def test_attention_preproj_ranklift_rejects_nonpositive_tail_shape() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="complete tensor and binary-input metadata is not prevalidated",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -529,10 +515,6 @@ def test_attention_preproj_ranklift_rejects_incomplete_metadata(case: str) -> No
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="duplicate producers, reverse order, and public aliases are accepted",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -570,6 +552,26 @@ def test_attention_preproj_ranklift_rejects_invalid_topology(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
+def test_attention_preproj_ranklift_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(branches=2, binary_ops=["ADD", "MUL"])
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
+
+    assert stats == _STATS
+    assert refresh_count == 1
+
+
 def test_attention_preproj_ranklift_keeps_raw_owner_and_calls() -> None:
     lowering_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     lowering_source = lowering_path.read_text(encoding="utf-8")
@@ -581,11 +583,13 @@ def test_attention_preproj_ranklift_keeps_raw_owner_and_calls() -> None:
         and node.name
         == "_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 190
+    assert owner.end_lineno - owner.lineno + 1 == 563
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 1
     owner_source = ast.get_source_segment(lowering_source, owner)
     assert owner_source is not None
-    assert "_build_tensor_consumer_map(model_ir)" in owner_source
+    assert "graph_index = ModelIRGraphIndex(model_ir)" in owner_source
+    assert "_build_tensor_consumer_map(model_ir)" not in owner_source
+    assert "graph_index.remove_operator(int(reshape_idx))" in owner_source
     assert "_prune_unused_tensors(model_ir)" in owner_source
 
     lowerer = next(

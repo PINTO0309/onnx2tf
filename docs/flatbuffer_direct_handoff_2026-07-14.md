@@ -12473,3 +12473,52 @@ branch setter/metadata action and the single removal, and leave zero-match
 execution untouched. Turn all 27 strict xfails green while preserving exact
 valid outputs, statistics, fixed point, and both production calls. Validate
 sequentially, commit and push, and do not create a pull request.
+
+## Attention pre-projection rank-lift transactional correction: completed state
+
+All twenty-seven former strict xfails are green. The corrected raw owner is 563
+lines and constructs one `ModelIRGraphIndex`; the two-branch fixed-point rewrite
+refreshes it exactly once. Indexed BatchMatMul input setters and one indexed
+leading-Reshape removal replace every repeated full consumer scan.
+
+Before mutation, the leading source/Reshape and every projection branch prove
+unique producers, strict operator order, exact private intermediate consumers,
+complete positive shapes and compatible signatures, data-preserving dtypes,
+valid boundaries, and concrete tail outputs. All BatchMatMul transpose flags
+must be false. The binary's other input must exist and broadcast to the exact
+old and new result shapes, retaining scalar and `[K]` bias behavior while
+rejecting rank-sensitive forms. Tail dimensions are all positive and multiply
+to the projection width.
+
+Leading and tail shape constants now require immutable, unquantized INT32
+TensorIR and NumPy buffers with exact values, shapes, signatures, ownership,
+and no runtime producer. Dynamic sequence signatures, NCW/NWC layout metadata,
+and per-axis QDIM rank-lift by one. The complete all-branch plan is built before
+the first setter; invalid later branches cannot leave partial updates, and
+zero-match execution no longer prunes.
+
+Validation completed sequentially as follows:
+
+- corrected focused contract: `50 passed in 0.58s`;
+- corrected focused contract, attention Gather cleanup, six adjacent extracted
+  bridge/collapse contracts, and ordered architecture suite:
+  `797 passed in 19.42s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.52s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to fully proven candidates. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. The 563-line count is
+descriptive only; 2,000 remains the ONNX operation-count tier threshold. PR
+#952 remains closed; no pull request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 563-line
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains` owner into
+a focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve both production calls. Prove corrected checkpoint/module
+AST identity and direct owner/wrapper equality for valid multiple/binary/scalar/
+dynamic/quantized cases plus constant, broadcast, flag, metadata, topology, and
+atomic rejection cases. Validate sequentially, commit and push, and do not
+create a pull request.

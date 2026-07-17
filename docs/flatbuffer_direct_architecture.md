@@ -8730,6 +8730,33 @@ before commit, and a zero-match call must be a complete no-op. The 190-line
 count is descriptive only; 2,000 remains the ONNX operation-count tier
 threshold.
 
+That correction is now implemented in the 563-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated consumer reconstruction and stays
+current through indexed BatchMatMul input setters and the single leading-
+Reshape removal. A two-branch rewrite constructs and refreshes it exactly once.
+
+The leading source/Reshape and every branch now prove unique producers, strict
+Reshape/BatchMatMul/binary/tail-Reshape order, exact private intermediate
+consumers, complete positive physical shapes, full compatible signatures,
+data-preserving dtypes, valid public boundaries, and concrete tail outputs.
+`adjX`, `adjY`, `adj_x`, and `adj_y` must all be absent or false. Each binary's
+other input must exist and broadcast to the exact old rank-three result and the
+exact new rank-four result; this retains scalar and `[K]` biases while rejecting
+rank-sensitive `[T,1,K]` values. All tail dimensions are positive and their
+product is proven against the projection width.
+
+Leading and tail shape inputs have immutable unquantized INT32 TensorIR and
+NumPy-buffer contracts with exact values, shapes, signatures, ownership, and
+runtime-producer absence. Dynamic sequence signatures rank-lift from
+`[T,1,K]` to `[1,1,T,K]`; NCW/NWC metadata lifts to NCHW/NHWC, and retained
+per-axis QDIM advances by one. Every branch setter and shape/signature/layout/
+quantization update is planned before mutation. All twenty-seven former strict
+xfails are green, zero-match execution is unchanged, and scalar-bias plus
+single-index contracts bring focused coverage to fifty cases without changing
+valid statistics, NumPy-exact outputs, fixed point, or both production calls.
+The 563-line count is descriptive only; 2,000 remains the ONNX operation-count
+tier threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
