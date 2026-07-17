@@ -2356,6 +2356,12 @@ owner used by the safety fallback. The primary guard retains its stable
 complete shape result without changing the guarded sort or following Concat-
 axis owner boundary.
 
+The final Concat-axis owner is counter-complete and has no cleanup-only path;
+the adjacent stale-binary owner always prunes unused tensors. Characterization
+therefore requires a stable Concat-axis shape result followed by stale-binary
+tensor-delta accounting and its stable shape result. Both rewrite-only guards,
+sorts, and the progress boundary remain fixed.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

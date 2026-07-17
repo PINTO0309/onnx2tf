@@ -3552,3 +3552,31 @@ At resume, stage complete reconciliation evidence for
 `final_concat_axis_stats`, retaining its guard, sort, and following stale-
 binary owner boundary. Commit and push only; do not create or update a pull
 request.
+
+## Primary final Concat-axis/binary evidence characterization checkpoint
+
+The final Concat-axis owner is the same counter-complete, cleanup-free repair
+already characterized in the fallback. The immediately following stale
+channelwise-binary owner is also shared with the fallback and unconditionally
+prunes unused tensors, including zero-rewrite calls.
+
+A strict expected-failure primary-path contract requires a stable
+`_final_concat_axis_static_shape_stats` result under the existing axis guard,
+then `final_binary_layout_tensor_count`, a clamped `pruned_unused_tensors`
+delta, and stable `_final_binary_layout_static_shape_stats` under the existing
+binary guard. Both guarded sorts and the following progress boundary remain
+fixed; cleanup-only evidence does not trigger reconciliation.
+
+At implementation, add only result/prune plumbing. Do not change either owner,
+matching, rewiring, metadata, pruning, raw schemas, guards, sorts, progress,
+dependencies, or TensorFlow behavior. Validate sequentially, then commit and
+push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal/Concat-axis/binary owner gate: `37 passed, 1 xfailed`
+- expanded broad related gate: `573 passed, 1 xfailed in 29.12s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet complete final Concat-axis and
+binary evidence contract; there are no unexpected failures.
