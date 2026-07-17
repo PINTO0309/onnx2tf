@@ -9232,3 +9232,12 @@ central lowerer no longer imports the hard-activation runner, and the
 efficiency fixture exercises the enabled explicit phase with one graph-index
 build. Focused, architecture, pass-efficiency, core, and TensorFlow-import-
 blocked suites pass.
+
+The absolute-final normalization/attention pair is now characterized without
+production changes. It has two ordered owners, one fresh shared pass-state
+scope, fixed `False`/`True` normalization flags, and one zero-argument call at
+the terminal instance-normalization/dynamic-shape boundary. Focused contracts
+freeze all ModelIR/layout/diagnostics/scope arguments and the mixed-attention
+rationale. The eventual phase should use a frozen ModelIR/layout/diagnostics
+context, two direct owner imports, two stable IDs, and one fresh shared scope
+per build.

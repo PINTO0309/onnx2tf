@@ -14363,3 +14363,51 @@ attention shared-scope pair before changing production. Freeze its fixed
 normalization flags, complete argument contracts, one direct boundary, and
 existing efficiency behavior. Validate sequentially, keep real-model
 conversion minimal, commit and push only, and do not create a pull request.
+
+## Absolute-final normalization/attention orchestration characterization: completed state
+
+The 21-line `_run_absolute_final_normalization_attention_pass_pair` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session. Every invocation creates one `ModelIRPassStateScope` from
+ModelIR and layout state, then passes the same scope, ModelIR, layout, and
+diagnostics first to normalization/pad cleanup and then to mixed-attention
+layout cleanup.
+
+The normalization invocation retains the fixed terminal policy
+`include_instance=False` and `include_flatten=True`. The sole zero-argument
+call remains between terminal instance-normalization post-bias recovery and
+dynamic rank-1 unsqueeze/reshape shape-input rewriting. The retained comment
+documents why mixed attention must follow late boundary/layout repair.
+
+The focused
+`test_flatbuffer_direct_absolute_final_normalization_attention_orchestration.py`
+freezes the scope construction, both complete argument contracts, fixed
+normalization flags, exact order, sole invocation, and outer boundaries. The
+existing efficiency fixture continues to prove one graph-index build across
+the pair.
+
+Sequential validation completed as follows:
+
+- focused absolute-final normalization/attention characterization:
+  `4 passed in 0.20s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 18.70s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 11.17s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `pad_layout` and `attention_layout`.
+Construct one fresh `ModelIRPassStateScope` per phase invocation and attach the
+same object to both immutable invocations. Preserve the normalization flags,
+the attention rationale comment, historical zero-argument helper, sole call,
+and both outer boundaries. Prove builder arguments, fresh/shared scope
+identity, and instrumented order before switching to a delegate; validate
+sequentially, commit and push, and do not create a pull request.

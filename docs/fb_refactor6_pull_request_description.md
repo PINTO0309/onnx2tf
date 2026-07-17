@@ -2246,3 +2246,13 @@ TensorFlow-import-blocked tests pass. No public API, artifact, dependency,
 option semantics, runtime order, scope-sharing behavior, or TensorFlow
 boundary changed. PR #952 remains closed, and no pull request was created,
 reopened, or updated.
+
+The absolute-final normalization/attention pair is now characterized without
+production changes. Four focused tests freeze its shared
+`ModelIRPassStateScope`, complete ModelIR/layout/diagnostics contracts, fixed
+`include_instance=False` and `include_flatten=True` policy, sole zero-argument
+call, and both outer terminal boundaries. The focused plus architecture suite
+passed 252 tests, the 30 pass-efficiency tests and all 11 TensorFlow-import-
+blocked tests passed, and targeted static checks passed. Runtime behavior and
+all public/dependency contracts remain unchanged. PR #952 remains closed, and
+no pull request was created, reopened, or updated.
