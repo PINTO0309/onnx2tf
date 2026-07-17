@@ -137,7 +137,7 @@ def test_qkv_attention_signature_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -239,10 +239,6 @@ def test_qkv_attention_runner_preserves_all_production_orders(
     assert events == list(expected_ids)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the QKV runner still discards ordered mutation results",
-)
 @pytest.mark.parametrize(
     ("include_layout_transpose", "include_prefix", "expected_ids"),
     PRODUCTION_FORMS,
@@ -349,10 +345,6 @@ def test_qkv_attention_returns_and_summarizes_all_production_forms(
     assert isinstance(helper.body[0].value, ast.Call)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the lowerer does not capture terminal QKV mutation evidence",
-)
 def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     target_names = (
@@ -493,18 +485,20 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
     late_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_qkv_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == QKV_ATTENTION
-        and statement.value.keywords
     )
 
     assert (
-        _call_name(lowerer.body[late_index - 1])
+        _call_name(lowerer.body[late_index - 2])
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    next_boundary = lowerer.body[late_index + 1]
+    next_boundary = lowerer.body[late_index + 2]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)

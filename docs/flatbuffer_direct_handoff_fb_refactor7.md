@@ -1298,3 +1298,31 @@ terminal call. Validate all policies, malformed lengths, summary filtering,
 net pruning, shared pass state, boundary structure, core, pass efficiency,
 architecture, and TensorFlow import blocking sequentially. Commit and push
 only; do not create or update a pull request.
+
+## Late QKV mutation evidence implementation checkpoint
+
+The QKV orchestration runner and lowerer's private delegate now return the
+ordered raw tuple for all three production policies. The pure
+`summarize_qkv_attention_mutations()` helper validates the policy-specific
+tuple length and always emits four layout, four prefix, two bridge, and one
+net-prune counter. Inactive families are explicit zeros, generic-layout
+`iterations` is excluded, and pruning is clamped to the exact nonnegative
+tensor-count reduction.
+
+Only the terminal `include_prefix=False` invocation stages
+`late_qkv_tensor_count`, `late_qkv_results`, and `_late_qkv_stats`. The two
+default invocation forms still discard their now-available results. All
+defaults, pass IDs and order, optional-layout policy, shared pass state,
+shape-extract/split-bridge boundaries, and unconditional broad reconciliation
+remain unchanged.
+
+Focused QKV, indexed split/conv bridge, and Hardswish-SE coverage is `73 passed
+in 0.91s`. The sequential QKV, split/conv bridge, Hardswish-SE, late
+hard-activation, SINet terminal, Expand/Squeeze, late-layout,
+constant-fold/cast, shared-context, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gate is `503 passed in 28.68s`. Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At resume, move backward to the shape-extract owner immediately before late
+QKV. Confirm whether its return counter fully accounts for pruning before
+staging it. Commit and push only; do not create or update a pull request.

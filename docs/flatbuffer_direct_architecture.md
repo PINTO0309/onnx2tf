@@ -10134,3 +10134,10 @@ non-mutating `iterations` metric. Strict characterization requires ordered raw
 result propagation and one fixed mutation schema containing four layout, four
 prefix, two bridge, and one net-prune counter. The terminal call must stage
 count/results/summary without changing the other two production forms.
+
+The QKV runner and lowerer delegate now return ordered raw results for every
+policy. `summarize_qkv_attention_mutations()` validates the active tuple length,
+fills inactive family keys with zeros, copies only ten declared mutation
+counters, excludes `iterations`, and adds clamped net pruning. Only the
+terminal form stages starting count, raw results, and `_late_qkv_stats`; the two
+default forms continue to ignore their return values.

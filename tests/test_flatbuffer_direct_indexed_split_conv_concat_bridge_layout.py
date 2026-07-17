@@ -768,10 +768,13 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
     ]
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_qkv_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_run_qkv_attention_layout_pass_cluster"
+    assert previous.value.func.id == "summarize_qkv_attention_mutations"
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
