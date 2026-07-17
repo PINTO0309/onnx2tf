@@ -4024,3 +4024,34 @@ At resume, audit the preceding `final_broadcast_repair_stats` owner and its
 reconciliation/sort/layout-inference block before retaining complete evidence.
 Keep the following mixed-singleton Concat boundary fixed. Commit and push only;
 do not create or update a pull request.
+
+## Primary final broadcast reconciliation characterization checkpoint
+
+The indexed rank-four channelwise broadcast owner increments its exact counter
+for every in-place constant rotation or shared-constant clone plus binary-input
+rewire. It performs no pruning or topology removal, and unsupported,
+already-broadcastable, unknown-layout, unsafe-shape, and second-run zero results
+are ModelIR no-ops. The counter therefore completely guards shape follow-up.
+
+A strict expected-failure orchestration contract now requires stable two-key
+`_final_broadcast_static_shape_stats` evidence and assigns the opt-in complete
+result at the existing first statement of the positive guard. The following
+topological sort, layout inference, and `final_mixed_singleton_concat_stats`
+boundary remain exact.
+
+At implementation, add only caller-side result plumbing. Do not change the
+owner, counter schema, constant clone/rotation, rewiring, guard, reconcile/sort/
+infer order, dependencies, fallback behavior, following owner, or TensorFlow
+behavior. Validate the binary-layout owner, terminal orchestration, convergence,
+and architecture sequentially, then commit and push only; do not create or
+update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- binary owner, convergence, terminal orchestration, and architecture:
+  `285 passed, 1 xfailed in 17.22s`
+- expanded broad related gate: `1213 passed, 1 xfailed in 30.33s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final broadcast reconciliation-
+result contract; there are no unexpected failures.

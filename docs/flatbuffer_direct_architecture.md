@@ -10694,3 +10694,11 @@ The primary caller now initializes that stable result and replaces it with the
 opt-in complete reconciliation dictionary only after the unchanged exact
 counter guard succeeds. No owner, scan, pruning, layout synchronization, or
 placeholder boundary changes.
+
+The preceding final rank-four channelwise broadcast owner counts every
+in-place constant rotation and shared-constant clone/rewire, performs no prune,
+and has no counter-zero ModelIR mutation. Strict characterization preserves its
+single-counter guard and the existing reconciliation→topological-sort→layout-
+inference order while requiring a stable two-key
+`_final_broadcast_static_shape_stats` result. The following mixed-singleton
+Concat owner remains adjacent.
