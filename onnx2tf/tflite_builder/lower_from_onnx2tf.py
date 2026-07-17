@@ -5447,6 +5447,10 @@ def lower_onnx_to_ir(
                 None,
             )
         )
+        _fallback_se_fc_gather_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if (
             int(
                 fallback_sinet_shuffle_stats.get(
@@ -5469,7 +5473,12 @@ def lower_onnx_to_ir(
             > 0
             or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count
         ):
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_se_fc_gather_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         if int(
             _restore_placeholder_matmul_flattened_inputs(fallback_ir).get(
                 "restored_placeholder_matmul_flattened_inputs",

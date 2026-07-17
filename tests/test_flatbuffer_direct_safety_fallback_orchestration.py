@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -201,10 +200,6 @@ def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the fallback SE/FC/Gather reconciliation result is discarded",
-)
 def test_safety_fallback_stages_se_fc_gather_reconciliation_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
     cluster_index = next(

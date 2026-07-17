@@ -2688,3 +2688,25 @@ SE/FC, Gather, pruning, tensor-delta, cluster, or guard contracts. Validate the
 complete owner suites, safety fallback, static reconciliation, core, pass
 efficiency, architecture, and TensorFlow import blocking sequentially. Commit
 and push only; do not create or update a pull request.
+
+## Safety-fallback SE/FC/Gather reconciliation implementation checkpoint
+
+The fallback SINet-shuffle and SE/FC/Gather owners, their result schemas, the
+before/after tensor count, and all four combined predicate terms are unchanged.
+The lowerer initializes `_fallback_se_fc_gather_static_shape_stats` with both
+complete reconciliation keys set to zero and replaces it with the opt-in
+complete result only when the established predicate is true.
+
+This adds no scan, fingerprint, copy, rewrite, cleanup, dependency, or
+unconditional reconciliation. The following placeholder-MatMul restore
+boundary remains immediately adjacent and unchanged.
+
+Focused safety-fallback and SE/FC/Gather validation is `19 passed`. The broader
+sequential fallback-owner, reconciliation, convergence, core, pass-efficiency,
+architecture, and TensorFlow import-blocking gate is `463 passed in 27.00s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, audit the placeholder-MatMul restore owner and its guarded
+reconciliation. Confirm its positive-only pruning contract and characterize
+the discarded reconciliation result without changing the guard. Commit and
+push only; do not create or update a pull request.

@@ -287,7 +287,13 @@ def test_se_fc_gather_preserves_fallback_boundaries() -> None:
     assert _direct_call_name(fallback_block.body[invocation_index - 1]) == (
         "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
     )
-    guard = fallback_block.body[invocation_index + 1]
+    default_stats = fallback_block.body[invocation_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_fallback_se_fc_gather_static_shape_stats"
+    )
+    guard = fallback_block.body[invocation_index + 2]
     assert isinstance(guard, ast.If)
     assert len(guard.body) == 1
     assert _direct_call_name(guard.body[0]) == "_reconcile_static_tensor_shapes"
@@ -364,7 +370,18 @@ def test_terminal_se_fc_gather_reconciles_only_after_change_or_prune() -> None:
         assert isinstance(cluster_assignment.targets[0], ast.Tuple)
         assert len(cluster_assignment.targets[0].elts) == 2
 
-        guard = statements[sinet_index + 2]
+        guard_offset = 2
+        if model_name == "fallback_ir":
+            default_stats = statements[sinet_index + 2]
+            assert isinstance(default_stats, ast.Assign)
+            assert len(default_stats.targets) == 1
+            assert isinstance(default_stats.targets[0], ast.Name)
+            assert default_stats.targets[0].id == (
+                "_fallback_se_fc_gather_static_shape_stats"
+            )
+            guard_offset = 3
+
+        guard = statements[sinet_index + guard_offset]
         assert isinstance(guard, ast.If)
         assert guard.orelse == []
         get_calls = [
@@ -394,7 +411,19 @@ def test_terminal_se_fc_gather_reconciles_only_after_change_or_prune() -> None:
         assert len(tensor_len_calls) == 1
         assert len(guard.body) == 1
         reconcile = guard.body[0]
-        assert isinstance(reconcile, ast.Expr)
+        if model_name == "fallback_ir":
+            assert isinstance(reconcile, ast.Assign)
+            assert len(reconcile.targets) == 1
+            assert isinstance(reconcile.targets[0], ast.Name)
+            assert reconcile.targets[0].id == (
+                "_fallback_se_fc_gather_static_shape_stats"
+            )
+            assert {
+                keyword.arg: ast.unparse(keyword.value)
+                for keyword in reconcile.value.keywords
+            } == {"include_mutation_count": "True"}
+        else:
+            assert isinstance(reconcile, ast.Expr)
         assert isinstance(reconcile.value, ast.Call)
         assert isinstance(reconcile.value.func, ast.Name)
         assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"

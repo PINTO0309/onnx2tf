@@ -2256,9 +2256,9 @@ remain unchanged.
 
 The fallback SINet-shuffle plus SE/FC/Gather boundary already combines three
 rewrite counters with a before/after tensor-count predicate, so cleanup-only
-pruning remains visible. Characterization requires a stable zero static-shape
-result and an assigned opt-in complete result inside the unchanged combined
-guard. No owner, predicate term, or pass order is altered.
+pruning remains visible. A stable zero static-shape result and an assigned
+opt-in complete result replace the discarded return inside the unchanged
+combined guard. No owner, predicate term, or pass order is altered.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
