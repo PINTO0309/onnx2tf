@@ -8951,3 +8951,13 @@ public API, CLI behavior, artifact, dependency, corpus/exclusion policy,
 operation tier, pass semantics, or TensorFlow boundary. The next candidate is
 the adjacent five-step qlinear mean/concat recovery sequence; characterize its
 arguments and repetition boundaries before introducing another phase runner.
+
+That qlinear sequence is now characterized without production changes. It is a
+six-line parameterless straight-line closure over only ModelIR and calls five
+already-extracted module owners with the same single positional argument. A
+focused fixture freezes the complete order, argument contracts, two outer
+zero-argument invocations, and both neighboring boundaries. No callback,
+layout state, diagnostics, or conversion option needs to enter the eventual
+phase context. The next change should introduce a frozen ModelIR-only context
+and five stable IDs, then prove instrumented order before switching the
+historical helper to a delegate.

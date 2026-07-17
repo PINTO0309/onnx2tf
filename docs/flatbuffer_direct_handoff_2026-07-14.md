@@ -13043,3 +13043,43 @@ introduce another explicit stable-ID phase only if direct module ownership can
 preserve the exact flattened sequence. Keep verification sequential and
 minimal, commit and push a coherent checkpoint, and do not create a pull
 request.
+
+## QLinear mean/concat recovery orchestration characterization: completed state
+
+The adjacent six-line `_run_qlinear_mean_concat_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over only
+`model_ir`, contains no pass-state scope or control flow, and performs five
+model-only calls in this exact order: mean/HardSigmoid/MulAdd, QLinear SiLU
+prefix, QLinear concat/conv propagation, concat pre-QDQ cleanup, and
+mean/max-pool/concat/conv recovery. Its return values continue to be ignored.
+
+All five targets already have extracted module owners in
+`mean_hardsigmoid_muladd_layout.py`, `qlinear_silu_prefix_layout.py`,
+`qlinear_concat_conv_compat.py`, `quantization_cleanup.py`, and
+`mean_maxpool_concat_layout.py`. No lowerer-local composite callback, layout
+state, diagnostics, or option flag is required for a future phase context.
+
+The focused `test_flatbuffer_direct_qlinear_recovery_orchestration.py` freezes
+the helper shape and capture set, all five positional/keyword argument
+contracts, both zero-argument outer invocations, and their exact neighboring
+boundaries. Validation completed sequentially as follows:
+
+- focused characterization: `4 passed in 0.18s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.98s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 10.06s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran in this checkpoint. Public APIs, CLI behavior, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, and TensorFlow
+isolation are unchanged. PR #952 remains closed, no branch PR is open, and no
+pull request was created, reopened, or updated.
+
+At restart, introduce a frozen ModelIR-only context and a five-ID immutable
+invocation specification that imports these owners directly. Preserve the
+historical helper name, its two outer calls and boundaries, and the exact
+argument/order contract. Prove direct builder arguments and instrumented order
+before changing the lowerer delegate, validate sequentially, commit and push,
+and do not create a pull request.

@@ -1926,3 +1926,12 @@ their actual module owner and stable phase boundary. No public API, CLI,
 artifact, dependency, corpus policy, operation tier, pass order, or TensorFlow
 isolation behavior changed. PR #952 remains closed and no pull request was
 created, reopened, or updated.
+
+The next five-step qlinear mean/concat recovery sequence is now characterized
+without production changes. Four focused tests freeze its ModelIR-only capture,
+all positional and keyword arguments, both zero-argument outer invocations,
+and both exact neighboring boundaries. All five targets already have extracted
+module owners, and no lowerer-local callback, layout state, diagnostics, or
+option flag is required. The focused plus architecture suite passed 252 tests,
+and all 11 TensorFlow-import-blocked tests passed. No pull request was created,
+reopened, or updated.
