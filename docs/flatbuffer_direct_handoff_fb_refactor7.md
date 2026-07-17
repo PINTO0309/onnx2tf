@@ -1346,3 +1346,27 @@ late-SPP, QKV, and architecture boundary contracts. Validate the complete
 shape-extract suite and adjacent terminal orchestration, core, pass efficiency,
 architecture, and TensorFlow import blocker sequentially. Commit and push only;
 do not create or update a pull request.
+
+## Pre-QKV shape-extract evidence implementation checkpoint
+
+Only the shape-extract invocation between the late SPP pair and QKV starting
+count now assigns its unchanged result to
+`_late_pre_qkv_shape_extract_stats`. The first production call and the later
+absolute-end shape-extract call remain expressions, and the structural contract
+continues to require exactly three owner calls.
+
+The owner still receives only ModelIR, its rewrite/prune behavior is unchanged,
+and the staged result is not consumed by a reconciliation guard. Late SPP and
+QKV remain its exact neighbors, with all other terminal evidence and the broad
+reconciliation unchanged.
+
+Focused shape-extract, late-SPP, and QKV coverage is `37 passed in 0.94s`. The
+sequential shape-extract, late-SPP, QKV, split/conv bridge, Hardswish-SE, late
+hard-activation, SINet terminal, Expand/Squeeze, late-layout,
+constant-fold/cast, shared-context, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gate is `524 passed in 29.02s`. Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At resume, propagate ordered results and net-prune evidence from the late SPP
+pair immediately before this owner. Commit and push only; do not create or
+update a pull request.

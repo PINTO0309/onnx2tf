@@ -10148,3 +10148,8 @@ There are three production calls to this owner. Strict characterization selects
 only the call between late SPP and the QKV starting-count capture and requires
 it to assign `_late_pre_qkv_shape_extract_stats`. The other two calls must remain
 untouched at this checkpoint.
+
+That exact invocation now assigns its unchanged return dictionary to
+`_late_pre_qkv_shape_extract_stats`. The earlier call and the later absolute-end
+call remain discarded expressions. This preserves all three execution points
+while giving the current terminal interval unambiguous mutation evidence.

@@ -390,7 +390,10 @@ def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
     }
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_pre_qkv_shape_extract_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (
@@ -494,8 +497,15 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
         and statement.value.func.id == QKV_ATTENTION
     )
 
+    previous_boundary = lowerer.body[late_index - 2]
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+    assert isinstance(previous_boundary.value, ast.Call)
+    assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
-        _call_name(lowerer.body[late_index - 2])
+        previous_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
     next_boundary = lowerer.body[late_index + 2]

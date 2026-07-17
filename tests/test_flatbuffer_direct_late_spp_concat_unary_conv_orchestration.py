@@ -170,14 +170,19 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
         == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
     )
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert (
         following.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"

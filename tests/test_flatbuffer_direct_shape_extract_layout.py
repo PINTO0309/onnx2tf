@@ -312,10 +312,6 @@ def test_shape_extract_owner_matches_lowerer_compatibility_wrapper() -> None:
     assert _snapshot(wrapper_model_ir) == _snapshot(direct_model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the pre-QKV terminal shape-extract result is still discarded",
-)
 def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() -> None:
     tree = ast.parse(
         (

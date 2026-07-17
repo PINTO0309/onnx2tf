@@ -5142,7 +5142,9 @@ def lower_onnx_to_ir(
     _run_terminal_affine_concat_split_recovery_sequence()
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _run_late_spp_concat_unary_conv_pass_pair()
-    _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    _late_pre_qkv_shape_extract_stats = (
+        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
     late_qkv_tensor_count = len(model_ir.tensors)
