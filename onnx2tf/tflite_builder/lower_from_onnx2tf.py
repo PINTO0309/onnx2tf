@@ -269,6 +269,10 @@ from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orc
     LateLayoutMeanSPPGatherConstantCastContext,
     run_late_layout_mean_spp_gather_constant_cast,
 )
+from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
+    SingletonConsecutiveReshapeContext,
+    run_singleton_consecutive_reshape,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4395,28 +4399,12 @@ def lower_onnx_to_ir(
         target_model_ir: ModelIR,
         target_layout_state: LayoutState | None,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            target_model_ir,
-            layout_state=target_layout_state,
-        )
-        run_singleton_channel_transpose_cleanup(
-            target_model_ir,
-            layout_state=target_layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_duplicate_fanout_cleanup(
-            target_model_ir,
-            include_transpose=False,
-            layout_state=target_layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_consecutive_reshape_cleanup(
-            target_model_ir,
-            layout_state=target_layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_singleton_consecutive_reshape(
+            SingletonConsecutiveReshapeContext(
+                model_ir=target_model_ir,
+                layout_state=target_layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
 
     boundary_batchmatmul_unary_context = BoundaryBatchMatMulUnaryContext(

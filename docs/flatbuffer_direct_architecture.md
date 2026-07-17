@@ -9414,3 +9414,15 @@ freeze all three owner contracts, `include_transpose=False`, caller forms,
 multiplicity, the fallback guard, and all six surrounding boundaries. The
 eventual phase should use a frozen target context constructed inside the
 historical helper for each call and expose three stable IDs.
+
+That cluster now uses `SingletonConsecutiveReshapeContext` and three stable IDs
+in `passes/singleton_consecutive_reshape_orchestration.py`. Each build creates
+one fresh target-specific scope and retains the fixed reshape-only duplicate-
+fanout policy. The historical helper constructs its frozen context per
+positional call, preventing main/fallback target leakage. Both main calls, the
+guarded fallback call, the guard itself, and all boundaries remain unchanged.
+Multiplicity-aware accounting moves one syntactic occurrence of each owner to
+stable IDs, preserves 120 effective ordered calls, and retains the two
+reshape-only duplicate-fanout and singleton-channel occurrences. The explicit
+no-layout efficiency fixture retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.

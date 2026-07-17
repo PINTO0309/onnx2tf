@@ -15176,9 +15176,66 @@ no pull request was created, reopened, or updated.
 At restart, introduce a frozen target ModelIR/layout/diagnostics context and
 three stable IDs in a dedicated phase module. Build one fresh target-specific
 scope, preserve fixed `include_transpose=False`, and import the owners directly
-from `singleton_reshape_layout`, `graph_cleanup`, and their owning modules
-without importing the lowerer. Construct the context inside the historical
-helper for every positional call so main and fallback state cannot leak.
+from `singleton_reshape_layout` and `graph_cleanup` without importing the
+lowerer. Construct the context inside the historical helper for every
+positional call so main and fallback state cannot leak.
 Preserve all three callers and every boundary, move the efficiency fixture to
 the explicit no-layout runner, validate sequentially, commit and push only,
 and do not create or reopen a pull request.
+
+## Explicit singleton/consecutive-reshape orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/singleton_consecutive_reshape_orchestration.py`. A frozen
+`SingletonConsecutiveReshapeContext` contains one target ModelIR, its optional
+layout state, and session diagnostics. Three stable IDs preserve singleton-
+channel transpose cleanup, reshape-only duplicate-fanout cleanup, and
+consecutive-reshape cleanup in the original order. The module imports both
+owner modules directly and does not import the central lowerer.
+
+Each builder creates one fresh target-specific `ModelIRPassStateScope` and
+attaches that same target, layout, diagnostics, and scope to all immutable
+invocations. The duplicate-fanout invocation explicitly retains
+`include_transpose=False`, and the shared executor validates all three IDs
+before execution. A second build for the same context creates a different
+scope, so calls cannot share stale graph indexes.
+
+The historical helper preserves its two required positional arguments and
+constructs the frozen context inside every call. Both main calls still pass
+`(model_ir, session.layout_state)`, while the guarded fallback call still
+passes `(fallback_ir, None)`. All three call expressions, the normalization
+guard, and all six surrounding boundaries are unchanged. Other direct uses of
+the three owners remain in the lowerer.
+
+Architecture accounting moves one syntactic call of each owner to stable IDs
+while preserving the effective ordered total of 120. Dedicated accounting
+also preserves the two reshape-only duplicate-fanout occurrences and two
+singleton-channel transpose occurrences. The efficiency fixture now calls the
+explicit no-layout phase and still observes one graph-index build and three
+diagnostics events.
+
+Sequential validation completed as follows:
+
+- focused singleton/consecutive orchestration plus ordered architecture:
+  `257 passed in 18.57s`;
+- pass-efficiency: `30 passed in 0.55s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.20s` (`32` plus `11`);
+- targeted Ruff, formatting, Python compilation, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, target routing, duplicate-fanout policy, runtime order, caller
+multiplicity, guard, boundaries, shared-scope efficiency, and TensorFlow
+isolation are unchanged. PR #952 remains closed, no branch PR is open, and no
+pull request was created, reopened, or updated.
+
+At restart, characterize `_run_gate_layout_pass_cluster`, the smallest
+remaining one-boolean shared-scope cluster. Freeze both mixed-attention policy
+forms, the complete owner sequence, default and explicit callers (including
+callback-driven invocation), scope sharing, and all boundaries before
+extraction. Validate sequentially, keep real-model conversion minimal, make
+separate characterization and implementation checkpoints, commit and push
+only, and do not create or reopen a pull request.

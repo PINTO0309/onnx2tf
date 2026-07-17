@@ -84,6 +84,9 @@ from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import
 from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
     LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
+    SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -114,6 +117,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
     *SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
     *TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
+    *SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -7199,18 +7203,33 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     ) == 1
 
     short_helper_name = "_run_singleton_consecutive_reshape_pass_cluster"
-    short_helper = _helper_calls(
-        short_helper_name,
-        [
-            "run_singleton_channel_transpose_cleanup",
-            "run_duplicate_fanout_cleanup",
-            "run_consecutive_reshape_cleanup",
-        ],
+    assert SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS == (
+        "run_singleton_channel_transpose_cleanup",
+        "run_duplicate_fanout_cleanup",
+        "run_consecutive_reshape_cleanup",
+    )
+    short_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == short_helper_name
     )
     assert [argument.arg for argument in short_helper.args.args] == [
         "target_model_ir",
         "target_layout_state",
     ]
+    assert len(short_helper.body) == 1
+    short_statement = short_helper.body[0]
+    assert isinstance(short_statement, ast.Expr)
+    assert isinstance(short_statement.value, ast.Call)
+    assert isinstance(short_statement.value.func, ast.Name)
+    assert short_statement.value.func.id == "run_singleton_consecutive_reshape"
+    assert len(short_statement.value.args) == 1
+    assert isinstance(short_statement.value.args[0], ast.Call)
+    assert isinstance(short_statement.value.args[0].func, ast.Name)
+    assert (
+        short_statement.value.args[0].func.id
+        == "SingletonConsecutiveReshapeContext"
+    )
     short_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -11816,6 +11835,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_boundary_input_layout_cleanup",
         "run_pad_layout_cleanup",
         "run_mean_mul_add_conv_layout_cleanup",
+        "run_singleton_channel_transpose_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -11862,7 +11882,13 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
             for keyword in call.keywords
         )
     ]
-    assert len(reshape_only_duplicate_calls) == 2
+    assert (
+        len(reshape_only_duplicate_calls)
+        + SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS.count(
+            "run_duplicate_fanout_cleanup"
+        )
+        == 2
+    )
 
     boundary_batchmatmul_calls = [
         call
@@ -11986,7 +12012,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_channel_transpose_cleanup"
     ]
-    assert len(singleton_channel_transpose_calls) == 2
+    assert (
+        len(singleton_channel_transpose_calls)
+        + _orchestrated_pass_count("run_singleton_channel_transpose_cleanup")
+        == 2
+    )
 
     layout_transpose_calls = [
         call

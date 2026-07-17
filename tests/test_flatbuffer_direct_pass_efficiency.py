@@ -108,6 +108,10 @@ from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orc
     LateLayoutMeanSPPGatherConstantCastContext,
     run_late_layout_mean_spp_gather_constant_cast,
 )
+from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
+    SingletonConsecutiveReshapeContext,
+    run_singleton_consecutive_reshape,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1549,23 +1553,12 @@ def test_singleton_consecutive_reshape_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_singleton_channel_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_duplicate_fanout_cleanup(
-        model_ir,
-        include_transpose=False,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_singleton_consecutive_reshape(
+        SingletonConsecutiveReshapeContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1

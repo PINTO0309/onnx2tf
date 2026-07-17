@@ -2463,3 +2463,18 @@ and all six surrounding boundaries. The 253-test focused/architecture set, 30
 pass-efficiency tests, and all 11 TensorFlow-import-blocked tests pass. Runtime
 behavior and all public/dependency contracts remain unchanged. PR #952 remains
 closed, and no pull request was created, reopened, or updated.
+
+That target-aware cluster now delegates to a dedicated phase with a frozen
+target ModelIR/layout/diagnostics context and three stable IDs. Every build
+creates one fresh target-specific scope shared by singleton-channel transpose,
+reshape-only duplicate-fanout, and consecutive-reshape cleanup in the exact
+existing order. The historical helper constructs the context per positional
+call, retaining both main calls, the guarded fallback call, target forms,
+guard, and all boundaries without cross-target state. Architecture accounting
+preserves 120 effective calls and the two specialized duplicate/singleton
+occurrences; the explicit no-layout efficiency fixture retains one graph-index
+build. The 257-test focused/architecture set, 30 pass-efficiency tests, 32 core
+smoke tests, and all 11 TensorFlow-import-blocked tests pass. No public API,
+artifact, dependency, target-routing, policy, runtime-order, guard, boundary,
+scope-sharing, or TensorFlow-isolation contract changed. PR #952 remains
+closed, and no pull request was created, reopened, or updated.
