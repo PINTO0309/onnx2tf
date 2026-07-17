@@ -2402,3 +2402,13 @@ TensorFlow-import-blocked tests pass. No public API, artifact, dependency,
 target routing, caller multiplicity, runtime order, boundary, scope-sharing
 behavior, or TensorFlow isolation changed. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+The fixed terminal-boundary layout cluster is now characterized without
+production changes. Four focused tests freeze its zero-argument contract, one
+main-ModelIR/session-layout scope, complete arguments and exact order for all
+five owners, sole production call, and both surrounding boundaries. The
+boundary-input/PAD/layout-transpose recovery sequence is explicitly protected.
+The 252-test focused/architecture set, 30 pass-efficiency tests, and all 11
+TensorFlow-import-blocked tests pass. Runtime behavior and all public/
+dependency contracts remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.

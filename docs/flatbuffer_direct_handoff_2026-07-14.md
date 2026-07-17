@@ -14934,3 +14934,47 @@ option-dependent channel-shuffle or singleton clusters. Freeze all owner
 contracts, caller multiplicity, and boundaries first; validate sequentially,
 keep real-model conversion minimal, commit and push only, and do not create a
 pull request.
+
+## Terminal-boundary layout orchestration characterization: completed state
+
+The fixed-target, zero-argument
+`_run_terminal_boundary_layout_pass_cluster` remains unchanged in production.
+It creates one `ModelIRPassStateScope` for the main ModelIR and session layout
+state, then executes dual-MUL/CONCAT cleanup, boundary-input recovery, PAD
+recovery, final transpose cleanup, and transpose-gather channel-fanout cleanup
+in that exact order. All five owners receive the same main ModelIR, layout
+state, session diagnostics, and scope. The intermediate PAD rerun remains
+necessary because boundary-input recovery can recreate input-head wrappers;
+the following transpose sweep remains after it.
+
+There is exactly one argument-free production call. It remains immediately
+after transpose/InstanceNorm dual-stat residual-add/resize cleanup and before
+the terminal `optimize_layout_transpose_chains` conditional. Focused contracts
+freeze the zero-argument signature, fresh/shared scope construction, five full
+owner contracts, fixed order, caller multiplicity, and both outer boundaries.
+
+Sequential characterization validation completed as follows:
+
+- focused terminal-boundary contracts: `4 passed in 0.16s`;
+- focused contracts plus ordered architecture: `252 passed in 17.11s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.20s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, fixed owner contracts, caller
+multiplicity, terminal boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and five
+stable owner IDs in a dedicated phase module. Import owners directly from
+`dual_mul_concat_layout`, `boundary_input_layout`, `pad_layout`, and
+`layout_transpose`; do not import the lowerer. Preserve the historical helper
+as one zero-argument delegate, keep the PAD/transpose order and comments
+semantically represented by the phase, and leave all unrelated direct owner
+calls untouched. Move the efficiency fixture to the explicit runner, prove
+one graph-index build and instrumented order, validate sequentially, then
+commit and push only. Do not create or reopen a pull request.

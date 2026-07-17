@@ -9356,3 +9356,13 @@ their identical surrounding boundaries remain unchanged; unrelated direct
 runner calls remain in the lowerer. The efficiency fixture now exercises the
 explicit no-layout phase and retains one graph-index build. Focused,
 architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The terminal-boundary layout cluster is now characterized without production
+changes. This fixed-target, zero-argument cluster shares one pass-state scope
+across dual-MUL/CONCAT, boundary-input, PAD, layout-transpose, and transpose-
+gather channel-fanout owners in that order. Every owner receives the main
+ModelIR, session layout state, session diagnostics, and the shared scope. Its
+sole call remains between the final InstanceNorm dual-stat residual-add/resize
+rewrite and the terminal layout-optimization conditional. The eventual phase
+should expose five stable IDs in a dedicated direct-owner module while
+preserving the PAD-after-boundary and transpose-after-PAD recovery sequence.
