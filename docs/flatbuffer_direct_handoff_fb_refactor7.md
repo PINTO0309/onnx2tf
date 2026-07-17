@@ -560,3 +560,25 @@ reconciliations and select the next boundary only when every mutating owner has
 a complete returned result or explicit prune accounting. Characterize it
 before changing production, then commit and push only. Do not create or update
 a pull request.
+
+## Indexed binary-layout convergence characterization checkpoint
+
+`_run_indexed_binary_layout_convergence()` still executes its complete
+three-round sequence after reaching a stable round. Each round runs rank-four
+broadcast-constant repair, stale NCHW-to-NHWC binary-Transpose repair, and
+static-shape reconciliation with one shared `ModelIRGraphIndex`.
+
+The three returned dictionaries contain only mutation counts. The two repair
+owners prune only after a positive rewrite, and reconciliation changes metadata
+only, so an all-zero round is a complete convergence signal. Strict
+expected-failure cases require immediate zero-change convergence to stop after
+one round and a reconciliation-only first change to stop after the following
+zero round. A passing contract keeps the existing maximum at three rounds when
+reconciliation reports a change every time and verifies the shared index.
+
+At implementation, preserve owner order, one-index ownership, aggregate return
+statistics, and the three-round cap. Break only after adding all three current
+round results and confirming every mutation dictionary is zero. Run the full
+indexed binary-layout owner suite plus core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gates sequentially. Commit and push only; do not
+create or update a pull request.

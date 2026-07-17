@@ -9814,3 +9814,14 @@ behavior; every changed outcome adds exactly one reconciliation over the
 all-zero/no-prune path. Structural tests that span extracted owners now resolve
 their helper dependencies from the owning core module instead of the lowerer
 compatibility surface.
+
+The indexed binary-layout convergence coordinator is the next bounded scan
+target. It currently executes all three broadcast-repair, stale-Transpose
+repair, and static-shape reconciliation rounds even after a complete round
+returns only zero mutation counters. All three owners return pure mutation
+dictionaries; their zero paths do not prune tensors or mutate topology. Strict
+expected-failure cases now require termination after the first stable round,
+whether stability is immediate or follows one changing reconciliation round.
+A separate passing contract preserves the existing three-round maximum while
+shape reconciliation continues changing metadata. Production remains
+unchanged at this characterization checkpoint.
