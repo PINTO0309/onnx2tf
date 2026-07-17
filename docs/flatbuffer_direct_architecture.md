@@ -10251,3 +10251,11 @@ The direct call now records `pre_terminal_pre_add_tensor_count` and builds
 tensor reduction. This exposes zero-rewrite pruning without changing the
 owner's unconditional cleanup. The three orchestration-owned occurrences and
 all downstream reconciliation decisions remain unchanged.
+
+Immediately before the pre-ADD count, the first of two terminal affine recovery
+calls still discards its ordered eleven-result tuple. The existing fixed
+twelve-key summary and cluster-wide net-prune accounting already provide the
+complete contract. Strict characterization requires distinct
+`pre_terminal_affine_tensor_count`, `pre_terminal_affine_results`, and
+`_pre_terminal_affine_stats` assignments while preserving the independently
+staged second occurrence.

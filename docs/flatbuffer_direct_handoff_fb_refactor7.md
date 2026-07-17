@@ -1705,3 +1705,23 @@ pre-ADD count. The second occurrence already has complete ordered-result and
 net-prune evidence; characterize a distinct target for the first occurrence
 without changing the shared runner or summary. Commit and push only; do not
 create or update a pull request.
+
+## First terminal affine mutation evidence characterization checkpoint
+
+The first terminal affine recovery uses the same ordered eleven-result runner
+and fixed twelve-key plus net-prune summary already validated for the second
+occurrence. No new summary or child-owner contract is required.
+
+Strict expected-failure coverage requires adjacent
+`pre_terminal_affine_tensor_count`, `pre_terminal_affine_results`, and
+`_pre_terminal_affine_stats` assignments between the final InstanceNorm
+dual-statistics rewrite and `pre_terminal_pre_add_tensor_count`. The second
+occurrence must retain its independent `terminal_affine_*` targets.
+
+At implementation, replace only the first recovery expression with the three
+assignments and reuse `summarize_terminal_affine_concat_split_mutations()` with
+a clamped tensor-count delta. Update both terminal-affine boundary contracts.
+Validate both occurrence targets, all eleven child results, pre-ADD,
+channel-slice, core, pass-efficiency, architecture, and TensorFlow import
+blocking sequentially. Commit and push only; do not create or update a pull
+request.
