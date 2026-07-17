@@ -2663,3 +2663,28 @@ aggregate. Confirm that its existing tensor-count delta covers cleanup-only
 paths and characterize the guarded reconciliation result without changing the
 combined predicate. Commit and push only; do not create or update a pull
 request.
+
+## Safety-fallback SE/FC/Gather reconciliation characterization checkpoint
+
+The fallback boundary samples `fallback_se_fc_gather_tensor_count` before the
+SINet shuffle and SE/FC/Gather owners. Its predicate combines all three exact
+rewrite counters with `len(fallback_ir.tensors) <
+fallback_se_fc_gather_tensor_count`, so zero-rewrite pruning is also covered.
+This is complete mutation evidence for the existing reconciliation guard.
+
+The guarded reconciliation return is discarded. A strict expected-failure AST
+contract requires `_fallback_se_fc_gather_static_shape_stats`, initialized with
+both zero keys and replaced by an opt-in complete result only when the existing
+combined predicate is true. It freezes every predicate term and the following
+placeholder-MatMul boundary.
+
+Focused safety-fallback and SE/FC/Gather characterization is `18 passed, 1
+xfailed`. The broader sequential fallback-owner, reconciliation, convergence,
+core, pass-efficiency, architecture, and TensorFlow import-blocking gate is
+`462 passed, 1 xfailed in 27.24s`. Ruff and whitespace validation pass.
+
+At implementation, add only this result plumbing. Do not change the SINet,
+SE/FC, Gather, pruning, tensor-delta, cluster, or guard contracts. Validate the
+complete owner suites, safety fallback, static reconciliation, core, pass
+efficiency, architecture, and TensorFlow import blocking sequentially. Commit
+and push only; do not create or update a pull request.

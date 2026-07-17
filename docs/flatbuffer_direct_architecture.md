@@ -2254,6 +2254,12 @@ branch. A stable zero result and assigned opt-in complete reconciliation
 evidence replace the discarded return value; the guard and both refreshes
 remain unchanged.
 
+The fallback SINet-shuffle plus SE/FC/Gather boundary already combines three
+rewrite counters with a before/after tensor-count predicate, so cleanup-only
+pruning remains visible. Characterization requires a stable zero static-shape
+result and an assigned opt-in complete result inside the unchanged combined
+guard. No owner, predicate term, or pass order is altered.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

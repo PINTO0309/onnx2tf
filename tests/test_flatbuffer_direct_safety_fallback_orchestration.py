@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -191,9 +192,84 @@ def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
+
     assert ast.unparse(guard.body[1]) == (
         "_topologically_sort_operators(fallback_ir)"
     )
     assert ast.unparse(guard.body[2]) == (
         "infer_model_ir_logical_layouts(fallback_ir)"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the fallback SE/FC/Gather reconciliation result is discarded",
+)
+def test_safety_fallback_stages_se_fc_gather_reconciliation_evidence() -> None:
+    body = _safety_fallback_body(_lowerer())
+    cluster_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Tuple)
+        and {
+            element.id
+            for element in statement.targets[0].elts
+            if isinstance(element, ast.Name)
+        }
+        == {"fallback_se_fc_stats", "fallback_gather_stats"}
+    )
+
+    default_stats = body[cluster_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert len(default_stats.targets) == 1
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_fallback_se_fc_gather_static_shape_stats"
+    )
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(default_stats.value.keys, default_stats.value.values)
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = body[cluster_index + 2]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "int(fallback_sinet_shuffle_stats.get("
+        "'optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains', 0)) "
+        "+ int(fallback_se_fc_stats.get("
+        "'optimized_transpose_se_fc_mul_prepost_nhwc_chains', 0)) + "
+        "int(fallback_gather_stats.get("
+        "'optimized_transpose_gather_transpose_nhwc_channel_chains', 0)) > 0 "
+        "or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count"
+    )
+    assert len(guard.body) == 1
+    reconciliation = guard.body[0]
+    assert isinstance(reconciliation, ast.Assign)
+    assert len(reconciliation.targets) == 1
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == (
+        "_fallback_se_fc_gather_static_shape_stats"
+    )
+    assert isinstance(reconciliation.value, ast.Call)
+    assert isinstance(reconciliation.value.func, ast.Name)
+    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
+        "fallback_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    following = body[cluster_index + 3]
+    assert isinstance(following, ast.If)
+    assert "_restore_placeholder_matmul_flattened_inputs(fallback_ir)" in (
+        ast.unparse(following.test)
     )
