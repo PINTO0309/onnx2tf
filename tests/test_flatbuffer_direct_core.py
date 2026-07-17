@@ -1936,3 +1936,61 @@ def test_dispatcher_records_onnx_provenance() -> None:
     assert model_ir.operators[0].onnx_node_name == "onnx_add"
     assert model_ir.operators[0].onnx_op_type == "Add"
     assert model_ir.tensors["z"].onnx_tensor_name == "z"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the lowerer does not yet call the aggregate late binary-layout "
+        "recovery runner"
+    ),
+)
+def test_late_binary_layout_recovery_reconciles_only_after_mutation(
+    monkeypatch,
+) -> None:
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+    runner_invocations = 0
+
+    def counted_reconcile(model_ir, *args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        return original_reconcile(model_ir, *args, **kwargs)
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_outcome(outcome: str) -> int:
+        nonlocal reconcile_count, runner_invocations
+        reconcile_count = 0
+        runner_invocations = 0
+
+        def runner_result(*args, **kwargs):
+            nonlocal runner_invocations
+            runner_invocations += 1
+            return {
+                "rewritten_prelu_transpose_passthrough_chains": int(
+                    outcome == "rewrite"
+                ),
+                "pruned_unused_tensors": int(outcome == "prune"),
+            }
+
+        monkeypatch.setattr(
+            lowering_module,
+            "run_late_binary_layout_recovery",
+            runner_result,
+            raising=False,
+        )
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"late_binary_layout_recovery_{outcome}",
+        )
+        assert runner_invocations == 1
+        return reconcile_count
+
+    unchanged_count = run_with_outcome("unchanged")
+    assert run_with_outcome("rewrite") == unchanged_count + 1
+    assert run_with_outcome("prune") == unchanged_count + 1

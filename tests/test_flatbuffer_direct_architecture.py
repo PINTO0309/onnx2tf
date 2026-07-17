@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -15532,6 +15534,68 @@ def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
             assert isinstance(layout_keyword.value.value, ast.Name)
             assert layout_keyword.value.value.id == "session"
             assert layout_keyword.value.attr == "layout_state"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the conditional late binary-layout recovery sequence is still "
+        "expanded inline and reconciles unconditionally"
+    ),
+)
+def test_late_binary_layout_recovery_uses_one_aggregate_runner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    branch = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test)
+        == (
+            "optimize_layout_transpose_chains or "
+            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+        )
+    )
+
+    assert len(branch.body) == 2
+    assignment = branch.body[0]
+    assert isinstance(assignment, ast.Assign)
+    assert len(assignment.targets) == 1
+    assert isinstance(assignment.targets[0], ast.Name)
+    assert assignment.targets[0].id == "late_binary_layout_recovery_stats"
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == "run_late_binary_layout_recovery"
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in assignment.value.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+    reconcile_guard = branch.body[1]
+    assert isinstance(reconcile_guard, ast.If)
+    assert ast.unparse(reconcile_guard.test) == (
+        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+    )
+    assert len(reconcile_guard.body) == 1
+    reconcile = reconcile_guard.body[0]
+    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
 
 
 def test_indexed_split_adapter_owners_are_bounded_and_transactional() -> None:

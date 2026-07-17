@@ -850,3 +850,26 @@ large phase-barrier scans unless every intervening owner result is preserved;
 prefer another local conditional block with a complete result interval.
 Characterize before production changes, then commit and push only. Do not
 create or update a pull request.
+
+## Late binary-layout recovery runner characterization checkpoint
+
+The conditional block after late binary repair currently runs PReLU
+passthrough, dual pre-Add recovery, terminal affine-FC recovery, optional
+PReLU-BMM recovery, affine pre/post recovery, optional generic layout cleanup,
+and then reconciles unconditionally.
+
+Every owner returns rewrite counters, but several owners prune unused tensors
+on zero rewrites. Generic layout cleanup also returns `iterations`, which is an
+execution count rather than a mutation. Strict expected-failure architecture
+and lowerer-wiring contracts now require one dedicated runner. It must preserve
+the outer branch, owner order, optional branches, Session LayoutState and
+diagnostics; return only mutation counts plus net pruning; and trigger
+reconciliation only for a positive aggregate.
+
+At implementation, add a TensorFlow-independent pass module that imports the
+six existing owners directly. Normalize optional-owner counters to zero, filter
+the layout `iterations` field, and add `pruned_unused_tensors` from the net
+tensor-count reduction. Replace the inline lowerer sequence with one runner
+assignment and one aggregate guard. Validate the runner, every affected owner,
+core, architecture, pass-efficiency, and TensorFlow-import-blocked suites
+sequentially. Commit and push only; do not create or update a pull request.

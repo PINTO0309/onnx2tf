@@ -9920,3 +9920,13 @@ only after a changing first scan, either repair counter, or exact-repair
 pruning. The following topology sort remains unconditional inside the outer
 restoration block. Lowerer wiring covers unchanged, all three counters, and
 prune-only behavior independently.
+
+The conditional late binary-layout recovery sequence is the next extraction
+boundary. It currently expands PReLU passthrough, dual pre-Add, terminal FC,
+optional PReLU-BMM, affine pre/post, optional generic layout cleanup, and an
+unconditional reconciliation inline. All owners expose rewrite counters, but
+several prune on zero rewrites and generic layout cleanup also reports a
+non-mutating iteration count. Strict expected-failure contracts require one
+dedicated runner to preserve branch/order/context, return only mutation counts
+plus net pruning, and let the lowerer reconcile only after a positive aggregate.
+Production remains unchanged at this characterization checkpoint.
