@@ -2270,3 +2270,13 @@ and all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
 dependency, fixed policy, runtime order, scope-sharing behavior, or TensorFlow
 boundary changed. PR #952 remains closed, and no pull request was created,
 reopened, or updated.
+
+The QKV attention cluster is now characterized without production changes.
+Five focused tests freeze both keyword-only defaults, both independent guards,
+three complete ModelIR/layout/diagnostics contracts, one shared
+`ModelIRPassStateScope`, two default calls, the late prefix-disabled call and
+its forwarded layout option, and all three outer boundaries. The focused plus
+architecture suite passed 253 tests, the 30 pass-efficiency tests and all 11
+TensorFlow-import-blocked tests passed, and targeted static checks passed.
+Runtime behavior and all public/dependency contracts remain unchanged. PR #952
+remains closed, and no pull request was created, reopened, or updated.

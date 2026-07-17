@@ -9251,3 +9251,13 @@ argument delegate at the same sole terminal boundary. The efficiency fixture
 now exercises the explicit runner while retaining one graph-index build.
 Focused, architecture, pass-efficiency, core, and TensorFlow-import-blocked
 suites pass.
+
+The QKV attention cluster is now characterized without production changes. It
+has three ordered owner slots and one fresh shared pass-state scope. Independent
+keyword-only options control layout-transpose and prefix cleanup; bridge
+cleanup always runs. Two calls use the default prefix-plus-bridge form, while a
+late call disables prefix and forwards the global layout option. Focused
+contracts freeze all ModelIR/layout/diagnostics/scope arguments and three
+distinct outer boundaries. The eventual phase should keep both options outside
+a frozen ModelIR/layout/diagnostics context and derive active expected IDs per
+invocation.

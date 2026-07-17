@@ -14460,3 +14460,53 @@ candidate but has two independent Boolean choices and multiple runtime forms;
 freeze every active sequence and boundary before production changes. Validate
 sequentially, keep real-model conversion minimal, commit and push only, and do
 not create a pull request.
+
+## QKV attention orchestration characterization: completed state
+
+The 29-line `_run_qkv_attention_layout_pass_cluster` remains unchanged in
+production. It exposes keyword-only defaults
+`include_layout_transpose=False` and `include_prefix=True`, creates one
+`ModelIRPassStateScope` from ModelIR and layout state, conditionally runs
+layout-transpose and QKV-prefix cleanup, and always runs QKV-bridge cleanup.
+Every active owner receives the same ModelIR, layout, diagnostics, and scope.
+
+The helper has three calls and two syntactic forms. Two calls use the defaults,
+executing prefix then bridge cleanup. The late bridge call disables prefix and
+forwards `optimize_layout_transpose_chains` to the layout option, yielding
+either bridge-only or layout-transpose plus bridge cleanup. One default call is
+inside the layout-enabled block between batch-matmul input-adj recovery and
+split/conv/concat recovery. The second default call is between the same
+batch-matmul recovery and ReLU/split recovery. The late form remains between
+shape-extract recovery and split/conv/concat recovery.
+
+The focused `test_flatbuffer_direct_qkv_attention_orchestration.py` freezes
+both defaults, both independent guards, all three cleanup contracts, all three
+call sites, both syntactic invocation forms, and every surrounding boundary.
+The existing efficiency fixture exercises the default two-step form and
+continues to prove one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused QKV attention characterization: `5 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.17s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.22s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and three
+stable IDs with direct imports from `layout_transpose` and `attention_layout`.
+Keep both Boolean choices as runner arguments, derive the active expected-ID
+sequence for all combinations, and build one fresh shared scope per invocation.
+Preserve the historical keyword-only helper, both defaults, three callers,
+caller values, and every outer boundary. Prove the production default and late
+forms, fresh/shared scope identity, and instrumented order before switching to
+a delegate; validate sequentially, commit and push, and do not create a pull
+request.
