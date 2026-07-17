@@ -13983,3 +13983,47 @@ its complete option/callback/state-scope contract and every runtime boundary,
 then create characterization and implementation as separate sequentially
 validated commits. Continue to minimize real-model conversion, commit and push
 only, and do not create a pull request.
+
+## Late SPP/concat-unary-conv orchestration characterization: completed state
+
+The 17-line `_run_late_spp_concat_unary_conv_pass_pair` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session with no option, callback, or control-flow dependency. Every invocation
+creates one `ModelIRPassStateScope` from ModelIR and layout state, then routes
+the identical scope, ModelIR, layout state, and diagnostics first to SPP layout
+cleanup and then to concat/unary/conv layout cleanup.
+
+The focused
+`test_flatbuffer_direct_late_spp_concat_unary_conv_orchestration.py` freezes
+the one scope construction, both complete cleanup argument contracts, their
+exact order, the sole zero-argument invocation, and its terminal placement
+between strided-slice/pad/concat bridge recovery and shape-extract layout
+recovery. The existing efficiency fixture continues to prove one graph-index
+build across both runners.
+
+Sequential validation completed as follows:
+
+- focused late SPP/concat-unary-conv characterization:
+  `4 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 18.18s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.81s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `spp_layout` and
+`concat_unary_conv_layout`. Construct exactly one fresh
+`ModelIRPassStateScope` per phase invocation and attach the identical object to
+both immutable invocations. Preserve the historical helper, its sole zero-
+argument call, both outer neighbors, and runtime efficiency. Prove builder
+arguments, fresh/shared scope identity, and instrumented order before switching
+to a delegate; validate sequentially, commit and push, and do not create a pull
+request.

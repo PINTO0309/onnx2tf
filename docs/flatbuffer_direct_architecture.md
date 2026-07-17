@@ -9159,3 +9159,11 @@ a delegate with unchanged defaults, callback identity, direct option values,
 and outer boundaries. Both efficiency fixtures now exercise the explicit
 runner and retain one graph-index build. Focused, architecture, pass-
 efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The late SPP/concat-unary-conv pair is now characterized without production
+changes. It has two ordered cleanup owners, one fresh shared pass-state scope,
+one zero-argument terminal invocation, and no option, callback, or control
+flow. Focused contracts freeze all ModelIR/layout/diagnostics/scope arguments
+and both outer boundaries. The eventual phase should use one frozen ModelIR/
+layout/diagnostics context, two direct owner imports, two stable IDs, and a
+fresh shared scope per build.

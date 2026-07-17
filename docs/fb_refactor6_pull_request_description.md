@@ -2149,3 +2149,12 @@ efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked
 tests pass. No public API, artifact, dependency, runtime order, option
 semantics, scope-sharing behavior, or TensorFlow boundary changed. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+The late SPP/concat-unary-conv pair is now characterized without production
+changes. Four focused tests freeze its one shared `ModelIRPassStateScope`, both
+complete ModelIR/layout/diagnostics contracts, its sole zero-argument terminal
+invocation, and both adjacent recovery boundaries. The focused plus
+architecture suite passed 252 tests, the 30 pass-efficiency tests and all 11
+TensorFlow-import-blocked tests passed, and targeted static checks passed.
+Runtime behavior and all public/dependency contracts remain unchanged. PR #952
+remains closed, and no pull request was created, reopened, or updated.
