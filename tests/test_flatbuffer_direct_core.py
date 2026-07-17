@@ -1505,6 +1505,72 @@ def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
     assert run_with_outcome("prune") == unchanged_count + 1
 
 
+def test_final_se_fc_gather_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
+    sinet_counter = (
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains"
+    )
+    se_fc_counter = "optimized_transpose_se_fc_mul_prepost_nhwc_chains"
+    gather_counter = (
+        "optimized_transpose_gather_transpose_nhwc_channel_chains"
+    )
+    probe_name = "unused_final_se_fc_gather_probe"
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+
+    def counted_reconcile(model_ir, *args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        result = original_reconcile(model_ir, *args, **kwargs)
+        model_ir.tensors[probe_name] = TensorIR(
+            name=probe_name,
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+        )
+        return result
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_outcome(outcome: str) -> int:
+        nonlocal reconcile_count
+        reconcile_count = 0
+
+        def sinet_result(model_ir, *args, **kwargs):
+            if outcome == "prune":
+                assert model_ir.tensors.pop(probe_name, None) is not None
+            return {sinet_counter: int(outcome == "sinet")}
+
+        def cluster_result(*args, **kwargs):
+            return (
+                {se_fc_counter: int(outcome == "se_fc")},
+                {gather_counter: int(outcome == "gather")},
+            )
+
+        monkeypatch.setattr(
+            lowering_module,
+            "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+            sinet_result,
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "run_se_fc_gather_channel_fanout",
+            cluster_result,
+        )
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"se_fc_gather_reconcile_{outcome}",
+        )
+        return reconcile_count
+
+    unchanged_count = run_with_outcome("unchanged")
+    for outcome in ("sinet", "se_fc", "gather", "prune"):
+        assert run_with_outcome(outcome) == unchanged_count + 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod

@@ -5238,15 +5238,42 @@ def lower_onnx_to_ir(
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
             infer_model_ir_logical_layouts(fallback_ir)
-        _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
-            fallback_ir,
-            layout_state=None,
+        fallback_se_fc_gather_tensor_count = len(fallback_ir.tensors)
+        fallback_sinet_shuffle_stats = (
+            _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+                fallback_ir,
+                layout_state=None,
+            )
         )
-        _run_se_fc_gather_channel_fanout_pass_cluster(
-            fallback_ir,
-            None,
+        fallback_se_fc_stats, fallback_gather_stats = (
+            _run_se_fc_gather_channel_fanout_pass_cluster(
+                fallback_ir,
+                None,
+            )
         )
-        _reconcile_static_tensor_shapes(fallback_ir)
+        if (
+            int(
+                fallback_sinet_shuffle_stats.get(
+                    "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+                    0,
+                )
+            )
+            + int(
+                fallback_se_fc_stats.get(
+                    "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
+                    0,
+                )
+            )
+            + int(
+                fallback_gather_stats.get(
+                    "optimized_transpose_gather_transpose_nhwc_channel_chains",
+                    0,
+                )
+            )
+            > 0
+            or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count
+        ):
+            _reconcile_static_tensor_shapes(fallback_ir)
         if int(
             _restore_placeholder_matmul_flattened_inputs(fallback_ir).get(
                 "restored_placeholder_matmul_flattened_inputs",
@@ -5445,15 +5472,42 @@ def lower_onnx_to_ir(
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.
-    _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    final_se_fc_gather_tensor_count = len(model_ir.tensors)
+    final_sinet_shuffle_stats = (
+        _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _run_se_fc_gather_channel_fanout_pass_cluster(
-        model_ir,
-        session.layout_state,
+    final_se_fc_stats, final_gather_stats = (
+        _run_se_fc_gather_channel_fanout_pass_cluster(
+            model_ir,
+            session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    if (
+        int(
+            final_sinet_shuffle_stats.get(
+                "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+                0,
+            )
+        )
+        + int(
+            final_se_fc_stats.get(
+                "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
+                0,
+            )
+        )
+        + int(
+            final_gather_stats.get(
+                "optimized_transpose_gather_transpose_nhwc_channel_chains",
+                0,
+            )
+        )
+        > 0
+        or len(model_ir.tensors) < final_se_fc_gather_tensor_count
+    ):
+        _reconcile_static_tensor_shapes(model_ir)
     # Absolute-final PRELU cleanup:
     # late layout/broadcast/singleton repairs can still recreate strict
     # TRANSPOSE->PRELU->inverse-TRANSPOSE wrappers (e.g. SiNet entry blocks).

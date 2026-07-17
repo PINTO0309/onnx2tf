@@ -9757,3 +9757,11 @@ reconcile after any of the three exact rewrite counters or a tensor-count
 decrease caused by zero-rewrite pruning. A strict structural expectation covers
 both ModelIR targets and preserves the four-statement owner order. Production
 remains unconditional at this checkpoint.
+
+Both terminal boundaries now implement that four-statement contract. The main
+and fallback paths record tensor count, retain the SINet result, unpack the two
+cluster results, and reconcile only after a positive exact counter or pruning.
+The owner order, main Session LayoutState, fallback `None` LayoutState, shared
+diagnostics, and fallback/main separation remain unchanged. A lowerer fixture
+covers all three counters plus prune-only behavior on the main path, while the
+structural contract verifies identical fallback wiring.

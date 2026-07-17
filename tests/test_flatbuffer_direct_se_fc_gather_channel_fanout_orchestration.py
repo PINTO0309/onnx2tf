@@ -51,7 +51,7 @@ def _expression_path(node: ast.expr) -> Any:
 
 
 def _direct_call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, (ast.Expr, ast.Assign))
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     return statement.value.func.id
@@ -61,7 +61,7 @@ def _direct_invocation_index(statements: list[ast.stmt]) -> int:
     return next(
         index
         for index, statement in enumerate(statements)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SE_FC_GATHER
@@ -273,11 +273,13 @@ def test_se_fc_gather_preserves_fallback_boundaries() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.If)
         and any(
-            isinstance(candidate, ast.Expr)
-            and isinstance(candidate.value, ast.Call)
-            and isinstance(candidate.value.func, ast.Name)
-            and candidate.value.func.id == SE_FC_GATHER
-            for candidate in statement.body
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == SE_FC_GATHER
+            and len(node.args) == 2
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "fallback_ir"
+            for node in ast.walk(statement)
         )
     )
     invocation_index = _direct_invocation_index(fallback_block.body)
@@ -285,9 +287,10 @@ def test_se_fc_gather_preserves_fallback_boundaries() -> None:
     assert _direct_call_name(fallback_block.body[invocation_index - 1]) == (
         "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
     )
-    assert _direct_call_name(fallback_block.body[invocation_index + 1]) == (
-        "_reconcile_static_tensor_shapes"
-    )
+    guard = fallback_block.body[invocation_index + 1]
+    assert isinstance(guard, ast.If)
+    assert len(guard.body) == 1
+    assert _direct_call_name(guard.body[0]) == "_reconcile_static_tensor_shapes"
 
 
 def test_se_fc_gather_preserves_main_model_boundaries() -> None:
@@ -297,18 +300,12 @@ def test_se_fc_gather_preserves_main_model_boundaries() -> None:
     assert _direct_call_name(lowerer.body[invocation_index - 1]) == (
         "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
     )
-    assert _direct_call_name(lowerer.body[invocation_index + 1]) == (
-        "_reconcile_static_tensor_shapes"
-    )
+    guard = lowerer.body[invocation_index + 1]
+    assert isinstance(guard, ast.If)
+    assert len(guard.body) == 1
+    assert _direct_call_name(guard.body[0]) == "_reconcile_static_tensor_shapes"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the main and fallback SINet/SE-FC/Gather boundaries still reconcile "
-        "unconditionally instead of using ordered results and prune accounting"
-    ),
-)
 def test_terminal_se_fc_gather_reconciles_only_after_change_or_prune() -> None:
     lowerer, _ = _lowerer_and_helper()
     helper_name = "_run_se_fc_gather_channel_fanout_pass_cluster"

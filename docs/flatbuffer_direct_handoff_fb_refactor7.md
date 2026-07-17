@@ -409,3 +409,24 @@ per-counter, and prune-only wiring coverage before running the complete SINet
 shuffle, SE layout, orchestration, core, architecture, pass-efficiency, and
 TensorFlow-import-blocked gates sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Terminal SE/FC/Gather reconciliation implementation checkpoint
+
+Both main and fallback boundaries now record tensor count, assign the SINet
+shuffle result, unpack the ordered SE-FC and Gather results, and guard the
+existing immediate reconciliation by the three exact counters or a tensor-count
+decrease. The owner order, main Session LayoutState, fallback `None` LayoutState,
+diagnostics, and recursive fallback separation are unchanged.
+
+The strict two-boundary architecture contract is green. A synthetic main-path
+lowerer fixture covers unchanged, each of the three positive counters, and
+prune-only outcomes; every changed outcome adds exactly one reconciliation.
+Sequential validation across the complete related owners/orchestrator, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked suites is
+`566 passed in 27.36s`.
+
+At resume, re-inventory the remaining unconditional static-shape
+reconciliations outside this absolute-final block. Prefer a boundary with a
+complete returned mutation contract; where a runner prunes on zero rewrite,
+preserve that behavior with explicit accounting. Characterize before changing
+production, then commit and push only. Do not create or update a pull request.
