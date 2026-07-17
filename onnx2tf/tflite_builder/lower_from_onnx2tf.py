@@ -5732,13 +5732,22 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
+    _final_mixed_singleton_concat_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_mixed_singleton_concat_stats.get(
             "repaired_mixed_singleton_nchw_inputs_for_nhwc_concat",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_mixed_singleton_concat_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     final_placeholder_matmul_stats = (
         _restore_placeholder_matmul_flattened_inputs(
             model_ir,

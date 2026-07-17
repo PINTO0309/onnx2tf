@@ -10689,3 +10689,8 @@ Strict characterization preserves its single-counter guard and requires a
 stable two-key `_final_mixed_singleton_concat_static_shape_stats` value that
 receives the opt-in complete reconciliation result only inside that guard. The
 following placeholder-MatMul block remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary only after the unchanged exact
+counter guard succeeds. No owner, scan, pruning, layout synchronization, or
+placeholder boundary changes.

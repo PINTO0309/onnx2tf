@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -736,10 +733,6 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
     assert following.targets[0].id == "final_se_fc_gather_tensor_count"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final mixed-singleton Concat reconciliation result is discarded",
-)
 def test_primary_path_stages_final_mixed_singleton_concat_reconciliation() -> None:
     body = _lowerer_body()
     stats_index = next(

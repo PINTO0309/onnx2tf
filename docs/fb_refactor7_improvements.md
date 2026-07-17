@@ -291,6 +291,15 @@ This checkpoint extends the expanded related gate to `1181 passed in 30.44s`;
 the focused restore, binary-adapter, terminal, core-guard, and architecture gate
 is `382 passed in 19.28s`.
 
+The preceding final mixed-singleton Concat path now retains stable, complete
+reconciliation evidence under its unchanged exact repair counter. Adapter
+planning, rewiring, positive-only pruning/layout synchronization, and the
+following placeholder-MatMul boundary are unchanged.
+
+This checkpoint extends the expanded related gate to `1213 passed in 29.96s`;
+the focused indexed-owner, terminal, core-guard, and architecture gate is
+`357 passed in 19.46s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -300,6 +309,6 @@ full model-corpus run for this observation and accounting unit.
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
 reconciliation inventory immediately before the completed final PReLU boundary,
-beginning with `final_mixed_singleton_concat_stats`. Any new mutation evidence
-must preserve current pass order, TensorFlow-free boundary, dependency set, and
+beginning with `final_broadcast_repair_stats`. Any new mutation evidence must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
 sequential validation policy.

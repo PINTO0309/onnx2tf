@@ -3998,3 +3998,29 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final mixed-singleton result
 contract; there are no unexpected failures.
+
+## Primary final mixed-singleton Concat implementation checkpoint
+
+The primary path now initializes
+`_final_mixed_singleton_concat_static_shape_stats` with the stable two-key
+schema and replaces it with the opt-in complete reconciliation dictionary only
+under the unchanged exact repair-counter guard. This adds no reconciliation or
+graph traversal.
+
+The indexed owner, raw counter, plan construction/application, adapter names and
+metadata, Concat rewiring, positive-only pruning/layout synchronization, guard,
+ordering, placeholder block, dependencies, and TensorFlow-free behavior are
+unchanged. The strict characterization contract is now a normal passing
+contract, and the existing architecture guard checks the retained assignment.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed owner, terminal orchestration, core guard, and architecture:
+  `357 passed in 19.46s`
+- expanded broad related gate: `1213 passed in 29.96s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the preceding `final_broadcast_repair_stats` owner and its
+reconciliation/sort/layout-inference block before retaining complete evidence.
+Keep the following mixed-singleton Concat boundary fixed. Commit and push only;
+do not create or update a pull request.
