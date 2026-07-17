@@ -1839,3 +1839,22 @@ At resume, inspect the immediately preceding
 Confirm its occurrence forms, fixed result schema, and prune behavior before
 selecting the last direct call for evidence. Commit and push only; do not create
 or update a pull request.
+
+## Pre-terminal affine InstanceNorm post-bias characterization checkpoint
+
+The indexed InstanceNorm post-transpose bias/add owner has five production
+occurrences: one nested call and four direct top-level calls. Its one fixed
+rewrite counter is complete because pruning occurs only after a positive
+rewrite; a prune-hook test freezes that behavior.
+
+Strict expected-failure coverage selects the third direct call, between late
+binary-layout recovery and the staged residual/Mul/Concat result, and requires
+`_pre_terminal_affine_instancenorm_post_bias_stats`. The first two direct calls,
+nested occurrence, and absolute-final fourth direct call remain unchanged.
+
+At implementation, replace only the selected expression and update the
+residual/Mul/Concat boundary contract. Validate the complete indexed post-bias,
+residual/Mul/Concat, dual-statistics, terminal-affine, core, pass-efficiency,
+architecture, absolute-final normalization, and TensorFlow import-blocking
+suites sequentially. Commit and push only; do not create or update a pull
+request.

@@ -772,3 +772,28 @@ def test_post_bias_preflight_avoids_index_construction(monkeypatch) -> None:
     assert optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
         model_ir
     ) == {_STATS: 0}
+
+
+def test_post_bias_counter_is_complete_mutation_evidence(monkeypatch) -> None:
+    model_ir, _ = _build_model()
+    prune_calls: list[tuple[ModelIR, LayoutState | None]] = []
+
+    def record_prune(
+        active_model_ir: ModelIR,
+        *,
+        layout_state: LayoutState | None = None,
+    ) -> None:
+        prune_calls.append((active_model_ir, layout_state))
+
+    monkeypatch.setattr(post_bias_module, "_prune_unused_tensors", record_prune)
+
+    first = optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+        model_ir
+    )
+    second = optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+        model_ir
+    )
+
+    assert first == {_STATS: 1}
+    assert second == {_STATS: 0}
+    assert prune_calls == [(model_ir, None)]

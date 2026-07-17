@@ -10291,3 +10291,10 @@ That last direct call now assigns its unchanged raw result to the staged target.
 The two earlier direct calls and nested occurrence retain their previous forms,
 and the dual-statistics assignment remains the immediate next owner. No
 tensor-count proxy or reconciliation consumer is introduced.
+
+The preceding indexed InstanceNorm post-transpose bias/add owner has four
+direct production calls plus one nested call. Its single counter is complete
+because pruning is positive-only. Strict characterization selects the third
+direct call, immediately before the staged residual/Mul/Concat result, for
+`_pre_terminal_affine_instancenorm_post_bias_stats`; the absolute-final fourth
+direct call remains an expression.
