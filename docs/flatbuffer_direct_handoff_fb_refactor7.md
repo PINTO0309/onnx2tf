@@ -4194,3 +4194,34 @@ At resume, audit the absolute-final
 before the unconditional sort/layout inference and final ConvInteger owner.
 Determine whether its exact raw result can be retained without adding a guard
 or reconciliation. Commit and push only; do not create or update a pull request.
+
+## Absolute-final dynamic rank-one result characterization checkpoint
+
+The dynamic rank-one Unsqueeze/Reshape-shape owner increments its exact counter
+for each shape-parameter metadata/data rewrite or runtime SHAPE/CONCAT pipeline
+insertion plus RESHAPE rewire. It performs no pruning and synchronizes layout
+only after a positive result. Of its three production occurrences, the very-
+late and recursive-fallback calls already retain their raw dictionaries; only
+the absolute-final direct call discards its result.
+
+A strict expected-failure orchestration contract now requires that last call to
+assign `_absolute_final_dynamic_rank1_stats`. It fixes all three occurrence
+counts and preserves the immediately following unconditional topological sort,
+layout inference, and `final_convinteger_layout_stats` boundary.
+
+At implementation, change only the last expression to an assignment. Do not
+change the owner, counter schema, option/tensor/operator writes, layout sync,
+other two occurrences, add a guard or reconciliation, reorder sort/inference,
+change dependencies, or affect TensorFlow behavior. Validate dynamic-Reshape,
+terminal orchestration, architecture, and occurrence contracts sequentially,
+then commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- dynamic-Reshape owner, terminal orchestration, and architecture:
+  `287 passed, 1 xfailed in 17.91s`
+- expanded broad related gate: `1256 passed, 1 xfailed in 30.47s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet absolute-final raw-result
+assignment; there are no unexpected failures.

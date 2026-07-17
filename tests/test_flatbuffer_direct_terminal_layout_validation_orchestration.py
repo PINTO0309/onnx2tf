@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -992,6 +995,63 @@ def test_primary_path_stages_final_convinteger_reconciliation() -> None:
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_instancenorm_repair_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="absolute-final dynamic rank-one result is discarded",
+)
+def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
+    body = _lowerer_body()
+    owner_name = "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    direct_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == owner_name
+    ]
+    assert len(direct_indices) == 2
+
+    very_late = body[direct_indices[0]]
+    assert isinstance(very_late, ast.Assign)
+    assert isinstance(very_late.targets[0], ast.Name)
+    assert very_late.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
+
+    final_index = direct_indices[1]
+    final = body[final_index]
+    assert isinstance(final, ast.Assign)
+    assert isinstance(final.targets[0], ast.Name)
+    assert final.targets[0].id == "_absolute_final_dynamic_rank1_stats"
+    assert _call_name(_statement_call(final)) == owner_name
+
+    assert _call_name(_statement_call(body[final_index + 1])) == (
+        "_topologically_sort_operators"
+    )
+    assert _call_name(_statement_call(body[final_index + 2])) == (
+        "infer_model_ir_logical_layouts"
+    )
+    following = body[final_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "final_convinteger_layout_stats"
+
+    all_calls = sorted(
+        (
+            node
+            for node in ast.walk(next(
+                function
+                for function in ast.parse(
+                    LOWERER_PATH.read_text(encoding="utf-8")
+                ).body
+                if isinstance(function, ast.FunctionDef)
+                and function.name == "lower_onnx_to_ir"
+            ))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == owner_name
+        ),
+        key=lambda call: call.lineno,
+    )
+    assert len(all_calls) == 3
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

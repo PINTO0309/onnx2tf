@@ -10723,6 +10723,14 @@ opt-in complete reconciliation dictionary as the unchanged first statement of
 the structural-repair guard. Hint-only propagation still does not enter the
 guard, and sort/layout inference retain their positions.
 
+The immediately preceding dynamic rank-one Unsqueeze/Reshape-shape owner has
+three production occurrences and one exact rewrite counter covering both
+shape-parameter-only updates and inserted runtime SHAPE/CONCAT pipelines. It
+does not prune. Very-late and recursive-fallback results are already retained;
+strict characterization selects only the absolute-final direct expression for
+an `_absolute_final_dynamic_rank1_stats` assignment while preserving the
+following unconditional sort, layout inference, and ConvInteger boundary.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
