@@ -3375,7 +3375,7 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
 
 
 def _run_indexed_binary_layout_convergence(model_ir: ModelIR) -> Dict[str, int]:
-    """Run three terminal binary-layout convergence rounds with one index."""
+    """Run up to three terminal binary-layout convergence rounds with one index."""
 
     graph_index = ModelIRGraphIndex(model_ir)
     repaired_constants = 0
@@ -3413,6 +3413,12 @@ def _run_indexed_binary_layout_convergence(model_ir: ModelIR) -> Dict[str, int]:
         reconciled_shapes += int(
             reconcile_stats.get("reconciled_static_tensor_shapes", 0)
         )
+        if not _stats_have_positive_count(
+            broadcast_stats,
+            transpose_stats,
+            reconcile_stats,
+        ):
+            break
     return {
         "repaired_rank4_channelwise_broadcast_constants": int(
             repaired_constants

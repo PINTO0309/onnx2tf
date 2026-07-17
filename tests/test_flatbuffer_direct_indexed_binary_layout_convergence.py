@@ -357,13 +357,6 @@ def test_indexed_binary_layout_convergence_matches_legacy_sequence(
         ([1, 0], 2),
     ],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the indexed binary-layout coordinator still executes all three "
-        "rounds after a complete stable round"
-    ),
-)
 def test_indexed_binary_layout_convergence_stops_after_stable_round(
     monkeypatch,
     reconcile_counts: list[int],

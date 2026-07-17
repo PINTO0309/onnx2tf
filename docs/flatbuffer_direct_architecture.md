@@ -9825,3 +9825,12 @@ whether stability is immediate or follows one changing reconciliation round.
 A separate passing contract preserves the existing three-round maximum while
 shape reconciliation continues changing metadata. Production remains
 unchanged at this characterization checkpoint.
+
+The coordinator now adds all three current-round statistics before testing the
+same pure mutation dictionaries with `_stats_have_positive_count()`. An
+all-zero round terminates the loop; a changing repair or reconciliation keeps
+the shared index and advances to the next round, still bounded by the existing
+three-round cap. Immediate and second-round convergence fixtures are green,
+the always-changing fixture still executes three rounds, and the original
+multi-repair graph produces the same aggregate statistics and complete ModelIR
+as the fixed three-round sequence.

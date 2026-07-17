@@ -582,3 +582,29 @@ round results and confirming every mutation dictionary is zero. Run the full
 indexed binary-layout owner suite plus core, pass-efficiency, architecture, and
 TensorFlow-import-blocked gates sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Indexed binary-layout convergence implementation checkpoint
+
+`_run_indexed_binary_layout_convergence()` now accumulates broadcast repair,
+stale binary-Transpose repair, and static-shape reconciliation results for the
+current round, then stops when all three pure mutation dictionaries are zero.
+Changing rounds continue with the same `ModelIRGraphIndex`, owner order, and
+aggregate counters, and the existing three-round maximum remains unchanged.
+
+The immediate-stability and second-round-stability characterizations are now
+passing. The always-changing fixture still executes exactly three rounds, and
+the original multi-repair fixture remains ModelIR/stat identical to the former
+fixed three-round sequence. Two adjacent binary-owner tests were updated to
+monkeypatch the extracted owner modules rather than aliases that no longer
+exist in the lowerer; this changes test ownership only.
+
+Sequential validation across the complete indexed convergence, binary layout,
+binary adapter, shape reconciliation, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked suites is `402 passed in 26.66s`. The focused
+convergence owner suite is `11 passed in 0.54s`.
+
+At resume, continue the reconciliation inventory outside fixed-point helpers.
+Choose a boundary only when all mutations since the preceding reconciliation
+are represented by returned counters or explicit prune accounting. Preserve
+phase order, characterize before production changes, and commit/push only. Do
+not create or update a pull request.
