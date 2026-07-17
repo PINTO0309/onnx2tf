@@ -9126,3 +9126,13 @@ bridge and swish passthrough. Focused contracts freeze every argument and
 boundary, while the existing efficiency fixture proves one graph-index build.
 The eventual phase needs a frozen ModelIR/layout/diagnostics context, three
 stable IDs, and one fresh shared scope per invocation.
+
+That cluster now uses `LateDequantUnaryFanoutContext` and three stable IDs in
+`passes/late_dequant_unary_fanout_orchestration.py`. Each builder creates one
+fresh scope shared by all three cleanup invocations. The historical helper is
+a four-line delegate at the same boundary. Stable-ID multiplicity preserves
+the moved occurrences alongside remaining direct runner calls, and the
+efficiency fixture now drives the explicit phase while observing one graph-
+index build. Focused, architecture, pass-efficiency, core, and TensorFlow-
+import-blocked suites pass. Characterize the option-dependent transpose-unary
+fanout cluster and its shared scope next.

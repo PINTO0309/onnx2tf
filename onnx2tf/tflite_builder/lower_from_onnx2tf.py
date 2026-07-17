@@ -217,6 +217,10 @@ from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestrat
     TerminalSingletonMaxPoolReshapeContext,
     run_terminal_singleton_maxpool_reshape,
 )
+from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
+    LateDequantUnaryFanoutContext,
+    run_late_dequant_unary_fanout,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4362,30 +4366,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_late_dequant_unary_fanout_pass_cluster() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_dequant_concat_quantize_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        # Some late specialized rewrites can still leave trivial
-        # NHWC->NCHW->NHWC wrappers around unary activations.
-        # Run one final strict unary transpose fold before serialization guards.
-        run_transpose_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_late_dequant_unary_fanout(
+            late_dequant_unary_fanout_context
         )
 
     def _run_terminal_singleton_maxpool_reshape_pass_pair() -> None:
@@ -4694,6 +4676,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
+    )
+    late_dequant_unary_fanout_context = LateDequantUnaryFanoutContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     sinet_preadd_resize_recovery_context = SINetPreaddResizeRecoveryContext(
         model_ir=model_ir,

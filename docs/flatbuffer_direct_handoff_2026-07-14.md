@@ -13833,3 +13833,50 @@ invocations. Preserve the historical helper, sole zero-argument call, both
 outer neighbors, and unary-fold rationale comment. Prove builder arguments,
 scope identity, and instrumented order before switching to a delegate,
 validate sequentially, commit and push, and do not create a pull request.
+
+## Explicit late dequant/unary/fanout orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/late_dequant_unary_fanout_orchestration.py`. A frozen
+`LateDequantUnaryFanoutContext` contains only ModelIR, layout state, and
+diagnostics. All three cleanup owners are imported directly from
+`dequant_concat_quantize_layout` and `layout_transpose`; the phase module does
+not import the central lowerer.
+
+`LATE_DEQUANT_UNARY_FANOUT_PASS_IDS` declares the exact three-step order. Each
+builder call constructs one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the same scope, ModelIR, layout, and
+diagnostics to all three immutable invocations. The shared executor validates
+every ID before execution, and the final unary-fold rationale comment moved
+with its invocation.
+
+The historical helper is a four-line delegate at the same sole zero-argument
+boundary between the quantized HardSigmoid bridge and swish passthrough.
+Architecture ownership uses stable-ID multiplicity for the moved dequant,
+unary passthrough, and unary fanout occurrences while retaining all other
+direct calls. The efficiency fixture now drives the explicit runner and still
+observes one graph-index build followed by two scope reuses.
+
+Sequential validation completed as follows:
+
+- focused late dequant/unary/fanout orchestration: `7 passed in 0.64s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `285 passed in 19.25s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.02s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_transpose_unary_fanout_layout_pass_cluster` before changing production
+code. Freeze its option-dependent calls, default values, shared pass-state
+scope, all ModelIR/layout/diagnostics arguments, invocation variants, and outer
+boundaries. Validate sequentially, commit and push, and do not create a pull
+request.

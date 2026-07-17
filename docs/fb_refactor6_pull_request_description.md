@@ -2111,3 +2111,15 @@ the three runners. The focused plus architecture suite passed 252 tests, the
 targeted static checks passed. Runtime behavior and all public/dependency
 contracts remain unchanged. PR #952 remains closed, and no pull request was
 created, reopened, or updated.
+
+That cluster is now implemented in
+`passes/late_dequant_unary_fanout_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context, three stable IDs, and direct owner imports.
+Every builder creates one fresh `ModelIRPassStateScope` shared by all three
+immutable invocations. The historical helper remains a four-line delegate at
+the same quantized-HardSigmoid/swish boundary, and the efficiency fixture now
+executes the explicit phase while preserving one graph-index build. The 285-
+test focused/architecture/efficiency set, 32 core smoke tests, and all 11
+TensorFlow-import-blocked tests pass. No public API, artifact, dependency,
+runtime order, scope-sharing behavior, or TensorFlow boundary changed. PR #952
+remains closed, and no pull request was created, reopened, or updated.

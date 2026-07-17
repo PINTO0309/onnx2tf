@@ -42,6 +42,9 @@ from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration impor
 from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
     TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
+    LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -59,6 +62,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
     *TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
     *TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
+    *LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -4893,26 +4897,21 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
         "run_transpose_unary_passthrough_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert tuple(expected_order) == LATE_DEQUANT_UNARY_FANOUT_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_late_dequant_unary_fanout"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "late_dequant_unary_fanout_context"
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -11605,7 +11604,13 @@ def test_dequant_concat_quantize_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_dequant_concat_quantize_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count(
+            "run_dequant_concat_quantize_layout_cleanup"
+        )
+        == 2
+    )
 
 
 def test_concat_unary_conv_layout_rewrite_has_single_owner() -> None:
@@ -11906,6 +11911,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert orchestrated_runner_names == {
         "run_clamp_cleanup",
         "run_consecutive_reshape_cleanup",
+        "run_dequant_concat_quantize_layout_cleanup",
         "run_hard_activation_passthrough_cleanup",
         "run_layout_transpose_cleanup",
         "run_maximum_zero_relu_cleanup",
@@ -11916,6 +11922,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_singleton_maxpool_layout_cleanup",
         "run_trailing_output_transpose_cleanup",
         "run_transpose_unary_passthrough_cleanup",
+        "run_transpose_unary_fanout_bridge_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12134,7 +12141,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_fanout_calls) == 3
+    assert (
+        len(transpose_unary_fanout_calls)
+        + _orchestrated_pass_count("run_transpose_unary_fanout_bridge_cleanup")
+        == 3
+    )
 
     transpose_unary_binary_fanout_calls = [
         call

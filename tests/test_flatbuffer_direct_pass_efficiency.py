@@ -53,6 +53,10 @@ from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestrat
     TerminalSingletonMaxPoolReshapeContext,
     run_terminal_singleton_maxpool_reshape,
 )
+from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
+    LateDequantUnaryFanoutContext,
+    run_late_dequant_unary_fanout,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -845,18 +849,13 @@ def test_late_dequant_unary_fanout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_dequant_concat_quantize_layout_cleanup,
-        run_transpose_unary_passthrough_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_late_dequant_unary_fanout(
+        LateDequantUnaryFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3
