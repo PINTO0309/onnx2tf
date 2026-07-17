@@ -8973,3 +8973,14 @@ pass. The next orchestration candidate is the mixed layout/attention/quantized
 suffix, which must first be characterized because it carries layout,
 diagnostics, nested phase runners, local composite callbacks, and an option
 flag.
+
+That mixed suffix is now characterized without production changes. It has
+thirteen straight-line call slots, one required keyword-only duplicate-
+transpose option, two outer invocations, and no local pass-state scope or
+control flow. Focused contracts freeze all ModelIR/layout/diagnostics routing,
+the option's single destination, and both outer neighbors. Ten slots have
+direct module or extracted phase owners; the mean-attention cluster,
+attention-gate/QDQ helper, and duplicate quantized-PReLU cluster must remain
+explicit injected callbacks in a future frozen context. Extraction must prove
+the same flattened order and per-invocation option value before changing the
+historical helper.

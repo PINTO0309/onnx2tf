@@ -13132,3 +13132,51 @@ clusters, layout/diagnostic routing, and the
 arguments, repetition, and conditional boundary first. Keep verification
 sequential and minimal, commit and push coherent checkpoints, and do not
 create a pull request.
+
+## Layout/attention/quantized recovery suffix characterization: completed state
+
+The 41-line `_run_layout_attention_quantized_recovery_suffix` remains unchanged
+in production. It is a straight-line helper with one required keyword-only
+boolean, no branch/loop/try/context-manager control flow, and no local
+`ModelIRPassStateScope`. Its data captures are ModelIR, session, and
+`include_duplicate_transpose`.
+
+The focused
+`test_flatbuffer_direct_layout_attention_quantized_suffix_orchestration.py`
+freezes all thirteen call slots and every positional and keyword argument. It
+distinguishes model-only calls from layout-aware calls and the one
+layout/diagnostics cleanup. It also proves that the option reaches only the
+duplicate quantized-PReLU cluster as `include_transpose`, both outer calls pass
+the global duplicate-transpose option by keyword, and both exact neighboring
+boundaries remain fixed.
+
+Ten slots resolve to existing module owners or already-extracted phase
+runners. Three dependencies remain lowerer-local/nested boundaries:
+`_run_mean_attention_layout_pass_cluster`,
+`_run_attention_gate_qdq_recovery_sequence`, and
+`_run_duplicate_quantized_prelu_pass_cluster`. A future context must therefore
+carry ModelIR, layout state, diagnostics, and these three explicit callbacks;
+the duplicate callback must retain its per-invocation boolean argument.
+
+Validation completed sequentially as follows:
+
+- focused suffix characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.93s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.58s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, map the ten direct slots to their current module callables and
+introduce a frozen explicit context plus thirteen stable IDs. Keep the three
+nested dependencies as injected callbacks, pass the duplicate-transpose flag
+through the immutable invocation specification, and prove flattened
+instrumented order and exact argument equivalence before switching the
+historical helper. Validate sequentially, commit and push, and do not create a
+pull request.

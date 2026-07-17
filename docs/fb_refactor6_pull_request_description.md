@@ -1946,3 +1946,12 @@ instrumented order, and lowerer-import isolation. The 394-test related owner
 set, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests pass. No
 public API, artifact, dependency, runtime order, or TensorFlow boundary
 changed, and no pull request was created, reopened, or updated.
+
+The adjacent 13-step layout/attention/quantized suffix is now characterized
+without production changes. Four focused tests freeze its required keyword-
+only option, every ModelIR/layout/diagnostics argument, all call slots, both
+outer invocations, and both neighboring boundaries. Ten targets have direct
+owners or extracted phase runners; three nested lowerer boundaries will require
+explicit callbacks in a future context. The focused plus architecture suite
+passed 252 tests and all 11 TensorFlow-import-blocked tests passed. No pull
+request was created, reopened, or updated.
