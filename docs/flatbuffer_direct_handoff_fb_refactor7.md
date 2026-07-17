@@ -2894,3 +2894,24 @@ adapter insertion, Concat rewire, output metadata, raw result, guard, or next
 owner. Validate mixed-Concat repair, safety fallback, static reconciliation,
 core, pass efficiency, architecture, and TensorFlow import blocking
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Safety-fallback mixed-Concat reconciliation implementation checkpoint
+
+The fallback mixed-Concat owner, its exact one-key result, and positive guard
+are unchanged. `_fallback_mixed_concat_static_shape_stats` supplies both zero
+keys and receives the opt-in complete reconciliation result only after a
+positive repair.
+
+No matcher, adapter insertion, Concat rewire, output metadata, scan,
+dependency, or following Concat-axis owner changed. This is observation-only
+result plumbing under the existing conditional reconciliation.
+
+Focused mixed-Concat and safety-fallback validation is `19 passed`. The broader
+sequential indexed-owner, fallback-owner, reconciliation, convergence, core,
+pass-efficiency, architecture, and TensorFlow import-blocking gate is `491
+passed in 29.82s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, audit `fallback_concat_axis_stats` and its guarded reconciliation.
+Confirm its complete counter and cleanup behavior before changing that
+boundary. Commit and push only; do not create or update a pull request.

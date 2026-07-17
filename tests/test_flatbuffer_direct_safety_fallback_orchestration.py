@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -463,10 +462,6 @@ def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
     assert following.targets[0].id == "fallback_concat_layout_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the fallback mixed-Concat reconciliation result is discarded",
-)
 def test_safety_fallback_stages_mixed_concat_reconciliation_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
     owner_index = next(
