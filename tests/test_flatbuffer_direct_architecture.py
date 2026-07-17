@@ -63,6 +63,9 @@ from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration imp
 from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
     ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
+    QKV_ATTENTION_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -87,6 +90,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *CHANNEL_SLICE_PAD_MUL_PASS_IDS,
     *LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
     *ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
+    *QKV_ATTENTION_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -1464,26 +1468,15 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
         "run_qkv_attention_prefix_cleanup",
         "run_qkv_attention_bridge_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == QKV_ATTENTION_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        and node.func.id == "run_qkv_attention"
+    ]
+    assert len(helper_calls) == 1
 
     helper_invocations = [
         node
@@ -11877,6 +11870,8 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_pad_mul_layout_cleanup",
         "run_normalization_pad_layout_cleanup",
         "run_mixed_attention_layout_cleanup",
+        "run_qkv_attention_prefix_cleanup",
+        "run_qkv_attention_bridge_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12435,8 +12430,10 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
     }
     assert "run_conv_attention_layout_cleanup" in lowerer_names
     assert "run_mixed_attention_layout_cleanup" in lowerer_names
-    assert "run_qkv_attention_bridge_cleanup" in lowerer_names
-    assert "run_qkv_attention_prefix_cleanup" in lowerer_names
+    assert "run_qkv_attention_bridge_cleanup" not in lowerer_names
+    assert "run_qkv_attention_prefix_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_qkv_attention_bridge_cleanup") == 1
+    assert _orchestrated_pass_count("run_qkv_attention_prefix_cleanup") == 1
     pass_source = pass_path.read_text(encoding="utf-8")
     assert "_build_tensor_consumer_map" not in pass_source
     assert "_build_tensor_producer_map" not in pass_source

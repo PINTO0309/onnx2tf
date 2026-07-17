@@ -245,6 +245,10 @@ from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orches
     AbsoluteFinalNormalizationAttentionContext,
     run_absolute_final_normalization_attention,
 )
+from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
+    QKVAttentionContext,
+    run_qkv_attention,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -696,8 +700,6 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains as _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains_pass,
     run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
-    run_qkv_attention_bridge_cleanup,
-    run_qkv_attention_prefix_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_asin_transpose_passthrough_chains as _optimize_asin_transpose_passthrough_chains_pass,
@@ -4082,29 +4084,10 @@ def lower_onnx_to_ir(
         include_layout_transpose: bool = False,
         include_prefix: bool = True,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        if include_layout_transpose:
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        if include_prefix:
-            run_qkv_attention_prefix_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_qkv_attention_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_qkv_attention(
+            qkv_attention_context,
+            include_layout_transpose=include_layout_transpose,
+            include_prefix=include_prefix,
         )
 
     def _run_duplicate_quantized_prelu_pass_cluster(
@@ -4565,6 +4548,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
+    )
+    qkv_attention_context = QKVAttentionContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     layout_recovery_context = LayoutRecoveryContext(
         model_ir=model_ir,

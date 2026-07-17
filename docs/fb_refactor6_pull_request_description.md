@@ -2280,3 +2280,17 @@ architecture suite passed 253 tests, the 30 pass-efficiency tests and all 11
 TensorFlow-import-blocked tests passed, and targeted static checks passed.
 Runtime behavior and all public/dependency contracts remain unchanged. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+That cluster is now implemented in `passes/qkv_attention_orchestration.py`
+with a frozen ModelIR/layout/diagnostics context and three canonical stable
+IDs. Both Boolean options remain per-invocation arguments, variant-specific
+expected IDs cover the default and two late runtime forms, and every builder
+creates one fresh shared `ModelIRPassStateScope`. The historical helper keeps
+both defaults, three callers, caller values, and all outer boundaries as a
+delegate. The central lowerer no longer imports the QKV prefix or bridge
+runner, and the efficiency fixture executes the explicit default phase while
+preserving one graph-index build. The 260-test focused/architecture set, 30
+pass-efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-
+blocked tests pass. No public API, artifact, dependency, option semantics,
+runtime order, scope-sharing behavior, or TensorFlow boundary changed. PR #952
+remains closed, and no pull request was created, reopened, or updated.

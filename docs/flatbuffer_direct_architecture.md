@@ -9261,3 +9261,13 @@ contracts freeze all ModelIR/layout/diagnostics/scope arguments and three
 distinct outer boundaries. The eventual phase should keep both options outside
 a frozen ModelIR/layout/diagnostics context and derive active expected IDs per
 invocation.
+
+That cluster now uses `QKVAttentionContext` and three canonical stable IDs in
+`passes/qkv_attention_orchestration.py`. Both Boolean choices remain runner
+arguments, active expected IDs cover the default and both late runtime forms,
+and every build creates one fresh shared scope. The historical helper keeps
+both defaults, three callers, caller values, and outer boundaries as a
+delegate. The central lowerer no longer imports the QKV prefix or bridge
+runner. The efficiency fixture exercises the explicit default phase with one
+graph-index build. Focused, architecture, pass-efficiency, core, and
+TensorFlow-import-blocked suites pass.

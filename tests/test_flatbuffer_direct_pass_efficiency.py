@@ -80,6 +80,10 @@ from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orches
     AbsoluteFinalNormalizationAttentionContext,
     run_absolute_final_normalization_attention,
 )
+from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
+    QKVAttentionContext,
+    run_qkv_attention,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -422,17 +426,12 @@ def test_qkv_attention_pair_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_qkv_attention_prefix_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_qkv_attention_bridge_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_qkv_attention(
+        QKVAttentionContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
