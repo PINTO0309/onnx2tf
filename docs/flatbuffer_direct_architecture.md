@@ -8801,6 +8801,26 @@ rename, removals, pruning, and statistics must be known before commit; a
 zero-match call must be a complete no-op. The 209-line count is descriptive
 only; 2,000 remains the ONNX operation-count tier threshold.
 
+That correction is now implemented in the 705-line raw owner. One differential
+`ModelIRGraphIndex` replaces all repeated producer/consumer scans and remains
+current through indexed input/output setters plus one batched removal. Exact
+operator arity, unique ordered topology, private boundaries, complete positive
+rank-four shape/signature/dtype/layout metadata, and both the original NHWC and
+planned NCHW broadcasts are proven before mutation.
+
+Pre/post permutations have immutable private unquantized INT32 TensorIR and
+NumPy-buffer contracts. Non-scalar embedded constants are rank-expanded and
+transposed to NCHW; shared/public constants are provenance-preserving clones,
+while private constants are updated locally. Dynamic signatures,
+logical/physical layout, and per-axis QDIM are remapped for constants,
+intermediates, and the canonical output. All twenty-eight former strict xfails
+are green, with additional constant-QDIM/ownership/provenance and duplicate-pre
+coverage bringing the focused contract to sixty-four cases. Zero-match
+execution no longer prunes, and valid numerical results, all allowed ops,
+statistics, multiple matches, fixed point, and the production call are
+unchanged. The 705-line count is descriptive only; 2,000 remains the ONNX
+operation-count tier threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

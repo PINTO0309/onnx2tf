@@ -1811,3 +1811,14 @@ indexed topology/metadata/permutation/broadcast/constant/quantization/removal
 plan before mutation and turning all 28 xfails green without changing valid
 behavior, statistics, fixed point, or the ordered production call. Do not
 create a pull request.
+That transactional correction is now complete in the 705-line raw owner. One
+differential `ModelIRGraphIndex`, strict ordered arity/topology/metadata
+preflight, immutable pre/post INT32 permutation contracts, old/new broadcast
+proofs, local constant rotation, provenance-preserving shared constant clones,
+dynamic layout/signature/QDIM remapping, indexed setters, and one batched
+removal turn all 28 former xfails green. Focused coverage now has 64 green
+cases, including constant QDIM/ownership/provenance and duplicate-pre
+contracts, while valid numerical behavior, all allowed ops, statistics, fixed
+point, and the production call remain unchanged. Resume by mechanically
+extracting the corrected owner with exact AST and owner/wrapper equality; do
+not create a pull request.

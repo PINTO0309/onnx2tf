@@ -12627,3 +12627,52 @@ zero-match execution untouched. Turn all 28 strict xfails green while
 preserving NumPy-exact valid outputs, all allowed ops, statistics, fixed point,
 and the production call. Validate sequentially, commit and push, and do not
 create a pull request.
+
+## NCHW-to-NHWC elementwise roundtrip correction: completed state
+
+All twenty-eight former strict xfails are green. The corrected raw owner is 705
+lines and constructs one `ModelIRGraphIndex`; it performs no legacy producer or
+consumer-map rebuilds. Indexed input/output setters and one batched indexed
+removal keep the same index current across multiple matches.
+
+Before mutation, each candidate proves exact unary/binary and Transpose arity,
+unique ordered producers, private intermediate consumers, complete positive
+rank-four physical shapes, compatible dynamic signatures, matching dtypes,
+valid logical/physical layout annotations, and exact old/new elementwise
+broadcast results. Both pre and post permutation inputs now require immutable,
+private, unquantized INT32 TensorIR and NumPy buffers with exact values, shape,
+signature, and no runtime producer.
+
+Non-scalar NHWC constants are rank-expanded and transposed into NCHW only after
+their metadata and original broadcast have been proven. Private constants are
+updated locally; constants with public or nonlocal consumers are cloned with
+their dtype, quantization, layout, and ONNX provenance preserved. Dynamic
+output signatures, logical/physical layout, and per-axis QDIM are remapped from
+NHWC to NCHW for intermediate, canonical output, and transformed constant
+tensors. A zero-match invocation is now a complete no-op and does not prune.
+
+Validation completed sequentially as follows:
+
+- corrected focused contract: `64 passed in 0.62s`;
+- corrected focused contract, the two preceding attention contracts, six
+  adjacent extracted bridge/collapse contracts, and ordered architecture
+  suite: `877 passed in 19.11s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.52s`;
+- focused-test Ruff and Python compilation/whitespace checks: passed;
+- the central lowerer retains exactly two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+the ordered production call, and TensorFlow isolation are unchanged. The
+705-line count is descriptive only; 2,000 remains the ONNX operation-count
+tier threshold. PR #952 remains closed; no pull request was created, reopened,
+or updated.
+
+At restart, mechanically extract the corrected 705-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` owner into a
+focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve the ordered production call. Prove corrected checkpoint/
+module AST identity and direct owner/wrapper equality for valid, multiple,
+dynamic, constant-remap/clone, layout/QDIM, permutation-ownership, missing-
+metadata, public-boundary, reverse-topology, duplicate-producer, and zero-match
+cases. Validate sequentially, commit and push, and do not create a pull request.

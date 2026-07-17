@@ -520,6 +520,17 @@ def test_elementwise_roundtrip_nchw_nhwc_preserves_dynamic_signatures() -> None:
             ),
             id="duplicate-root-producer",
         ),
+        pytest.param(
+            lambda model_ir: model_ir.operators.insert(
+                1,
+                OperatorIR(
+                    "TRANSPOSE",
+                    ["x_nchw", "perm_to_nhwc"],
+                    ["x_nhwc"],
+                ),
+            ),
+            id="duplicate-pre-producer",
+        ),
     ],
 )
 def test_elementwise_roundtrip_nchw_nhwc_preserves_existing_rejections(
@@ -549,15 +560,35 @@ def test_elementwise_roundtrip_nchw_nhwc_raw_owner_and_call_are_characterized() 
     ]
 
     assert owner.end_lineno is not None
-    assert owner.end_lineno - owner.lineno + 1 == 209
-    assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
+    assert owner.end_lineno - owner.lineno + 1 == 705
+    assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 3
+    assert (
+        sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ModelIRGraphIndex"
+            for node in ast.walk(owner)
+        )
+        == 1
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"_build_tensor_consumer_map", "_build_tensor_producer_map"}
+        for node in ast.walk(owner)
+    )
+    assert (
+        sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "remove_operators"
+            for node in ast.walk(owner)
+        )
+        == 1
+    )
     assert len(calls) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="zero-match execution currently prunes unrelated tensors",
-)
 def test_elementwise_roundtrip_nchw_nhwc_does_not_prune_unmatched_graph() -> None:
     model_ir = _make_model_ir()
     model_ir.tensors["unrelated"] = TensorIR(
@@ -574,10 +605,6 @@ def test_elementwise_roundtrip_nchw_nhwc_does_not_prune_unmatched_graph() -> Non
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="transpose permutation inputs do not yet have an immutable constant contract",
-)
 @pytest.mark.parametrize("role", ["pre", "post"])
 @pytest.mark.parametrize(
     "condition",
@@ -628,26 +655,29 @@ def test_elementwise_roundtrip_nchw_nhwc_rejects_unsafe_permutation_constant(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NHWC broadcast constants are not yet remapped to NCHW",
-)
 @pytest.mark.parametrize(
-    "bias_data",
+    "bias_data,expected_shape",
     [
-        pytest.param(np.arange(3, dtype=np.float32) + 0.5, id="channel-vector"),
+        pytest.param(
+            np.arange(3, dtype=np.float32) + 0.5,
+            [1, 3, 1, 1],
+            id="channel-vector",
+        ),
         pytest.param(
             np.arange(3, dtype=np.float32).reshape(1, 1, 1, 3) + 0.5,
+            [1, 3, 1, 1],
             id="rank-four-channel",
         ),
         pytest.param(
             np.arange(192, dtype=np.float32).reshape(1, 8, 8, 3) / 128.0 + 0.5,
+            [1, 3, 8, 8],
             id="full-rank-four",
         ),
     ],
 )
 def test_elementwise_roundtrip_nchw_nhwc_remaps_local_broadcast_constant(
     bias_data: np.ndarray,
+    expected_shape: list[int],
 ) -> None:
     model_ir = _make_model_ir()
     bias = model_ir.tensors["bias"]
@@ -666,12 +696,10 @@ def test_elementwise_roundtrip_nchw_nhwc_remaps_local_broadcast_constant(
 
     assert stats == _STATS
     assert np.array_equal(actual["final"], expected["final"])
+    assert model_ir.tensors["bias"].shape == expected_shape
+    assert list(np.asarray(model_ir.tensors["bias"].data).shape) == expected_shape
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="shared NHWC constants are not yet cloned before NCHW remapping",
-)
 def test_elementwise_roundtrip_nchw_nhwc_clones_shared_broadcast_constant() -> None:
     model_ir = _make_model_ir()
     bias_data = np.arange(3, dtype=np.float32).reshape(1, 1, 1, 3) + 0.5
@@ -709,12 +737,14 @@ def test_elementwise_roundtrip_nchw_nhwc_clones_shared_broadcast_constant() -> N
     assert np.array_equal(actual["final"], expected["final"])
     assert np.array_equal(actual["shared_out"], expected["shared_out"])
     assert np.array_equal(model_ir.tensors["bias"].data, bias_data)
+    rewritten_add = next(
+        op for op in model_ir.operators if list(op.outputs) == ["sum_nhwc"]
+    )
+    assert rewritten_add.inputs == ["x_nchw", "bias__nchw"]
+    assert model_ir.tensors["bias__nchw"].shape == [1, 3, 1, 1]
+    assert model_ir.tensors["bias__nchw"].onnx_tensor_name == "onnx::bias"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout metadata is not yet changed from NHWC to NCHW",
-)
 def test_elementwise_roundtrip_nchw_nhwc_remaps_layout_metadata() -> None:
     model_ir = _make_model_ir()
     for name in ("x_nchw", "y_nchw", "root_nchw", "final"):
@@ -732,10 +762,6 @@ def test_elementwise_roundtrip_nchw_nhwc_remaps_layout_metadata() -> None:
         assert model_ir.tensors[name].physical_layout == "NCHW"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="per-axis quantized dimensions are not yet remapped from NHWC to NCHW",
-)
 def test_elementwise_roundtrip_nchw_nhwc_remaps_per_axis_quantization() -> None:
     model_ir = _make_model_ir()
     for name in ("sum_nhwc", "root_nhwc"):
@@ -752,10 +778,45 @@ def test_elementwise_roundtrip_nchw_nhwc_remaps_per_axis_quantization() -> None:
     assert model_ir.tensors["root_nchw"].quantization.quantized_dimension == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="candidate topology and metadata are not yet fully preflighted",
-)
+def test_elementwise_roundtrip_nchw_nhwc_remaps_constant_per_axis_quantization() -> (
+    None
+):
+    model_ir = _make_model_ir()
+    bias = model_ir.tensors["bias"]
+    bias.data = np.asarray([0.5, 1.0, 1.5], dtype=np.float32)
+    bias.shape = [3]
+    bias.shape_signature = [3]
+    bias.quantization = QuantParamIR(
+        scale=[0.1, 0.2, 0.3],
+        zero_point=[0, 0, 0],
+        quantized_dimension=0,
+    )
+
+    stats = _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
+
+    assert stats == _STATS
+    assert bias.shape == [1, 3, 1, 1]
+    assert bias.quantization.quantized_dimension == 1
+
+
+@pytest.mark.parametrize("condition", ["variable", "metadata-mismatch"])
+def test_elementwise_roundtrip_nchw_nhwc_rejects_unsafe_feature_constant(
+    condition: str,
+) -> None:
+    model_ir = _make_model_ir()
+    bias = model_ir.tensors["bias"]
+    bias.data = np.asarray([0.5, 1.0, 1.5], dtype=np.float32)
+    bias.shape = [3]
+    bias.shape_signature = [3]
+    if condition == "variable":
+        bias.is_variable = True
+    else:
+        bias.shape = [1, 1, 1, 3]
+        bias.shape_signature = [1, 1, 1, 3]
+
+    _assert_transactional_rejection(model_ir)
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
