@@ -9930,3 +9930,19 @@ non-mutating iteration count. Strict expected-failure contracts require one
 dedicated runner to preserve branch/order/context, return only mutation counts
 plus net pruning, and let the lowerer reconcile only after a positive aggregate.
 Production remains unchanged at this characterization checkpoint.
+
+`run_late_binary_layout_recovery()` now owns that complete sequence in the
+original order. The optional PReLU-BMM and generic layout cleanup owners remain
+controlled by one `include_layout_transpose` flag, while the runner forwards
+the shared LayoutState and diagnostics to the owners that accept them. Its
+result contains the five owner rewrite counters, the four generic-layout
+mutation counters, and `pruned_unused_tensors` from the net tensor-table
+reduction. The non-mutating layout `iterations` field is deliberately omitted.
+
+The lowerer branch is consequently reduced to one runner assignment and one
+`_stats_have_positive_count()` guard. Static-shape reconciliation is skipped
+when the complete recovery sequence is stable and retained after any rewrite
+or zero-rewrite pruning. Dedicated runner tests fix owner order, optional-owner
+behavior, context forwarding, normalized counters, pruning, and the empty-model
+stable path. Architecture tests count calls at the new ownership boundary
+rather than assuming every owner is invoked directly from the lowerer.

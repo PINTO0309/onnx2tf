@@ -1451,7 +1451,7 @@ def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
     probe_name = "unused_final_prelu_probe"
     original_reconcile = lowering_module._reconcile_static_tensor_shapes
     reconcile_count = 0
-    prelu_invocations = 0
+    recovery_invocations = 0
 
     def counted_reconcile(model_ir, *args, **kwargs):
         nonlocal reconcile_count
@@ -1472,32 +1472,30 @@ def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
     )
 
     def run_with_outcome(outcome: str) -> int:
-        nonlocal reconcile_count, prelu_invocations
+        nonlocal reconcile_count, recovery_invocations
         reconcile_count = 0
-        prelu_invocations = 0
+        recovery_invocations = 0
 
         def pass_result(model_ir, *args, **kwargs):
-            nonlocal prelu_invocations
-            prelu_invocations += 1
-            is_final_invocation = prelu_invocations == 2
-            if is_final_invocation and outcome == "prune":
+            nonlocal recovery_invocations
+            recovery_invocations += 1
+            if outcome == "prune":
                 assert model_ir.tensors.pop(probe_name, None) is not None
             return {
-                counter_name: int(
-                    is_final_invocation and outcome == "rewrite"
-                )
+                counter_name: int(outcome == "rewrite"),
+                "pruned_unused_tensors": int(outcome == "prune"),
             }
 
         monkeypatch.setattr(
             lowering_module,
-            "_optimize_prelu_transpose_passthrough_chains",
+            "run_late_binary_layout_recovery",
             pass_result,
         )
         lower_onnx_to_ir(
             _add_onnx_model(),
             output_file_name=f"prelu_reconcile_{outcome}",
         )
-        assert prelu_invocations == 2
+        assert recovery_invocations == 1
         return reconcile_count
 
     unchanged_count = run_with_outcome("unchanged")
@@ -1938,13 +1936,6 @@ def test_dispatcher_records_onnx_provenance() -> None:
     assert model_ir.tensors["z"].onnx_tensor_name == "z"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the lowerer does not yet call the aggregate late binary-layout "
-        "recovery runner"
-    ),
-)
 def test_late_binary_layout_recovery_reconciles_only_after_mutation(
     monkeypatch,
 ) -> None:

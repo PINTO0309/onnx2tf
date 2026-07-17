@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -163,6 +161,29 @@ ORCHESTRATED_PASS_IDS = frozenset(
 
 def _orchestrated_pass_count(pass_id: str) -> int:
     return ORCHESTRATED_PASS_ID_SEQUENCE.count(str(pass_id))
+
+
+def _late_binary_layout_recovery_call_count(function_name: str) -> int:
+    runner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_binary_layout_recovery.py"
+    )
+    runner_tree = ast.parse(runner_path.read_text(encoding="utf-8"))
+    runner = next(
+        node
+        for node in runner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_binary_layout_recovery"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+        for node in ast.walk(runner)
+    )
 
 
 DEPENDENCY_SCOPED_ROOTS = [
@@ -5808,7 +5829,14 @@ def test_indexed_affine_prepost_layout_owner_preserves_canonical_output() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 7
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _late_binary_layout_recovery_call_count(
+            "optimize_transpose_mul_add_const_prepost_nhwc_chains"
+        )
+        == 7
+    )
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -12506,6 +12534,10 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert (
         len(calls)
         + sum(_orchestrated_pass_count(name) for name in runner_names)
+        + sum(
+            _late_binary_layout_recovery_call_count(name)
+            for name in runner_names
+        )
         == 120
     )
     for call in calls:
@@ -12702,6 +12734,9 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert (
         len(layout_transpose_calls)
         + _orchestrated_pass_count("run_layout_transpose_cleanup")
+        + _late_binary_layout_recovery_call_count(
+            "run_layout_transpose_cleanup"
+        )
         == 12
     )
 
@@ -15536,13 +15571,6 @@ def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
             assert layout_keyword.value.attr == "layout_state"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the conditional late binary-layout recovery sequence is still "
-        "expanded inline and reconciles unconditionally"
-    ),
-)
 def test_late_binary_layout_recovery_uses_one_aggregate_runner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -16042,7 +16070,14 @@ def test_indexed_prelu_passthrough_owner_is_bounded_and_transactional() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _late_binary_layout_recovery_call_count(
+            "optimize_prelu_transpose_passthrough_chains"
+        )
+        == 3
+    )
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -16611,7 +16646,10 @@ def test_dual_pre_add_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) == 0
+    assert (
+        _late_binary_layout_recovery_call_count(owner_name) == 1
+    )
 
 
 def test_terminal_affine_fc_optimizer_has_one_module_owner() -> None:
@@ -16666,7 +16704,10 @@ def test_terminal_affine_fc_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) == 0
+    assert (
+        _late_binary_layout_recovery_call_count(owner_name) == 1
+    )
 
 
 def test_terminal_prelu_bmm_optimizer_has_one_module_owner() -> None:
@@ -16723,7 +16764,10 @@ def test_terminal_prelu_bmm_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) == 0
+    assert (
+        _late_binary_layout_recovery_call_count(owner_name) == 1
+    )
 
 
 def test_residual_affine_prelu_optimizer_has_one_module_owner() -> None:

@@ -171,6 +171,9 @@ from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     run_layout_recovery_prefix,
     run_layout_reshape_attention_recovery_prefix,
 )
+from onnx2tf.tflite_builder.passes.late_binary_layout_recovery import (
+    run_late_binary_layout_recovery,
+)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     AttentionRecoveryContext,
     run_attention_gate_qdq_recovery,
@@ -5141,30 +5144,14 @@ def lower_onnx_to_ir(
     ):
         _reconcile_static_tensor_shapes(model_ir)
     if optimize_layout_transpose_chains or apply_safe_transpose_reduction_lite_on_no_layout_opt:
-        # Late binary-layout repairs can recreate PRELU bridge wrappers.
-        # Run PRELU transpose passthrough once more before final safety checks,
-        # including the safe-reduction fallback relowering path.
-        _optimize_prelu_transpose_passthrough_chains(
+        late_binary_layout_recovery_stats = run_late_binary_layout_recovery(
             model_ir,
+            include_layout_transpose=optimize_layout_transpose_chains,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
-        _optimize_transpose_dual_pre_add_to_single_post_adapter_nhwc_chains(model_ir)
-        _optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains(model_ir)
-        if optimize_layout_transpose_chains:
-            _optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains(model_ir)
-        # PRELU rewrite can recreate strict TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE
-        # bridges on legacy branches. Fold them again in this final stage.
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        if optimize_layout_transpose_chains:
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-            )
-        _reconcile_static_tensor_shapes(model_ir)
+        if _stats_have_positive_count(late_binary_layout_recovery_stats):
+            _reconcile_static_tensor_shapes(model_ir)
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(

@@ -873,3 +873,33 @@ tensor-count reduction. Replace the inline lowerer sequence with one runner
 assignment and one aggregate guard. Validate the runner, every affected owner,
 core, architecture, pass-efficiency, and TensorFlow-import-blocked suites
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Late binary-layout recovery runner implementation checkpoint
+
+The new TensorFlow-independent `run_late_binary_layout_recovery()` pass module
+now owns the full late recovery cluster. It preserves the existing PReLU,
+dual-pre-Add, terminal affine-FC, optional PReLU-BMM, affine pre/post, and
+optional generic-layout order. LayoutState and diagnostics cross the new
+boundary explicitly, and optional owners return stable zero counters when they
+are disabled.
+
+The runner exposes only mutation evidence: five owner rewrite counters, four
+generic-layout mutation counters, and `pruned_unused_tensors` calculated from
+net tensor-table reduction. It filters generic layout cleanup's non-mutating
+`iterations` count. The lowerer retains the original outer condition but now
+contains only the runner call and an aggregate mutation guard, so reconciliation
+is skipped on a fully stable sequence and preserved after a rewrite or
+prune-only mutation.
+
+Dedicated runner and lowerer-wiring coverage initially passed as `5 passed in
+2.16s`. The seven legacy tests that encoded direct-lowerer call ownership were
+updated to recognize the new runner boundary and passed as `7 passed in
+2.43s`. The complete sequential related suite covering all six owners, layout
+cleanup, core, pass efficiency, architecture, and TensorFlow import blocking is
+`523 passed in 26.93s`.
+
+At resume, inventory the next local lowerer phase boundary before changing
+production. Prefer a bounded sequence whose complete mutation interval is
+represented by returned counters or explicit prune accounting; characterize
+that boundary first. Commit and push coherent units only. Do not create or
+update a pull request.
