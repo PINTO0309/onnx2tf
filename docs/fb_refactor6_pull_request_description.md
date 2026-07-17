@@ -2349,3 +2349,13 @@ all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
 dependency, scope-allocation semantics, runtime order, parent boundary, or
 TensorFlow isolation changed. PR #952 remains closed, and no pull request was
 created, reopened, or updated.
+
+The very-late gather/constant/normalization parent is now characterized without
+production changes. Four focused tests freeze its one fresh shared pass-state
+scope, four effective owner steps, complete ModelIR/layout/diagnostics routing,
+fixed `include_instance=False` and `include_flatten=True` policy, sole zero-
+argument terminal call, and both outer boundaries. The focused plus
+architecture suite passed 252 tests, the 30 pass-efficiency tests and all 11
+TensorFlow-import-blocked tests passed, and targeted static checks passed.
+Runtime behavior and all public/dependency contracts remain unchanged. PR #952
+remains closed, and no pull request was created, reopened, or updated.

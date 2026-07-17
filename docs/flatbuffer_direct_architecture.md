@@ -9314,3 +9314,13 @@ internal boundaries, and the central lowerer no longer imports either runner.
 The efficiency fixture now exercises the explicit external-scope phase and
 retains one graph-index build. Focused, architecture, pass-efficiency, core,
 and TensorFlow-import-blocked suites pass.
+
+The very-late gather/constant/normalization parent is now characterized without
+production changes. One fresh pass-state scope spans transpose-gather cleanup,
+the explicit constant-fold/cast pair, and fixed-policy normalization cleanup.
+Its three phase calls expand to four effective owner steps, all sharing the
+same ModelIR/layout/diagnostics/scope. Focused contracts freeze the flattened
+order, `include_instance=False`, `include_flatten=True`, the sole terminal
+call, and both outer boundaries. The eventual phase should compose the existing
+constant-fold/cast builder with the parent scope and expose all four effective
+owner IDs without duplicating the middle pair's argument construction.

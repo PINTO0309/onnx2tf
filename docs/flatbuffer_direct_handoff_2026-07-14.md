@@ -14749,3 +14749,45 @@ parent. Freeze its four effective owner steps, fixed normalization policy,
 shared external scope, sole call, and outer terminal boundaries before
 production changes. Validate sequentially, keep real-model conversion minimal,
 commit and push only, and do not create a pull request.
+
+## Very-late gather/constant/normalization orchestration characterization: completed state
+
+The 22-line `_run_very_late_gather_constant_normalization_pass_cluster`
+remains unchanged in production. It creates one fresh
+`ModelIRPassStateScope`, runs transpose-gather-axis cleanup, passes the same
+scope into the explicit constant-fold/redundant-cast helper, and finishes with
+normalization-pad cleanup using fixed `include_instance=False` and
+`include_flatten=True` policy.
+
+The three direct phase calls expand to four effective cleanup owners in this
+order: transpose-gather axis, constant-input fold, redundant cast, and
+normalization pad. Every owner receives the same ModelIR, layout, diagnostics,
+and scope. The helper has one zero-argument terminal call after the final
+transpose/mul/post-transpose/add recovery and before dynamic reshape shape
+resolution.
+
+Sequential validation completed as follows:
+
+- focused very-late characterization: `4 passed in 0.57s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.25s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.32s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, fixed normalization policy, terminal
+boundaries, shared-scope behavior, and TensorFlow isolation are unchanged. PR
+#952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and four
+stable effective owner IDs. Create one fresh scope, build the transpose-gather
+and normalization invocations locally, and splice in
+`build_constant_fold_cast_invocations(..., state_scope=state_scope)` so the
+middle pair is not duplicated. Preserve the historical zero-argument helper,
+fixed normalization flags, sole caller, and outer terminal boundaries as a
+delegate. Validate sequentially, commit and push, and do not create a pull
+request.
