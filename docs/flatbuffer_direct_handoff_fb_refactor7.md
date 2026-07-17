@@ -1229,3 +1229,24 @@ late QKV cluster. Characterize raw results and zero-rewrite pruning before
 extending the staged terminal aggregate. Do not guard broad reconciliation
 until the full interval is accounted for. Commit and push only; do not create
 or update a pull request.
+
+## Terminal split/conv bridge evidence characterization checkpoint
+
+The indexed split/conv/concat bridge owner immediately preceding the terminal
+Hardswish-SE capture returns one rewrite counter and prunes unused tensors only
+when that counter is positive. Its bounded candidate/idempotence coverage and
+24 transactional unsafe-candidate fixtures establish that a zero result leaves
+ModelIR unchanged. The raw return is therefore complete mutation evidence.
+
+A strict expected-failure structural contract requires the terminal call to
+assign its unchanged result to `_terminal_split_conv_concat_bridge_stats` while
+preserving ModelIR and Session LayoutState arguments. The late QKV call and
+Hardswish-SE tensor-count assignment remain the exact neighboring boundaries.
+No reconciliation guard changes.
+
+At implementation, replace only the discarded expression with the staged
+assignment and update boundary-aware QKV and architecture tests. Validate the
+complete indexed owner suite and the adjacent QKV, Hardswish-SE,
+hard-activation, core, pass-efficiency, architecture, and TensorFlow import
+blocker sequentially. Commit and push only; do not create or update a pull
+request.

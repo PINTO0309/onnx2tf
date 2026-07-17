@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import copy
 import pickle
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -28,6 +30,10 @@ _N = 1
 _H = 3
 _W = 5
 _SPLIT_CHANNELS = 4
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
+    "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+)
 
 
 def _tensor(
@@ -725,3 +731,53 @@ def test_indexed_split_conv_concat_bridge_rejects_unsafe_candidate_transactional
     }
     assert _snapshot(model_ir) == before
     assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the terminal split/conv bridge result is still discarded",
+)
+def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence() -> None:
+    tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert [keyword.arg for keyword in invocation.value.keywords] == [
+        "layout_state"
+    ]
+
+    previous = lowerer.body[invocation_index - 1]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == "_run_qkv_attention_layout_pass_cluster"
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "terminal_hardswish_se_tensor_count"

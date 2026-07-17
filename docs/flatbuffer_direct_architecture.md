@@ -10111,3 +10111,11 @@ plus the clamped net tensor reduction. This captures zero-rewrite pruning
 without changing owner semantics. The staged dictionary is not yet consumed by
 a reconciliation guard, and both neighboring boundaries remain in their
 original order.
+
+The immediately preceding indexed split/conv/concat bridge owner prunes only
+after a positive rewrite. Its single returned counter is therefore complete
+mutation evidence, unlike the Hardswish-SE owner. Strict characterization
+requires the terminal call to assign that unchanged result to staged
+`_terminal_split_conv_concat_bridge_stats` between the late QKV cluster and the
+Hardswish-SE tensor-count capture. Production remains unchanged in this
+checkpoint.
