@@ -3227,3 +3227,34 @@ Implementation validation completed sequentially under `uv`:
 At resume, audit the corresponding primary-path terminal layout-validation and
 indexed binary-convergence boundary. Commit and push only; do not create or
 update a pull request.
+
+## Primary terminal layout-validation characterization checkpoint
+
+The primary path currently computes `layout_problems` before indexed binary
+convergence, high-rank binary coalescing, dynamic-boundary signature
+realignment, and the final topological sort. The comment describes a terminal
+graph, but the actual validation result can precede all four later mutations.
+The same validator was already proven pure by the fallback checkpoint.
+
+A dedicated strict expected-failure orchestration contract requires validation
+immediately after the final sort. A non-empty result preserves the established
+`logical_layout_validation_errors` list schema; an empty result removes only a
+stale key. Finalization follows immediately. Progress advancement/spinner
+closure remain before indexed convergence and are not moved.
+
+At implementation, move only the pure validation/metadata block and add its
+empty-result removal. Do not change progress reporting, convergence,
+coalescing, signature realignment, sorting, finalization, dependencies, or the
+TensorFlow boundary. Validate sequentially, then commit and push only; do not
+create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal validation, indexed convergence, and high-rank binary owners:
+  `13 passed, 1 xfailed`
+- broad related gate plus rank-6 structure/numeric parity:
+  `543 passed, 1 xfailed in 27.93s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet primary terminal-validation
+contract; there are no unexpected failures.
