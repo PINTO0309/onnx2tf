@@ -1275,3 +1275,26 @@ At resume, characterize the late QKV cluster's ordered results and prune
 behavior. Preserve `include_prefix=False`, the optional generic-layout policy,
 and all three production forms. Commit and push only; do not create or update a
 pull request.
+
+## Late QKV mutation evidence characterization checkpoint
+
+The QKV orchestration owner serves three production policies: required prefix
+plus bridge, bridge only, and optional generic layout plus bridge. The terminal
+form uses `include_prefix=False`. Its generic layout and required bridge owners
+both may prune on zero rewrites, and generic layout also returns non-mutating
+`iterations`, so raw counters alone are insufficient.
+
+Strict expected-failure coverage requires the runner and private delegate to
+return the ordered one- or two-result tuple for all three policies. A pure
+summary must validate tuple length and emit a stable schema of four layout,
+four prefix, two bridge, and one net-prune counter, with inactive-family zeros
+and no `iterations`. The terminal production form must capture starting tensor
+count, raw results, and normalized `_late_qkv_stats` between shape-extract and
+the staged split/conv bridge. No reconciliation guard changes.
+
+At implementation, preserve all invocation defaults and orders, return raw
+results through both layers, add the fixed pure summary, and stage only the
+terminal call. Validate all policies, malformed lengths, summary filtering,
+net pruning, shared pass state, boundary structure, core, pass efficiency,
+architecture, and TensorFlow import blocking sequentially. Commit and push
+only; do not create or update a pull request.

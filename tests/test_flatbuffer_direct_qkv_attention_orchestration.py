@@ -239,6 +239,179 @@ def test_qkv_attention_runner_preserves_all_production_orders(
     assert events == list(expected_ids)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the QKV runner still discards ordered mutation results",
+)
+@pytest.mark.parametrize(
+    ("include_layout_transpose", "include_prefix", "expected_ids"),
+    PRODUCTION_FORMS,
+)
+def test_qkv_attention_returns_and_summarizes_all_production_forms(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+    include_prefix: bool,
+    expected_ids: tuple[str, ...],
+) -> None:
+    context = _context()
+    layout_result = {
+        "iterations": 9,
+        "removed_identity_transpose": 1,
+        "removed_inverse_transpose_pairs": 2,
+        "removed_inverse_transpose_fanout_branches": 3,
+        "composed_consecutive_transpose_pairs": 4,
+    }
+    prefix_result = {
+        "optimized_attention_qkv_gather_reshape_transpose_hoist_chains": 5,
+        "optimized_attention_qkv_slice_replace_gather_reshape_chains": 6,
+        "optimized_attention_qkv_slice_to_split_chains": 7,
+        "optimized_attention_split_post_reshape_collapse_chains": 8,
+    }
+    bridge_result = {
+        "optimized_attention_qkv_shared_pretranspose_slice_nchw_chains": 10,
+        "optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains": 11,
+    }
+    expected_results = (
+        *((layout_result,) if include_layout_transpose else ()),
+        *((prefix_result,) if include_prefix else ()),
+        bridge_result,
+    )
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(invocation.pass_id for invocation in invocations) == expected_ids
+        assert tuple(expected_pass_ids) == expected_ids
+        assert phase_name == "QKV attention"
+        return expected_results
+
+    monkeypatch.setattr(
+        qkv_attention_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    results = run_qkv_attention(
+        context,
+        include_layout_transpose=include_layout_transpose,
+        include_prefix=include_prefix,
+    )
+    summarize = getattr(
+        qkv_attention_orchestration,
+        "summarize_qkv_attention_mutations",
+    )
+    summary = summarize(
+        results,
+        include_layout_transpose=include_layout_transpose,
+        include_prefix=include_prefix,
+        pruned_unused_tensors=12,
+    )
+
+    assert results == expected_results
+    assert summary == {
+        "removed_identity_transpose": 1 if include_layout_transpose else 0,
+        "removed_inverse_transpose_pairs": 2 if include_layout_transpose else 0,
+        "removed_inverse_transpose_fanout_branches": (
+            3 if include_layout_transpose else 0
+        ),
+        "composed_consecutive_transpose_pairs": (
+            4 if include_layout_transpose else 0
+        ),
+        "optimized_attention_qkv_gather_reshape_transpose_hoist_chains": (
+            5 if include_prefix else 0
+        ),
+        "optimized_attention_qkv_slice_replace_gather_reshape_chains": (
+            6 if include_prefix else 0
+        ),
+        "optimized_attention_qkv_slice_to_split_chains": (
+            7 if include_prefix else 0
+        ),
+        "optimized_attention_split_post_reshape_collapse_chains": (
+            8 if include_prefix else 0
+        ),
+        "optimized_attention_qkv_shared_pretranspose_slice_nchw_chains": 10,
+        "optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains": 11,
+        "pruned_unused_tensors": 12,
+    }
+    assert "iterations" not in summary
+    with pytest.raises(
+        ValueError,
+        match=r"QKV attention mutation summary expected [12] pass results",
+    ):
+        summarize(
+            (),
+            include_layout_transpose=include_layout_transpose,
+            include_prefix=include_prefix,
+            pruned_unused_tensors=0,
+        )
+
+    _, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the lowerer does not capture terminal QKV mutation evidence",
+)
+def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = (
+        "late_qkv_tensor_count",
+        "late_qkv_results",
+        "_late_qkv_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+        target_names[2]: first_index + 2,
+    }
+    result_call = assignments[target_names[1]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == QKV_ATTENTION
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in result_call.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
+        "include_prefix": False,
+    }
+    summary_call = assignments[target_names[2]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == "summarize_qkv_attention_mutations"
+    assert {keyword.arg for keyword in summary_call.keywords} == {
+        "include_layout_transpose",
+        "include_prefix",
+        "pruned_unused_tensors",
+    }
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert (
+        previous.value.func.id
+        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+    )
+    following = lowerer.body[first_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
+
+
 def test_qkv_attention_preserves_both_invocation_forms() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [

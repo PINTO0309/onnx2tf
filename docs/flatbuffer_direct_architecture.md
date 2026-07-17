@@ -10125,3 +10125,12 @@ The terminal invocation now assigns its unchanged owner result to
 remain expressions, making the staging specific to the interval being
 accounted. ModelIR and Session LayoutState forwarding and both neighboring
 boundaries are unchanged; no reconciliation consumes the staged counter yet.
+
+The late QKV cluster immediately before that owner has three production
+policies. The terminal policy excludes the prefix and optionally runs generic
+layout cleanup before the required bridge cleanup. Both active terminal owners
+can prune with zero rewrite counters, while generic layout also reports the
+non-mutating `iterations` metric. Strict characterization requires ordered raw
+result propagation and one fixed mutation schema containing four layout, four
+prefix, two bridge, and one net-prune counter. The terminal call must stage
+count/results/summary without changing the other two production forms.
