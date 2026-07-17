@@ -2362,6 +2362,11 @@ a stable Concat-axis shape result followed by stale-binary tensor-delta
 accounting and its stable shape result. Both rewrite-only guards, sorts, and
 the progress boundary remain fixed.
 
+The final SiNet Concat/Resize affine owner prunes and synchronizes layout state
+only after a successful transactional rewrite. Characterization requires its
+counter-complete primary guard to retain a stable complete shape result without
+changing the following high-rank BatchMatMul boundary.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

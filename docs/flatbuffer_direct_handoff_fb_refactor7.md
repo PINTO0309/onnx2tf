@@ -3606,3 +3606,35 @@ immediately before `final_high_rank_bmm_stats`, beginning with
 `final_sinet_concat_resize_stats`. Confirm each owner's counter and cleanup
 completeness before changing its caller. Commit and push only; do not create or
 update a pull request.
+
+## Primary final SiNet Concat/Resize characterization checkpoint
+
+`_optimize_sinet_concat_resize_affine_transpose_chains()` mutates only after a
+transactional plan revalidation succeeds. Its exact positive counter covers
+rewiring, metadata updates, removals, optional legacy adapter insertion,
+pruning, and layout-state sync. Preflight, unsafe/stale-plan, rewrite-cap, and
+second-run zero results are true no-ops. Existing indexed and numeric-parity
+coverage spans dtype, constant form, input order, Resize type, fan-out, and
+legacy behavior.
+
+A strict expected-failure primary-path contract requires a stable
+`_final_sinet_concat_resize_static_shape_stats` zero dictionary and assigns the
+opt-in complete reconciliation result under the unchanged positive guard. No
+sort is added, and the following `final_high_rank_bmm_stats` boundary remains
+fixed.
+
+At implementation, add only result plumbing. Do not change matching,
+transactional plan application, rewiring, metadata, pruning, layout sync, raw
+schema, guard, following owner, dependencies, or TensorFlow behavior. Validate
+sequentially, then commit and push only; do not create or update a pull
+request.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal orchestration and indexed SiNet Concat/Resize owner:
+  `65 passed, 1 xfailed`
+- expanded broad related gate: `632 passed, 1 xfailed in 28.51s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final SiNet Concat/Resize
+reconciliation contract; there are no unexpected failures.
