@@ -237,6 +237,11 @@ passed in 28.97s`. The complete counter and unchanged guard now retain the
 opt-in shape result without changing adapter insertion, rewiring, output
 metadata, sorting, or the following Concat-axis owner.
 
+Complete final Concat-axis and stale-binary evidence extends the gate to `574
+passed in 28.45s`. Concat-axis retains its complete guarded shape result, while
+stale-binary cleanup-only pruning is recorded explicitly without broadening
+its rewrite-only guard or moving the progress boundary.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -244,8 +249,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next
-characterized unit should continue the primary final-pass reconciliation
-inventory with `final_concat_axis_stats`. The fallback checkpoint already
-proves its raw counter is complete, but the primary guarded result still needs
-characterization. Any new mutation evidence must preserve current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+characterized unit should continue the remaining primary final-pass
+reconciliation inventory immediately before `final_high_rank_bmm_stats`,
+starting with `final_sinet_concat_resize_stats`. Any new mutation evidence must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

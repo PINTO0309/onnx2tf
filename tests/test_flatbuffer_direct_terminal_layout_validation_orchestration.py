@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -426,10 +423,6 @@ def test_primary_path_stages_final_mixed_concat_reconciliation() -> None:
     assert following.targets[0].id == "final_concat_axis_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final Concat-axis/binary evidence is incomplete",
-)
 def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> None:
     body = _lowerer_body()
     axis_index = next(

@@ -6024,25 +6024,48 @@ def lower_onnx_to_ir(
         )
         _topologically_sort_operators(model_ir)
     final_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+    _final_concat_axis_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_concat_axis_stats.get(
             "repaired_nchw_concat_transpose_conv_axes",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_concat_axis_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
         _topologically_sort_operators(model_ir)
-    final_binary_layout_stats = (
-        _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
-    )
+    final_binary_layout_tensor_count = len(model_ir.tensors)
+    final_binary_layout_stats = {
+        **_repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir),
+        "pruned_unused_tensors": max(
+            0,
+            final_binary_layout_tensor_count - len(model_ir.tensors),
+        ),
+    }
+    _final_binary_layout_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_binary_layout_stats.get(
             "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
             0,
         )
-        ) > 0:
-            _reconcile_static_tensor_shapes(model_ir)
-            _topologically_sort_operators(model_ir)
+    ) > 0:
+        _final_binary_layout_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
+        _topologically_sort_operators(model_ir)
     _advance_post_progress()
     if post_progress_bar is not None:
         post_progress_spinner.stop()

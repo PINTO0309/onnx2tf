@@ -3580,3 +3580,29 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet complete final Concat-axis and
 binary evidence contract; there are no unexpected failures.
+
+## Primary final Concat-axis/binary evidence implementation checkpoint
+
+The primary path now initializes `_final_concat_axis_static_shape_stats` with
+both stable zero keys and stores the opt-in complete result under the unchanged
+positive axis guard. It then snapshots the tensor count, merges a clamped
+`pruned_unused_tensors` delta into `final_binary_layout_stats`, initializes
+`_final_binary_layout_static_shape_stats`, and stores the opt-in complete result
+under the unchanged positive binary guard.
+
+Cleanup-only stale-binary evidence does not trigger reconciliation. Both
+owners, matching, rewiring, metadata, pruning, raw schemas, guards, guarded
+sorts, progress boundary, dependencies, and TensorFlow-free behavior are
+unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal/Concat-axis/binary owner gate: `38 passed`
+- expanded broad related gate: `574 passed in 28.45s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, continue the remaining primary final-pass reconciliation inventory
+immediately before `final_high_rank_bmm_stats`, beginning with
+`final_sinet_concat_resize_stats`. Confirm each owner's counter and cleanup
+completeness before changing its caller. Commit and push only; do not create or
+update a pull request.
