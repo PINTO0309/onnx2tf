@@ -8636,6 +8636,40 @@ setters, removals, pruning, and statistics must be known before commit; a
 zero-match call must remain a complete no-op. The 293-line count is descriptive
 only; 2,000 remains the ONNX operation-count tier threshold.
 
+That correction is now implemented in the 740-line raw owner. One
+`ModelIRGraphIndex` replaces every repeated consumer reconstruction and stays
+current through indexed input replacement and batched/single operator removal.
+Two matches of each pattern construct and refresh it exactly once.
+
+Both patterns now prove unique producers, source-before-consumer order, exact
+private intermediate consumers, valid public boundaries, complete positive
+physical shapes, full compatible signatures, data-preserving dtypes, and
+scalar axis-zero Gather semantics before mutation. Pattern B additionally
+proves the exact two singleton-axis removals, input/Reshape boundary layout and
+quantization equivalence, and ordered downstream consumers before replacing
+all uses. Pattern A proves the exact rank-four/rank-three shape algebra,
+permutation options, target Reshape, and retained output before rank-lifting the
+Transpose. Dynamic signature axes are permuted rather than concretized;
+rank-three NCW/NWC annotations lift to NCHW/NHWC, and per-axis QDIM shifts by
+one with the inserted leading singleton dimension.
+
+Every index, permutation, and target-shape tensor now has an explicit immutable
+unquantized INT32 TensorIR and NumPy-buffer contract. Scalar indices accept the
+ONNX scalar `[]` and normalized singleton `[1]` representations but reject
+multi-element zeros. Public inputs, variables, runtime producers, wrong
+TensorIR or buffer dtypes, and quantized constants reject atomically. A changed
+private permutation updates once; an unrelated consumer or public output
+receives a deterministic collision-safe clone preserving layout and ONNX
+provenance. Constant action, option values, metadata/QDIM, input replacement,
+removals, and pruning are complete before the first mutation.
+
+All forty-six former strict xfails are green. The scalar-index and single-index
+construction contracts bring focused coverage to eighty-one cases. A no-match
+call is a complete no-op; valid statistics, NumPy-exact outputs, negative axes,
+multiple matches, fixed point, collision naming, public Pattern-A Reshape
+outputs, and both production calls remain unchanged. The 740-line count is
+descriptive only; 2,000 remains the ONNX operation-count tier threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

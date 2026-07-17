@@ -1759,4 +1759,12 @@ QDIM loss, incomplete Pattern-B equivalence checks, missing metadata, and
 invalid topology. Resume by building one indexed topology/metadata/constant/
 quantization/removal plan before mutation and turning all 46 xfails green
 without changing valid behavior or either production call. Do not create a
-pull request.
+pull request. That transactional correction is now complete in the 740-line
+raw owner. One differential `ModelIRGraphIndex`, strict Pattern-A/Pattern-B
+topology and metadata preflight, immutable scalar-index/permutation/shape
+constant contracts, provenance-preserving public/shared permutation clones,
+dynamic-signature rank lifting, QDIM remapping, and indexed removals turn all
+46 former xfails green. Focused coverage now has 81 green cases, including
+single-index reuse and ONNX scalar index representations, while both production
+calls remain unchanged. Resume by mechanically extracting the corrected owner
+with exact AST and owner/wrapper equality; do not create a pull request.

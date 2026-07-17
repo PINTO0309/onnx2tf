@@ -12323,3 +12323,56 @@ exact Pattern-B metadata equivalence, and precompute every setter, removal, and
 prune decision before mutation. Turn all 46 strict xfails green while
 preserving valid behavior, statistics, fixed point, and both production calls.
 Validate sequentially, commit and push, and do not create a pull request.
+
+## Attention Gather cleanup transactional correction: completed state
+
+All forty-six former strict xfails are green. The corrected raw owner is 740
+lines and constructs one `ModelIRGraphIndex`; mixed two-Pattern-A/two-Pattern-B
+fixed-point execution refreshes it exactly once. Indexed replacements and
+batched/single removals replace every repeated full consumer scan.
+
+Before mutation, each candidate proves unique producers, strict graph order,
+exact private intermediate consumers, complete positive physical shapes and
+full compatible signatures, data-preserving dtypes, scalar zero-index Gather
+semantics, and valid public boundaries. Pattern B proves exact singleton-axis
+shape reduction and source/Reshape layout plus quantization equivalence before
+bypassing the chain. Pattern A proves the complete rank-lift algebra, target
+Reshape, permutation options, and retained output metadata. Its dynamic axes
+remain dynamic, NCW/NWC layout annotations rank-lift to NCHW/NHWC, and retained
+per-axis QDIM advances by one.
+
+Index, permutation, and target-shape constants now require immutable,
+unquantized INT32 TensorIR and NumPy buffers with exact values and shapes.
+Public inputs, variables, runtime producers, wrong TensorIR/buffer dtypes, and
+quantized values reject. Scalar `[]` and normalized `[1]` index representations
+remain supported, while multi-element zeros reject. A private permutation
+updates once; unrelated consumers and public outputs receive deterministic
+collision-safe clones preserving layout and ONNX provenance. All actions are
+planned before commit, and zero-match execution no longer prunes.
+
+Validation completed sequentially as follows:
+
+- corrected focused contract: `81 passed in 0.59s`;
+- corrected focused contract plus ordered architecture suite:
+  `329 passed in 18.32s`;
+- corrected focused contract, six adjacent extracted bridge/collapse
+  contracts, and ordered architecture suite: `731 passed in 18.68s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.42s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly six pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is limited to fully proven candidates. Public API, CLI, artifacts, dependencies,
+corpus profiles, exclusions, operation tiers, both ordered runtime calls, and
+TensorFlow isolation are unchanged. The 740-line count is descriptive only;
+2,000 remains the ONNX operation-count tier threshold. PR #952 remains closed;
+no pull request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 740-line
+`_optimize_attention_gather_transpose_reshape_cleanup_chains` owner into a
+focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve both production calls. Prove corrected checkpoint/module
+AST identity and direct owner/wrapper equality for both patterns, dynamic and
+scalar metadata, multiple matches, constant ownership/cloning, quantization,
+pruning, rejection, topology, and atomicity cases. Validate sequentially,
+commit and push, and do not create a pull request.

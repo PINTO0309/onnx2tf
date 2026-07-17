@@ -9,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -589,10 +590,6 @@ def test_attention_gather_cleanup_pattern_b_preserves_rejections(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="no-match execution prunes tensors instead of remaining a no-op",
-)
 def test_attention_gather_cleanup_does_not_prune_unmatched_graph() -> None:
     model_ir = _model(pattern_a=1)
     _tensor(model_ir, "unused", [1])
@@ -611,10 +608,6 @@ _UNSAFE_CONSTANT_ROLES = [
 ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="matched constants lack an immutable ownership and type plan",
-)
 @pytest.mark.parametrize("role", _UNSAFE_CONSTANT_ROLES)
 @pytest.mark.parametrize(
     "condition",
@@ -657,10 +650,6 @@ def test_attention_gather_cleanup_rejects_unsafe_match_constant(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="public permutation outputs are mutated instead of cloned",
-)
 def test_attention_gather_cleanup_clones_public_permutation_output() -> None:
     model_ir = _model(pattern_a=1)
     original = np.asarray(model_ir.tensors["a0_perm"].data).copy()
@@ -674,10 +663,6 @@ def test_attention_gather_cleanup_clones_public_permutation_output() -> None:
     assert np.array_equal(model_ir.tensors["a0_perm"].data, original)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="shared permutation clones drop tensor provenance metadata",
-)
 def test_attention_gather_cleanup_preserves_shared_permutation_metadata() -> None:
     model_ir = _model(pattern_a=1)
     _append_identity_consumer(model_ir, "a0_perm", "perm_copy")
@@ -690,10 +675,6 @@ def test_attention_gather_cleanup_preserves_shared_permutation_metadata() -> Non
     assert clone.onnx_tensor_name == "onnx::a0_perm"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="multi-element zero indices are treated as scalar Gather indices",
-)
 @pytest.mark.parametrize("pattern", ["a", "b"])
 def test_attention_gather_cleanup_rejects_multi_element_index(
     pattern: str,
@@ -711,10 +692,6 @@ def test_attention_gather_cleanup_rejects_multi_element_index(
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Pattern A collapses dynamic signatures to concrete dimensions",
-)
 def test_attention_gather_cleanup_preserves_dynamic_signature() -> None:
     model_ir = _model(pattern_a=1)
     model_ir.tensors["a0_x"].shape_signature = [1, 2, -1, 4]
@@ -727,10 +704,6 @@ def test_attention_gather_cleanup_preserves_dynamic_signature() -> None:
     assert model_ir.tensors["a0_transpose"].shape_signature == [1, -1, 2, 4]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Pattern A does not remap per-axis quantized dimensions",
-)
 def test_attention_gather_cleanup_remaps_per_axis_quantization() -> None:
     model_ir = _model(pattern_a=1)
     model_ir.tensors["a0_transpose"].quantization = QuantParamIR(
@@ -747,10 +720,6 @@ def test_attention_gather_cleanup_remaps_per_axis_quantization() -> None:
     assert quantization.quantized_dimension == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Pattern B does not validate exact intermediate Gather shapes",
-)
 def test_attention_gather_cleanup_rejects_inconsistent_intermediate_shape() -> None:
     model_ir = _model(pattern_b=1)
     model_ir.tensors["b0_gather0"].shape = [1, 99, 8]
@@ -759,10 +728,6 @@ def test_attention_gather_cleanup_rejects_inconsistent_intermediate_shape() -> N
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Pattern B bypasses incompatible output quantization metadata",
-)
 def test_attention_gather_cleanup_rejects_quantization_mismatch() -> None:
     model_ir = _model(pattern_b=1)
     model_ir.tensors["b0_reshape"].quantization = QuantParamIR(
@@ -774,10 +739,6 @@ def test_attention_gather_cleanup_rejects_quantization_mismatch() -> None:
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="complete tensor metadata is not prevalidated transactionally",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -798,10 +759,6 @@ def test_attention_gather_cleanup_rejects_incomplete_metadata(case: str) -> None
     _assert_transactional_rejection(model_ir)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="duplicate producers, reverse order, and public aliases are accepted",
-)
 @pytest.mark.parametrize(
     "case",
     [
@@ -841,6 +798,46 @@ def test_attention_gather_cleanup_rejects_invalid_topology(case: str) -> None:
     _assert_transactional_rejection(model_ir)
 
 
+def test_attention_gather_cleanup_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(pattern_a=2, pattern_b=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
+
+    assert stats == {
+        "optimized_attention_gather_transpose_reshape_cleanup_pattern_a": 2,
+        "optimized_attention_gather_transpose_reshape_cleanup_pattern_b": 2,
+    }
+    assert refresh_count == 1
+
+
+def test_attention_gather_cleanup_accepts_scalar_index_representation() -> None:
+    model_ir = _model(pattern_a=1, pattern_b=1)
+    for name in ("a0_index", "b0_index0", "b0_index1"):
+        tensor = model_ir.tensors[name]
+        tensor.shape = []
+        tensor.shape_signature = []
+        tensor.data = np.asarray(0, dtype=np.int32)
+
+    stats = _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
+
+    assert stats == {
+        "optimized_attention_gather_transpose_reshape_cleanup_pattern_a": 1,
+        "optimized_attention_gather_transpose_reshape_cleanup_pattern_b": 1,
+    }
+    assert validate_model_ir_invariants(model_ir) == []
+
+
 def test_attention_gather_cleanup_keeps_raw_owner_and_calls() -> None:
     lowering_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     lowering_source = lowering_path.read_text(encoding="utf-8")
@@ -851,13 +848,16 @@ def test_attention_gather_cleanup_keeps_raw_owner_and_calls() -> None:
         if isinstance(node, ast.FunctionDef)
         and node.name == "_optimize_attention_gather_transpose_reshape_cleanup_chains"
     )
-    assert owner.end_lineno - owner.lineno + 1 == 293
+    assert owner.end_lineno - owner.lineno + 1 == 740
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
     owner_source = ast.get_source_segment(lowering_source, owner)
     assert owner_source is not None
     assert "Pattern A:" in owner_source
     assert "Pattern B:" in owner_source
-    assert "_build_tensor_consumer_map(model_ir)" in owner_source
+    assert "graph_index = ModelIRGraphIndex(model_ir)" in owner_source
+    assert "_build_tensor_consumer_map(model_ir)" not in owner_source
+    assert "graph_index.remove_operators(remove_indices)" in owner_source
+    assert "graph_index.remove_operator(int(gather_idx))" in owner_source
     assert "_prune_unused_tensors(model_ir)" in owner_source
 
     lowerer = next(
