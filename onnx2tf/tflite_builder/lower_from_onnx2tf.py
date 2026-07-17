@@ -5113,9 +5113,11 @@ def lower_onnx_to_ir(
             _reconcile_static_tensor_shapes(model_ir)
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _pre_terminal_affine_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _pre_terminal_affine_instancenorm_residual_mul_concat_stats = (
         _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(

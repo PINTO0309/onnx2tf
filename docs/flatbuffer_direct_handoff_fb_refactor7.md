@@ -1858,3 +1858,28 @@ residual/Mul/Concat, dual-statistics, terminal-affine, core, pass-efficiency,
 architecture, absolute-final normalization, and TensorFlow import-blocking
 suites sequentially. Commit and push only; do not create or update a pull
 request.
+
+## Pre-terminal affine InstanceNorm post-bias implementation checkpoint
+
+Only the third direct InstanceNorm post-transpose bias/add call now assigns its
+unchanged result to `_pre_terminal_affine_instancenorm_post_bias_stats`. The
+nested occurrence, first two direct calls, and absolute-final fourth direct call
+retain their existing forms.
+
+The counter is complete because pruning remains positive-only. The result is
+not consumed by reconciliation, and the following staged residual/Mul/Concat,
+dual-statistics, and first terminal-affine owners retain their exact order.
+
+Focused post-bias, residual/Mul/Concat, dual-statistics, terminal-affine,
+absolute-final, and architecture coverage is `399 passed in 1.88s`. The
+sequential InstanceNorm owner, absolute-final, pre-ADD, channel-slice, pad,
+terminal-slice, callback, affine, bridge, SPP, QKV, hard-activation, SINet,
+late-layout, shared-context, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gate is `1195 passed in 29.59s`. Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At resume, audit the preceding `late_binary_layout_recovery_stats` interval.
+Confirm that its existing mutation counter and conditional reconciliation form
+a complete boundary for this newly staged terminal chain. If it does, move to
+the absolute-final fourth post-bias call rather than duplicating already staged
+evidence. Commit and push only; do not create or update a pull request.

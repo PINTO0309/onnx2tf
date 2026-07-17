@@ -10298,3 +10298,8 @@ because pruning is positive-only. Strict characterization selects the third
 direct call, immediately before the staged residual/Mul/Concat result, for
 `_pre_terminal_affine_instancenorm_post_bias_stats`; the absolute-final fourth
 direct call remains an expression.
+
+That third direct call now assigns its unchanged result to the staged target.
+The absolute-final fourth call and all earlier occurrences remain unchanged.
+The staged counter is observation-only, and no tensor-count proxy is required
+because pruning remains positive-only.
