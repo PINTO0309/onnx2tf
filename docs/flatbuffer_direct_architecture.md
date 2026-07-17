@@ -9749,3 +9749,11 @@ ignore that tuple. The SE/FC/Gather runner narrows and forwards its two result
 dictionaries, and the lowerer's private wrapper returns them without changing
 context construction or shared state scope. The complete orchestration corpus
 confirms that result propagation is additive to existing behavior.
+
+The remaining main and fallback SINet/SE-FC/Gather reconciliation boundaries
+are now characterized together. Each boundary must record the tensor count,
+retain the SINet shuffle result, unpack the two ordered cluster results, and
+reconcile after any of the three exact rewrite counters or a tensor-count
+decrease caused by zero-rewrite pruning. A strict structural expectation covers
+both ModelIR targets and preserves the four-statement owner order. Production
+remains unconditional at this checkpoint.

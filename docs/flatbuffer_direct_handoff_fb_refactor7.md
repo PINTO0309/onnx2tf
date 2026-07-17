@@ -389,3 +389,23 @@ one combined ownership boundary: SINet shuffle result, both ordered cluster
 results, and tensor-count reduction for zero-rewrite pruning. Do not change the
 two call sites until both boundary forms have strict structural and lowerer
 wiring coverage. Commit and push only; do not create or update a pull request.
+
+## Terminal SE/FC/Gather reconciliation characterization checkpoint
+
+The main ModelIR and fallback ModelIR have the same terminal boundary: the
+SINet shuffle residual owner, the two-runner SE/FC/Gather cluster, then an
+unconditional static-shape reconciliation. The SINet owner and both runner
+results expose exact rewrite counters, while the two runner implementations may
+also prune unused tensors on a zero rewrite count.
+
+A strict expected-failure structural contract now covers both targets. It
+requires each boundary to record the tensor count, assign the SINet result,
+unpack both ordered cluster results, and guard the immediate reconciliation by
+the three exact counters or a tensor-count decrease. Production is unchanged.
+
+At implementation, preserve the same owner order, target LayoutState forms,
+diagnostics, and fallback/main separation. Add lowerer-level unchanged,
+per-counter, and prune-only wiring coverage before running the complete SINet
+shuffle, SE layout, orchestration, core, architecture, pass-efficiency, and
+TensorFlow-import-blocked gates sequentially. Commit and push only; do not
+create or update a pull request.
