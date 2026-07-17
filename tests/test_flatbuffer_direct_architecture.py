@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -8396,6 +8398,58 @@ def test_mixed_singleton_concat_repair_has_indexed_owner() -> None:
     assert "_set_operator_inputs" in owner_calls
     assert "_apply_plan" in owner_calls
     assert "sync_from_model_ir" in owner_calls
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the absolute-final mixed-singleton Concat owner reconciles shapes "
+        "even when its complete mutation counter is zero"
+    ),
+)
+def test_absolute_final_mixed_singleton_concat_reconciles_only_after_change() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    owner_name = "_repair_mixed_singleton_nchw_inputs_for_nhwc_concat"
+    counter_name = "repaired_mixed_singleton_nchw_inputs_for_nhwc_concat"
+    assignment_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == owner_name
+    )
+
+    guard = lowerer.body[assignment_index + 1]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert len(get_calls) == 1
+    assert isinstance(get_calls[0].args[0], ast.Constant)
+    assert get_calls[0].args[0].value == counter_name
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert len(reconcile.value.args) == 1
+    assert isinstance(reconcile.value.args[0], ast.Name)
+    assert reconcile.value.args[0].id == "model_ir"
 
 
 def test_window_partition_rewrite_has_indexed_owner() -> None:

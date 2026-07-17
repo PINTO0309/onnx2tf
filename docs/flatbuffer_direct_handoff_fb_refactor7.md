@@ -221,3 +221,27 @@ and TensorFlow-import-blocked optional-boundary suites: `52 passed`. Focused
 Ruff, Python compilation, and whitespace checks also pass. Continue with the
 remaining unconditional static-shape reconciliation inventory; commit and push
 only, with no pull request.
+
+## Mixed-singleton Concat reconciliation characterization checkpoint
+
+The first safe candidate in the remaining terminal inventory is
+`_repair_mixed_singleton_nchw_inputs_for_nhwc_concat()`. Its indexed owner
+returns one exact mutation counter and performs no mutation when that counter is
+zero. Existing tests cover positive rewrites, complete no-op preservation,
+maintained GraphIndex/LayoutState, fan-out, name allocation, and the fast path
+without a Concat. The immediately following shape reconciliation is still
+unconditional in production.
+
+A strict expected-failure architecture contract now requires that exact call to
+be assigned and its immediate reconciliation to be guarded by
+`repaired_mixed_singleton_nchw_inputs_for_nhwc_concat > 0`. This checkpoint does
+not change production. Do not apply the same assumption to the nearby PReLU
+owner, which intentionally prunes unused tensors even when its rewrite count is
+zero, or to the SE/FC/Gather cluster, whose wrapper currently returns no
+aggregate mutation result.
+
+At implementation, change only this one call site, add lowerer-level zero/one
+counter wiring coverage, and preserve its order and Session LayoutState. Run the
+complete mixed-singleton owner, core, architecture, pass-efficiency, and
+TensorFlow-import-blocked gates sequentially. Commit and push only; do not
+create or update a pull request.

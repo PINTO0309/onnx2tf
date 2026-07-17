@@ -9679,3 +9679,15 @@ any one counter adds exactly one reconciliation relative to the all-zero path,
 and the complete owner suites retain their positive/no-op/idempotence behavior.
 The common non-SINet path therefore avoids six full reconciliation scans without
 changing any rewrite or cross-owner ordering.
+
+The next terminal reconciliation candidate is the indexed mixed-singleton
+NCHW-input repair for an NHWC Concat. Its owner returns the single complete
+`repaired_mixed_singleton_nchw_inputs_for_nhwc_concat` mutation counter, mutates
+only when that counter is positive, and has explicit positive, no-op, index,
+layout, fan-out, naming, and missing-Concat coverage. The production lowerer
+still reconciles unconditionally at this characterization checkpoint. A strict
+architecture expectation fixes the required immediate counter guard before
+production changes. Nearby owners are not equivalent: the PReLU owner prunes
+unused tensors even on a zero rewrite count, while the SE/FC/Gather cluster
+currently discards multiple pass results. They must not reuse this guard without
+separate counter-completeness work.
