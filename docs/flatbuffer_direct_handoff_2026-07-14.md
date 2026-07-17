@@ -15386,3 +15386,54 @@ callback identity, and move the full-policy efficiency fixture to the explicit
 runner. Replace seven direct owner calls with seven stable IDs without changing
 the 120 effective-call total. Validate sequentially, commit and push only, and
 do not create or reopen a pull request.
+
+## Channel-shuffle/gather orchestration extraction: completed state
+
+`passes/channel_shuffle_gather_orchestration.py` now owns a frozen
+`ChannelShuffleGatherContext` plus stable leading, base, default, post, and
+seven-owner union ID sequences. A single selector composes two independently
+optional leading owners, the unconditional two-owner base, and the optional
+three-owner post group. Focused parameterization covers all eight boolean
+combinations, so a policy combination unused by current callers cannot silently
+change order or argument contracts.
+
+Every invocation build creates one fresh `ModelIRPassStateScope` for the
+context's main ModelIR/layout and shares it across all selected owners. The
+historical helper is a one-call delegate retaining keyword-only defaults
+`True`, `True`, and `False`, and forwards every switch explicitly. Its direct
+full-plus-post and late-base callers, exact keyword forms, and all four direct
+boundaries remain unchanged. `LayoutRecoveryContext` still stores the helper
+itself, and its argument-free invocation continues to select the default four-
+owner policy.
+
+Architecture accounting imports the seven-owner union. Seven direct owner
+calls moved out of the lowerer and became seven stable IDs, leaving the total
+at 120 effective ordered calls. Existing independent layout-transpose and other
+orchestrated gather/fanout occurrences remain separately counted. The full-
+plus-post efficiency fixture now invokes the explicit phase with no layout
+state and still observes one graph-index refresh.
+
+Sequential implementation validation completed as follows:
+
+- focused all-policy contracts, delegate, callback, and boundaries:
+  `22 passed in 0.82s`;
+- focused channel-shuffle/gather, layout-recovery, and ordered architecture:
+  `276 passed in 22.70s`;
+- pass efficiency: `30 passed in 0.62s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 12.05s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer still reports exactly the same two pre-existing F401
+  findings and no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, all eight
+policy combinations, runtime order, caller multiplicity, callback wiring,
+boundaries, shared-scope semantics, and TensorFlow isolation are unchanged.
+PR #952 remains closed, and no pull request was created, reopened, or updated.
+
+At restart, inventory the remaining inline post-lowering helper clusters and
+select the smallest bounded cluster whose caller policies and target ModelIR
+forms can be fully characterized. Preserve separate characterization and
+implementation checkpoints, sequential validation, minimal real-model
+conversion, commit and push only, and do not create or reopen a pull request.

@@ -91,6 +91,13 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     GATE_LAYOUT_PASS_IDS,
     GATE_LAYOUT_REQUIRED_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
+    CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_LEADING_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_POST_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -123,6 +130,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
     *SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
     *GATE_LAYOUT_PASS_IDS,
+    *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -6834,18 +6842,43 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
             assert scope_keyword.value.id == "state_scope"
 
     channel_helper_name = "_run_channel_shuffle_gather_layout_pass_cluster"
-    _assert_helper(
-        channel_helper_name,
-        [
-            "run_two_way_channel_shuffle_cleanup",
-            "run_nhwc_channel_shuffle_cleanup",
-            "run_nchw_channel_shuffle_cleanup",
-            "run_transpose_gather_axis_cleanup",
-            "run_layout_transpose_cleanup",
-            "run_transpose_unary_fanout_bridge_cleanup",
-            "run_transpose_unary_binary_fanout_bridge_cleanup",
-        ],
+    channel_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == channel_helper_name
     )
+    assert CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS == (
+        *CHANNEL_SHUFFLE_GATHER_LEADING_PASS_IDS,
+        *CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
+    )
+    assert CHANNEL_SHUFFLE_GATHER_PASS_IDS == (
+        *CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
+        *CHANNEL_SHUFFLE_GATHER_POST_PASS_IDS,
+    )
+    assert len(channel_helper.body) == 1
+    channel_statement = channel_helper.body[0]
+    assert isinstance(channel_statement, ast.Expr)
+    assert isinstance(channel_statement.value, ast.Call)
+    assert isinstance(channel_statement.value.func, ast.Name)
+    assert channel_statement.value.func.id == "run_channel_shuffle_gather"
+    assert len(channel_statement.value.args) == 1
+    assert isinstance(channel_statement.value.args[0], ast.Name)
+    assert channel_statement.value.args[0].id == "channel_shuffle_gather_context"
+    assert [keyword.arg for keyword in channel_statement.value.keywords] == [
+        "include_two_way_shuffle",
+        "include_nhwc_shuffle",
+        "include_post_gather_cleanup",
+    ]
+    assert [argument.arg for argument in channel_helper.args.kwonlyargs] == [
+        "include_two_way_shuffle",
+        "include_nhwc_shuffle",
+        "include_post_gather_cleanup",
+    ]
+    assert [
+        value.value
+        for value in channel_helper.args.kw_defaults
+        if isinstance(value, ast.Constant)
+    ] == [True, True, False]
     channel_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -10599,11 +10632,8 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_optimize_transpose_unary_passthrough_chains",
         "run_layout_transpose_cleanup",
         "run_trailing_output_transpose_cleanup",
-        "run_transpose_gather_axis_cleanup",
-            "run_transpose_gather_channel_fanout_cleanup",
-            "run_transpose_unary_binary_fanout_bridge_cleanup",
-            "run_transpose_unary_fanout_bridge_cleanup",
-        }
+        "run_transpose_gather_channel_fanout_cleanup",
+    }
 
 
 def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
@@ -10664,11 +10694,12 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
     ]
     assert len(imports) == 1
     assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_nchw_channel_shuffle_cleanup",
-        "run_nhwc_channel_shuffle_cleanup",
         "run_stale_nchw_channel_shuffle_repair",
-        "run_two_way_channel_shuffle_cleanup",
     }
+    for pass_id in CHANNEL_SHUFFLE_GATHER_LEADING_PASS_IDS:
+        assert _orchestrated_pass_count(pass_id) == 1
+    for pass_id in CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS:
+        assert _orchestrated_pass_count(pass_id) >= 1
 
 
 def test_mean_layout_rewrites_have_single_owner() -> None:
@@ -11849,6 +11880,9 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_ndhwc_gate_layout_cleanup",
         "run_cost_volume_scatter_layout_cleanup",
         "run_add_concat_suffix_layout_cleanup",
+        "run_nchw_channel_shuffle_cleanup",
+        "run_nhwc_channel_shuffle_cleanup",
+        "run_two_way_channel_shuffle_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12125,7 +12159,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_nchw_channel_shuffle_cleanup"
     ]
-    assert len(nchw_channel_shuffle_calls) == 1
+    assert (
+        len(nchw_channel_shuffle_calls)
+        + _orchestrated_pass_count("run_nchw_channel_shuffle_cleanup")
+        == 1
+    )
 
     nhwc_channel_shuffle_calls = [
         call
@@ -12133,7 +12171,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_nhwc_channel_shuffle_cleanup"
     ]
-    assert len(nhwc_channel_shuffle_calls) == 1
+    assert (
+        len(nhwc_channel_shuffle_calls)
+        + _orchestrated_pass_count("run_nhwc_channel_shuffle_cleanup")
+        == 1
+    )
 
     two_way_channel_shuffle_calls = [
         call
@@ -12141,7 +12183,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_two_way_channel_shuffle_cleanup"
     ]
-    assert len(two_way_channel_shuffle_calls) == 1
+    assert (
+        len(two_way_channel_shuffle_calls)
+        + _orchestrated_pass_count("run_two_way_channel_shuffle_cleanup")
+        == 1
+    )
 
     stale_nchw_channel_shuffle_calls = [
         call

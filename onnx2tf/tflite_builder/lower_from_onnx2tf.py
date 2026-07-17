@@ -71,10 +71,7 @@ from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains as _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains_pass,
     _optimize_shufflenet_transpose_shuffle_chains as _optimize_shufflenet_transpose_shuffle_chains_pass,
     _repair_nchw_channel_shuffle_concat_gathers as _repair_nchw_channel_shuffle_concat_gathers_pass,
-    run_nchw_channel_shuffle_cleanup,
-    run_nhwc_channel_shuffle_cleanup,
     run_stale_nchw_channel_shuffle_repair,
-    run_two_way_channel_shuffle_cleanup,
 )
 from onnx2tf.tflite_builder.passes.mean_layout import (
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains as _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains_pass,
@@ -276,6 +273,10 @@ from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration i
 from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     GateLayoutContext,
     run_gate_layout,
+)
+from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
+    ChannelShuffleGatherContext,
+    run_channel_shuffle_gather,
 )
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
@@ -578,10 +579,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     _optimize_transpose_unary_passthrough_chains as _optimize_transpose_unary_passthrough_chains_pass,
     run_layout_transpose_cleanup,
     run_trailing_output_transpose_cleanup,  # noqa: F401 - compatibility re-export
-    run_transpose_gather_axis_cleanup,
     run_transpose_gather_channel_fanout_cleanup,
-    run_transpose_unary_binary_fanout_bridge_cleanup,
-    run_transpose_unary_fanout_bridge_cleanup,
 )
 from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains as _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains_pass,
@@ -4155,55 +4153,12 @@ def lower_onnx_to_ir(
         include_nhwc_shuffle: bool = True,
         include_post_gather_cleanup: bool = False,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
+        run_channel_shuffle_gather(
+            channel_shuffle_gather_context,
+            include_two_way_shuffle=include_two_way_shuffle,
+            include_nhwc_shuffle=include_nhwc_shuffle,
+            include_post_gather_cleanup=include_post_gather_cleanup,
         )
-        if include_two_way_shuffle:
-            run_two_way_channel_shuffle_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        if include_nhwc_shuffle:
-            run_nhwc_channel_shuffle_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_nchw_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        if include_post_gather_cleanup:
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-            run_transpose_unary_fanout_bridge_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-            run_transpose_unary_binary_fanout_bridge_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
 
     def _run_transpose_unary_fanout_layout_pass_cluster(
         *,
@@ -4403,6 +4358,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     gate_layout_context = GateLayoutContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    channel_shuffle_gather_context = ChannelShuffleGatherContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

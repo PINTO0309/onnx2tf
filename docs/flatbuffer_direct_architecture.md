@@ -9460,3 +9460,15 @@ selects the seven-owner full-plus-post policy, while the late direct caller
 disables both leading shuffles and selects only the two-owner base. Focused
 contracts freeze the exact guards, all owner contracts/order, caller keywords,
 callback identity, and both direct caller boundaries.
+
+That cluster now delegates to `ChannelShuffleGatherContext` and stable leading,
+base, default, post, and seven-owner union ID sequences in
+`passes/channel_shuffle_gather_orchestration.py`. A single policy selector
+builds every one of the eight boolean combinations in the same fixed relative
+order, and every invocation build owns one fresh main-model scope shared by its
+selected owners. The historical helper preserves all three keyword-only
+defaults, both direct caller forms and boundaries remain unchanged, and layout
+recovery still stores the helper itself as its argument-free callback.
+Multiplicity-aware accounting replaces seven direct owner calls with seven
+stable IDs while retaining 120 effective ordered calls. The explicit seven-
+owner efficiency fixture retains one graph-index build.

@@ -116,6 +116,10 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     GateLayoutContext,
     run_gate_layout,
 )
+from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
+    ChannelShuffleGatherContext,
+    run_channel_shuffle_gather,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1205,22 +1209,16 @@ def test_shuffle_gather_cluster_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_two_way_channel_shuffle_cleanup,
-        run_nhwc_channel_shuffle_cleanup,
-        run_nchw_channel_shuffle_cleanup,
-        run_transpose_gather_axis_cleanup,
-        run_layout_transpose_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-        run_transpose_unary_binary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_channel_shuffle_gather(
+        ChannelShuffleGatherContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_two_way_shuffle=True,
+        include_nhwc_shuffle=True,
+        include_post_gather_cleanup=True,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 7

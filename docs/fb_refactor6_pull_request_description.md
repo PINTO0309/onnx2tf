@@ -2514,3 +2514,18 @@ The 259-test focused/layout-recovery/architecture set, 30 pass-efficiency
 tests, and all 11 TensorFlow-import-blocked tests pass. Runtime behavior and all
 public/dependency contracts remain unchanged. PR #952 remains closed, and no
 pull request was created, reopened, or updated.
+
+The channel-shuffle/gather cluster now delegates to a dedicated frozen context
+and stable leading, base, default, post, and seven-owner union sequences. One
+selector covers all eight policy combinations without changing relative owner
+order; each build creates one fresh main-model pass-state scope shared by the
+selected owners. The helper's three keyword-only defaults, two direct caller
+forms, all boundaries, and identity as the argument-free layout-recovery
+callback are unchanged. Accounting replaces seven direct owner calls with
+seven stable IDs, preserves 120 effective calls, and the explicit seven-owner
+efficiency fixture retains one graph-index build. The 276-test focused/layout-
+recovery/architecture set, 30 pass-efficiency tests, 32 core smoke tests, and
+all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
+dependency, policy, runtime-order, callback, boundary, scope-sharing, or
+TensorFlow-isolation contract changed. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
