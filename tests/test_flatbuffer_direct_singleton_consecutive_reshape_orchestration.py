@@ -266,6 +266,20 @@ def test_singleton_consecutive_runner_returns_three_ordered_results(
     assert run_singleton_consecutive_reshape(context) == expected_results
 
 
+def test_singleton_consecutive_empty_model_returns_only_zero_mutation_counts() -> None:
+    context = _context(use_layout_state=True)
+
+    assert run_singleton_consecutive_reshape(context) == (
+        {"rewritten_singleton_channel_layout_transpose_to_reshape": 0},
+        {"removed_duplicate_reshape_fanout": 0},
+        {
+            "removed_noop_reshape_chains": 0,
+            "rewritten_consecutive_reshape_passthrough_chains": 0,
+            "rewritten_fanout_bypass_reshape_passthrough_chains": 0,
+        },
+    )
+
+
 def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [

@@ -510,3 +510,24 @@ At resume, characterize the earlier shared reconciliation using all preceding
 sanitizer/repair results, the three cluster result dictionaries, and tensor-count
 prune accounting. Do not use an incomplete subset of cluster counters. Commit
 and push only; do not create or update a pull request.
+
+## Shared late-reconciliation characterization checkpoint
+
+The earlier shared reconciliation is owned by six direct results and the three
+singleton/consecutive cluster results: dynamic boundary-signature realignment,
+HardSwish shape sanitization, Squeeze sanitization, wrong-way Conv transpose
+sanitization, exact and singleton binary repair, singleton-channel transpose,
+duplicate Reshape fan-out, and consecutive Reshape cleanup.
+
+All returned values in these nine dictionaries are mutation counts. The new
+empty-cluster fixture freezes its exact zero-only dictionaries. A strict
+expected-failure architecture contract requires all nine results to be assigned
+and passed to one compact `_stats_have_positive_count()` predicate, with a
+pre-boundary tensor count covering zero-rewrite pruning. Production remains
+unchanged.
+
+At implementation, add the private pure mutation-count helper, capture all nine
+results in their existing order, and guard only the immediate shared
+reconciliation. Add helper unit tests and lowerer wiring for every dictionary
+plus prune-only behavior. Validate all owner/orchestration/core gates
+sequentially, then commit and push only; do not create or update a pull request.

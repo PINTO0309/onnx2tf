@@ -9795,3 +9795,12 @@ dictionaries, and the lowerer's private helper preserves that tuple. All three
 production call sites continue ignoring it, so this checkpoint changes neither
 ModelIR nor reconciliation behavior. The complete orchestration corpus confirms
 that tuple propagation is additive to the existing shared-state contract.
+
+The earlier shared reconciliation can now be characterized over nine pure
+mutation-result dictionaries: boundary-signature realignment, HardSwish shape,
+Squeeze axes/shape, wrong-way Conv transpose, two binary repairs, and the three
+singleton/consecutive cluster results. The empty-cluster contract freezes only
+zero-valued mutation counters. A strict expected-failure boundary contract
+requires all nine dictionaries to pass through one compact positive-count
+predicate, plus tensor-count reduction for zero-rewrite pruning. Production is
+unchanged at this characterization checkpoint.

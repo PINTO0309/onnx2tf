@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -8627,6 +8629,115 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
         if len(call.args) >= 1 and isinstance(call.args[0], ast.Constant)
     } == expected_counters
     assert len(get_calls) == len(expected_counters)
+    guard_names = {
+        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
+    }
+    assert count_target.id in guard_names
+    tensor_len_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "len"
+    ]
+    assert len(tensor_len_calls) == 1
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the earlier shared late boundary still discards nine pure mutation "
+        "results and reconciles unconditionally"
+    ),
+)
+def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    direct_owner_names = (
+        "_realign_dynamic_boundary_shape_signature_map",
+        "_sanitize_hardswish_tensor_shapes",
+        "_sanitize_squeeze_axes_with_static_input_shapes",
+        "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
+        "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
+        "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
+    )
+    cluster_name = "_run_singleton_consecutive_reshape_pass_cluster"
+    first_owner_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == direct_owner_names[0]
+    )
+
+    count_assignment = lowerer.body[first_owner_index - 1]
+    assert isinstance(count_assignment, ast.Assign)
+    assert len(count_assignment.targets) == 1
+    count_target = count_assignment.targets[0]
+    assert isinstance(count_target, ast.Name)
+    assert isinstance(count_assignment.value, ast.Call)
+    assert isinstance(count_assignment.value.func, ast.Name)
+    assert count_assignment.value.func.id == "len"
+
+    result_names: list[str] = []
+    for offset, owner_name in enumerate(direct_owner_names):
+        assignment = lowerer.body[first_owner_index + offset]
+        assert isinstance(assignment, ast.Assign)
+        assert isinstance(assignment.value, ast.Call)
+        assert isinstance(assignment.value.func, ast.Name)
+        assert assignment.value.func.id == owner_name
+        assert len(assignment.targets) == 1
+        assert isinstance(assignment.targets[0], ast.Name)
+        result_names.append(assignment.targets[0].id)
+
+    cluster_assignment = lowerer.body[
+        first_owner_index + len(direct_owner_names)
+    ]
+    assert isinstance(cluster_assignment, ast.Assign)
+    assert isinstance(cluster_assignment.value, ast.Call)
+    assert isinstance(cluster_assignment.value.func, ast.Name)
+    assert cluster_assignment.value.func.id == cluster_name
+    assert len(cluster_assignment.targets) == 1
+    cluster_targets = cluster_assignment.targets[0]
+    assert isinstance(cluster_targets, ast.Tuple)
+    assert len(cluster_targets.elts) == 3
+    assert all(isinstance(target, ast.Name) for target in cluster_targets.elts)
+    result_names.extend(
+        target.id
+        for target in cluster_targets.elts
+        if isinstance(target, ast.Name)
+    )
+
+    guard = lowerer.body[first_owner_index + len(direct_owner_names) + 1]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    mutation_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_stats_have_positive_count"
+    ]
+    assert len(mutation_calls) == 1
+    assert [
+        argument.id
+        for argument in mutation_calls[0].args
+        if isinstance(argument, ast.Name)
+    ] == result_names
     guard_names = {
         node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
     }
