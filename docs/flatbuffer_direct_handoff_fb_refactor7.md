@@ -802,3 +802,25 @@ merge their guards unless tests can still distinguish each convergence
 opportunity. Select the next boundary only when every mutation since the prior
 scan has a returned counter or prune accounting. Commit and push only; do not
 create or update a pull request.
+
+## Placeholder-MatMul repair reconciliation characterization checkpoint
+
+The absolute-final placeholder-MatMul restoration block currently performs a
+first static-shape reconciliation, exact rank-four binary repair, singleton
+broadcast repair, and a second unconditional reconciliation whenever the
+restoration counter is positive.
+
+The first scan must remain. Its returned mutation counter and both repair
+counters completely describe their rewrites, while the exact repair may also
+prune unused tensors on a zero rewrite. A strict expected-failure lowerer
+fixture requires the second scan only after a changing first reconciliation,
+an exact repair, a singleton repair, or prune-only tensor-count reduction.
+
+At implementation, assign the restoration result, retain its existing outer
+guard, capture the first reconciliation and both repair results, and record
+tensor count before the repairs. Guard only the second reconciliation with the
+three dictionaries or a tensor-count decrease. Preserve call order,
+LayoutState forwarding, and the following topology sort. Validate placeholder
+MatMul restoration, binary adapters, shape reconciliation, core,
+architecture, pass-efficiency, and TensorFlow-import-blocked suites
+sequentially. Commit and push only; do not create or update a pull request.

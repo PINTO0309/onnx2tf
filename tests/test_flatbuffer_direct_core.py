@@ -1669,6 +1669,115 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
         assert run_with_outcome(outcome) == unchanged_count + 1
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the placeholder-MatMul restoration block still performs its second "
+        "reconciliation when the first scan and both repairs are unchanged"
+    ),
+)
+def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
+    monkeypatch,
+) -> None:
+    first_counter = "reconciled_static_tensor_shapes"
+    exact_counter = "inserted_rank4_binary_layout_fix_transpose"
+    singleton_counter = (
+        "repaired_rank4_binary_singleton_broadcast_layout_mismatch"
+    )
+    probe_name = "unused_placeholder_matmul_repair_probe"
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+    restore_seen = False
+    reconciles_after_restore = 0
+    exact_after_restore = 0
+    singleton_after_restore = 0
+
+    def run_with_outcome(outcome: str) -> int:
+        nonlocal reconcile_count, restore_seen, reconciles_after_restore
+        nonlocal exact_after_restore, singleton_after_restore
+        reconcile_count = 0
+        restore_seen = False
+        reconciles_after_restore = 0
+        exact_after_restore = 0
+        singleton_after_restore = 0
+
+        def restore_result(*args, **kwargs):
+            nonlocal restore_seen
+            restore_seen = True
+            return {"restored_placeholder_matmul_flattened_inputs": 1}
+
+        def reconcile_result(model_ir, *args, **kwargs):
+            nonlocal reconcile_count, reconciles_after_restore
+            reconcile_count += 1
+            result = original_reconcile(model_ir, *args, **kwargs)
+            model_ir.tensors[probe_name] = TensorIR(
+                name=probe_name,
+                dtype="FLOAT32",
+                shape=[1],
+                shape_signature=[1],
+            )
+            if restore_seen:
+                reconciles_after_restore += 1
+                if reconciles_after_restore == 1 and outcome == "first":
+                    return {**result, first_counter: 1}
+            return result
+
+        def exact_result(model_ir, *args, **kwargs):
+            nonlocal exact_after_restore
+            if not restore_seen:
+                return {exact_counter: 0}
+            exact_after_restore += 1
+            is_target = exact_after_restore == 1
+            if is_target and outcome == "prune":
+                assert model_ir.tensors.pop(probe_name, None) is not None
+            return {exact_counter: int(is_target and outcome == "exact")}
+
+        def singleton_result(*args, **kwargs):
+            nonlocal singleton_after_restore
+            if not restore_seen:
+                return {singleton_counter: 0}
+            singleton_after_restore += 1
+            return {
+                singleton_counter: int(
+                    singleton_after_restore == 1 and outcome == "singleton"
+                ),
+            }
+
+        monkeypatch.setattr(
+            lowering_module,
+            "_restore_placeholder_matmul_flattened_inputs",
+            restore_result,
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_reconcile_static_tensor_shapes",
+            reconcile_result,
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
+            exact_result,
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
+            singleton_result,
+        )
+
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"placeholder_matmul_repair_{outcome}",
+        )
+        assert restore_seen is True
+        assert exact_after_restore == 1
+        assert singleton_after_restore == 1
+        return reconcile_count
+
+    unchanged_count = run_with_outcome("unchanged")
+    for outcome in ("first", "exact", "singleton", "prune"):
+        assert run_with_outcome(outcome) == unchanged_count + 1
+
+
 def test_stats_have_positive_count_accepts_only_positive_mutations() -> None:
     assert lowering_module._stats_have_positive_count() is False
     assert lowering_module._stats_have_positive_count(

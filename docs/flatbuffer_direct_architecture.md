@@ -9903,3 +9903,12 @@ tensor-count decrease. The stable path ends after fusion; second-scan metadata
 changes, fusion rewrites, and zero-rewrite pruning each retain the final scan.
 All three reconciliation guards remain ordered under one index, and the
 complete legacy fixture preserves ModelIR and aggregate statistics.
+
+The absolute-final placeholder-MatMul restoration block is the next bounded
+reconciliation interval. A positive restoration still requires its first shape
+scan. The immediately following exact and singleton binary repairs return pure
+rewrite counters, while the exact owner may prune unused tensors on a zero
+rewrite. A strict expected-failure lowerer fixture requires the second scan
+only after a changing first reconciliation, either repair counter, or a
+tensor-count decrease. Production remains unchanged at this characterization
+checkpoint.
