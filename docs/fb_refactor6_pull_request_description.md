@@ -2294,3 +2294,14 @@ pass-efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-
 blocked tests pass. No public API, artifact, dependency, option semantics,
 runtime order, scope-sharing behavior, or TensorFlow boundary changed. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+The duplicate-fanout/quantized-PReLU pair is now characterized without
+production changes. Five focused tests freeze its required keyword-only
+transpose option, one fresh shared `ModelIRPassStateScope`, both complete
+ModelIR/layout/diagnostics contracts, callback-only ownership in the ordered
+layout/attention/quantized suffix, option forwarding, callback identity, and
+both stable-list neighbors. The focused plus architecture suite passed 253
+tests, the 30 pass-efficiency tests and all 11 TensorFlow-import-blocked tests
+passed, and targeted static checks passed. Runtime behavior and all public/
+dependency contracts remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.

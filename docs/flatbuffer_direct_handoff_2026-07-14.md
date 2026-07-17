@@ -14561,3 +14561,49 @@ option, complete argument routing, callback uses from the layout/attention
 suffix, all direct calls, and every active boundary. Validate sequentially,
 keep real-model conversion minimal, commit and push only, and do not create a
 pull request.
+
+## Duplicate-fanout and quantized-PReLU orchestration characterization: completed state
+
+The 21-line `_run_duplicate_quantized_prelu_pass_cluster` remains unchanged
+in production. It requires the keyword-only `include_transpose` option,
+creates one `ModelIRPassStateScope` from ModelIR and the session layout state,
+and executes duplicate-fanout cleanup followed by quantized-PReLU cleanup.
+Both owners receive the same ModelIR, layout, diagnostics, and scope; only the
+duplicate-fanout owner receives the required option.
+
+The helper has no direct call expression in the central lowerer. It remains
+the sole `duplicate_quantized_prelu_cluster` callback of the ordered layout/
+attention/quantized suffix. That callback occupies one stable slot after the
+attention-gate/QDQ recovery callback and before dequantize/transpose-conv/
+quantize recovery. The suffix builder forwards its required
+`include_duplicate_transpose` value as the helper's `include_transpose`
+keyword. Existing suffix characterization continues to freeze the two outer
+suffix calls, their shared feature-flag value, and their surrounding
+boundaries.
+
+Sequential validation completed as follows:
+
+- focused duplicate/quantized-PReLU characterization: `5 passed in 0.59s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.26s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.77s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, option semantics, callback identity,
+shared-scope behavior, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable owner IDs with direct imports from `graph_cleanup` and
+`quantized_prelu`. Keep `include_transpose` as a required runner argument and
+create one fresh shared scope per build. Preserve the historical keyword-only
+helper as the same suffix callback, including its option routing and stable
+neighbors. Prove both option values, fresh/shared scope identity, instrumented
+order, architecture accounting, and the efficiency invariant before switching
+to the delegate; validate sequentially, commit and push, and do not create a
+pull request.

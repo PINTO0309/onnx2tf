@@ -9271,3 +9271,14 @@ delegate. The central lowerer no longer imports the QKV prefix or bridge
 runner. The efficiency fixture exercises the explicit default phase with one
 graph-index build. Focused, architecture, pass-efficiency, core, and
 TensorFlow-import-blocked suites pass.
+
+The duplicate-fanout/quantized-PReLU pair is now characterized without
+production changes. Its required keyword-only transpose option is forwarded
+only to duplicate-fanout cleanup, while quantized-PReLU cleanup always follows.
+Both owners share one fresh `ModelIRPassStateScope` and receive the same
+ModelIR, layout state, and diagnostics. The helper has no direct call and is
+owned by one stable callback slot in the layout/attention/quantized suffix;
+focused contracts freeze the callback identity, suffix option routing, and
+both stable neighbors. The eventual phase should keep the option outside a
+frozen ModelIR/layout/diagnostics context, expose two stable owner IDs, and
+construct one fresh shared scope per build.
