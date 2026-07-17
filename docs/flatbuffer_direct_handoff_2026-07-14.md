@@ -14607,3 +14607,53 @@ neighbors. Prove both option values, fresh/shared scope identity, instrumented
 order, architecture accounting, and the efficiency invariant before switching
 to the delegate; validate sequentially, commit and push, and do not create a
 pull request.
+
+## Explicit duplicate-fanout and quantized-PReLU orchestration: completed state
+
+The characterized pair now delegates to
+`passes/duplicate_quantized_prelu_orchestration.py`. A frozen
+`DuplicateQuantizedPReLUContext` contains only ModelIR, layout state, and
+diagnostics. `DUPLICATE_QUANTIZED_PRELU_PASS_IDS` is the canonical two-owner
+sequence, and the phase module imports both cleanup owners directly without
+importing the central lowerer.
+
+`include_transpose` remains a required per-invocation argument rather than
+context state. Both Boolean values retain the same duplicate-fanout then
+quantized-PReLU sequence; only the first owner's behavior changes. Every
+builder creates one fresh `ModelIRPassStateScope` and attaches that same scope,
+ModelIR, layout, and diagnostics to both immutable invocations. The shared
+executor validates the two stable IDs before execution.
+
+The historical helper keeps its keyword-only required option as a delegate.
+It remains the exact callback stored in the layout/attention/quantized suffix,
+with unchanged option forwarding and stable neighbors. Architecture accounting
+moves one syntactic occurrence of each owner to the new stable IDs without
+changing total owner multiplicity. Both cleanup imports remain in the central
+lowerer because independent direct call sites still use them; those unrelated
+sites were deliberately left unchanged. The efficiency fixture now executes
+the explicit phase and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused duplicate/quantized-PReLU orchestration: `10 passed in 0.60s`;
+- focused orchestration plus ordered architecture:
+  `258 passed in 19.35s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.38s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, option semantics, runtime order, callback identity, invocation
+multiplicity, shared-scope efficiency, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the remaining shared-scope helpers and select the next
+small ordered boundary. Characterize required options, all active forms,
+caller multiplicity, callback ownership, and outer boundaries before changing
+production. Validate sequentially, keep real-model conversion minimal, commit
+and push only, and do not create a pull request.

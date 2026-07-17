@@ -66,6 +66,9 @@ from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orches
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     QKV_ATTENTION_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
+    DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -91,6 +94,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
     *ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
     *QKV_ATTENTION_PASS_IDS,
+    *DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -4558,37 +4562,25 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_duplicate_fanout_cleanup",
         "run_quantized_prelu_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-    duplicate_include_transpose = next(
-        keyword
-        for keyword in calls["run_duplicate_fanout_cleanup"].keywords
-        if keyword.arg == "include_transpose"
     )
-    assert isinstance(duplicate_include_transpose.value, ast.Name)
-    assert duplicate_include_transpose.value.id == "include_transpose"
+    assert DUPLICATE_QUANTIZED_PRELU_PASS_IDS == expected_order
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_duplicate_quantized_prelu"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert statement.value.args[0].id == "duplicate_quantized_prelu_context"
+    assert len(statement.value.keywords) == 1
+    include_transpose = statement.value.keywords[0]
+    assert include_transpose.arg == "include_transpose"
+    assert isinstance(include_transpose.value, ast.Name)
+    assert include_transpose.value.id == "include_transpose"
 
     helper_invocations = [
         node
@@ -4599,17 +4591,7 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
     ]
     assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.count(helper_name) == 1
     assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 1
-    for call in helper_invocations:
-        include_transpose = next(
-            keyword
-            for keyword in call.keywords
-            if keyword.arg == "include_transpose"
-        )
-        assert isinstance(include_transpose.value, ast.Name)
-        assert (
-            include_transpose.value.id
-            == "include_duplicate_transpose"
-        )
+    assert helper_invocations == []
 
 
 def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() -> None:
@@ -11872,6 +11854,8 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_mixed_attention_layout_cleanup",
         "run_qkv_attention_prefix_cleanup",
         "run_qkv_attention_bridge_cleanup",
+        "run_duplicate_fanout_cleanup",
+        "run_quantized_prelu_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -11970,7 +11954,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_quantized_prelu_cleanup"
     ]
-    assert len(quantized_prelu_calls) == 2
+    assert (
+        len(quantized_prelu_calls)
+        + _orchestrated_pass_count("run_quantized_prelu_cleanup")
+        == 2
+    )
 
     quantized_reshape_calls = [
         call

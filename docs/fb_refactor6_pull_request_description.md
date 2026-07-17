@@ -2305,3 +2305,20 @@ tests, the 30 pass-efficiency tests and all 11 TensorFlow-import-blocked tests
 passed, and targeted static checks passed. Runtime behavior and all public/
 dependency contracts remain unchanged. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+That pair is now implemented in
+`passes/duplicate_quantized_prelu_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context, two canonical stable IDs, and direct owner
+imports. The required transpose option remains a per-invocation argument, both
+Boolean values preserve the same owner order, and every builder creates one
+fresh `ModelIRPassStateScope` shared by both immutable invocations. The
+historical helper remains the same keyword-only suffix callback with unchanged
+option forwarding and stable neighbors. Independent direct uses of both
+cleanup runners remain untouched. Architecture accounting preserves total
+owner multiplicity, and the efficiency fixture executes the explicit phase
+while retaining one graph-index build. The 258-test focused/architecture set,
+30 pass-efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-
+blocked tests pass. No public API, artifact, dependency, option semantics,
+runtime order, callback identity, scope-sharing behavior, or TensorFlow
+boundary changed. PR #952 remains closed, and no pull request was created,
+reopened, or updated.

@@ -9282,3 +9282,14 @@ focused contracts freeze the callback identity, suffix option routing, and
 both stable neighbors. The eventual phase should keep the option outside a
 frozen ModelIR/layout/diagnostics context, expose two stable owner IDs, and
 construct one fresh shared scope per build.
+
+That pair now uses `DuplicateQuantizedPReLUContext` and two stable IDs in
+`passes/duplicate_quantized_prelu_orchestration.py`. The required transpose
+choice stays outside the frozen ModelIR/layout/diagnostics context, every
+builder creates one fresh scope shared by both immutable invocations, and the
+fixed owner order is identical for both option values. The historical helper
+remains the same keyword-only callback in the layout/attention/quantized
+suffix, with unchanged option routing and stable neighbors. Other independent
+direct calls to both cleanup runners remain untouched. The efficiency fixture
+now exercises the explicit phase and retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.

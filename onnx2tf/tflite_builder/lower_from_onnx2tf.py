@@ -249,6 +249,10 @@ from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     QKVAttentionContext,
     run_qkv_attention,
 )
+from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
+    DuplicateQuantizedPReLUContext,
+    run_duplicate_quantized_prelu,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4094,22 +4098,9 @@ def lower_onnx_to_ir(
         *,
         include_transpose: bool,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_duplicate_fanout_cleanup(
-            model_ir,
+        run_duplicate_quantized_prelu(
+            duplicate_quantized_prelu_context,
             include_transpose=include_transpose,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_quantized_prelu_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
         )
 
     def _run_constant_fold_cast_cleanup_pass_cluster(
@@ -4550,6 +4541,11 @@ def lower_onnx_to_ir(
         )
     )
     qkv_attention_context = QKVAttentionContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    duplicate_quantized_prelu_context = DuplicateQuantizedPReLUContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

@@ -84,6 +84,10 @@ from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     QKVAttentionContext,
     run_qkv_attention,
 )
+from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
+    DuplicateQuantizedPReLUContext,
+    run_duplicate_quantized_prelu,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -511,18 +515,13 @@ def test_duplicate_quantized_prelu_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_duplicate_fanout_cleanup(
-        model_ir,
+    run_duplicate_quantized_prelu(
+        DuplicateQuantizedPReLUContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
         include_transpose=False,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_quantized_prelu_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
     )
 
     assert refresh_count == 1
