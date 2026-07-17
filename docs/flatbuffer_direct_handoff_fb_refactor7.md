@@ -3780,3 +3780,36 @@ At resume, audit `final_prelu_stats` and its tensor-count-assisted guard for
 counter and cleanup completeness before retaining its guarded reconciliation
 result. Keep the following consecutive-Reshape boundary fixed. Commit and push
 only; do not create or update a pull request.
+
+## Primary final PReLU reconciliation characterization checkpoint
+
+The absolute-final PReLU owner has one exact rewrite counter, but intentionally
+runs unused-tensor pruning on every invocation to preserve its legacy cleanup
+contract. A zero-rewrite call can therefore mutate the tensor table. The caller
+already samples `final_prelu_tensor_count` and combines the rewrite counter with
+a clamped-by-comparison net tensor reduction condition. This guard covers both
+rewrite and cleanup-only paths; stale, unsafe, capped, and idempotent calls with
+no removable tensor remain true no-ops.
+
+A strict expected-failure orchestration contract now requires a stable two-key
+`_final_prelu_static_shape_stats` value and assigns the opt-in complete
+reconciliation result under that unchanged counter-or-tensor-delta guard. It
+also fixes the immediately following `final_consecutive_reshape_stats`
+boundary.
+
+At implementation, add only this result plumbing. Do not change the owner,
+counter schema, matching/planning, rewiring, alpha handling, pruning, layout
+sync, tensor-count sample, guard, ordering, dependencies, or TensorFlow
+behavior. Validate the indexed PReLU owner, terminal orchestration, and
+architecture sequentially, then commit and push only; do not create or update a
+pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed PReLU owner, terminal orchestration, and architecture:
+  `297 passed, 1 xfailed in 17.16s`
+- expanded broad related gate: `1123 passed, 1 xfailed in 29.66s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final PReLU reconciliation-
+result contract; there are no unexpected failures.

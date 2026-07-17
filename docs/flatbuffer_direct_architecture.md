@@ -10635,3 +10635,12 @@ The primary caller now initializes that stable result and replaces it with the
 opt-in complete reconciliation dictionary only after the unchanged aggregate
 guard succeeds. The runner result, duplicate positive fan-out accounting,
 pruning/layout synchronization, and final SiNet boundary are unchanged.
+
+The immediately preceding absolute-final PReLU owner deliberately prunes
+unused tensors on every invocation, including zero-rewrite calls. Its caller
+already samples the tensor-table size and reconciles after either a positive
+rewrite counter or a net tensor reduction. Strict characterization preserves
+that complete guard and requires a stable two-key
+`_final_prelu_static_shape_stats` value that receives the opt-in complete
+reconciliation result only inside the guard. The following consecutive-Reshape
+owner remains adjacent.
