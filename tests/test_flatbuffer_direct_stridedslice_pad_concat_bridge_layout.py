@@ -1415,10 +1415,15 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
         "_run_channel_slice_pad_mul_layout_pass_cluster"
     )
     previous = lowerer.body[slice_index - 4]
-    assert isinstance(previous, ast.Expr)
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_pre_add_stats"
+    assert isinstance(previous.value, ast.Dict)
+    pre_add_owner = previous.value.values[0]
+    assert isinstance(pre_add_owner, ast.Call)
+    assert isinstance(pre_add_owner.func, ast.Name)
+    assert pre_add_owner.func.id == "_optimize_transpose_pre_add_nhwc_chains"
     following = lowerer.body[slice_index]
     assert isinstance(following, ast.Assign)
     assert following.targets[0].id == "_pre_terminal_affine_slice_pad_concat_stats"

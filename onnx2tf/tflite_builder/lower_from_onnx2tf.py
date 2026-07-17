@@ -5128,10 +5128,17 @@ def lower_onnx_to_ir(
     # Late bridge rewrites above can recreate strict
     # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
     _run_terminal_affine_concat_split_recovery_sequence()
-    _optimize_transpose_pre_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-    )
+    pre_terminal_pre_add_tensor_count = len(model_ir.tensors)
+    _pre_terminal_pre_add_stats = {
+        **_optimize_transpose_pre_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        ),
+        "pruned_unused_tensors": max(
+            0,
+            int(pre_terminal_pre_add_tensor_count - len(model_ir.tensors)),
+        ),
+    }
     channel_slice_pad_mul_results = _run_channel_slice_pad_mul_layout_pass_cluster()
     _pre_terminal_channel_slice_pad_mul_stats = (
         summarize_channel_slice_pad_mul_mutations(channel_slice_pad_mul_results)

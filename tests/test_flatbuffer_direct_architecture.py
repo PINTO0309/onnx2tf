@@ -1838,7 +1838,14 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         if position == 0:
             assert isinstance(invocation_statement, ast.Expr)
             previous = lowerer.body[index - 1]
-            following = lowerer.body[index + 1]
+            tensor_count = lowerer.body[index + 1]
+            assert isinstance(tensor_count, ast.Assign)
+            assert len(tensor_count.targets) == 1
+            assert isinstance(tensor_count.targets[0], ast.Name)
+            assert tensor_count.targets[0].id == (
+                "pre_terminal_pre_add_tensor_count"
+            )
+            following = lowerer.body[index + 2]
         else:
             assert isinstance(invocation_statement, ast.Assign)
             assert len(invocation_statement.targets) == 1
@@ -1861,10 +1868,19 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
         assert isinstance(following, (ast.Expr, ast.Assign))
-        assert isinstance(following.value, ast.Call)
-        assert isinstance(following.value.func, ast.Name)
+        if position == 0:
+            assert isinstance(following, ast.Assign)
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            assert following.targets[0].id == "_pre_terminal_pre_add_stats"
+            assert isinstance(following.value, ast.Dict)
+            following_call = following.value.values[0]
+        else:
+            following_call = following.value
+        assert isinstance(following_call, ast.Call)
+        assert isinstance(following_call.func, ast.Name)
         previous_call_names.append(previous.value.func.id)
-        next_call_names.append(following.value.func.id)
+        next_call_names.append(following_call.func.id)
     assert previous_call_names == [
         "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains",
         "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",

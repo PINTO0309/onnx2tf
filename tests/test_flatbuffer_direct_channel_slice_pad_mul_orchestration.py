@@ -187,13 +187,23 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
         and statement.value.func.id == CHANNEL_SLICE_PAD_MUL
     )
 
-    previous = lowerer.body[invocation_index - 1]
+    pre_add_stats = lowerer.body[invocation_index - 1]
+    pre_add_count = lowerer.body[invocation_index - 2]
     summary = lowerer.body[invocation_index + 1]
     following = lowerer.body[invocation_index + 2]
-    assert isinstance(previous, ast.Expr)
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert isinstance(pre_add_count, ast.Assign)
+    assert len(pre_add_count.targets) == 1
+    assert isinstance(pre_add_count.targets[0], ast.Name)
+    assert pre_add_count.targets[0].id == "pre_terminal_pre_add_tensor_count"
+    assert isinstance(pre_add_stats, ast.Assign)
+    assert len(pre_add_stats.targets) == 1
+    assert isinstance(pre_add_stats.targets[0], ast.Name)
+    assert pre_add_stats.targets[0].id == "_pre_terminal_pre_add_stats"
+    assert isinstance(pre_add_stats.value, ast.Dict)
+    pre_add_owner = pre_add_stats.value.values[0]
+    assert isinstance(pre_add_owner, ast.Call)
+    assert isinstance(pre_add_owner.func, ast.Name)
+    assert pre_add_owner.func.id == "_optimize_transpose_pre_add_nhwc_chains"
     assert isinstance(summary, ast.Assign)
     assert len(summary.targets) == 1
     assert isinstance(summary.targets[0], ast.Name)
@@ -372,10 +382,20 @@ def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
     assert summary_call.args[0].id == "channel_slice_pad_mul_results"
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Expr)
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_pre_add_stats"
+    assert isinstance(previous.value, ast.Dict)
+    owner_call = previous.value.values[0]
+    assert isinstance(owner_call, ast.Call)
+    assert isinstance(owner_call.func, ast.Name)
+    assert owner_call.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    tensor_count = lowerer.body[first_index - 2]
+    assert isinstance(tensor_count, ast.Assign)
+    assert len(tensor_count.targets) == 1
+    assert isinstance(tensor_count.targets[0], ast.Name)
+    assert tensor_count.targets[0].id == "pre_terminal_pre_add_tensor_count"
     following = lowerer.body[first_index + 2]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -389,10 +409,6 @@ def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
     assert helper.body[0].value.func.id == "run_channel_slice_pad_mul"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the pre-terminal pre-ADD owner still lacks net-prune evidence",
-)
 def test_pre_terminal_pre_add_captures_zero_rewrite_pruning_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     target_names = (

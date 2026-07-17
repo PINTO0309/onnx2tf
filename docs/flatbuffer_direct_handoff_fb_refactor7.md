@@ -1678,3 +1678,30 @@ Validate zero-rewrite pruning, the complete indexed/compatibility owner,
 channel-slice, terminal-affine, core, pass-efficiency, architecture, and
 TensorFlow import blocking sequentially. Commit and push only; do not create or
 update a pull request.
+
+## Pre-terminal pre-ADD evidence implementation checkpoint
+
+The unique direct pre-ADD invocation now records
+`pre_terminal_pre_add_tensor_count` and assigns `_pre_terminal_pre_add_stats`
+from the owner's unchanged aggregate counter plus clamped net
+`pruned_unused_tensors`. This captures the compatibility owner's unconditional
+cleanup when its rewrite counter is zero.
+
+The three orchestration-owned occurrences remain unchanged. The first focused
+run exposed two stale terminal-affine boundary expectations (`135 passed, 2
+failed`) that resolved the immediately following `len` call instead of the
+logical owner inside the merged dictionary. Updating only those contracts
+produced `137 passed in 2.77s`.
+
+The sequential indexed/compatibility pre-ADD, channel-slice, pad,
+terminal-slice, callback, affine, bridge, SPP, QKV, hard-activation, SINet,
+late-layout, shared-context, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gate is `806 passed in 29.07s`. Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At resume, inspect the first direct
+`_run_terminal_affine_concat_split_recovery_sequence()` immediately before the
+pre-ADD count. The second occurrence already has complete ordered-result and
+net-prune evidence; characterize a distinct target for the first occurrence
+without changing the shared runner or summary. Commit and push only; do not
+create or update a pull request.

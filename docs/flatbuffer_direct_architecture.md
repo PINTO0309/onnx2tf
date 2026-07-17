@@ -10245,3 +10245,9 @@ characterization requires a starting tensor count followed by a dictionary
 containing the unchanged owner counter and clamped net
 `pruned_unused_tensors`, between terminal affine recovery and the staged
 channel-slice results.
+
+The direct call now records `pre_terminal_pre_add_tensor_count` and builds
+`_pre_terminal_pre_add_stats` from the unchanged owner result plus clamped net
+tensor reduction. This exposes zero-rewrite pruning without changing the
+owner's unconditional cleanup. The three orchestration-owned occurrences and
+all downstream reconciliation decisions remain unchanged.
