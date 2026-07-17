@@ -2446,3 +2446,32 @@ At resume, audit the immediately following `split_fallback_stats` owner and its
 conditional reconciliation. Confirm whether its raw rewrite counter covers any
 cleanup and whether the existing positive guard is complete before changing
 that boundary. Commit and push only; do not create or update a pull request.
+
+## Post-Split fallback reconciliation characterization checkpoint
+
+`replace_unsupported_split_with_slice()` has one complete mutation predicate:
+`replaced_unsupported_split_with_slice`. The owner creates tensors and replaces
+operators only when that counter increments, and both tensor pruning and
+`LayoutState` synchronization are nested under `rewritten > 0`. A new no-op
+fixture proves that a zero result invokes neither maintenance path; a positive
+fixture proves that both paths execute exactly once. The lowerer's existing
+positive guard is therefore sound and must not be broadened or removed.
+
+The remaining evidence gap is the result of the guarded
+`_reconcile_static_tensor_shapes(model_ir)` call. A strict expected-failure
+architecture contract requires a stable two-key zero default and, on a
+positive Split rewrite, an assigned opt-in complete reconciliation result.
+The assignment must use `_post_split_fallback_static_shape_stats`, preserve the
+existing guard expression and order, and request `include_mutation_count=True`.
+
+Focused owner/orchestration characterization is `6 passed, 278 deselected, 1
+xfailed`. The broader sequential Split, reconciliation, convergence, core,
+pass-efficiency, architecture, and TensorFlow import-blocking gate is `432
+passed, 1 xfailed in 26.37s`. Ruff and whitespace validation pass.
+
+At implementation, change only that result plumbing. Do not change the Split
+matcher, rewrite, raw result schema, pruning, GraphIndex updates, LayoutState
+sync, or conditional execution. Run Split fallback, static reconciliation,
+very-late orchestration, core, pass-efficiency, architecture, and TensorFlow
+import-blocking tests sequentially. Commit and push only; do not create or
+update a pull request.

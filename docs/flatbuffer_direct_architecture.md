@@ -2223,6 +2223,15 @@ rewrite. The lowerer retains a private compatibility wrapper and passes the
 session `LayoutState`; complete operator-list construction is forbidden by the
 ownership gate.
 
+The fallback's `replaced_unsupported_split_with_slice` result is complete
+mutation evidence for this owner. Tensor pruning and `LayoutState` syncing are
+both nested under a positive rewrite count; a zero result changes neither the
+ModelIR nor layout metadata. The direct lowerer therefore retains its existing
+positive guard around the immediately following static-shape reconciliation.
+Characterization separately requires that reconciliation's complete opt-in
+result to be staged instead of discarded, without changing the guard or pass
+order.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct
