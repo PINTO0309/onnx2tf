@@ -15944,3 +15944,52 @@ Session-owned `ModelIRPassContext` is behaviorally inert for each builder and
 whether eliminating either type reduces real duplication without widening
 runtime state. Commit characterization before production changes, validate
 sequentially, commit and push only, and do not create or update a pull request.
+
+## Final two orchestration contexts: characterization checkpoint
+
+The two remaining unconsolidated context types have intentionally different
+contracts and are characterized separately before production changes.
+
+`QLinearRecoveryContext` is a frozen model-only dataclass. Its five stable
+invocations all receive the exact ModelIR and no keyword arguments. Passing a
+full Session-shaped `ModelIRPassContext` to the builder is already behaviorally
+identical: neither its LayoutState nor diagnostics identity is read or
+forwarded. The lowerer currently constructs the type with only the main
+`model_ir`.
+
+`SINetTerminalLayoutRecoveryContext` is a frozen ModelIR/LayoutState/callback
+dataclass. Its first invocation receives exact ModelIR and LayoutState, the
+middle pre-add/resize callback receives no arguments, and the final invocation
+receives only exact ModelIR. The lowerer passes
+`_run_sinet_preadd_resize_recovery_sequence` as the exact callback. Neither
+module imports the lowerer or reads diagnostics.
+
+Sequential characterization validation completed as follows:
+
+- focused remaining-field, behavioral-substitution, callback, lowerer-wiring,
+  and import contracts: `6 passed in 0.51s`;
+- remaining contract, both parents, related previous context contracts, shared
+  context, and ordered architecture: `323 passed in 16.80s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.11s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, runtime order, callback identity, diagnostics behavior,
+and TensorFlow isolation remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
+
+At restart, handle the two types independently in one bounded implementation
+unit. Make `QLinearRecoveryContext` an internal alias of `ModelIRPassContext`
+and bind its lowerer variable to `shared_model_ir_pass_context`; this should
+bring the shared inventory to twenty-five alias names and twenty-two main-model
+consumers. For SINet terminal, retain a dedicated frozen callback-bearing
+dataclass but replace its ModelIR/LayoutState fields with one
+`pass_context: ModelIRPassContext`, pass the exact Session-owned object from the
+lowerer, and read identities through it. Preserve all eight total pass IDs,
+five QLinear argument contracts, the three SINet invocation contracts, and the
+exact argument-free callback. Update the earlier exclusion tests, validate
+sequentially including core smoke, commit and push only, and do not create or
+update a pull request.

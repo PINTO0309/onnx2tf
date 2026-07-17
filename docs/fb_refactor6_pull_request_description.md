@@ -2681,3 +2681,20 @@ existing F401 findings. No real-model conversion or broad corpus suite ran. No
 public API, CLI, artifact, dependency, pass order, nested-context, diagnostics,
 or TensorFlow boundary changed. PR #952 remains closed, and no pull request was
 created, reopened, or updated.
+
+The final two unconsolidated orchestration contexts are characterized without
+production changes and without conflating their different contracts. QLinear's
+model-only context drives five invocations and a common `ModelIRPassContext` is
+a behaviorally identical input whose LayoutState and diagnostics remain inert.
+The SINet terminal context retains its ModelIR/LayoutState pair, exact pre-add/
+resize callback identity, argument-free callback invocation, and three-pass
+order. Both lowerer constructors and both lowerer-independent modules are
+frozen.
+
+The 6 focused contracts, 323-test related orchestration/context/architecture
+set, 31 pass-efficiency tests, and all 11 TensorFlow-import-blocked tests pass.
+Focused formatting, lint, Python compilation, and whitespace checks pass. No
+production source, real-model conversion, or broad corpus suite changed or
+ran. No public API, CLI, artifact, dependency, pass order, callback,
+diagnostics, or TensorFlow boundary changed. PR #952 remains closed, and no pull
+request was created, reopened, or updated.

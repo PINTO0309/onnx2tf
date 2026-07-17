@@ -9596,3 +9596,12 @@ are available on the common object but remain inert across all four builders.
 ModelIR/LayoutState identity, nested safe-binary context identity, pass IDs,
 layout policies, and execution order are unchanged. The model-only QLinear and
 callback-bearing SINet terminal contexts remain independent.
+
+The final two unconsolidated orchestration contexts are now characterized as
+separate boundaries without production changes. The model-only
+`QLinearRecoveryContext` feeds five invocations and already accepts a full
+`ModelIRPassContext` without observing LayoutState or diagnostics. The
+`SINetTerminalLayoutRecoveryContext` retains its ModelIR/LayoutState identity
+and one argument-free pre-add/resize callback across three ordered invocations.
+Both lowerer constructors, exact callback wiring, keyword policies, and module
+independence are frozen before either type changes.
