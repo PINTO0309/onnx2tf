@@ -30,6 +30,9 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
     TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
+    SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -43,6 +46,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
     *TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
     *TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
+    *SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -1670,7 +1674,14 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert tuple(expected_order) == SINET_PREADD_RESIZE_RECOVERY_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_sinet_preadd_resize_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "sinet_preadd_resize_recovery_context"
+    assert helper_calls[0].keywords == []
 
     terminal_helper = next(
         node
@@ -6217,14 +6228,15 @@ def test_indexed_sinet_dual_resize_owner_unifies_both_residual_modes() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == 1
-        layout_keyword = next(
-            keyword
-            for keyword in production_calls[0].keywords
-            if keyword.arg == "layout_state"
-        )
-        assert isinstance(layout_keyword.value, ast.Attribute)
-        assert layout_keyword.value.attr == "layout_state"
+        assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+        for production_call in production_calls:
+            layout_keyword = next(
+                keyword
+                for keyword in production_call.keywords
+                if keyword.arg == "layout_state"
+            )
+            assert isinstance(layout_keyword.value, ast.Attribute)
+            assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_sinet_shared_post_owner_is_bounded_and_transactional() -> None:
@@ -6350,7 +6362,7 @@ def test_indexed_sinet_concat_resize_owner_is_bounded_and_transactional() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -6419,14 +6431,15 @@ def test_indexed_sinet_tail_concat_owner_reuses_indexed_branch_contracts() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_sinet_softmax_mask_owner_is_bounded_and_transactional() -> None:
@@ -6485,14 +6498,15 @@ def test_indexed_sinet_softmax_mask_owner_is_bounded_and_transactional() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_sinet_mix_attention_owner_is_bounded_and_transactional() -> None:

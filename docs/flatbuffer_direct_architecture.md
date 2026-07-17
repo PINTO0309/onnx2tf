@@ -9048,3 +9048,15 @@ focused plus architecture suite passed 252 tests, and all 11 TensorFlow-import-
 blocked tests passed. The next change should introduce a frozen ModelIR/layout
 context and six stable IDs, then prove builder equality and instrumented order
 before switching the historical helper to a delegate.
+
+That sequence now uses `SINetPreaddResizeRecoveryContext` and six stable IDs in
+`passes/sinet_preadd_resize_recovery_orchestration.py`. Every owner is a direct
+import, the first two invocations carry ModelIR only, and the final four carry
+ModelIR plus layout state. The historical helper is a four-line delegate while
+all three top-level invocations, its nested terminal-layout invocation, and
+their neighbors remain unchanged. Ordered architecture accounting combines
+the new stable IDs with remaining direct calls so the existing owner totals
+remain explicit. Focused, related-owner, core, and TensorFlow-import-blocked
+suites pass apart from one stale direct fixture that fails identically at the
+parent checkpoint. Characterize the adjacent three-step SINet terminal-layout
+sequence before the next extraction.

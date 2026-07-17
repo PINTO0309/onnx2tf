@@ -201,6 +201,10 @@ from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchest
     TerminalAffineConcatSplitRecoveryContext,
     run_terminal_affine_concat_split_recovery,
 )
+from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
+    SINetPreaddResizeRecoveryContext,
+    run_sinet_preadd_resize_recovery,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4706,6 +4710,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
+    sinet_preadd_resize_recovery_context = SINetPreaddResizeRecoveryContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+    )
 
     def _run_layout_recovery_prefix_pass_sequence() -> None:
         run_layout_recovery_prefix(layout_recovery_context)
@@ -4767,24 +4775,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_sinet_preadd_resize_recovery_sequence() -> None:
-        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        # Generic rewrites can recreate SiNet concat+resize transpose adapters.
-        _optimize_sinet_concat_resize_affine_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_sinet_dual_resize_affine_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_sinet_concat_resize_affine_tail_concat_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_sinet_softmax_mask_residual_nhwc_tail_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        run_sinet_preadd_resize_recovery(
+            sinet_preadd_resize_recovery_context
         )
 
     def _run_sinet_terminal_layout_recovery_sequence() -> None:

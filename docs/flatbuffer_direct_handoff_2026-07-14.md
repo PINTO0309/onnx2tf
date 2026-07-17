@@ -13465,3 +13465,57 @@ three top-level invocations, the one nested invocation, and every neighboring
 boundary. Prove builder argument equality and instrumented order before
 switching the helper to a delegate, validate sequentially, commit and push,
 and do not create a pull request.
+
+## Explicit SINet pre-add/resize recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/sinet_preadd_resize_recovery_orchestration.py`. A frozen
+`SINetPreaddResizeRecoveryContext` contains only ModelIR and layout state. All
+six existing owners are imported directly; no lowerer callback, diagnostics,
+conversion option, or central-lowerer import is required.
+
+`SINET_PREADD_RESIZE_RECOVERY_PASS_IDS` declares the exact six-step order.
+Immutable invocations preserve the two ModelIR-only and four layout-aware
+argument contracts, and the shared executor validates the complete sequence
+before running an owner. The historical helper remains a four-line delegate.
+Its three top-level calls, one nested terminal-layout call, and all four
+neighboring boundaries are unchanged.
+
+Architecture ownership accounting now combines the stable phase occurrence
+with remaining direct lowerer calls. This preserves the existing module-owner
+contracts for the two residual-affine passes and all four SINet passes without
+mistaking a mechanically moved call for a removed invocation.
+
+Sequential validation completed as follows:
+
+- focused SINet pre-add/resize orchestration: `7 passed in 0.58s`;
+- ordered architecture: `248 passed in 17.80s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 17.13s`;
+- related residual-affine/SINet owner set, excluding one documented stale
+  assertion: `282 passed in 1.42s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.09s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+The diagnostic related-owner run including
+`test_flatbuffer_direct_sinet_concat_resize_affine_transpose_chain_optimized`
+reported `282 passed, 1 failed`. Its stale `optimized == 1` expectation also
+fails unchanged at parent checkpoint `71d1814e`, where the optimizer returns
+zero, proving that it is not a regression from this extraction. The temporary
+detached comparison worktree was removed immediately after verification.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_sinet_terminal_layout_recovery_sequence` before changing production
+code. Freeze its three-slot order, nested pre-add/resize phase boundary,
+ModelIR/layout routing, top-level repetitions, and outer neighbors before
+choosing its explicit context. Validate sequentially, commit and push, and do
+not create a pull request.

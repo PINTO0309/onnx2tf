@@ -2017,3 +2017,18 @@ blocked tests passed, and targeted static checks passed. Runtime behavior,
 public contracts, dependency boundaries, corpus policy, and operation tiers
 remain unchanged. PR #952 remains closed, and no pull request was created,
 reopened, or updated.
+
+That sequence is now implemented in
+`passes/sinet_preadd_resize_recovery_orchestration.py` with a frozen
+ModelIR/layout context, six stable IDs, and direct imports of every existing
+owner. The historical helper remains a four-line delegate, and its three top-
+level plus one nested invocation retain every prior ordering boundary. Focused
+and architecture contracts prove context construction, exact arguments,
+instrumented order, lowerer-import isolation, and owner multiplicity. The
+255-test focused-plus-architecture set, 282-test related owner set, 32 core
+smoke tests, and all 11 TensorFlow-import-blocked tests pass. One stale direct
+concat/resize fixture still expects an optimization that already returns zero
+at parent checkpoint `71d1814e`; it is documented rather than attributed to
+this extraction. No public API, artifact, dependency, runtime order, or
+TensorFlow boundary changed. PR #952 remains closed, and no pull request was
+created, reopened, or updated.

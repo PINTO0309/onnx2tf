@@ -4,6 +4,20 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    sinet_preadd_resize_recovery_orchestration,
+)
+from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
+    SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
+    SINetPreaddResizeRecoveryContext,
+    build_sinet_preadd_resize_recovery_invocations,
+    run_sinet_preadd_resize_recovery,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -36,26 +50,29 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _ordered_call_contracts(
-    helper: ast.FunctionDef,
-) -> list[tuple[str, tuple[Any, ...], dict[str, Any]]]:
-    contracts: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-    for statement in helper.body:
-        assert isinstance(statement, ast.Expr)
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        contracts.append(
-            (
-                call.func.id,
-                tuple(_expression_path(argument) for argument in call.args),
-                {
-                    str(keyword.arg): _expression_path(keyword.value)
-                    for keyword in call.keywords
-                },
-            )
-        )
-    return contracts
+def _context() -> SINetPreaddResizeRecoveryContext:
+    model_ir = ModelIR("sinet_preadd_resize_recovery_test")
+    return SINetPreaddResizeRecoveryContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+    )
+
+
+def _normalize_new_contract(
+    invocation: sinet_preadd_resize_recovery_orchestration.RecoveryInvocation,
+    context: SINetPreaddResizeRecoveryContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "session.layout_state"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
 
 
 def test_sinet_preadd_resize_recovery_is_a_straight_line_closure() -> None:
@@ -72,7 +89,7 @@ def test_sinet_preadd_resize_recovery_is_a_straight_line_closure() -> None:
     )
 
     assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 20
+    assert helper.end_lineno - helper.lineno + 1 == 4
     assert helper.args.args == []
     assert helper.args.posonlyargs == []
     assert helper.args.kwonlyargs == []
@@ -98,44 +115,45 @@ def test_sinet_preadd_resize_recovery_is_a_straight_line_closure() -> None:
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
     }
-    assert loaded_data_names == {"model_ir", "session"}
+    assert loaded_data_names == {"sinet_preadd_resize_recovery_context"}
 
 
 def test_sinet_preadd_resize_recovery_preserves_all_call_contracts() -> None:
-    _, helper = _lowerer_and_helper()
+    context = _context()
+    invocations = build_sinet_preadd_resize_recovery_invocations(context)
 
-    assert _ordered_call_contracts(helper) == [
-        (
-            "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
+    assert (
+        tuple(step.pass_id for step in invocations)
+        == SINET_PREADD_RESIZE_RECOVERY_PASS_IDS
+    )
+    assert {
+        step.pass_id: _normalize_new_contract(step, context) for step in invocations
+    } == {
+        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        (
-            "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        (
-            "_optimize_sinet_concat_resize_affine_transpose_chains",
+        "_optimize_sinet_concat_resize_affine_transpose_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_sinet_dual_resize_affine_transpose_chains",
+        "_optimize_sinet_dual_resize_affine_transpose_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_sinet_concat_resize_affine_tail_concat_transpose_chains",
+        "_optimize_sinet_concat_resize_affine_tail_concat_transpose_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_sinet_softmax_mask_residual_nhwc_tail_chains",
+        "_optimize_sinet_softmax_mask_residual_nhwc_tail_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-    ]
+    }
 
 
 def test_sinet_preadd_resize_recovery_invocations_remain_zero_argument() -> None:
@@ -208,3 +226,93 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
             "_optimize_transpose_csp_attention_nhwc_chains",
         ),
     ]
+
+
+def test_sinet_preadd_resize_context_and_wrapper_are_explicit() -> None:
+    lowerer, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "run_sinet_preadd_resize_recovery"
+    assert len(call.args) == 1
+    assert isinstance(call.args[0], ast.Name)
+    assert call.args[0].id == "sinet_preadd_resize_recovery_context"
+    assert call.keywords == []
+
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "sinet_preadd_resize_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert context_assignment.value.func.id == "SINetPreaddResizeRecoveryContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
+        "layout_state": "session.layout_state",
+    }
+
+
+def test_sinet_preadd_resize_runner_preserves_instrumented_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    probe_steps = build_sinet_preadd_resize_recovery_invocations(context)
+    events: list[str] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append(pass_id)
+
+        return record
+
+    for step in probe_steps:
+        module_name = next(
+            name
+            for name, value in vars(sinet_preadd_resize_recovery_orchestration).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            sinet_preadd_resize_recovery_orchestration,
+            module_name,
+            recorder(step.pass_id),
+        )
+
+    run_sinet_preadd_resize_recovery(context)
+
+    assert events == list(SINET_PREADD_RESIZE_RECOVERY_PASS_IDS)
+
+
+def test_sinet_preadd_resize_module_does_not_import_lowerer() -> None:
+    module_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "sinet_preadd_resize_recovery_orchestration.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        for node in tree.body
+    )
+    assert not any(
+        isinstance(node, ast.Import)
+        and any(
+            alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+            for alias in node.names
+        )
+        for node in tree.body
+    )
