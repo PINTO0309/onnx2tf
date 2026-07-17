@@ -10221,3 +10221,11 @@ slice/pad/concat boundary contracts identify the exact assignment, while the
 two later direct calls remain expressions. No summary, tensor-count proxy, or
 reconciliation consumer is added because the positive-only owner counter
 already covers every mutation.
+
+The preceding channel-slice/pad-Mul orchestration has two ordered child
+results. The channel-slice child declares three rewrite counters and the
+pad-Mul child declares one. All four underlying rewrite owners prune only after
+a positive counter, so strict characterization requires ordered tuple
+propagation and a fixed four-key summary without a tensor-count proxy. Only the
+direct terminal invocation should stage results and summary; the callback used
+inside terminal slice recovery remains behaviorally unchanged.

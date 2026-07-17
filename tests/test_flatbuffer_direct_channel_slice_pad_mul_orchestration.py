@@ -260,6 +260,132 @@ def test_channel_slice_pad_mul_runner_preserves_instrumented_order(
     assert events == list(CHANNEL_SLICE_PAD_MUL_PASS_IDS)
 
 
+def test_channel_slice_pad_mul_children_have_fixed_mutation_schemas() -> None:
+    context = _context()
+
+    results = tuple(
+        invocation.run()
+        for invocation in build_channel_slice_pad_mul_invocations(context)
+    )
+
+    assert results == (
+        {
+            "optimized_transpose_channel_slice_dual_add_bridges_strict": 0,
+            "optimized_transpose_slice_muladd_conv_mergeadd_strict": 0,
+            "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 0,
+        },
+        {
+            "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 0,
+        },
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the channel-slice/pad-Mul runner still discards ordered results",
+)
+def test_channel_slice_pad_mul_returns_and_summarizes_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    channel_slice_result = {
+        "optimized_transpose_channel_slice_dual_add_bridges_strict": 2,
+        "optimized_transpose_slice_muladd_conv_mergeadd_strict": 3,
+        "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 4,
+    }
+    pad_mul_result = {
+        "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 5,
+    }
+    expected_results = (channel_slice_result, pad_mul_result)
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(
+            invocation.pass_id for invocation in invocations
+        ) == CHANNEL_SLICE_PAD_MUL_PASS_IDS
+        assert tuple(expected_pass_ids) == CHANNEL_SLICE_PAD_MUL_PASS_IDS
+        assert phase_name == "channel-slice/pad-mul"
+        return expected_results
+
+    monkeypatch.setattr(
+        channel_slice_pad_mul_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    results = run_channel_slice_pad_mul(context)
+    assert results == expected_results
+    summarize = getattr(
+        channel_slice_pad_mul_orchestration,
+        "summarize_channel_slice_pad_mul_mutations",
+    )
+    assert summarize(results) == {
+        **channel_slice_result,
+        **pad_mul_result,
+    }
+    with pytest.raises(
+        ValueError,
+        match=r"channel-slice/pad-Mul mutation summary expected 2 pass results",
+    ):
+        summarize(())
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the direct channel-slice/pad-Mul result is still discarded",
+)
+def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
+    lowerer, helper = _lowerer_and_helper()
+    target_names = (
+        "channel_slice_pad_mul_results",
+        "_pre_terminal_channel_slice_pad_mul_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+    }
+    result_call = assignments[target_names[0]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == CHANNEL_SLICE_PAD_MUL
+    assert result_call.args == []
+    assert result_call.keywords == []
+    summary_call = assignments[target_names[1]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == "summarize_channel_slice_pad_mul_mutations"
+    assert len(summary_call.args) == 1
+    assert isinstance(summary_call.args[0], ast.Name)
+    assert summary_call.args[0].id == "channel_slice_pad_mul_results"
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    following = lowerer.body[first_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_pre_terminal_affine_post_add_stats"
+
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+    assert isinstance(helper.body[0].value.func, ast.Name)
+    assert helper.body[0].value.func.id == "run_channel_slice_pad_mul"
+
+
 def test_channel_slice_pad_mul_module_does_not_import_lowerer() -> None:
     module_path = (
         REPO_ROOT

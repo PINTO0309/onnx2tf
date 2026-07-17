@@ -1605,3 +1605,27 @@ At resume, inspect the preceding channel-slice/pad/Mul orchestration cluster.
 Determine whether its runner already propagates complete ordered results and
 whether any child can prune without a positive counter before adding mutation
 evidence. Commit and push only; do not create or update a pull request.
+
+## Pre-terminal channel-slice/pad-Mul evidence characterization checkpoint
+
+The channel-slice/pad-Mul orchestration has two ordered child results. Empty
+ModelIR probing confirms three fixed channel-slice counters followed by one
+fixed pad-Mul counter. Source and behavioral owner coverage confirm that all
+four underlying rewrites prune only after a positive counter, so no net tensor
+count is needed.
+
+Strict expected-failure coverage requires the orchestration runner and lowerer
+delegate to return the ordered pair, validates an exact four-key summary, and
+requires only the direct terminal invocation to stage
+`channel_slice_pad_mul_results` and
+`_pre_terminal_channel_slice_pad_mul_stats`. The terminal-slice callback,
+shared pass-state scope, Session LayoutState, diagnostics, and pass order remain
+unchanged.
+
+At implementation, add the pure fixed-schema summary, propagate the raw pair
+through the runner and delegate, and replace only the direct expression with
+two assignments. Update the pre-add and pre-terminal affine boundary contracts.
+Validate malformed length, result order, the complete channel-slice and pad
+owners, terminal-slice recovery, core, pass-efficiency, architecture, and
+TensorFlow-import blocking sequentially. Commit and push only; do not create or
+update a pull request.
