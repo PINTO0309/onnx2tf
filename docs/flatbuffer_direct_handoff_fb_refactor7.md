@@ -1629,3 +1629,29 @@ Validate malformed length, result order, the complete channel-slice and pad
 owners, terminal-slice recovery, core, pass-efficiency, architecture, and
 TensorFlow-import blocking sequentially. Commit and push only; do not create or
 update a pull request.
+
+## Pre-terminal channel-slice/pad-Mul evidence implementation checkpoint
+
+The channel-slice/pad-Mul runner and lowerer delegate now return the ordered
+two-result tuple. The pure `summarize_channel_slice_pad_mul_mutations()` helper
+validates the exact length and extracts only the three channel-slice counters
+and one pad-Mul counter.
+
+The direct terminal invocation stages `channel_slice_pad_mul_results` followed
+by `_pre_terminal_channel_slice_pad_mul_stats`. The terminal-slice callback
+continues to ignore the returned pair, shared pass-state and diagnostics remain
+unchanged, and no reconciliation decision consumes the summary.
+
+Focused runner, summary, owner, and boundary coverage is `17 passed in 0.66s`;
+terminal-slice callback and architecture coverage is `17 passed in 0.71s`.
+The first expanded gate exposed one stale boundary expectation (`782 passed, 1
+failed`) after the two new assignments. Updating that exact contract produced
+`783 passed in 28.91s` across channel-slice, pad, terminal-slice, callback,
+affine, bridge, SPP, QKV, hard-activation, SINet, late-layout, shared-context,
+core, pass-efficiency, architecture, and TensorFlow-import-blocked coverage.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the preceding `_optimize_transpose_pre_add_nhwc_chains`
+owner. Establish its production occurrence count, return schema, and pruning
+contract before choosing an unambiguous evidence target. Commit and push only;
+do not create or update a pull request.

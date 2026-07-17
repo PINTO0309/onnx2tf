@@ -1392,11 +1392,33 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
     assert layout_keyword.value.value.id == "session"
     assert layout_keyword.value.attr == "layout_state"
 
-    previous = lowerer.body[slice_index - 2]
+    channel_slice_summary = lowerer.body[slice_index - 2]
+    assert isinstance(channel_slice_summary, ast.Assign)
+    assert len(channel_slice_summary.targets) == 1
+    assert isinstance(channel_slice_summary.targets[0], ast.Name)
+    assert channel_slice_summary.targets[0].id == (
+        "_pre_terminal_channel_slice_pad_mul_stats"
+    )
+    assert isinstance(channel_slice_summary.value, ast.Call)
+    assert isinstance(channel_slice_summary.value.func, ast.Name)
+    assert channel_slice_summary.value.func.id == (
+        "summarize_channel_slice_pad_mul_mutations"
+    )
+    channel_slice_results = lowerer.body[slice_index - 3]
+    assert isinstance(channel_slice_results, ast.Assign)
+    assert len(channel_slice_results.targets) == 1
+    assert isinstance(channel_slice_results.targets[0], ast.Name)
+    assert channel_slice_results.targets[0].id == "channel_slice_pad_mul_results"
+    assert isinstance(channel_slice_results.value, ast.Call)
+    assert isinstance(channel_slice_results.value.func, ast.Name)
+    assert channel_slice_results.value.func.id == (
+        "_run_channel_slice_pad_mul_layout_pass_cluster"
+    )
+    previous = lowerer.body[slice_index - 4]
     assert isinstance(previous, ast.Expr)
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_run_channel_slice_pad_mul_layout_pass_cluster"
+    assert previous.value.func.id == "_optimize_transpose_pre_add_nhwc_chains"
     following = lowerer.body[slice_index]
     assert isinstance(following, ast.Assign)
     assert following.targets[0].id == "_pre_terminal_affine_slice_pad_concat_stats"

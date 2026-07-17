@@ -10229,3 +10229,11 @@ a positive counter, so strict characterization requires ordered tuple
 propagation and a fixed four-key summary without a tensor-count proxy. Only the
 direct terminal invocation should stage results and summary; the callback used
 inside terminal slice recovery remains behaviorally unchanged.
+
+The orchestration runner and lowerer delegate now return the ordered pair, and
+`summarize_channel_slice_pad_mul_mutations()` validates exactly two results
+before extracting only the four declared counters. Production stages
+`channel_slice_pad_mul_results` and
+`_pre_terminal_channel_slice_pad_mul_stats` at the direct terminal call. The
+terminal-slice callback still ignores the returned pair, and no reconciliation
+consumer or tensor-count proxy is added.

@@ -178,18 +178,29 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "channel_slice_pad_mul_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == CHANNEL_SLICE_PAD_MUL
     )
 
     previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
+    summary = lowerer.body[invocation_index + 1]
+    following = lowerer.body[invocation_index + 2]
     assert isinstance(previous, ast.Expr)
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert isinstance(summary, ast.Assign)
+    assert len(summary.targets) == 1
+    assert isinstance(summary.targets[0], ast.Name)
+    assert summary.targets[0].id == "_pre_terminal_channel_slice_pad_mul_stats"
+    assert isinstance(summary.value, ast.Call)
+    assert isinstance(summary.value.func, ast.Name)
+    assert summary.value.func.id == "summarize_channel_slice_pad_mul_mutations"
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -212,7 +223,7 @@ def test_channel_slice_pad_mul_preserves_stable_callback_boundary() -> None:
 def test_channel_slice_pad_mul_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -280,10 +291,6 @@ def test_channel_slice_pad_mul_children_have_fixed_mutation_schemas() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the channel-slice/pad-Mul runner still discards ordered results",
-)
 def test_channel_slice_pad_mul_returns_and_summarizes_mutations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -329,10 +336,6 @@ def test_channel_slice_pad_mul_returns_and_summarizes_mutations(
         summarize(())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the direct channel-slice/pad-Mul result is still discarded",
-)
 def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
     lowerer, helper = _lowerer_and_helper()
     target_names = (
