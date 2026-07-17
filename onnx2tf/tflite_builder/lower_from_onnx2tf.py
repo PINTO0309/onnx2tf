@@ -4057,8 +4057,8 @@ def lower_onnx_to_ir(
     def _run_se_fc_gather_channel_fanout_pass_cluster(
         target_model_ir: ModelIR,
         target_layout_state: LayoutState | None,
-    ) -> None:
-        run_se_fc_gather_channel_fanout(
+    ) -> Tuple[Dict[str, int], Dict[str, int]]:
+        return run_se_fc_gather_channel_fanout(
             ModelIRPassContext(
                 model_ir=target_model_ir,
                 layout_state=target_layout_state,

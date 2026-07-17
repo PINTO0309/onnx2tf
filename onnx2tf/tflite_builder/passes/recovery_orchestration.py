@@ -20,9 +20,8 @@ def run_recovery_invocations(
     *,
     expected_pass_ids: Sequence[str],
     phase_name: str,
-) -> None:
+) -> Tuple[Any, ...]:
     actual_pass_ids = tuple(invocation.pass_id for invocation in invocations)
     if actual_pass_ids != tuple(expected_pass_ids):
         raise RuntimeError(f"{phase_name} pass IDs diverged from their order")
-    for invocation in invocations:
-        invocation.run()
+    return tuple(invocation.run() for invocation in invocations)

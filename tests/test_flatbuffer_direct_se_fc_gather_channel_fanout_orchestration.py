@@ -137,7 +137,7 @@ def test_se_fc_gather_signature_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -222,10 +222,6 @@ def test_se_fc_gather_runner_preserves_both_instrumented_orders(
     assert events[0][1] is events[1][1]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the SE-FC/Gather runner currently discards both pass result dictionaries",
-)
 def test_se_fc_gather_runner_returns_both_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

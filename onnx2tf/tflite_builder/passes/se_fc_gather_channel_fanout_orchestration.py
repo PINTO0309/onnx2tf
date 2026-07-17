@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple, cast
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -53,9 +53,12 @@ def build_se_fc_gather_channel_fanout_invocations(
 
 def run_se_fc_gather_channel_fanout(
     context: SEFCGatherChannelFanoutContext,
-) -> None:
-    run_recovery_invocations(
-        build_se_fc_gather_channel_fanout_invocations(context),
-        expected_pass_ids=SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
-        phase_name="SE-FC/gather-channel-fanout",
+) -> Tuple[Dict[str, int], Dict[str, int]]:
+    return cast(
+        Tuple[Dict[str, int], Dict[str, int]],
+        run_recovery_invocations(
+            build_se_fc_gather_channel_fanout_invocations(context),
+            expected_pass_ids=SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
+            phase_name="SE-FC/gather-channel-fanout",
+        ),
     )

@@ -369,3 +369,23 @@ continue ignoring results. Do not yet change either main/fallback terminal
 reconciliation; first validate all recovery-orchestration and SE/FC/Gather
 contracts sequentially. Commit and push only; do not create or update a pull
 request.
+
+## Recovery-result propagation implementation checkpoint
+
+`run_recovery_invocations()` now returns the callback values as an ordered
+tuple after the same pass-ID validation. Existing orchestrators continue to
+ignore it. `run_se_fc_gather_channel_fanout()` returns its two typed result
+dictionaries, and the lowerer's private helper forwards them while preserving
+the same context, Session diagnostics, and shared `ModelIRPassStateScope`.
+
+Sequential validation across every
+`test_flatbuffer_direct_*orchestration.py` file is `292 passed in 4.37s`.
+The core, pass-efficiency, architecture, and TensorFlow-import-blocked gate is
+`336 passed in 25.72s`. Focused return-order, ID-drift, SE/FC/Gather, and helper
+contracts pass.
+
+At resume, characterize the main and fallback terminal reconciliation guards as
+one combined ownership boundary: SINet shuffle result, both ordered cluster
+results, and tensor-count reduction for zero-rewrite pruning. Do not change the
+two call sites until both boundary forms have strict structural and lowerer
+wiring coverage. Commit and push only; do not create or update a pull request.

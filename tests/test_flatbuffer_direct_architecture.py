@@ -4779,7 +4779,7 @@ def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
     ]
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_se_fc_gather_channel_fanout"

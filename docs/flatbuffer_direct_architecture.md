@@ -9742,3 +9742,10 @@ utility and this specific wrapper to return ordered result tuples without
 changing callback order, arguments, shared state scope, diagnostics, or
 exception timing. Production remains unchanged at this characterization
 checkpoint.
+
+`run_recovery_invocations()` now returns callback values as an ordered tuple
+after the same pre-execution ID validation. Existing orchestrators continue to
+ignore that tuple. The SE/FC/Gather runner narrows and forwards its two result
+dictionaries, and the lowerer's private wrapper returns them without changing
+context construction or shared state scope. The complete orchestration corpus
+confirms that result propagation is additive to existing behavior.
