@@ -10192,3 +10192,10 @@ the twelve declared keys and adds clamped net pruning. Production stages
 starting count, `terminal_affine_results`, and `_terminal_affine_stats` only at
 the second call; its forward-string annotation preserves the delegate's
 context-only runtime load contract.
+
+Immediately before the staged terminal affine cluster, the first direct
+strided-slice/pad/concat call still discards its complete positive-only counter.
+Strict characterization requires it to assign
+`_pre_terminal_affine_slice_pad_concat_stats` between the preceding raw
+transpose/Mul/Add owner and `terminal_affine_tensor_count`. The second direct
+call retains its distinct staged target.

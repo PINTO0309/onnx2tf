@@ -1513,3 +1513,22 @@ At resume, move backward to the first strided-slice/pad/concat call immediately
 before this cluster. Its positive-only prune contract permits direct result
 capture, but keep the earlier terminal affine recovery unchanged. Commit and
 push only; do not create or update a pull request.
+
+## First terminal slice/pad/concat evidence characterization checkpoint
+
+The first direct strided-slice/pad/concat call shares the same positive-only
+prune contract as the already staged second call, so its raw counter is complete
+mutation evidence. A strict expected-failure contract requires the first call
+to assign `_pre_terminal_affine_slice_pad_concat_stats` between the raw
+transpose/Mul/Add owner and `terminal_affine_tensor_count`.
+
+The contract also requires exactly two direct owner statements and preserves
+the second target as `_terminal_slice_pad_concat_stats`. This prevents another
+ambiguous occurrence edit. The earlier terminal affine recovery and all owner
+arguments, ordering, and reconciliation behavior remain unchanged.
+
+At implementation, replace only the first direct expression and update the
+terminal-affine and bridge-owner boundary contracts. Validate both occurrence
+targets, the complete bridge suite, terminal affine recovery, core, pass
+efficiency, architecture, and TensorFlow import blocking sequentially. Commit
+and push only; do not create or update a pull request.
