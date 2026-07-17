@@ -207,3 +207,17 @@ this terminal block. Do not assume their runners expose complete mutation
 counters: characterize each return contract and positive/no-op coverage before
 guarding another scan. Commit and push only; do not create or update a pull
 request.
+
+## NodeView value-list typing checkpoint
+
+`NodeView.inputs` and `NodeView.outputs` now explicitly carry
+`list[_ValueView]` annotations. This resolves the editor-side protobuf type
+misinference that reported `.name` as unavailable at the demand-driven input
+rank recovery in `lower_from_onnx2tf.py`. The produced lists and their values
+are unchanged at runtime.
+
+Sequential validation covered the complete NodeView, flatbuffer-direct core,
+and TensorFlow-import-blocked optional-boundary suites: `52 passed`. Focused
+Ruff, Python compilation, and whitespace checks also pass. Continue with the
+remaining unconditional static-shape reconciliation inventory; commit and push
+only, with no pull request.

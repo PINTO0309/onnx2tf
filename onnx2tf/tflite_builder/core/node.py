@@ -63,7 +63,7 @@ class NodeView:
         remap = input_name_remap if isinstance(input_name_remap, dict) else {}
         shapes = shape_map if isinstance(shape_map, dict) else {}
         dtypes = dtype_map if isinstance(dtype_map, dict) else {}
-        self.inputs = [
+        self.inputs: list[_ValueView] = [
             _ValueView(
                 name=remap.get(name, name) if name else "",
                 onnx_name=name if name else "",
@@ -72,7 +72,7 @@ class NodeView:
             )
             for name in node.input
         ]
-        self.outputs = [
+        self.outputs: list[_ValueView] = [
             _ValueView(
                 name=name,
                 onnx_name=name,
