@@ -430,3 +430,29 @@ def test_shared_recovery_runner_rejects_id_drift_before_execution() -> None:
         )
 
     assert events == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the shared recovery runner currently discards ordered callback results",
+)
+def test_shared_recovery_runner_returns_ordered_callback_results() -> None:
+    invocations = (
+        RecoveryInvocation(
+            pass_id="first",
+            callback=lambda: {"first_changes": 1},
+        ),
+        RecoveryInvocation(
+            pass_id="second",
+            callback=lambda: {"second_changes": 2},
+        ),
+    )
+
+    assert run_recovery_invocations(
+        invocations,
+        expected_pass_ids=("first", "second"),
+        phase_name="result-preserving phase",
+    ) == (
+        {"first_changes": 1},
+        {"second_changes": 2},
+    )

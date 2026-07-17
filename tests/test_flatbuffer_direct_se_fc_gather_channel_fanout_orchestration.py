@@ -222,6 +222,33 @@ def test_se_fc_gather_runner_preserves_both_instrumented_orders(
     assert events[0][1] is events[1][1]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the SE-FC/Gather runner currently discards both pass result dictionaries",
+)
+def test_se_fc_gather_runner_returns_both_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(use_layout_state=True)
+    expected_results = (
+        {"optimized_transpose_se_fc_mul_prepost_nhwc_chains": 1},
+        {"optimized_transpose_gather_transpose_nhwc_channel_chains": 2},
+    )
+
+    for pass_id, expected_result in zip(
+        SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
+        expected_results,
+        strict=True,
+    ):
+        monkeypatch.setattr(
+            se_fc_gather_channel_fanout_orchestration,
+            pass_id,
+            lambda *args, _result=expected_result, **kwargs: dict(_result),
+        )
+
+    assert run_se_fc_gather_channel_fanout(context) == expected_results
+
+
 def test_se_fc_gather_preserves_both_production_target_forms() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [

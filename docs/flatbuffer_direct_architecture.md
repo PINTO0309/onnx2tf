@@ -9733,3 +9733,12 @@ The owner still performs its unconditional prune and retains the same Session
 LayoutState. A lowerer-level fixture covers unchanged, rewrite, and prune-only
 outcomes, so the optimized guard preserves the previously unreported cleanup
 mutation rather than treating a zero rewrite count as a no-op.
+
+The shared recovery-invocation utility validates pass IDs and runs callbacks in
+order but currently discards every callback result. This prevents the terminal
+SE/FC/Gather wrapper from exposing its two already-complete runner dictionaries
+to the lowerer. Strict expected-failure contracts now require the generic
+utility and this specific wrapper to return ordered result tuples without
+changing callback order, arguments, shared state scope, diagnostics, or
+exception timing. Production remains unchanged at this characterization
+checkpoint.

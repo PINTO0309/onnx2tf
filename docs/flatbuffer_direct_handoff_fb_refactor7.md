@@ -350,3 +350,22 @@ contracts and decide whether aggregation can be introduced without changing
 their public runner results or diagnostics. If not, leave it unconditional and
 inventory another bounded scan/allocation. Commit and push only; do not create
 or update a pull request.
+
+## Recovery-result propagation characterization checkpoint
+
+`run_recovery_invocations()` currently validates ordered pass IDs and invokes
+each callback but discards its return value. Consequently,
+`run_se_fc_gather_channel_fanout()` cannot expose the two existing result
+dictionaries needed for a complete terminal reconciliation guard.
+
+Two strict expected-failure contracts now require ordered result tuples from
+the generic recovery utility and the SE/FC/Gather wrapper. They preserve the
+same callback order, arguments, shared `ModelIRPassStateScope`, diagnostics, ID
+drift failure before execution, and exception timing. Production is unchanged.
+
+At implementation, return a tuple from the generic runner and forward a typed
+two-dictionary tuple from the SE/FC/Gather wrapper. Existing orchestrators may
+continue ignoring results. Do not yet change either main/fallback terminal
+reconciliation; first validate all recovery-orchestration and SE/FC/Gather
+contracts sequentially. Commit and push only; do not create or update a pull
+request.
