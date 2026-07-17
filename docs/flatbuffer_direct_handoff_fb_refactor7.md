@@ -2868,3 +2868,29 @@ At resume, audit `fallback_concat_layout_stats` and its guarded reconciliation.
 Confirm its counter and absence or presence of cleanup-only mutation before
 changing that boundary. Commit and push only; do not create or update a pull
 request.
+
+## Safety-fallback mixed-Concat reconciliation characterization checkpoint
+
+`_repair_mixed_nhwc_inputs_for_nchw_concat()` inserts local transpose adapters,
+rewires the Concat, and updates its output metadata only when
+`repaired_mixed_nhwc_inputs_for_nchw_concat` increments. It performs no pruning
+or zero-rewrite cleanup, and existing positive/no-op/idempotence/fan-out tests
+make the one-key result a complete mutation predicate.
+
+The fallback guard is already correct, but its reconciliation result is
+discarded. A strict expected-failure AST contract requires a stable two-key
+`_fallback_mixed_concat_static_shape_stats` default and an opt-in complete
+result inside the unchanged positive guard. The following Concat-axis repair
+remains fixed.
+
+Focused mixed-Concat and safety-fallback characterization is `18 passed, 1
+xfailed`. The broader sequential indexed-owner, fallback-owner,
+reconciliation, convergence, core, pass-efficiency, architecture, and
+TensorFlow import-blocking gate is `490 passed, 1 xfailed in 27.67s`. Ruff and
+whitespace validation pass.
+
+At implementation, add only this result plumbing. Do not alter the matcher,
+adapter insertion, Concat rewire, output metadata, raw result, guard, or next
+owner. Validate mixed-Concat repair, safety fallback, static reconciliation,
+core, pass efficiency, architecture, and TensorFlow import blocking
+sequentially. Commit and push only; do not create or update a pull request.

@@ -2279,6 +2279,11 @@ existing stale-Transpose-only reconciliation predicate remains unchanged;
 singleton repair updates its output metadata directly, and pruning alone does
 not require shape propagation.
 
+The fallback mixed-NHWC-input repair for NCHW Concat has one complete rewrite
+counter and no cleanup-only path. Characterization requires a stable complete
+zero result and assigned opt-in reconciliation evidence under the unchanged
+positive guard, while fixing the following Concat-axis repair boundary.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

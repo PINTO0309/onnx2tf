@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -460,3 +461,66 @@ def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "fallback_concat_layout_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the fallback mixed-Concat reconciliation result is discarded",
+)
+def test_safety_fallback_stages_mixed_concat_reconciliation_evidence() -> None:
+    body = _safety_fallback_body(_lowerer())
+    owner_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_concat_layout_stats"
+    )
+
+    default_stats = body[owner_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert len(default_stats.targets) == 1
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_fallback_mixed_concat_static_shape_stats"
+    )
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(default_stats.value.keys, default_stats.value.values)
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = body[owner_index + 2]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "int(fallback_concat_layout_stats.get("
+        "'repaired_mixed_nhwc_inputs_for_nchw_concat', 0)) > 0"
+    )
+    assert len(guard.body) == 1
+    reconciliation = guard.body[0]
+    assert isinstance(reconciliation, ast.Assign)
+    assert len(reconciliation.targets) == 1
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == (
+        "_fallback_mixed_concat_static_shape_stats"
+    )
+    assert isinstance(reconciliation.value, ast.Call)
+    assert isinstance(reconciliation.value.func, ast.Name)
+    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
+        "fallback_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    following = body[owner_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "fallback_concat_axis_stats"
