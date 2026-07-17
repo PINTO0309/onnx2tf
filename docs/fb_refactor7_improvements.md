@@ -227,6 +227,11 @@ passed in 28.52s`. Its exact adapter-insertion counter controls the unchanged
 guard, and the complete shape result is retained without changing Pad matching,
 lineage, layout sync, sorting, or the following Conv-input repair.
 
+Complete primary final Conv-input evidence extends the gate to `572 passed in
+28.31s`. The caller now records cleanup-only tensor pruning and retains the
+complete guarded shape result without broadening the rewrite-only guard or
+changing the following mixed-Concat owner.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -235,7 +240,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the primary final-pass reconciliation
-inventory with `final_conv_input_stats`. Its cleanup behavior must be audited
-before deciding whether the raw counter alone is complete. Any new mutation
-evidence must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+inventory with `final_concat_layout_stats`. Its cleanup behavior must be
+audited before deciding whether the raw counter alone is complete. Any new
+mutation evidence must preserve current pass order, TensorFlow-free boundary,
+dependency set, and sequential validation policy.

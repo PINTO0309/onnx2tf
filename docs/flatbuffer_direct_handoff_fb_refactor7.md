@@ -3480,3 +3480,27 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet complete Conv-input evidence
 contract; there are no unexpected failures.
+
+## Primary final Conv-input evidence implementation checkpoint
+
+The primary path now snapshots the tensor count, merges a clamped
+`pruned_unused_tensors` delta into `final_conv_input_stats`, initializes
+`_final_conv_input_static_shape_stats` with both stable zero keys, and stores
+the opt-in complete reconciliation result under the unchanged positive rewrite
+guard. Cleanup-only evidence does not trigger shape propagation.
+
+Indexed matching, rewiring, output metadata, pruning behavior, the raw owner
+schema, guarded sort, dependencies, and the following mixed-Concat boundary
+are unchanged. The preceding Pad contract now identifies the Conv-input tensor
+snapshot as the next owner start.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused final/prune/convergence selection: `5 passed, 10 deselected`
+- expanded broad related gate: `572 passed in 28.31s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit `final_concat_layout_stats` for zero-rewrite cleanup before
+retaining its guarded reconciliation result. Keep the following Concat-axis
+owner boundary fixed. Commit and push only; do not create or update a pull
+request.

@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -279,13 +276,9 @@ def test_primary_path_stages_final_pad_reconciliation() -> None:
     following = body[stats_index + 3]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "final_conv_input_stats"
+    assert following.targets[0].id == "final_conv_input_tensor_count"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final Conv-input stats omit cleanup and reconciliation evidence",
-)
 def test_primary_path_stages_complete_final_conv_input_evidence() -> None:
     body = _lowerer_body()
     stats_index = next(
