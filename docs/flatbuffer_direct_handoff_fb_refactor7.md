@@ -3722,3 +3722,35 @@ immediately before this SiNet cluster, beginning with
 `final_consecutive_reshape_stats`. Confirm its multi-counter and cleanup
 completeness before changing the caller. Commit and push only; do not create or
 update a pull request.
+
+## Primary final consecutive-Reshape reconciliation characterization checkpoint
+
+The absolute-final consecutive-Reshape runner has three returned mutation
+counters: no-op removal, ordinary consecutive-chain bypass/removal, and the
+fan-out bypass subset. Every input/output rewire or operator removal increments
+at least one of those counters. Unused-tensor pruning and optional layout-state
+sync are inside the same positive `rewritten > 0 or removed_noop > 0` predicate;
+preflight, no-candidate, unsafe, dynamic-shape, and preserved-semantic-rank
+paths are true no-ops. The existing aggregate guard is therefore complete even
+though the fan-out subset is intentionally represented by two positive keys.
+
+A strict expected-failure orchestration contract now requires a stable two-key
+`_final_consecutive_reshape_static_shape_stats` value and assigns the opt-in
+complete reconciliation result under the unchanged aggregate guard. It also
+fixes the immediately following `final_sinet_late_residual_stats` boundary.
+
+At implementation, add only this result plumbing. Do not change the runner,
+counter schema, matching, rewiring, operator removal, pruning, layout sync,
+aggregate guard, pass order, dependencies, or TensorFlow behavior. Validate the
+consecutive-Reshape owner and terminal orchestration sequentially, then commit
+and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- consecutive-Reshape owner, terminal orchestration, and architecture:
+  `281 passed, 1 xfailed in 17.27s`
+- expanded broad related gate: `1093 passed, 1 xfailed in 29.50s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final consecutive-Reshape
+reconciliation-result contract; there are no unexpected failures.

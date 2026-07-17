@@ -10620,3 +10620,13 @@ fingerprint or graph traversal. Default callers still receive only
 `reconciled_static_tensor_shapes`; the selected very-late call passes
 `include_mutation_count=True` and stages `_very_late_static_shape_stats` with
 both keys.
+
+The absolute-final consecutive-Reshape owner exposes three counters covering
+no-op removal, single-consumer chain removal, and fan-out bypass. Every graph
+rewrite increments at least one of those counters, and unused-tensor pruning
+plus optional layout-state synchronization occur only after a positive rewrite.
+Strict characterization therefore preserves the existing three-counter guard
+and requires a stable two-key `_final_consecutive_reshape_static_shape_stats`
+value that receives the opt-in complete reconciliation result only inside that
+guard. The following final SiNet owner remains adjacent and no sort or scan is
+added.
