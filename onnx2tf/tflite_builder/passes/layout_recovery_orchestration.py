@@ -69,6 +69,10 @@ from onnx2tf.tflite_builder.passes.pre_unary_squeeze_suffix_compat_layout import
 from onnx2tf.tflite_builder.passes.prelu_passthrough_layout import (
     optimize_prelu_transpose_passthrough_chains,
 )
+from onnx2tf.tflite_builder.passes.recovery_orchestration import (
+    RecoveryInvocation,
+    run_recovery_invocations,
+)
 from onnx2tf.tflite_builder.passes.reshape_transpose_collapse_layout import (
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains,
 )
@@ -140,17 +144,6 @@ class LayoutRecoveryContext:
     boundary_batchmatmul_unary_cluster: Callable[[], Any]
     pre_concat_cleanup: Callable[..., Any]
     channel_shuffle_gather_cluster: Callable[[], Any]
-
-
-@dataclass(frozen=True)
-class RecoveryInvocation:
-    pass_id: str
-    callback: Callable[..., Any]
-    args: Tuple[Any, ...] = ()
-    keyword_args: Tuple[Tuple[str, Any], ...] = ()
-
-    def run(self) -> Any:
-        return self.callback(*self.args, **dict(self.keyword_args))
 
 
 def _model_invocation(
@@ -294,14 +287,11 @@ def build_layout_recovery_invocations(
 
 
 def run_layout_recovery_prefix(context: LayoutRecoveryContext) -> None:
-    invocations = build_layout_recovery_invocations(context)
-    if (
-        tuple(invocation.pass_id for invocation in invocations)
-        != LAYOUT_RECOVERY_PASS_IDS
-    ):
-        raise RuntimeError("layout recovery pass IDs diverged from their order")
-    for invocation in invocations:
-        invocation.run()
+    run_recovery_invocations(
+        build_layout_recovery_invocations(context),
+        expected_pass_ids=LAYOUT_RECOVERY_PASS_IDS,
+        phase_name="layout recovery",
+    )
 
 
 def build_attention_recovery_invocations(
@@ -402,11 +392,8 @@ def build_attention_recovery_invocations(
 def run_layout_reshape_attention_recovery_prefix(
     context: LayoutRecoveryContext,
 ) -> None:
-    invocations = build_attention_recovery_invocations(context)
-    if (
-        tuple(invocation.pass_id for invocation in invocations)
-        != ATTENTION_RECOVERY_PASS_IDS
-    ):
-        raise RuntimeError("attention recovery pass IDs diverged from their order")
-    for invocation in invocations:
-        invocation.run()
+    run_recovery_invocations(
+        build_attention_recovery_invocations(context),
+        expected_pass_ids=ATTENTION_RECOVERY_PASS_IDS,
+        phase_name="layout/reshape/attention recovery",
+    )

@@ -8908,3 +8908,16 @@ clusters; the other call slots are candidates for direct module ownership.
 Focused contracts now fix all argument routing, the two and three outer
 invocation counts, and the attention sequence's nested quantized-suffix
 boundary before an explicit runner is introduced.
+
+That boundary now uses `AttentionRecoveryContext` and stable seven-step and
+ten-step invocation specifications in
+`passes/attention_recovery_orchestration.py`. Fourteen pass owners are direct
+module imports; the three composite clusters are explicit callbacks. The
+historical lowerer helpers remain outer ordering boundaries but capture only
+the context and delegate to the phase runners.
+
+Immutable invocation execution and pre-execution ID-order validation are shared
+through `passes/recovery_orchestration.py` by both attention and layout
+orchestration. Architecture accounting retains an ordered ID sequence in
+addition to its unique-ID set so a pass present in more than one phase
+contributes its exact multiplicity to former direct-call totals.

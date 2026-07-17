@@ -12870,3 +12870,62 @@ context, declare stable IDs for both ordered sequences, and prove old/new
 flattened order and argument equality before switching the two historical
 helpers. Keep validation sequential, commit and push coherent checkpoints, and
 do not create a pull request.
+
+## Explicit attention-recovery orchestration: completed state
+
+The characterized sequences now delegate to
+`passes/attention_recovery_orchestration.py`. A frozen
+`AttentionRecoveryContext` carries ModelIR, layout state, diagnostics, and the
+three lowerer-local mean-attention, gate-layout, and transpose-unary-fanout
+composite callbacks. The other fourteen targets are imported from their
+existing pass module owners; the orchestration module does not import the
+lowerer.
+
+The module declares seven stable preadd/mean/attention IDs and ten stable
+attention/gate/QDQ IDs. Both builders emit immutable invocations with the
+characterized positional and keyword arguments. The shared
+`passes/recovery_orchestration.py` primitive now owns immutable invocation
+execution and verifies the complete stable-ID sequence before running any
+callback. The preceding layout runner uses the same primitive, eliminating its
+duplicate execution/drift-check logic without changing its specifications.
+
+The historical lowerer helper names and every outer invocation remain in
+place. Each helper now has a two-line body that captures only the explicit
+attention context. Existing direct call-count architecture tests now add the
+stable phase multiplicity; this is intentionally a sequence count rather than
+set membership because pre-add appears in both the earlier layout prefix and
+the new preadd/mean/attention phase.
+
+Focused tests prove context construction, wrapper wiring, all seventeen IDs
+and argument contracts, instrumented execution order, zero-argument outer
+boundaries, lowerer-import isolation, and rejection of ID drift before the
+first callback. Three pre-existing quantized expected-builder tests were also
+corrected to import graph mutation helpers from their real owner,
+`core.model_ir_utils`, instead of relying on private lowerer re-exports that
+were already absent at checkpoint `9c210cf2`.
+
+Validation completed sequentially as follows:
+
+- both orchestration fixtures: `15 passed in 0.75s`;
+- central lowerer synthetic smoke: `32 passed in 0.59s`;
+- ordered architecture suite: `248 passed in 17.61s`;
+- three corrected quantized expected-builder fixtures: `29 passed in 0.59s`;
+- attention target-focused plus architecture suite: `433 passed in 17.39s`;
+- both orchestration fixtures, adjacent extracted pass contracts, and ordered
+  architecture suite: `909 passed in 18.70s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.44s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct suite was added. This is a mechanical
+orchestration extraction: public API, CLI, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, pass order, invocation multiplicity,
+and TensorFlow isolation are unchanged. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, inventory the next adjacent recovery sequence rather than widening
+this checkpoint. The one-step safe-binary wrapper and the six-step quantized
+activation/binary sequence form a likely next nested boundary, but first freeze
+their exact shared invocation multiplicity and module-owner/callback routing.
+Keep validation sequential, commit and push coherent checkpoints, and do not
+create a pull request.

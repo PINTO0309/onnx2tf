@@ -10,15 +10,25 @@ from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     ATTENTION_RECOVERY_PASS_IDS,
     LAYOUT_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
+    ATTENTION_GATE_QDQ_PASS_IDS,
+    PREADD_MEAN_ATTENTION_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATED_PASS_ID_SEQUENCE = (
+    *LAYOUT_RECOVERY_PASS_IDS,
+    *ATTENTION_RECOVERY_PASS_IDS,
+    *PREADD_MEAN_ATTENTION_PASS_IDS,
+    *ATTENTION_GATE_QDQ_PASS_IDS,
+)
 ORCHESTRATED_PASS_IDS = frozenset(
-    (*LAYOUT_RECOVERY_PASS_IDS, *ATTENTION_RECOVERY_PASS_IDS)
+    ORCHESTRATED_PASS_ID_SEQUENCE
 )
 
 
 def _orchestrated_pass_count(pass_id: str) -> int:
-    return int(str(pass_id) in ORCHESTRATED_PASS_IDS)
+    return ORCHESTRATED_PASS_ID_SEQUENCE.count(str(pass_id))
 
 
 DEPENDENCY_SCOPED_ROOTS = [
@@ -484,7 +494,14 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert tuple(expected_order) == PREADD_MEAN_ATTENTION_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_preadd_mean_attention_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "attention_recovery_context"
+    assert helper_calls[0].keywords == []
 
     recovery_block = next(
         statement
@@ -568,9 +585,14 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-    trailing_call = helper_calls[-2]
-    assert all(keyword.arg != "state_scope" for keyword in trailing_call.keywords)
+    assert tuple(expected_order) == ATTENTION_GATE_QDQ_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_attention_gate_qdq_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "attention_recovery_context"
+    assert helper_calls[0].keywords == []
 
     helper_invocations = [
         node
@@ -1355,7 +1377,11 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_mean_attention_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 4
+    assert (
+        len(helper_invocations)
+        + _orchestrated_pass_count("_run_mean_attention_layout_pass_cluster")
+        == 4
+    )
 
 
 def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
@@ -1862,7 +1888,7 @@ def test_mean_affine_prepost_owner_has_one_lowerer_adapter() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
 
 def test_batchmatmul_affine_input_owner_has_one_lowerer_adapter() -> None:
@@ -5714,7 +5740,7 @@ def test_indexed_affine_prepost_layout_owner_preserves_canonical_output() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 7
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 7
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -6491,7 +6517,7 @@ def test_indexed_sinet_mix_attention_owner_is_bounded_and_transactional() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -6558,7 +6584,7 @@ def test_indexed_sinet_sa_pa_mirrorpad_owner_is_bounded_and_transactional() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -6686,7 +6712,11 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_gate_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 2
+    assert (
+        len(helper_invocations)
+        + _orchestrated_pass_count("_run_gate_layout_pass_cluster")
+        == 2
+    )
     omitted_mixed_attention = [
         call
         for call in helper_invocations
@@ -6921,7 +6951,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == unary_helper_name
     ]
-    assert len(unary_invocations) == 2
+    assert len(unary_invocations) + _orchestrated_pass_count(unary_helper_name) == 2
     post_qdq_invocations = [
         call
         for call in unary_invocations
@@ -11803,15 +11833,23 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and node.func.id in runner_names
     ]
 
-    assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
     orchestrated_runner_names = runner_names & ORCHESTRATED_PASS_IDS
     assert orchestrated_runner_names == {
         "run_hard_activation_passthrough_cleanup",
         "run_ndhwc_concat_layout_cleanup",
         "run_spp_layout_cleanup",
         "run_squeeze_reshape_identity_cleanup",
+        "run_trailing_output_transpose_cleanup",
     }
-    assert len(calls) + len(orchestrated_runner_names) == 118
+    direct_runner_names = {
+        call.func.id for call in calls if isinstance(call.func, ast.Name)
+    }
+    assert direct_runner_names | orchestrated_runner_names == runner_names
+    assert (
+        len(calls)
+        + sum(_orchestrated_pass_count(name) for name in runner_names)
+        == 118
+    )
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -12016,7 +12054,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_trailing_output_transpose_cleanup"
     ]
-    assert len(trailing_output_transpose_calls) == 1
+    assert (
+        len(trailing_output_transpose_calls)
+        + _orchestrated_pass_count("run_trailing_output_transpose_cleanup")
+        == 1
+    )
 
     nchw_channel_shuffle_calls = [
         call
@@ -15864,7 +15906,7 @@ def test_residual_affine_prelu_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
 
 def test_residual_affine_fanout_optimizer_has_one_module_owner() -> None:
@@ -15919,7 +15961,7 @@ def test_residual_affine_fanout_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
 
 def test_pre_unary_affine_fanout_optimizer_has_one_module_owner() -> None:
@@ -15974,7 +16016,7 @@ def test_pre_unary_affine_fanout_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
 
 def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> None:
@@ -16929,13 +16971,14 @@ def test_indexed_conv_output_passthrough_owner_is_bounded_and_transactional() ->
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == 1
-        layout_keyword = next(
-            keyword
-            for keyword in production_calls[0].keywords
-            if keyword.arg == "layout_state"
-        )
-        assert isinstance(layout_keyword.value, ast.Attribute)
-        assert isinstance(layout_keyword.value.value, ast.Name)
-        assert layout_keyword.value.value.id == "session"
-        assert layout_keyword.value.attr == "layout_state"
+        assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+        for production_call in production_calls:
+            layout_keyword = next(
+                keyword
+                for keyword in production_call.keywords
+                if keyword.arg == "layout_state"
+            )
+            assert isinstance(layout_keyword.value, ast.Attribute)
+            assert isinstance(layout_keyword.value.value, ast.Name)
+            assert layout_keyword.value.value.id == "session"
+            assert layout_keyword.value.attr == "layout_state"

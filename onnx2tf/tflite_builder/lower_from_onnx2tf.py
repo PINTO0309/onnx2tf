@@ -175,6 +175,11 @@ from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     run_layout_recovery_prefix,
     run_layout_reshape_attention_recovery_prefix,
 )
+from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
+    AttentionRecoveryContext,
+    run_attention_gate_qdq_recovery,
+    run_preadd_mean_attention_recovery,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -480,7 +485,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     _optimize_transpose_unary_fanout_inverse_post_bridges as _optimize_transpose_unary_fanout_inverse_post_bridges_pass,
     _optimize_transpose_unary_passthrough_chains as _optimize_transpose_unary_passthrough_chains_pass,
     run_layout_transpose_cleanup,
-    run_trailing_output_transpose_cleanup,
+    run_trailing_output_transpose_cleanup,  # noqa: F401 - compatibility re-export
     run_transpose_gather_axis_cleanup,
     run_transpose_gather_channel_fanout_cleanup,
     run_transpose_unary_binary_fanout_bridge_cleanup,
@@ -4652,6 +4657,16 @@ def lower_onnx_to_ir(
             _run_channel_shuffle_gather_layout_pass_cluster
         ),
     )
+    attention_recovery_context = AttentionRecoveryContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+        mean_attention_cluster=_run_mean_attention_layout_pass_cluster,
+        gate_layout_cluster=_run_gate_layout_pass_cluster,
+        transpose_unary_fanout_cluster=(
+            _run_transpose_unary_fanout_layout_pass_cluster
+        ),
+    )
 
     def _run_layout_recovery_prefix_pass_sequence() -> None:
         run_layout_recovery_prefix(layout_recovery_context)
@@ -4662,47 +4677,10 @@ def lower_onnx_to_ir(
         )
 
     def _run_preadd_mean_attention_recovery_sequence() -> None:
-        _optimize_transpose_pre_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster()
+        run_preadd_mean_attention_recovery(attention_recovery_context)
 
     def _run_attention_gate_qdq_recovery_sequence() -> None:
-        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _run_gate_layout_pass_cluster()
-        _optimize_transposeconv_output_nhwc_passthrough_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transposeconv_output_channel1_terminal_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _run_transpose_unary_fanout_layout_pass_cluster()
-        _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
-        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-        run_trailing_output_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
+        run_attention_gate_qdq_recovery(attention_recovery_context)
 
     def _run_safe_binary_bridge_recovery_sequence() -> None:
         _run_safe_binary_bridge_recovery_pass(

@@ -1877,3 +1877,21 @@ position inside the quantized suffix. The focused suite passed 4 tests, the two
 orchestration fixtures plus architecture suite passed 258 tests, and all 11
 TensorFlow-import-blocked optional-boundary tests passed. No pull request was
 created, reopened, or updated.
+
+That boundary is now implemented as stable seven-step and ten-step phase
+specifications in `passes/attention_recovery_orchestration.py`. A frozen
+context carries ModelIR/layout/diagnostics and three explicit lowerer-local
+composite callbacks, while fourteen existing pass owners are imported
+directly. Both historical lowerer helper names and every outer invocation are
+preserved as two-line delegates. A shared immutable invocation primitive now
+performs pre-execution ID-order validation for both the attention and preceding
+layout orchestration modules.
+
+Tests verify all IDs and arguments, context and wrapper wiring, instrumented
+order, outer boundaries, lowerer-import isolation, stable-ID drift rejection,
+and multiplicity-aware architecture accounting. Three already-broken
+quantized expected-builders now import graph mutation helpers from their real
+`core.model_ir_utils` owner instead of absent lowerer private re-exports. The
+focused target suite, architecture suite, adjacent 909-test regression set,
+and all TensorFlow-import-blocked tests pass. No pull request was created,
+reopened, or updated.

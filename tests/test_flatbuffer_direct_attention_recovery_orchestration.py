@@ -4,6 +4,25 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import attention_recovery_orchestration
+from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
+    ATTENTION_GATE_QDQ_PASS_IDS,
+    PREADD_MEAN_ATTENTION_PASS_IDS,
+    AttentionRecoveryContext,
+    build_attention_gate_qdq_invocations,
+    build_preadd_mean_attention_invocations,
+    run_attention_gate_qdq_recovery,
+    run_preadd_mean_attention_recovery,
+)
+from onnx2tf.tflite_builder.passes.recovery_orchestration import (
+    RecoveryInvocation,
+    run_recovery_invocations,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -36,32 +55,64 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _ordered_call_contracts(
-    helper: ast.FunctionDef,
-) -> list[tuple[str, tuple[Any, ...], dict[str, Any]]]:
-    contracts: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-    for statement in helper.body:
-        assert isinstance(statement, ast.Expr)
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        contracts.append(
-            (
-                call.func.id,
-                tuple(_expression_path(argument) for argument in call.args),
-                {
-                    str(keyword.arg): _expression_path(keyword.value)
-                    for keyword in call.keywords
-                },
-            )
+def _context() -> AttentionRecoveryContext:
+    model_ir = ModelIR("attention_recovery_orchestration_test")
+    return AttentionRecoveryContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+        mean_attention_cluster=lambda: None,
+        gate_layout_cluster=lambda: None,
+        transpose_unary_fanout_cluster=lambda: None,
+    )
+
+
+def _normalize_new_contract(
+    invocation: attention_recovery_orchestration.RecoveryInvocation,
+    context: AttentionRecoveryContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "session.layout_state"
+        if value is context.diagnostics:
+            return "session.diagnostics"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
+
+
+def test_recovery_orchestration_modules_do_not_import_the_lowerer() -> None:
+    pass_root = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes"
+    for module_name in (
+        "attention_recovery_orchestration.py",
+        "layout_recovery_orchestration.py",
+        "recovery_orchestration.py",
+    ):
+        tree = ast.parse((pass_root / module_name).read_text(encoding="utf-8"))
+        assert not any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+            for node in tree.body
         )
-    return contracts
+        assert not any(
+            isinstance(node, ast.Import)
+            and any(
+                alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+                for alias in node.names
+            )
+            for node in tree.body
+        )
 
 
 def test_attention_recovery_sequences_are_straight_line_closures() -> None:
     expected_lines = {
-        PREADD_MEAN_ATTENTION: 14,
-        ATTENTION_GATE_QDQ: 27,
+        PREADD_MEAN_ATTENTION: 2,
+        ATTENTION_GATE_QDQ: 2,
     }
     control_flow_nodes = (
         ast.AsyncFor,
@@ -105,97 +156,148 @@ def test_attention_recovery_sequences_are_straight_line_closures() -> None:
             and isinstance(node.ctx, ast.Load)
             and node.id not in called_names
         }
-        assert loaded_data_names == {"model_ir", "session"}
+        assert loaded_data_names == {"attention_recovery_context"}
 
 
 def test_preadd_mean_attention_preserves_exact_order_and_arguments() -> None:
-    _, helper = _lowerer_and_helper(PREADD_MEAN_ATTENTION)
+    context = _context()
+    invocations = build_preadd_mean_attention_invocations(context)
+    contracts = {
+        step.pass_id: _normalize_new_contract(step, context) for step in invocations
+    }
 
-    assert _ordered_call_contracts(helper) == [
-        (
-            "_optimize_transpose_pre_add_nhwc_chains",
+    assert tuple(step.pass_id for step in invocations) == PREADD_MEAN_ATTENTION_PASS_IDS
+    assert contracts == {
+        "_optimize_transpose_pre_add_nhwc_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
+        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        (
-            "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        (
-            "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
+        "_optimize_transpose_mul_add_const_prepost_nhwc_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        (
-            "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
+        "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        ("_run_mean_attention_layout_pass_cluster", (), {}),
-    ]
+        "_run_mean_attention_layout_pass_cluster": ((), {}),
+    }
 
 
 def test_attention_gate_qdq_preserves_exact_order_and_arguments() -> None:
-    _, helper = _lowerer_and_helper(ATTENTION_GATE_QDQ)
+    context = _context()
+    invocations = build_attention_gate_qdq_invocations(context)
+    contracts = {
+        step.pass_id: _normalize_new_contract(step, context) for step in invocations
+    }
 
-    assert _ordered_call_contracts(helper) == [
-        (
-            "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
+    assert tuple(step.pass_id for step in invocations) == ATTENTION_GATE_QDQ_PASS_IDS
+    assert contracts == {
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_sinet_mix_attention_double_logistic_nhwc_chains",
+        "_optimize_sinet_mix_attention_double_logistic_nhwc_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        ("_run_gate_layout_pass_cluster", (), {}),
-        (
-            "_optimize_transposeconv_output_nhwc_passthrough_chains",
+        "_run_gate_layout_pass_cluster": ((), {}),
+        "_optimize_transposeconv_output_nhwc_passthrough_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_transposeconv_output_channel1_terminal_transpose_chains",
+        "_optimize_transposeconv_output_channel1_terminal_transpose_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        ("_run_transpose_unary_fanout_layout_pass_cluster", (), {}),
-        (
-            "_optimize_transpose_dequant_relu_quantize_bridges",
+        "_run_transpose_unary_fanout_layout_pass_cluster": ((), {}),
+        "_optimize_transpose_dequant_relu_quantize_bridges": (
             ("model_ir",),
             {},
         ),
-        (
-            "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
+        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges": (
             ("model_ir",),
             {},
         ),
-        (
-            "run_trailing_output_transpose_cleanup",
+        "run_trailing_output_transpose_cleanup": (
             ("model_ir",),
             {
                 "layout_state": "session.layout_state",
                 "diagnostics": "session.diagnostics",
             },
         ),
-        (
-            "_optimize_transpose_dequant_mul_add_prelu_quantize_bridges",
+        "_optimize_transpose_dequant_mul_add_prelu_quantize_bridges": (
             ("model_ir",),
             {},
         ),
-    ]
+    }
+
+
+def test_attention_recovery_context_and_wrappers_are_explicit() -> None:
+    lowerer, preadd_helper = _lowerer_and_helper(PREADD_MEAN_ATTENTION)
+    _, attention_helper = _lowerer_and_helper(ATTENTION_GATE_QDQ)
+
+    expected_wrappers = {
+        PREADD_MEAN_ATTENTION: (
+            preadd_helper,
+            "run_preadd_mean_attention_recovery",
+        ),
+        ATTENTION_GATE_QDQ: (
+            attention_helper,
+            "run_attention_gate_qdq_recovery",
+        ),
+    }
+    for helper_name, (helper, runner_name) in expected_wrappers.items():
+        assert len(helper.body) == 1
+        statement = helper.body[0]
+        assert isinstance(statement, ast.Expr)
+        call = statement.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == runner_name
+        assert len(call.args) == 1
+        assert isinstance(call.args[0], ast.Name)
+        assert call.args[0].id == "attention_recovery_context"
+        assert call.keywords == []
+        assert helper.name == helper_name
+
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "attention_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert context_assignment.value.func.id == "AttentionRecoveryContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+        "mean_attention_cluster": "_run_mean_attention_layout_pass_cluster",
+        "gate_layout_cluster": "_run_gate_layout_pass_cluster",
+        "transpose_unary_fanout_cluster": (
+            "_run_transpose_unary_fanout_layout_pass_cluster"
+        ),
+    }
 
 
 def test_attention_recovery_invocation_boundaries_remain_zero_argument() -> None:
@@ -236,3 +338,97 @@ def test_attention_recovery_invocation_boundaries_remain_zero_argument() -> None
         ATTENTION_GATE_QDQ,
         "_run_duplicate_quantized_prelu_pass_cluster",
     ]
+
+
+@pytest.mark.parametrize(
+    ("build_invocations", "run_phase", "expected_ids"),
+    [
+        (
+            build_preadd_mean_attention_invocations,
+            run_preadd_mean_attention_recovery,
+            PREADD_MEAN_ATTENTION_PASS_IDS,
+        ),
+        (
+            build_attention_gate_qdq_invocations,
+            run_attention_gate_qdq_recovery,
+            ATTENTION_GATE_QDQ_PASS_IDS,
+        ),
+    ],
+)
+def test_attention_recovery_runners_preserve_instrumented_order(
+    monkeypatch: pytest.MonkeyPatch,
+    build_invocations: Any,
+    run_phase: Any,
+    expected_ids: tuple[str, ...],
+) -> None:
+    probe_context = _context()
+    probe_steps = build_invocations(probe_context)
+    events: list[str] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append(pass_id)
+
+        return record
+
+    context_callbacks = {
+        probe_context.mean_attention_cluster,
+        probe_context.gate_layout_cluster,
+        probe_context.transpose_unary_fanout_cluster,
+    }
+    callback_by_id = {}
+    for step in probe_steps:
+        if step.callback in context_callbacks:
+            callback_by_id[step.pass_id] = recorder(step.pass_id)
+            continue
+        module_name = next(
+            name
+            for name, value in vars(attention_recovery_orchestration).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            attention_recovery_orchestration,
+            module_name,
+            recorder(step.pass_id),
+        )
+
+    context = AttentionRecoveryContext(
+        model_ir=probe_context.model_ir,
+        layout_state=probe_context.layout_state,
+        diagnostics=probe_context.diagnostics,
+        mean_attention_cluster=callback_by_id.get(
+            "_run_mean_attention_layout_pass_cluster",
+            lambda: None,
+        ),
+        gate_layout_cluster=callback_by_id.get(
+            "_run_gate_layout_pass_cluster",
+            lambda: None,
+        ),
+        transpose_unary_fanout_cluster=callback_by_id.get(
+            "_run_transpose_unary_fanout_layout_pass_cluster",
+            lambda: None,
+        ),
+    )
+
+    run_phase(context)
+
+    assert events == list(expected_ids)
+
+
+def test_shared_recovery_runner_rejects_id_drift_before_execution() -> None:
+    events: list[str] = []
+    invocations = (
+        RecoveryInvocation(
+            pass_id="actual_pass",
+            callback=lambda: events.append("executed"),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="test phase pass IDs diverged"):
+        run_recovery_invocations(
+            invocations,
+            expected_pass_ids=("expected_pass",),
+            phase_name="test phase",
+        )
+
+    assert events == []
