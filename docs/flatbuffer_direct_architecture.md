@@ -10440,3 +10440,10 @@ The call now assigns its unchanged raw result to
 between `_very_late_concat_transpose_conv_axis_stats` and the dynamic rank-one
 Unsqueeze/Reshape-shape rewrite. ModelIR/LayoutState forwarding and the single
 invocation are unchanged.
+
+The following dynamic rank-one Unsqueeze/Reshape-shape owner has three
+production occurrences and one fixed rewrite counter. It counts every
+operator/tensor insertion and metadata-only rewrite and performs no pruning.
+Strict characterization selects only the first very-late direct call for a
+future `_very_late_dynamic_rank1_reshape_stats` assignment while preserving
+the fallback and absolute-final expressions.

@@ -2344,3 +2344,26 @@ At resume, inspect the immediately following
 result schema, occurrence forms, and cleanup behavior before selecting this
 very-late call for a distinct observation point. Commit and push only; do not
 create or update a pull request.
+
+## Very-late dynamic rank-one Reshape characterization checkpoint
+
+The dynamic rank-one Unsqueeze/Reshape-shape owner has three production
+occurrences: the current very-late direct call, a fallback expression, and an
+absolute-final expression. Its single
+`rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs` counter covers both
+the indexed runtime SHAPE/Concat insertion path and the metadata-only
+higher-rank fallback. The owner performs no pruning.
+
+Strict expected-failure coverage selects only the first direct call for
+`_very_late_dynamic_rank1_reshape_stats`, preserves Session LayoutState
+forwarding, and freezes the following static-shape reconciliation. It also
+requires the fallback and absolute-final calls to remain expressions with their
+existing target ModelIRs. Focused dynamic-Reshape and very-late coverage is `33
+passed, 1 xfailed`.
+
+At implementation, replace only the selected direct expression with the
+assignment. Do not add a proxy, summary, reconciliation consumer, or another
+owner invocation. Validate dynamic-Reshape, very-late orchestration, fallback
+and absolute-final occurrence contracts, core, pass-efficiency, architecture,
+and TensorFlow import blocking sequentially. Commit and push only; do not
+create or update a pull request.
