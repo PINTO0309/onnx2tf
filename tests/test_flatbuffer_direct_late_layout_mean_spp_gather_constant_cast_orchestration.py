@@ -297,10 +297,6 @@ def test_late_layout_returns_ordered_results_through_lowerer_helper(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the late layout cluster has no normalized mutation summary yet",
-)
 @pytest.mark.parametrize("include_layout_transpose", [False, True])
 def test_late_layout_mutation_summary_filters_iterations_and_reports_pruning(
     include_layout_transpose: bool,
@@ -366,10 +362,6 @@ def test_late_layout_mutation_summary_filters_iterations_and_reports_pruning(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal lowerer call does not capture cluster mutation evidence",
-)
 def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     assignment_indices = {}
@@ -383,7 +375,7 @@ def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
         if target.id in {
             "late_layout_cluster_tensor_count",
             "late_layout_cluster_results",
-            "late_layout_cluster_stats",
+            "_late_layout_cluster_stats",
         }:
             assignment_indices[target.id] = index
             assignments[target.id] = statement.value
@@ -391,7 +383,7 @@ def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
     assert assignment_indices == {
         "late_layout_cluster_tensor_count": min(assignment_indices.values()),
         "late_layout_cluster_results": min(assignment_indices.values()) + 1,
-        "late_layout_cluster_stats": min(assignment_indices.values()) + 2,
+        "_late_layout_cluster_stats": min(assignment_indices.values()) + 2,
     }
     count_call = assignments["late_layout_cluster_tensor_count"]
     assert isinstance(count_call, ast.Call)
@@ -401,7 +393,7 @@ def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
     assert isinstance(result_call, ast.Call)
     assert isinstance(result_call.func, ast.Name)
     assert result_call.func.id == LATE_LAYOUT
-    summary_call = assignments["late_layout_cluster_stats"]
+    summary_call = assignments["_late_layout_cluster_stats"]
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
     assert summary_call.func.id == (
@@ -439,14 +431,19 @@ def test_late_layout_preserves_outer_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "late_layout_cluster_results"
+            for target in statement.targets
+        )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == LATE_LAYOUT
     )
 
-    previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
+    previous = lowerer.body[invocation_index - 2]
+    following = lowerer.body[invocation_index + 2]
     for boundary in (previous, following):
         assert isinstance(boundary, ast.Expr)
         assert isinstance(boundary.value, ast.Call)

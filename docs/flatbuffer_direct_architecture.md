@@ -10043,3 +10043,15 @@ before the cluster, capture the raw ordered results, and derive the summary from
 their exact net tensor reduction. This remains observation-only: the following
 Expand/Squeeze rewrite and unconditional phase reconciliation do not consume
 the summary at this checkpoint. Production is unchanged.
+
+`summarize_late_layout_mean_spp_gather_constant_cast_mutations()` now validates
+the policy-specific tuple length, initializes the four layout mutation keys,
+filters `iterations`, merges all five required result dictionaries, and clamps
+the explicit prune count to a nonnegative integer. Both layout-enabled and
+required-only policies therefore expose the same mutation-only schema.
+
+The terminal call site records tensor count, captures the raw tuple, and stores
+the derived summary in `_late_layout_cluster_stats` before the existing
+Expand/Squeeze call. The leading underscore marks this as staged evidence until
+the rest of the terminal phase has complete accounting. No phase guard or
+reconciliation behavior changes in this checkpoint.

@@ -1073,3 +1073,29 @@ runner/helper return contract and all owner order. Add no reconciliation guard.
 Validate both policies, malformed result length, net pruning, structure, core,
 architecture, pass efficiency, and TensorFlow import blocking sequentially.
 Commit and push only; do not create or update a pull request.
+
+## Late layout cluster mutation summary implementation checkpoint
+
+The pure
+`summarize_late_layout_mean_spp_gather_constant_cast_mutations()` helper now
+validates the expected five- or six-result tuple, emits four fixed layout
+mutation keys, drops `iterations`, merges every required-pass dictionary, and
+adds a clamped `pruned_unused_tensors` count.
+
+The production call site records the cluster's starting tensor count, captures
+the raw result tuple, and derives `_late_layout_cluster_stats` from net tensor
+reduction. The underscore is intentional: this evidence is staged but not yet
+used by the broad phase barrier. Expand/Squeeze and the unconditional static
+reconciliation remain exactly where they were.
+
+Focused summary, malformed-length, pruning, return, boundary, and architecture
+coverage is `19 passed in 2.28s`. The sequential late-cluster, child
+constant-fold/cast, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gate is `379 passed in 26.27s`. Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At resume, propagate mutation/prune evidence from another small cluster in the
+same terminal interval. Do not use `_late_layout_cluster_stats` to guard the
+phase reconciliation until every preceding owner since the prior mandatory
+shape barrier is accounted for. Commit and push only; do not create or update a
+pull request.

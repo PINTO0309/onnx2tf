@@ -5325,7 +5325,12 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "late_layout_cluster_results"
+            for target in statement.targets
+        )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -5339,7 +5344,7 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     assert isinstance(include_layout.value, ast.Name)
     assert include_layout.value.id == "optimize_layout_transpose_chains"
 
-    previous_boundary = lowerer.body[invocation_index - 1]
+    previous_boundary = lowerer.body[invocation_index - 2]
     assert isinstance(previous_boundary, ast.Expr)
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
@@ -5347,7 +5352,7 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         previous_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 1]
+    next_boundary = lowerer.body[invocation_index + 2]
     assert isinstance(next_boundary, ast.Expr)
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)

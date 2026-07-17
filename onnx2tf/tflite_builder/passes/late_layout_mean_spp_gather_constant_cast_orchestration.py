@@ -35,6 +35,57 @@ LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS = (
 
 
 LateLayoutMeanSPPGatherConstantCastContext = ModelIRPassContext
+_LAYOUT_MUTATION_KEYS = (
+    "removed_identity_transpose",
+    "removed_inverse_transpose_pairs",
+    "removed_inverse_transpose_fanout_branches",
+    "composed_consecutive_transpose_pairs",
+)
+
+
+def summarize_late_layout_mean_spp_gather_constant_cast_mutations(
+    pass_results: Tuple[Dict[str, int], ...],
+    *,
+    include_layout_transpose: bool,
+    pruned_unused_tensors: int,
+) -> Dict[str, int]:
+    """Normalize raw cluster results into mutation-only counters."""
+
+    expected_count = len(
+        LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS
+        if include_layout_transpose
+        else LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_REQUIRED_PASS_IDS
+    )
+    if len(pass_results) != expected_count:
+        raise ValueError(
+            "late layout mutation summary expected "
+            f"{expected_count} pass results, got {len(pass_results)}"
+        )
+
+    summary = {key: 0 for key in _LAYOUT_MUTATION_KEYS}
+    required_offset = 0
+    if include_layout_transpose:
+        layout_result = pass_results[0]
+        summary.update(
+            {
+                key: int(layout_result.get(key, 0))
+                for key in _LAYOUT_MUTATION_KEYS
+            }
+        )
+        required_offset = 1
+    for result in pass_results[required_offset:]:
+        summary.update(
+            {
+                str(key): int(value)
+                for key, value in result.items()
+                if str(key) != "iterations"
+            }
+        )
+    summary["pruned_unused_tensors"] = max(
+        0,
+        int(pruned_unused_tensors),
+    )
+    return summary
 
 
 def build_late_layout_mean_spp_gather_constant_cast_invocations(
