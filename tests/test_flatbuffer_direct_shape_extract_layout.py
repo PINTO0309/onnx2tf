@@ -345,10 +345,15 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert invocation.value.keywords == []
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_spp_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_run_late_spp_concat_unary_conv_pass_pair"
+    assert previous.value.func.id == (
+        "summarize_late_spp_concat_unary_conv_mutations"
+    )
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1

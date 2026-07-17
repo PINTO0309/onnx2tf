@@ -1391,3 +1391,28 @@ length, order, shared state, complete SPP and concat-unary-conv owner suites,
 adjacent terminal orchestration, core, pass efficiency, architecture, and the
 TensorFlow import blocker sequentially. Commit and push only; do not create or
 update a pull request.
+
+## Late SPP pair mutation evidence implementation checkpoint
+
+The late SPP orchestration runner and lowerer's private delegate now return the
+ordered two-result tuple. The pure
+`summarize_late_spp_concat_unary_conv_mutations()` helper validates the exact
+length and exposes only the SPP and concat-unary-conv mutation counters. Since
+both owners prune only after a positive rewrite, no tensor-count proxy is
+needed.
+
+Production captures `late_spp_results` and `_late_spp_stats` at the existing
+call site. The preceding raw layout rewrite, following pre-QKV shape-extract
+result, owner order, shared pass state, and broad reconciliation remain
+unchanged. The staged summary is not consumed by a guard.
+
+Focused late-SPP and shape-extract coverage is `23 passed in 0.71s`. The
+sequential complete SPP, concat-unary-conv, late-SPP, shape-extract, QKV,
+split/conv bridge, Hardswish-SE, late hard-activation, SINet terminal,
+Expand/Squeeze, late-layout, constant-fold/cast, shared-context, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked gate is `596 passed
+in 29.28s`. Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the immediately preceding terminal strided-slice/pad/concat
+raw owner. Confirm its return and prune contract before staging evidence.
+Commit and push only; do not create or update a pull request.

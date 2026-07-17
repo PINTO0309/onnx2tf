@@ -162,14 +162,17 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_spp_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == LATE_SPP_CONCAT_UNARY_CONV
     )
 
     previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
+    following = lowerer.body[invocation_index + 2]
     assert isinstance(previous, ast.Expr)
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
@@ -192,7 +195,7 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
 def test_late_spp_concat_unary_conv_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -240,10 +243,6 @@ def test_late_spp_concat_unary_conv_runner_preserves_instrumented_order(
     assert events == list(LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the late SPP pair still discards ordered mutation results",
-)
 def test_late_spp_concat_unary_conv_returns_and_summarizes_mutations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -291,10 +290,6 @@ def test_late_spp_concat_unary_conv_returns_and_summarizes_mutations(
     assert isinstance(helper.body[0].value, ast.Call)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the lowerer does not capture late SPP mutation evidence",
-)
 def test_lowerer_captures_late_spp_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     target_names = ("late_spp_results", "_late_spp_stats")

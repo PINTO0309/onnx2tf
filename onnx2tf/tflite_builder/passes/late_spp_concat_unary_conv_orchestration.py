@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -21,6 +21,27 @@ LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS = (
 
 
 LateSPPConcatUnaryConvContext = ModelIRPassContext
+_MUTATION_KEYS = (
+    "optimized_transpose_resize_add_concat_affine_conv_spp_nhwc_chains",
+    "optimized_transpose_concat_unary_fanout_conv_nhwc_chains",
+)
+
+
+def summarize_late_spp_concat_unary_conv_mutations(
+    pass_results: Tuple[Dict[str, int], ...],
+) -> Dict[str, int]:
+    """Normalize the ordered pair into its two declared mutation counters."""
+
+    expected_count = len(LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS)
+    if len(pass_results) != expected_count:
+        raise ValueError(
+            "late SPP mutation summary expected "
+            f"{expected_count} pass results, got {len(pass_results)}"
+        )
+    return {
+        key: int(result.get(key, 0))
+        for key, result in zip(_MUTATION_KEYS, pass_results)
+    }
 
 
 def build_late_spp_concat_unary_conv_invocations(
@@ -53,8 +74,8 @@ def build_late_spp_concat_unary_conv_invocations(
 
 def run_late_spp_concat_unary_conv(
     context: LateSPPConcatUnaryConvContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Dict[str, int], ...]:
+    return run_recovery_invocations(
         build_late_spp_concat_unary_conv_invocations(context),
         expected_pass_ids=LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
         phase_name="late SPP/concat-unary-conv",

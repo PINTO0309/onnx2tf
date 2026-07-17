@@ -10160,3 +10160,9 @@ mutation and no separate tensor-count delta is needed. Strict characterization
 requires ordered tuple propagation, exact two-result validation, and a fixed
 two-counter summary staged between the preceding raw layout rewrite and the
 pre-QKV shape-extract result.
+
+The runner and lowerer delegate now return the ordered pair. The pure
+`summarize_late_spp_concat_unary_conv_mutations()` helper validates exactly two
+results and maps them to the two declared keys. Production stages
+`late_spp_results` and `_late_spp_stats`; no unrelated fields or prune proxy are
+added, and the pair remains observation-only.

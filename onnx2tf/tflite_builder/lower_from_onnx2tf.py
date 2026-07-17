@@ -220,6 +220,7 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
     run_late_spp_concat_unary_conv,
+    summarize_late_spp_concat_unary_conv_mutations,
 )
 from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
     run_boundary_batchmatmul_unary,
@@ -4126,8 +4127,8 @@ def lower_onnx_to_ir(
             include_layout_transpose=include_layout_transpose,
         )
 
-    def _run_late_spp_concat_unary_conv_pass_pair() -> None:
-        run_late_spp_concat_unary_conv(
+    def _run_late_spp_concat_unary_conv_pass_pair() -> Tuple[Dict[str, int], ...]:
+        return run_late_spp_concat_unary_conv(
             late_spp_concat_unary_conv_context
         )
 
@@ -5141,7 +5142,10 @@ def lower_onnx_to_ir(
     # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
     _run_terminal_affine_concat_split_recovery_sequence()
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
-    _run_late_spp_concat_unary_conv_pass_pair()
+    late_spp_results = _run_late_spp_concat_unary_conv_pass_pair()
+    _late_spp_stats = summarize_late_spp_concat_unary_conv_mutations(
+        late_spp_results
+    )
     _late_pre_qkv_shape_extract_stats = (
         _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     )
