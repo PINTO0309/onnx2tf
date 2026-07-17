@@ -10325,3 +10325,12 @@ remain expressions, the third retains
 has an unambiguous observation point of its own. The result is not consumed by
 reconciliation, and pass order, ModelIR/LayoutState forwarding, rewrite guards,
 pruning, and generated artifacts remain unchanged.
+
+Immediately before that result, the absolute-final indexed affine post-ADD
+owner is the third of three direct production calls. Its single counter is
+complete because pruning occurs only after a positive rewrite. Strict
+characterization selects only that third call, after shape-signature
+sanitization and before `_absolute_final_instancenorm_post_bias_stats`, for a
+future `_absolute_final_affine_post_add_stats` assignment. The first
+pre-terminal call retains its existing staged target and the intervening
+very-late call remains an expression.

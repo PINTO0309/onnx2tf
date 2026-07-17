@@ -275,6 +275,78 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert direct_statements[3] is invocation
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the absolute-final affine post-ADD result is discarded",
+)
+def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() -> (
+    None
+):
+    lowerer, _ = _lowerer_and_helper()
+    post_bias_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_instancenorm_post_bias_stats"
+    )
+    invocation = lowerer.body[post_bias_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_absolute_final_affine_post_add_stats"
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[post_bias_index - 2]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == "_sanitize_static_shape_signature_consistency"
+    following = lowerer.body[post_bias_index]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_absolute_final_instancenorm_post_bias_stats"
+    )
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 3
+    assert isinstance(direct_statements[0], ast.Assign)
+    first_target = direct_statements[0].targets[0]
+    assert isinstance(first_target, ast.Name)
+    assert first_target.id == "_pre_terminal_affine_post_add_stats"
+    assert isinstance(direct_statements[1], ast.Expr)
+    assert direct_statements[2] is invocation
+
+
 def test_absolute_final_normalization_attention_context_and_wrapper_are_explicit() -> (
     None
 ):

@@ -1951,3 +1951,29 @@ distinct from the already staged pre-terminal affine post-ADD occurrence, and
 confirm its positive-only pruning contract before considering an
 `_absolute_final_affine_post_add_stats` target. Commit and push only; do not
 create or update a pull request.
+
+## Absolute-final affine post-ADD characterization checkpoint
+
+The indexed affine post-ADD owner has three direct top-level production calls.
+The first already stages `_pre_terminal_affine_post_add_stats`, the second
+remains a very-late expression after unbound-input repair, and the third is the
+absolute-final call after boundary-signature realignment and sanitization.
+
+The owner returns one fixed rewrite counter and invokes unused-tensor pruning
+only when that counter is positive. Existing prune-hook coverage freezes this
+contract, so the raw result is complete mutation evidence and needs neither a
+tensor-count proxy nor a summary adapter.
+
+Strict expected-failure coverage selects only the third call and requires an
+`_absolute_final_affine_post_add_stats` target immediately before
+`_absolute_final_instancenorm_post_bias_stats`. It freezes the first staged
+target and requires the second call to remain an expression. Focused
+absolute-final, indexed-owner, and pre-terminal boundary coverage is `64
+passed, 92 deselected, 1 xfailed`.
+
+At implementation, replace only the selected third expression and update the
+post-bias and architecture boundary contracts. Preserve the second very-late
+expression, ModelIR/LayoutState forwarding, and all pass order. Validate the
+indexed affine owner, absolute-final normalization, pre-terminal affine
+boundary, core, pass-efficiency, architecture, and TensorFlow import blocking
+sequentially. Commit and push only; do not create or update a pull request.
