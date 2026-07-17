@@ -9586,3 +9586,13 @@ LayoutState, and nested-context identity remains exact. The lowerer constructs
 all three from the main Session identities. The model-only QLinear context and
 callback-bearing SINet terminal context remain explicitly outside this
 boundary.
+
+The diagnostics-free model/layout boundary is now consolidated into the common
+Session context. The three historical type names are internal aliases of
+`ModelIRPassContext`, increasing the shared alias inventory to twenty-four and
+the main-model consumers to twenty-one. Their lowerer variables all reference
+`shared_model_ir_pass_context`; no per-phase object is constructed. Diagnostics
+are available on the common object but remain inert across all four builders.
+ModelIR/LayoutState identity, nested safe-binary context identity, pass IDs,
+layout policies, and execution order are unchanged. The model-only QLinear and
+callback-bearing SINet terminal contexts remain independent.

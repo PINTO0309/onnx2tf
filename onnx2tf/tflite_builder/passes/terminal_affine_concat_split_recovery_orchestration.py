@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.passes.affine_chain_fold import (
     optimize_fold_mul_add_mul_affine_chains,
 )
@@ -55,10 +53,7 @@ TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class TerminalAffineConcatSplitRecoveryContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
+TerminalAffineConcatSplitRecoveryContext = ModelIRPassContext
 
 
 def _model_invocation(

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     run_safe_binary_bridge_recovery,
 )
@@ -41,10 +39,7 @@ QUANTIZED_ACTIVATION_BINARY_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class QuantizedRecoveryContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
+QuantizedRecoveryContext = ModelIRPassContext
 
 
 def _model_invocation(

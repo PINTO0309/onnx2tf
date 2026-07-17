@@ -58,6 +58,7 @@ def _context() -> SINetPreaddResizeRecoveryContext:
     return SINetPreaddResizeRecoveryContext(
         model_ir=model_ir,
         layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
     )
 
 
@@ -263,16 +264,8 @@ def test_sinet_preadd_resize_context_and_wrapper_are_explicit() -> None:
             for target in statement.targets
         )
     )
-    assert isinstance(context_assignment.value, ast.Call)
-    assert isinstance(context_assignment.value.func, ast.Name)
-    assert context_assignment.value.func.id == "SINetPreaddResizeRecoveryContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in context_assignment.value.keywords
-    } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-    }
+    assert isinstance(context_assignment.value, ast.Name)
+    assert context_assignment.value.id == "shared_model_ir_pass_context"
 
 
 def test_sinet_preadd_resize_runner_preserves_instrumented_order(

@@ -177,7 +177,6 @@ from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     run_preadd_mean_attention_recovery,
 )
 from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
-    QuantizedRecoveryContext,
     run_quantized_activation_binary_recovery,
     run_safe_binary_recovery,
 )
@@ -194,11 +193,9 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
     run_terminal_slice_concat_recovery,
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
-    TerminalAffineConcatSplitRecoveryContext,
     run_terminal_affine_concat_split_recovery,
 )
 from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
-    SINetPreaddResizeRecoveryContext,
     run_sinet_preadd_resize_recovery,
 )
 from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
@@ -4220,10 +4217,7 @@ def lower_onnx_to_ir(
             _run_transpose_unary_fanout_layout_pass_cluster
         ),
     )
-    quantized_recovery_context = QuantizedRecoveryContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-    )
+    quantized_recovery_context = shared_model_ir_pass_context
     qlinear_recovery_context = QLinearRecoveryContext(model_ir=model_ir)
     terminal_slice_concat_recovery_context = TerminalSliceConcatRecoveryContext(
         pass_context=session.model_ir_pass_context,
@@ -4231,21 +4225,13 @@ def lower_onnx_to_ir(
             _run_channel_slice_pad_mul_layout_pass_cluster
         ),
     )
-    terminal_affine_concat_split_recovery_context = (
-        TerminalAffineConcatSplitRecoveryContext(
-            model_ir=model_ir,
-            layout_state=session.layout_state,
-        )
-    )
+    terminal_affine_concat_split_recovery_context = shared_model_ir_pass_context
     terminal_clamp_unary_relu_context = shared_model_ir_pass_context
     terminal_singleton_maxpool_reshape_context = shared_model_ir_pass_context
     late_dequant_unary_fanout_context = shared_model_ir_pass_context
     transpose_unary_fanout_context = shared_model_ir_pass_context
     late_spp_concat_unary_conv_context = shared_model_ir_pass_context
-    sinet_preadd_resize_recovery_context = SINetPreaddResizeRecoveryContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-    )
+    sinet_preadd_resize_recovery_context = shared_model_ir_pass_context
 
     def _run_layout_recovery_prefix_pass_sequence() -> None:
         run_layout_recovery_prefix(layout_recovery_context)

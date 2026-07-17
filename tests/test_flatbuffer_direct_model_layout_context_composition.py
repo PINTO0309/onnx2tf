@@ -78,15 +78,23 @@ def test_model_layout_contexts_share_one_frozen_identity_contract(
     )
     model_ir = ModelIR(f"model_layout_context_{module_name}")
     layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict] = []
 
+    assert context_type is ModelIRPassContext
     assert is_dataclass(context_type)
     assert tuple(field.name for field in fields(context_type)) == (
         "model_ir",
         "layout_state",
+        "diagnostics",
     )
-    context = context_type(model_ir=model_ir, layout_state=layout_state)
+    context = context_type(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
     assert context.model_ir is model_ir
     assert context.layout_state is layout_state
+    assert context.diagnostics is diagnostics
     with pytest.raises(FrozenInstanceError):
         context.model_ir = ModelIR("replacement")
 
@@ -99,25 +107,35 @@ def test_lowerer_model_layout_context_wiring_is_explicit() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
     context_names = {context_name for _, context_name in MODEL_LAYOUT_CONTEXT_TYPES}
-    calls = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
+    assignments = {
+        target.id: _expression_path(statement.value)
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance((target := statement.targets[0]), ast.Name)
+    }
+    context_variables = {
+        "QuantizedRecoveryContext": "quantized_recovery_context",
+        "SINetPreaddResizeRecoveryContext": "sinet_preadd_resize_recovery_context",
+        "TerminalAffineConcatSplitRecoveryContext": (
+            "terminal_affine_concat_split_recovery_context"
+        ),
+    }
+
+    assert set(context_variables) == context_names
+    assert {
+        variable_name: assignments[variable_name]
+        for variable_name in context_variables.values()
+    } == {
+        variable_name: "shared_model_ir_pass_context"
+        for variable_name in context_variables.values()
+    }
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id in context_names
-    ]
-
-    assert len(calls) == 3
-    assert {call.func.id for call in calls} == context_names
-    for call in calls:
-        assert call.args == []
-        assert {
-            str(keyword.arg): _expression_path(keyword.value)
-            for keyword in call.keywords
-        } == {
-            "model_ir": "model_ir",
-            "layout_state": "session.layout_state",
-        }
+        for node in ast.walk(lowerer)
+    )
 
 
 @pytest.mark.parametrize(

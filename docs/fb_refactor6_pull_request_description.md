@@ -2662,3 +2662,22 @@ checks pass. No production source, real-model conversion, or broad corpus suite
 changed or ran. No public API, CLI, artifact, dependency, pass order, scope,
 diagnostics, or TensorFlow boundary changed. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+The diagnostics-free model/layout context boundary is now implemented. Three
+duplicate frozen dataclasses are replaced by internal aliases of
+`ModelIRPassContext`, and their three lowerer variables reuse the existing
+`shared_model_ir_pass_context` instead of constructing phase-local objects.
+This brings the common inventory to 24 alias names and 21 main-model consumers
+while removing 29 net production lines. Diagnostics are present on the shared
+object but remain unobserved by all four affected builders. Exact ModelIR,
+LayoutState, and nested safe-binary context identities are preserved. QLinear
+and callback-bearing SINet terminal remain unchanged.
+
+The 62-test focused/shared-context set, 324-test related orchestration/shared-
+context/architecture set, 31 pass-efficiency tests, all 11 TensorFlow-import-
+blocked tests, and 32 core smoke tests pass. Focused formatting, lint, Python
+compilation, and whitespace checks pass; the lowerer retains only its two pre-
+existing F401 findings. No real-model conversion or broad corpus suite ran. No
+public API, CLI, artifact, dependency, pass order, nested-context, diagnostics,
+or TensorFlow boundary changed. PR #952 remains closed, and no pull request was
+created, reopened, or updated.

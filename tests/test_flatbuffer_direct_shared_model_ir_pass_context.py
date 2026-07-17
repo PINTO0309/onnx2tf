@@ -46,15 +46,24 @@ SHARED_CONTEXT_TYPES = (
     ("late_spp_concat_unary_conv_orchestration", "LateSPPConcatUnaryConvContext"),
     ("mean_attention_orchestration", "MeanAttentionContext"),
     ("qkv_attention_orchestration", "QKVAttentionContext"),
+    ("quantized_recovery_orchestration", "QuantizedRecoveryContext"),
     (
         "se_fc_gather_channel_fanout_orchestration",
         "SEFCGatherChannelFanoutContext",
+    ),
+    (
+        "sinet_preadd_resize_recovery_orchestration",
+        "SINetPreaddResizeRecoveryContext",
     ),
     (
         "singleton_consecutive_reshape_orchestration",
         "SingletonConsecutiveReshapeContext",
     ),
     ("singleton_reshape_orchestration", "SingletonReshapeContext"),
+    (
+        "terminal_affine_concat_split_recovery_orchestration",
+        "TerminalAffineConcatSplitRecoveryContext",
+    ),
     ("terminal_boundary_layout_orchestration", "TerminalBoundaryLayoutContext"),
     (
         "terminal_clamp_unary_relu_orchestration",
@@ -86,7 +95,10 @@ MAIN_SHARED_CONTEXT_NAMES = (
     "late_spp_concat_unary_conv_context",
     "mean_attention_context",
     "qkv_attention_context",
+    "quantized_recovery_context",
+    "sinet_preadd_resize_recovery_context",
     "singleton_reshape_context",
+    "terminal_affine_concat_split_recovery_context",
     "terminal_boundary_layout_context",
     "terminal_clamp_unary_relu_context",
     "terminal_singleton_maxpool_reshape_context",

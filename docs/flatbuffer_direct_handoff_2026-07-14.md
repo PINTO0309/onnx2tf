@@ -15892,3 +15892,55 @@ nested-context identity. Update their complete focused suites and the new
 characterization contract. Leave QLinear and callback-bearing SINet terminal
 unchanged. Validate sequentially, commit and push only, and do not create or
 update a pull request.
+
+## Diagnostics-free model/layout context composition: implemented state
+
+`SINetPreaddResizeRecoveryContext`, `QuantizedRecoveryContext`, and
+`TerminalAffineConcatSplitRecoveryContext` are now internal aliases of the core
+`ModelIRPassContext`. Their pass modules no longer define duplicate dataclasses
+or import ModelIR/LayoutState directly. The shared-context inventory therefore
+contains twenty-four alias names.
+
+The lowerer no longer imports or constructs those three historical context
+names. `quantized_recovery_context`,
+`terminal_affine_concat_split_recovery_context`, and
+`sinet_preadd_resize_recovery_context` all reference
+`shared_model_ir_pass_context`, increasing the main-model shared consumers from
+eighteen to twenty-one. This removes twenty-nine net production lines.
+
+All four builders retain their signatures and exact invocation sequences. The
+common diagnostics list exists on the Session-owned object but is never read or
+forwarded. Every ordinary invocation receives the same ModelIR, each
+layout-enabled invocation receives the same LayoutState, and quantized
+activation recovery still passes the exact same context object into nested safe
+binary recovery. Stable pass IDs, layout-enabled index sets, caller boundaries,
+and runtime order are unchanged. `QLinearRecoveryContext` and
+`SINetTerminalLayoutRecoveryContext` remain independent.
+
+Sequential implementation validation completed as follows:
+
+- the composition contract, all three parent suites, and expanded shared-
+  context contract: `62 passed in 1.11s`;
+- the new contract, all three parents, both excluded contexts, expanded shared
+  context, and ordered architecture: `324 passed in 16.96s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.15s` (`31` plus `11`);
+- central lowerer core smoke: `32 passed in 0.61s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The central lowerer retains exactly its two pre-existing F401
+  findings and no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, runtime
+order, nested context identity, diagnostics behavior, and TensorFlow isolation
+remain unchanged. PR #952 remains closed, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the two remaining unconsolidated orchestration contexts
+separately: model-only `QLinearRecoveryContext` and callback-bearing
+`SINetTerminalLayoutRecoveryContext`. Do not combine their different contracts
+without characterization. First determine whether using or composing the
+Session-owned `ModelIRPassContext` is behaviorally inert for each builder and
+whether eliminating either type reduces real duplication without widening
+runtime state. Commit characterization before production changes, validate
+sequentially, commit and push only, and do not create or update a pull request.
