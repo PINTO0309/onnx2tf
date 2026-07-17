@@ -28,6 +28,9 @@ from onnx2tf.tflite_builder.passes.concat_mul_add_add_mean_reshape_layout import
 from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
     TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
+    TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1177,11 +1180,6 @@ def test_concat_mean_reshape_keeps_owner_wrapper_and_ordered_boundaries() -> Non
     assert wrapper_call.args[0].id == "model_ir"
     assert wrapper_call.keywords == []
 
-    lowerer = next(
-        node
-        for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
-    )
     target_name = (
         "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains"
     )
@@ -1193,33 +1191,13 @@ def test_concat_mean_reshape_keeps_owner_wrapper_and_ordered_boundaries() -> Non
         "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains",
         "_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains",
     )
-    expected = {
-        "_run_terminal_affine_concat_split_recovery_sequence": (
-            "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains",
-            "_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains",
-        ),
-    }
-    observed: dict[str, tuple[str, str]] = {}
-    for statement in lowerer.body:
-        if not isinstance(statement, ast.FunctionDef):
-            continue
-        if statement.name not in expected:
-            continue
-        calls = [
-            candidate.value
-            for candidate in statement.body
-            if isinstance(candidate, ast.Expr)
-            and isinstance(candidate.value, ast.Call)
-            and isinstance(candidate.value.func, ast.Name)
-        ]
-        call_names = [call.func.id for call in calls]
-        index = call_names.index(target_name)
-        observed[statement.name] = (
-            call_names[index - 1],
-            call_names[index + 1],
-        )
-        assert len(calls[index].args) == 1
-        assert isinstance(calls[index].args[0], ast.Name)
-        assert calls[index].args[0].id == "model_ir"
-        assert calls[index].keywords == []
-    assert observed == expected
+    affine_index = TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS.index(
+        target_name
+    )
+    assert (
+        TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS[affine_index - 1],
+        TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS[affine_index + 1],
+    ) == (
+        "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains",
+        "_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains",
+    )

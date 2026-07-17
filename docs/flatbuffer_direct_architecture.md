@@ -9026,3 +9026,13 @@ diagnostics, option, control-flow, or local-state dependency. Every target has
 an existing module owner. Focused tests freeze the complete order and both
 distinct terminal neighbors. The eventual phase should use a frozen ModelIR/
 layout context and eleven stable IDs with direct imports only.
+
+That sequence now uses `TerminalAffineConcatSplitRecoveryContext` and eleven
+stable IDs in
+`passes/terminal_affine_concat_split_recovery_orchestration.py`. Every owner is
+a direct import and the historical lowerer helper is a four-line delegate.
+Both outer calls and their neighbors remain unchanged. Ordered stable-ID
+multiplicity handles owners shared with the preceding terminal slice/concat
+phase without losing execution-count guarantees. Focused, adjacent-owner,
+core, and TensorFlow-import-blocked suites pass. Characterize the neighboring
+SINet pre-add/resize sequence before the next extraction.

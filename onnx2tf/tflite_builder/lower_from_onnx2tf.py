@@ -197,6 +197,10 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
     TerminalSliceConcatRecoveryContext,
     run_terminal_slice_concat_recovery,
 )
+from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
+    TerminalAffineConcatSplitRecoveryContext,
+    run_terminal_affine_concat_split_recovery,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4696,6 +4700,12 @@ def lower_onnx_to_ir(
             _run_channel_slice_pad_mul_layout_pass_cluster
         ),
     )
+    terminal_affine_concat_split_recovery_context = (
+        TerminalAffineConcatSplitRecoveryContext(
+            model_ir=model_ir,
+            layout_state=session.layout_state,
+        )
+    )
 
     def _run_layout_recovery_prefix_pass_sequence() -> None:
         run_layout_recovery_prefix(layout_recovery_context)
@@ -4752,35 +4762,9 @@ def lower_onnx_to_ir(
         )
 
     def _run_terminal_affine_concat_split_recovery_sequence() -> None:
-        _optimize_fold_mul_add_mul_affine_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        run_terminal_affine_concat_split_recovery(
+            terminal_affine_concat_split_recovery_context
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
-        _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
-        _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(model_ir)
-        _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
-        _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_unary_split_concat_single_post_nchw(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_split_channelwise_tail_to_single_post_nchw(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
 
     def _run_sinet_preadd_resize_recovery_sequence() -> None:
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)

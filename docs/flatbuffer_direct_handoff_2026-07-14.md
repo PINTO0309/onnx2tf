@@ -13373,3 +13373,54 @@ with direct imports of every existing owner. Prove builder argument equality
 and instrumented order before switching the historical helper, preserve both
 top-level outer boundaries, validate sequentially, commit and push, and do not
 create a pull request.
+
+## Explicit terminal affine/concat/split recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/terminal_affine_concat_split_recovery_orchestration.py`. A frozen
+`TerminalAffineConcatSplitRecoveryContext` contains only ModelIR and layout
+state. All eleven existing owners are imported directly; no lowerer callback,
+diagnostics, option, or central-lowerer import is required.
+
+`TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS` declares the exact eleven-step
+order. Immutable invocations preserve the six layout-aware and five model-only
+argument contracts, and the shared executor validates the complete sequence
+before running any owner.
+
+The historical helper and both zero-argument top-level invocations remain as
+ordering boundaries. Its body shrinks from 30 to four lines and captures only
+the context. Both distinct predecessor/follower pairs remain unchanged.
+Several IDs intentionally also occur in the terminal slice/concat phase;
+ordered multiplicity rather than unique-ID membership preserves every former
+owner execution total. The only newly unique moved owner, affine-chain fold,
+retains its total of three invocations.
+
+Focused tests prove all stable IDs and arguments, explicit context/wrapper
+wiring, both outer boundaries, instrumented order, and lowerer-import
+isolation. Four concat-family fixtures now verify both terminal sequences via
+their independent stable adjacency lists.
+
+Sequential validation completed as follows:
+
+- focused terminal affine/concat/split orchestration: `7 passed in 0.57s`;
+- focused orchestration plus ordered architecture: `255 passed in 17.92s`;
+- four adjacent concat fixtures plus orchestration and architecture:
+  `517 passed in 17.55s`;
+- related eleven-slot owner and phase-family set:
+  `806 passed in 18.08s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.08s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_sinet_preadd_resize_recovery_sequence` before changing production code.
+Freeze its exact call/argument list, lowerer-local dependencies, captures,
+repetition, and outer boundaries before defining another phase context.
+Validate sequentially, commit and push, and do not create a pull request.

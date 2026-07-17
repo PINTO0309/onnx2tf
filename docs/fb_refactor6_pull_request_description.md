@@ -1995,3 +1995,13 @@ terminal neighbor pairs. All targets have direct module owners and no callback,
 diagnostics, or option is needed. The focused plus architecture suite passed
 252 tests and all 11 TensorFlow-import-blocked tests passed. No pull request was
 created, reopened, or updated.
+
+That sequence is now implemented in
+`passes/terminal_affine_concat_split_recovery_orchestration.py` with a frozen
+ModelIR/layout context, eleven stable IDs, and direct imports of every owner.
+The historical helper and both top-level boundaries remain unchanged as a
+four-line delegate. Multiplicity-aware contracts preserve owners shared with
+the terminal slice/concat phase. The 806-test related family, 32 core smoke
+tests, and all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
+dependency, runtime order, or TensorFlow boundary changed, and no pull request
+was created, reopened, or updated.

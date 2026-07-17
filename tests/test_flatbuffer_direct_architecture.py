@@ -27,6 +27,9 @@ from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestrati
 from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
     TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
+    TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -39,6 +42,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *QLINEAR_MEAN_CONCAT_PASS_IDS,
     *LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
     *TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+    *TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -1570,7 +1574,7 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
         "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
@@ -1582,7 +1586,8 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         "_optimize_transpose_split_channelwise_tail_to_single_post_nchw",
         "_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw",
         "_sanitize_probable_nhwc_axis_sensitive_ops",
-    ]
+    )
+    assert TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -1590,7 +1595,16 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_affine_concat_split_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "terminal_affine_concat_split_recovery_context"
+    )
+    assert helper_calls[0].keywords == []
 
     invocation_indexes = [
         index
@@ -5699,7 +5713,7 @@ def test_indexed_affine_chain_fold_owner_is_bounded_and_transactional() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
