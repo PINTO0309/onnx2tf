@@ -3665,3 +3665,35 @@ At resume, audit `final_sinet_deep_skip_stats` for counter/cleanup completeness
 before retaining its guarded reconciliation result. Keep the following SiNet
 Concat/Resize owner boundary fixed. Commit and push only; do not create or
 update a pull request.
+
+## Remaining primary final SiNet reconciliation characterization checkpoint
+
+The five preceding final SiNet owners—late residual, deep-skip pre-add fan-out,
+deep-skip dual Resize, shared-post PReLU fan-out, and deep-skip Concat/Resize
+tail—use indexed transactional plans. Each exact counter increments only after
+preflight revalidation and mutation. Pruning and optional layout-state sync are
+inside the same positive predicate; preflight, unsafe, stale-plan, capped, and
+second-run zero results are true no-ops. Their dedicated suites cover numeric
+parity, transactionality, idempotency, fan-out, constant cloning, GraphIndex,
+and layout-state consistency.
+
+A single strict expected-failure orchestration contract requires stable
+two-key results for all five existing positive guards and assigns each opt-in
+complete reconciliation result. No sort is added. The order from late residual
+through final SiNet Concat/Resize remains exact.
+
+At implementation, add only result plumbing for these five callers. Do not
+change any owner, match/plan logic, rewiring, metadata, pruning, layout sync,
+raw schema, guard, ordering, dependencies, or TensorFlow behavior. Validate all
+five dedicated suites sequentially, then commit and push only; do not create or
+update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal orchestration plus all five dedicated SiNet owner suites:
+  `464 passed, 1 xfailed in 1.67s`
+- expanded broad related gate: `1089 passed, 1 xfailed in 29.28s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet five-owner result contract;
+there are no unexpected failures.
