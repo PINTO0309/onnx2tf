@@ -1302,6 +1302,62 @@ def test_pass_diagnostic_ledger_rebuilds_after_destructive_list_mutations() -> N
     assert diagnostics.model_ir_numbering_snapshot() == (0, None, {})
 
 
+def test_final_sinet_counters_gate_shape_reconciliation(monkeypatch) -> None:
+    pass_counters = {
+        "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains": (
+            "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains"
+        ),
+        "_optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains": (
+            "optimized_sinet_deep_skip_pre_add_concat_prelu_fanout_chains"
+        ),
+        "_optimize_sinet_deep_skip_dual_resize_affine_transpose_chains": (
+            "optimized_sinet_deep_skip_dual_resize_affine_transpose_chains"
+        ),
+        "_optimize_sinet_shared_post_prelu_transpose_fanout_chains": (
+            "optimized_sinet_shared_post_prelu_transpose_fanout_chains"
+        ),
+        "_optimize_sinet_deep_skip_concat_resize_affine_tail_chains": (
+            "optimized_sinet_deep_skip_concat_resize_affine_tail_chains"
+        ),
+        "_optimize_sinet_concat_resize_affine_transpose_chains": (
+            "optimized_sinet_concat_resize_affine_transpose_chains"
+        ),
+    }
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+
+    def counted_reconcile(*args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        return original_reconcile(*args, **kwargs)
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_changed_pass(changed_pass: str | None) -> int:
+        nonlocal reconcile_count
+        for pass_name, counter_name in pass_counters.items():
+            changed = pass_name == changed_pass
+
+            def pass_result(*args, _counter=counter_name, _changed=changed, **kwargs):
+                return {_counter: int(_changed)}
+
+            monkeypatch.setattr(lowering_module, pass_name, pass_result)
+        reconcile_count = 0
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"sinet_reconcile_{changed_pass or 'none'}",
+        )
+        return reconcile_count
+
+    unchanged_count = run_with_changed_pass(None)
+    for pass_name in pass_counters:
+        assert run_with_changed_pass(pass_name) == unchanged_count + 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod

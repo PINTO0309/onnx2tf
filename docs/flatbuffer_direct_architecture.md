@@ -9670,3 +9670,12 @@ to its exact counter and requires its following reconciliation to be guarded by
 that counter. This preserves all six pass calls and their order while allowing
 the common zero-owner path to avoid six full operator/tensor reconciliation
 scans. Production remains unchanged at this characterization checkpoint.
+
+The six absolute-final SINet reconciliations are now guarded by their exact
+owner counters. Every owner still runs once in the same terminal position with
+the same LayoutState; only a zero result skips the immediately following
+static-shape reconciliation. A synthetic lowerer contract proves that enabling
+any one counter adds exactly one reconciliation relative to the all-zero path,
+and the complete owner suites retain their positive/no-op/idempotence behavior.
+The common non-SINet path therefore avoids six full reconciliation scans without
+changing any rewrite or cross-owner ordering.

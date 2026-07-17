@@ -5466,38 +5466,86 @@ def lower_onnx_to_ir(
     # Keep this after the final shape reconciliation: earlier than this,
     # SiNet-specific residual branches are not yet in their terminal form and
     # the strict matcher can fire on upstream blocks instead.
-    _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    final_sinet_late_residual_stats = (
+        _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    if int(
+        final_sinet_late_residual_stats.get(
+            "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+    final_sinet_preadd_fanout_stats = (
+        _optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_deep_skip_dual_resize_affine_transpose_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    if int(
+        final_sinet_preadd_fanout_stats.get(
+            "optimized_sinet_deep_skip_pre_add_concat_prelu_fanout_chains",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+    final_sinet_dual_resize_stats = (
+        _optimize_sinet_deep_skip_dual_resize_affine_transpose_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_shared_post_prelu_transpose_fanout_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    if int(
+        final_sinet_dual_resize_stats.get(
+            "optimized_sinet_deep_skip_dual_resize_affine_transpose_chains",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+    final_sinet_shared_post_stats = (
+        _optimize_sinet_shared_post_prelu_transpose_fanout_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_deep_skip_concat_resize_affine_tail_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    if int(
+        final_sinet_shared_post_stats.get(
+            "optimized_sinet_shared_post_prelu_transpose_fanout_chains",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+    final_sinet_deep_skip_stats = (
+        _optimize_sinet_deep_skip_concat_resize_affine_tail_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    if int(
+        final_sinet_deep_skip_stats.get(
+            "optimized_sinet_deep_skip_concat_resize_affine_tail_chains",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
     # Keep this after all late SiNet residual/deep-skip folds: those passes can
     # still recreate the mid-stage concat+resize affine NHWC/NCHW bridge.
-    _optimize_sinet_concat_resize_affine_transpose_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    final_sinet_concat_resize_stats = (
+        _optimize_sinet_concat_resize_affine_transpose_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    if int(
+        final_sinet_concat_resize_stats.get(
+            "optimized_sinet_concat_resize_affine_transpose_chains",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
     final_high_rank_bmm_stats = _compress_static_high_rank_batch_matmul(
         model_ir,
         layout_state=session.layout_state,

@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -6309,10 +6307,6 @@ def test_indexed_sinet_concat_resize_owner_is_bounded_and_transactional() -> Non
         assert layout_keyword.value.attr == "layout_state"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="absolute-final SINet passes reconcile shapes even when their counters are zero",
-)
 def test_absolute_final_sinet_reconciles_only_after_changed_passes() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
