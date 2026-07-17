@@ -3813,3 +3813,30 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final PReLU reconciliation-
 result contract; there are no unexpected failures.
+
+## Primary final PReLU reconciliation implementation checkpoint
+
+The primary path now initializes `_final_prelu_static_shape_stats` with the
+stable two-key schema and replaces it with the opt-in complete reconciliation
+dictionary only under the unchanged rewrite-or-tensor-reduction guard. This
+adds no scan because reconciliation already ran on that positive path.
+
+The indexed owner, raw counter, matching/planning, alpha copy-on-write and
+metadata handling, unconditional prune/layout synchronization, tensor-count
+sample, guard expression, pass order, dependencies, and TensorFlow-free
+behavior are unchanged. The strict characterization contract is now a normal
+passing contract, and the existing architecture guard checks the retained
+result assignment.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed PReLU owner, terminal orchestration, and architecture:
+  `298 passed in 19.18s`
+- expanded broad related gate: `1124 passed in 30.38s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the preceding `final_sinet_shuffle_stats` plus
+`final_se_fc_stats`/`final_gather_stats` aggregate and its tensor-count-assisted
+guard for complete rewrite and cleanup evidence before retaining its guarded
+reconciliation result. Keep the following final PReLU boundary fixed. Commit
+and push only; do not create or update a pull request.

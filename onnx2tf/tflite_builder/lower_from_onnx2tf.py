@@ -5817,6 +5817,10 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_prelu_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if (
         int(
             final_prelu_stats.get(
@@ -5827,7 +5831,10 @@ def lower_onnx_to_ir(
         > 0
         or len(model_ir.tensors) < final_prelu_tensor_count
     ):
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_prelu_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
     # Absolute-final reshape cleanup:
     # very late repair/reconciliation passes above can still recreate trivial
     # singleton-growth RESHAPE chains (e.g. 2D->3D->4D Conv1D input shims).

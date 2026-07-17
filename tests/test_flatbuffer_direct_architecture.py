@@ -9005,7 +9005,24 @@ def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
     assert counted_tensors.value.id == "model_ir"
     assert counted_tensors.attr == "tensors"
 
-    guard = lowerer.body[assignment_index + 1]
+    default_stats = lowerer.body[assignment_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == "_final_prelu_static_shape_stats"
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(
+            default_stats.value.keys,
+            default_stats.value.values,
+        )
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = lowerer.body[assignment_index + 2]
     assert isinstance(guard, ast.If)
     assert guard.orelse == []
     get_calls = [
@@ -9035,10 +9052,16 @@ def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
     assert len(tensor_len_calls) == 1
     assert len(guard.body) == 1
     reconcile = guard.body[0]
-    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile, ast.Assign)
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == "_final_prelu_static_shape_stats"
     assert isinstance(reconcile.value, ast.Call)
     assert isinstance(reconcile.value.func, ast.Name)
     assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
 
 
 def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:

@@ -10644,3 +10644,8 @@ that complete guard and requires a stable two-key
 `_final_prelu_static_shape_stats` value that receives the opt-in complete
 reconciliation result only inside the guard. The following consecutive-Reshape
 owner remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary only after the unchanged rewrite-or-
+tensor-reduction guard succeeds. The unconditional owner prune, tensor-count
+sample, raw result, and consecutive-Reshape boundary are unchanged.

@@ -262,6 +262,16 @@ This checkpoint extends the expanded related gate to `1094 passed in 29.69s`;
 the focused consecutive-Reshape, terminal-orchestration, and architecture gate
 is `282 passed in 18.99s`.
 
+The immediately preceding final PReLU path now retains its complete guarded
+reconciliation result as well. Its existing tensor-count sample remains
+necessary because the owner preserves a legacy unconditional-prune contract;
+the rewrite-or-net-reduction guard and following consecutive-Reshape boundary
+are unchanged.
+
+This checkpoint extends the expanded related gate to `1124 passed in 30.38s`;
+the focused indexed-PReLU, terminal-orchestration, and architecture gate is
+`298 passed in 19.18s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -270,7 +280,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
-reconciliation inventory immediately before the completed consecutive-Reshape
-boundary, beginning with `final_prelu_stats`. Any new mutation evidence must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+reconciliation inventory immediately before the completed final PReLU boundary,
+beginning with the `final_sinet_shuffle_stats` and final SE/FC/Gather aggregate.
+Any new mutation evidence must preserve current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.
