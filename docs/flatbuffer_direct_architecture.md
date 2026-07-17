@@ -9472,3 +9472,15 @@ recovery still stores the helper itself as its argument-free callback.
 Multiplicity-aware accounting replaces seven direct owner calls with seven
 stable IDs while retaining 120 effective ordered calls. The explicit seven-
 owner efficiency fixture retains one graph-index build.
+
+The mean/attention cluster is now characterized without production changes.
+Its keyword-only switches default to layer-normalization disabled and conv-
+attention enabled. Five owners form the unconditional mean/SE base, with the
+layer-normalization owner inserted after the first two and conv-attention
+appended last under separate guards. Both attention recovery and the layout/
+attention/quantized suffix store the same helper as an argument-free callback,
+selecting the six-owner default. One direct caller enables layer normalization
+while retaining conv attention; the terminal direct caller disables conv
+attention while retaining the default-disabled layer normalization. Focused
+contracts freeze all owner contracts/order, both exact guards, defaults,
+callback identities, caller keywords, multiplicity, and all direct boundaries.

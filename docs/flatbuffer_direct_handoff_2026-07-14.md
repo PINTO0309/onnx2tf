@@ -15437,3 +15437,57 @@ select the smallest bounded cluster whose caller policies and target ModelIR
 forms can be fully characterized. Preserve separate characterization and
 implementation checkpoints, sequential validation, minimal real-model
 conversion, commit and push only, and do not create or reopen a pull request.
+
+## Mean/attention orchestration characterization: completed state
+
+AST inventory shows that only two nested lowerer helpers still own multi-pass
+inline execution: the 53-line mean/attention cluster and the 76-line singleton-
+reshape cluster. The smaller mean/attention cluster was selected first. All
+other `_run_*` helpers are already delegates into dedicated orchestration
+modules or progress-control helpers.
+
+The production `_run_mean_attention_layout_pass_cluster` remains unchanged. It
+has keyword-only defaults `include_layernorm=False` and
+`include_conv_attention=True`, and creates one main-model/session-layout
+`ModelIRPassStateScope`. Its exact union order is transpose/MEAN passthrough,
+MEAN-MUL-ADD-CONV cleanup, optional layer-normalization statistics, terminal
+MEAN cleanup, SE-CONV cleanup, SE-FC cleanup, and optional conv-attention
+cleanup. The five non-optional owners retain their fixed relative order, and
+every selected owner receives the same ModelIR, layout, diagnostics, and scope.
+
+Four caller identities produce three active policy forms. Both
+`AttentionRecoveryContext` and `LayoutAttentionQuantizedSuffixContext` store
+the helper itself, and their corresponding invocations supply no arguments or
+keywords, selecting the default five-owner base plus conv attention. The first
+direct caller passes only `include_layernorm=True`, retaining conv attention;
+it remains between mean-affine cleanup and attention-gate/QDQ recovery. The
+terminal direct caller passes only `include_conv_attention=False`, selecting
+the five-owner base; its outer previous boundary is terminal-boundary layout
+and its inner next boundary is batch-matmul affine input cleanup.
+
+Sequential characterization validation completed as follows:
+
+- focused helper policy/caller/callback contracts: `5 passed in 0.67s`;
+- focused mean/attention, both parent orchestrations, and ordered architecture:
+  `269 passed in 21.78s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 12.18s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation-count tiers, all three active policy forms,
+callback wiring, caller multiplicity, boundaries, shared-scope behavior, and
+TensorFlow isolation are unchanged. PR #952 remains closed, and no pull request
+was created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and
+stable base, default, layernorm, conv-attention, and seven-owner union IDs in
+`mean_attention_orchestration.py`. Use one policy selector for all four boolean
+combinations and one fresh scope per build. Preserve the historical helper's
+two keyword-only defaults as a delegate, both direct caller forms, and its
+identity as both argument-free callbacks. Add an explicit full-policy
+efficiency fixture and replace seven direct owner calls with seven stable IDs
+without changing the 120 effective-call total. Validate sequentially, commit
+and push only, and do not create or reopen a pull request.

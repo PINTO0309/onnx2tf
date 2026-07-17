@@ -2529,3 +2529,15 @@ all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
 dependency, policy, runtime-order, callback, boundary, scope-sharing, or
 TensorFlow-isolation contract changed. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+The two-switch mean/attention cluster is now characterized without production
+changes. Five focused tests freeze its keyword-only `False`, `True` defaults;
+one shared main-model scope; five-owner unconditional mean/SE base; exact
+layer-normalization and conv-attention guards; seven-owner union; argument-free
+callback identities in both attention compositions; layernorm-plus-conv direct
+policy; terminal base-only direct policy; caller keywords; multiplicity; and
+all four direct boundaries. The 269-test focused/attention-recovery/layout-
+attention-quantized-suffix/architecture set, 30 pass-efficiency tests, and all
+11 TensorFlow-import-blocked tests pass. Runtime behavior and all public/
+dependency contracts remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
