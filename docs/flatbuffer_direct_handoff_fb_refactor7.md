@@ -1250,3 +1250,28 @@ complete indexed owner suite and the adjacent QKV, Hardswish-SE,
 hard-activation, core, pass-efficiency, architecture, and TensorFlow import
 blocker sequentially. Commit and push only; do not create or update a pull
 request.
+
+## Terminal split/conv bridge evidence implementation checkpoint
+
+Only the split/conv/concat bridge invocation directly after the late QKV
+cluster now assigns its unchanged result to
+`_terminal_split_conv_concat_bridge_stats`. The earlier invocations of the same
+owner remain untouched. This confines mutation staging to the terminal
+interval currently being accounted and prevents an ambiguous first-match
+rewrite.
+
+The owner call still receives the same ModelIR and Session LayoutState, and the
+late QKV and Hardswish-SE boundaries remain adjacent. Since pruning occurs only
+after a positive rewrite, the existing counter remains complete evidence. The
+staged result is observation-only and no reconciliation guard changes.
+
+Focused indexed owner, QKV, and Hardswish-SE coverage is `69 passed in 0.80s`.
+The sequential indexed owner, QKV, Hardswish-SE, late hard-activation, SINet
+terminal, Expand/Squeeze, late-layout, constant-fold/cast, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked gate is `470 passed
+in 28.41s`. Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, characterize the late QKV cluster's ordered results and prune
+behavior. Preserve `include_prefix=False`, the optional generic-layout policy,
+and all three production forms. Commit and push only; do not create or update a
+pull request.

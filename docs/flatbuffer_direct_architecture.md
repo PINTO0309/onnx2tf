@@ -10119,3 +10119,9 @@ requires the terminal call to assign that unchanged result to staged
 `_terminal_split_conv_concat_bridge_stats` between the late QKV cluster and the
 Hardswish-SE tensor-count capture. Production remains unchanged in this
 checkpoint.
+
+The terminal invocation now assigns its unchanged owner result to
+`_terminal_split_conv_concat_bridge_stats`. The other same-owner invocations
+remain expressions, making the staging specific to the interval being
+accounted. ModelIR and Session LayoutState forwarding and both neighboring
+boundaries are unchanged; no reconciliation consumes the staged counter yet.

@@ -733,10 +733,6 @@ def test_indexed_split_conv_concat_bridge_rejects_unsafe_candidate_transactional
     assert layout_state.validate_against_model_ir(model_ir) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal split/conv bridge result is still discarded",
-)
 def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence() -> None:
     tree = ast.parse(
         (

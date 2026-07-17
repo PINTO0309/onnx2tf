@@ -5148,9 +5148,11 @@ def lower_onnx_to_ir(
         include_layout_transpose=optimize_layout_transpose_chains,
         include_prefix=False,
     )
-    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_split_conv_concat_bridge_stats = (
+        _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     terminal_hardswish_se_tensor_count = len(model_ir.tensors)
     _terminal_hardswish_se_stats = {

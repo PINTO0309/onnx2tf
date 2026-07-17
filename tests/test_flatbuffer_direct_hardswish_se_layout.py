@@ -414,7 +414,10 @@ def test_terminal_hardswish_se_call_captures_complete_mutation_evidence() -> Non
     assert prune_call.func.id == "max"
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (

@@ -331,9 +331,17 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
         _call_name(lowerer.body[late_index - 1])
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    assert (
-        _call_name(lowerer.body[late_index + 1])
-        == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+    next_boundary = lowerer.body[late_index + 1]
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == (
+        "_terminal_split_conv_concat_bridge_stats"
+    )
+    assert isinstance(next_boundary.value, ast.Call)
+    assert isinstance(next_boundary.value.func, ast.Name)
+    assert next_boundary.value.func.id == (
+        "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
 
 
