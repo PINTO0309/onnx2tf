@@ -10659,3 +10659,8 @@ the counter-or-net-reduction guard and requires a stable two-key
 `_final_se_fc_gather_static_shape_stats` value receiving the opt-in complete
 reconciliation result only inside that guard. This mirrors the already-complete
 recursive-fallback boundary and keeps final PReLU adjacent.
+
+The primary caller now initializes that symmetric stable result and replaces it
+with the opt-in complete reconciliation dictionary only after the unchanged
+counter-or-tensor-reduction guard succeeds. No child invocation, pruning,
+layout synchronization, scan, or fallback behavior changes.

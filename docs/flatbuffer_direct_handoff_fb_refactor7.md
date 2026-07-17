@@ -3874,3 +3874,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet primary final aggregate
 reconciliation-result contract; there are no unexpected failures.
+
+## Primary final SE/FC/Gather reconciliation implementation checkpoint
+
+The main path now initializes `_final_se_fc_gather_static_shape_stats` with the
+same stable two-key schema as the recursive fallback and replaces it with the
+opt-in complete reconciliation dictionary only under the unchanged three-
+counter-or-tensor-reduction guard. No reconciliation, traversal, or invocation
+is added.
+
+The three owners, raw result schemas, orchestration order, matching/planning,
+rewiring, positive and zero-rewrite pruning behavior, layout synchronization,
+tensor-count sample, guard expression, fallback path, dependencies, and
+TensorFlow-free behavior are unchanged. The strict main-path contract is now a
+normal passing contract, and the shared boundary test requires symmetric main
+and fallback result assignments.
+
+Implementation validation completed sequentially under `uv`:
+
+- SiNet shuffle, SE/FC, Gather, orchestration, core guard, and architecture:
+  `543 passed in 17.93s`
+- expanded broad related gate: `1136 passed in 30.02s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the preceding `final_placeholder_matmul_stats` conditional
+block, including its first shape result and nested exact/singleton binary
+repairs, before changing any retained evidence. Keep the following final
+SE/FC/Gather boundary fixed. Commit and push only; do not create or update a
+pull request.

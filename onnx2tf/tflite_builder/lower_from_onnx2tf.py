@@ -5786,6 +5786,10 @@ def lower_onnx_to_ir(
             session.layout_state,
         )
     )
+    _final_se_fc_gather_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if (
         int(
             final_sinet_shuffle_stats.get(
@@ -5808,7 +5812,12 @@ def lower_onnx_to_ir(
         > 0
         or len(model_ir.tensors) < final_se_fc_gather_tensor_count
     ):
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_se_fc_gather_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     # Absolute-final PRELU cleanup:
     # late layout/broadcast/singleton repairs can still recreate strict
     # TRANSPOSE->PRELU->inverse-TRANSPOSE wrappers (e.g. SiNet entry blocks).
