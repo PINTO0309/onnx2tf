@@ -10317,3 +10317,11 @@ counter remains complete. Strict characterization requires that fourth call to
 assign `_absolute_final_instancenorm_post_bias_stats` immediately before the
 absolute-final normalization/attention pair, while preserving the separately
 staged third call.
+
+That absolute-final call now assigns its unchanged result to
+`_absolute_final_instancenorm_post_bias_stats`. The first two direct calls
+remain expressions, the third retains
+`_pre_terminal_affine_instancenorm_post_bias_stats`, and the fourth therefore
+has an unambiguous observation point of its own. The result is not consumed by
+reconciliation, and pass order, ModelIR/LayoutState forwarding, rewrite guards,
+pruning, and generated artifacts remain unchanged.

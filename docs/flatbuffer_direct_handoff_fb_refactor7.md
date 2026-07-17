@@ -1921,3 +1921,33 @@ normalization/attention outer-boundary contract. Validate all post-bias owner
 tests, occurrence targets, affine post-ADD, absolute-final normalization,
 architecture, core, pass-efficiency, and TensorFlow import blocking
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Absolute-final InstanceNorm post-bias implementation checkpoint
+
+Only the fourth direct InstanceNorm post-transpose bias/add call now assigns
+its unchanged result to `_absolute_final_instancenorm_post_bias_stats`. The
+first two direct calls remain expressions and the third retains its distinct
+`_pre_terminal_affine_instancenorm_post_bias_stats` target.
+
+The staged raw counter is complete because the owner prunes only after a
+positive rewrite. It remains observation-only: no new reconciliation decision,
+tensor-count proxy, pass invocation, graph scan, or artifact-producing action
+was added. The absolute-final affine post-ADD owner still runs immediately
+before it, and the normalization/attention pair still runs immediately after
+it with the same ModelIR and Session LayoutState.
+
+The first focused run produced `79 passed, 1 failed`; the failure was a stale
+occurrence-target expectation that still required the fourth call to be an
+expression. After updating that contract, focused coverage produced `80
+passed`. The first expanded sequential gate produced `1199 passed, 1 failed`;
+the remaining failure was a stale architecture boundary expectation. After
+correcting that exact boundary, focused coverage produced `9 passed`, and the
+expanded sequential gate completed with `1200 passed`. Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At resume, characterize the immediately preceding absolute-final
+`_optimize_transpose_mul_posttranspose_add_nhwc_chains` occurrence. Keep it
+distinct from the already staged pre-terminal affine post-ADD occurrence, and
+confirm its positive-only pruning contract before considering an
+`_absolute_final_affine_post_add_stats` target. Commit and push only; do not
+create or update a pull request.

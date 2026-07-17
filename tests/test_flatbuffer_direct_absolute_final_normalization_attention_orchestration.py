@@ -189,24 +189,25 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_absolute_final_instancenorm_post_bias_stats"
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
         == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert (
         following.value.func.id
         == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the absolute-final InstanceNorm post-bias result is discarded",
-)
 def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     normalization_index = next(

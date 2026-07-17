@@ -5539,9 +5539,11 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _absolute_final_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _run_absolute_final_normalization_attention_pass_pair()
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
