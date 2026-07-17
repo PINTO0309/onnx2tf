@@ -2233,6 +2233,12 @@ rewrite, replaces it with the reconciliation's complete opt-in result. This
 stages mutation evidence instead of discarding it without changing the guard,
 Split result schema, or pass order.
 
+The safety-fallback norm-only Pad cleanup has a different mutation contract.
+Its raw rewrite counter is incomplete because the child owner prunes unused
+tensors even after a zero rewrite. Characterization therefore requires the
+fallback call to add a clamped before/after tensor-count delta while retaining
+the existing norm-rewrite guard and recursive relowering order.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

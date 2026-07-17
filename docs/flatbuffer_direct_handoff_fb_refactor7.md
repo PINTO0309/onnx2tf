@@ -2503,3 +2503,32 @@ fallback-only reconciliation results and recursive relowering boundaries
 before changing them; do not alter fallback eligibility or broaden inference
 validation. Commit and push coherent units only, and do not create or update a
 pull request.
+
+## Safety-fallback norm evidence characterization checkpoint
+
+The first fallback-only owner after recursive relowering is the norm-only
+`run_pad_layout_cleanup()` call. Its child
+`_optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains()` unconditionally
+prunes unused tensors after its fixed-point loop. A focused fixture proves that
+an empty rewrite can remove an unused constant while returning
+`optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains: 0`; the raw result
+is therefore incomplete mutation evidence.
+
+A strict expected-failure lowerer contract requires
+`fallback_norm_tensor_count` immediately before the existing call and a
+`pruned_unused_tensors` clamped net delta merged into `fallback_norm_stats`.
+The existing norm-rewrite guard, its three child owners, reconciliation,
+topological sort, recursive relowering arguments, and all later fallback work
+remain unchanged.
+
+Focused safety-fallback characterization is `1 passed, 1 xfailed`. The broader
+sequential fallback-owner, reconciliation, convergence, core,
+pass-efficiency, architecture, and TensorFlow import-blocking gate is `445
+passed, 1 xfailed in 27.33s`. Ruff and whitespace validation pass.
+
+At implementation, add only this observation point. Do not use the new cleanup
+counter to broaden the current reconciliation guard: pruning unused tensors
+alone does not require shape reconciliation. Validate the direct norm owner,
+Pad orchestration, safety-fallback AST contract, pass efficiency, architecture,
+core, and TensorFlow import blocking sequentially. Commit and push only; do not
+create or update a pull request.
