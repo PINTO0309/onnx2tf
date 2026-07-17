@@ -2272,6 +2272,13 @@ caller no longer repeats the same reconciliation immediately. The wrapper's
 one-call contract remains intact, and only the duplicate caller-side full-graph
 scan is removed.
 
+The fallback Conv-input runner has two rewrite counters, but both indexed child
+owners prune unused tensors even on zero. Characterization therefore requires
+a clamped tensor-count delta plus a stable complete reconciliation result. The
+existing stale-Transpose-only reconciliation predicate remains unchanged;
+singleton repair updates its output metadata directly, and pruning alone does
+not require shape propagation.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

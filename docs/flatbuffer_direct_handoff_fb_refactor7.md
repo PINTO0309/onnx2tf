@@ -2814,3 +2814,33 @@ At resume, audit `fallback_conv_input_stats`. Its two child owners can prune
 on zero rewrite, so do not treat the existing stale-transpose counter as
 complete without tensor-delta evidence. Commit and push only; do not create or
 update a pull request.
+
+## Safety-fallback Conv-input evidence characterization checkpoint
+
+`_run_indexed_conv_input_adapter_repairs()` returns exact counters for
+singleton-Reshape and stale-Transpose repairs, but each child unconditionally
+prunes unused tensors. Existing zero-rewrite coverage proves two cleanup
+opportunities, so the raw dictionary is incomplete mutation evidence.
+
+A strict expected-failure safety-fallback contract requires
+`fallback_conv_input_tensor_count`, a clamped `pruned_unused_tensors` delta
+merged into `fallback_conv_input_stats`, and a stable two-key
+`_fallback_conv_input_static_shape_stats`. The existing reconciliation guard
+continues to read only
+`repaired_stale_nchw_to_nhwc_conv_input_transposes`; its opt-in complete result
+is assigned instead of discarded. Singleton repair already writes the Conv
+output shape/signature directly, and prune-only cleanup does not broaden this
+guard. The following mixed-Concat owner remains fixed.
+
+Focused Conv-input and safety-fallback characterization is `16 passed, 1
+xfailed`. The broader sequential indexed-owner, fallback-owner,
+reconciliation, convergence, core, pass-efficiency, architecture, and
+TensorFlow import-blocking gate is `479 passed, 1 xfailed in 27.90s`. Ruff and
+whitespace validation pass.
+
+At implementation, add only the tensor-delta and reconciliation result
+plumbing. Do not change either indexed owner, shared GraphIndex, raw counters,
+guard, or following fallback order. Validate indexed Conv-input repair, safety
+fallback, static reconciliation, core, pass efficiency, architecture, and
+TensorFlow import blocking sequentially. Commit and push only; do not create or
+update a pull request.

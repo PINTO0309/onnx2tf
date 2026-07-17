@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -373,3 +374,90 @@ def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "fallback_conv_input_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="fallback Conv-input stats omit cleanup and reconciliation evidence",
+)
+def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
+    body = _safety_fallback_body(_lowerer())
+    stats_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_conv_input_stats"
+    )
+
+    tensor_count = body[stats_index - 1]
+    assert isinstance(tensor_count, ast.Assign)
+    assert len(tensor_count.targets) == 1
+    assert isinstance(tensor_count.targets[0], ast.Name)
+    assert tensor_count.targets[0].id == "fallback_conv_input_tensor_count"
+    assert ast.unparse(tensor_count.value) == "len(fallback_ir.tensors)"
+
+    stats = body[stats_index]
+    assert isinstance(stats, ast.Assign)
+    assert isinstance(stats.value, ast.Dict)
+    assert stats.value.keys[0] is None
+    owner = stats.value.values[0]
+    assert isinstance(owner, ast.Call)
+    assert isinstance(owner.func, ast.Name)
+    assert owner.func.id == "_run_indexed_conv_input_adapter_repairs"
+    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
+    assert owner.keywords == []
+    prune_key = stats.value.keys[1]
+    assert isinstance(prune_key, ast.Constant)
+    assert prune_key.value == "pruned_unused_tensors"
+    assert ast.unparse(stats.value.values[1]) == (
+        "max(0, fallback_conv_input_tensor_count - len(fallback_ir.tensors))"
+    )
+
+    default_stats = body[stats_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert len(default_stats.targets) == 1
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_fallback_conv_input_static_shape_stats"
+    )
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(default_stats.value.keys, default_stats.value.values)
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = body[stats_index + 2]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "int(fallback_conv_input_stats.get("
+        "'repaired_stale_nchw_to_nhwc_conv_input_transposes', 0)) > 0"
+    )
+    assert len(guard.body) == 1
+    reconciliation = guard.body[0]
+    assert isinstance(reconciliation, ast.Assign)
+    assert len(reconciliation.targets) == 1
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == (
+        "_fallback_conv_input_static_shape_stats"
+    )
+    assert isinstance(reconciliation.value, ast.Call)
+    assert isinstance(reconciliation.value.func, ast.Name)
+    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
+        "fallback_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    following = body[stats_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "fallback_concat_layout_stats"
