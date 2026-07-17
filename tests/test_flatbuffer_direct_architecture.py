@@ -107,6 +107,17 @@ from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
     MEAN_ATTENTION_PASS_IDS,
     MEAN_ATTENTION_PREFIX_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
+    SINGLETON_RESHAPE_BASE_PASS_IDS,
+    SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+    SINGLETON_RESHAPE_DUPLICATE_BASE_PASS_IDS,
+    SINGLETON_RESHAPE_DUPLICATE_PASS_IDS,
+    SINGLETON_RESHAPE_LAYOUT_MULTI_PASS_IDS,
+    SINGLETON_RESHAPE_LAYOUT_PASS_IDS,
+    SINGLETON_RESHAPE_MULTI_BRANCH_PASS_IDS,
+    SINGLETON_RESHAPE_PASS_IDS,
+    SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -141,6 +152,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *GATE_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
+    *SINGLETON_RESHAPE_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -7175,52 +7187,48 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
 
-    def _helper_calls(
-        helper_name: str,
-        expected_order: list[str],
-    ) -> ast.FunctionDef:
-        helper = next(
-            node
-            for node in lowerer.body
-            if isinstance(node, ast.FunctionDef) and node.name == helper_name
-        )
-        calls = {
-            node.func.id: node
-            for node in ast.walk(helper)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in expected_order
-        }
-        assert [
-            call.func.id
-            for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-        ] == expected_order
-        for name in expected_order:
-            scope_keyword = next(
-                keyword
-                for keyword in calls[name].keywords
-                if keyword.arg == "state_scope"
-            )
-            assert isinstance(scope_keyword.value, ast.Name)
-            assert scope_keyword.value.id == "state_scope"
-        return helper
-
     long_helper_name = "_run_singleton_reshape_layout_pass_cluster"
-    _helper_calls(
-        long_helper_name,
-        [
-            "run_layout_transpose_cleanup",
-            "run_singleton_channel_transpose_cleanup",
-            "run_duplicate_fanout_cleanup",
-            "run_singleton_reshape_layout_cleanup",
-            "run_singleton_maxpool_layout_cleanup",
-            "run_flatten_concat_reshape_cleanup",
-            "run_consecutive_reshape_cleanup",
-            "run_squeeze_reshape_identity_cleanup",
-            "run_singleton_spatial_reshape_cleanup",
-            "run_multi_branch_gate_layout_cleanup",
-        ],
+    long_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == long_helper_name
     )
+    assert SINGLETON_RESHAPE_BASE_PASS_IDS == (
+        *SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+    )
+    assert SINGLETON_RESHAPE_LAYOUT_MULTI_PASS_IDS == (
+        *SINGLETON_RESHAPE_LAYOUT_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_PASS_IDS,
+        *SINGLETON_RESHAPE_MULTI_BRANCH_PASS_IDS,
+    )
+    assert SINGLETON_RESHAPE_DUPLICATE_BASE_PASS_IDS == (
+        *SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+        *SINGLETON_RESHAPE_DUPLICATE_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+    )
+    assert SINGLETON_RESHAPE_PASS_IDS == (
+        *SINGLETON_RESHAPE_LAYOUT_PASS_IDS,
+        *SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+        *SINGLETON_RESHAPE_DUPLICATE_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+        *SINGLETON_RESHAPE_MULTI_BRANCH_PASS_IDS,
+    )
+    assert len(long_helper.body) == 1
+    long_statement = long_helper.body[0]
+    assert isinstance(long_statement, ast.Expr)
+    assert isinstance(long_statement.value, ast.Call)
+    assert isinstance(long_statement.value.func, ast.Name)
+    assert long_statement.value.func.id == "run_singleton_reshape"
+    assert len(long_statement.value.args) == 1
+    assert isinstance(long_statement.value.args[0], ast.Name)
+    assert long_statement.value.args[0].id == "singleton_reshape_context"
+    assert [keyword.arg for keyword in long_statement.value.keywords] == [
+        "include_layout_transpose",
+        "include_duplicate_fanout",
+        "include_multi_branch_gate",
+        "include_spatial_concat_post_transpose",
+    ]
     long_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -11044,10 +11052,8 @@ def test_multi_branch_gate_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.multi_branch_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_multi_branch_gate_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert _orchestrated_pass_count("run_multi_branch_gate_layout_cleanup") == 1
 
 
 def test_complementary_gate_layout_rewrites_have_single_owner() -> None:
@@ -11901,6 +11907,10 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_terminal_mean_layout_cleanup",
         "run_se_conv_layout_cleanup",
         "run_conv_attention_layout_cleanup",
+        "run_singleton_reshape_layout_cleanup",
+        "run_flatten_concat_reshape_cleanup",
+        "run_singleton_spatial_reshape_cleanup",
+        "run_multi_branch_gate_layout_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -11952,6 +11962,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         + SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS.count(
             "run_duplicate_fanout_cleanup"
         )
+        + SINGLETON_RESHAPE_PASS_IDS.count("run_duplicate_fanout_cleanup")
         == 2
     )
 
@@ -12041,7 +12052,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_reshape_layout_cleanup"
     ]
-    assert len(singleton_reshape_calls) == 1
+    assert (
+        len(singleton_reshape_calls)
+        + _orchestrated_pass_count("run_singleton_reshape_layout_cleanup")
+        == 1
+    )
 
     consecutive_reshape_calls = [
         call
@@ -12061,7 +12076,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_flatten_concat_reshape_cleanup"
     ]
-    assert len(flatten_concat_reshape_calls) == 1
+    assert (
+        len(flatten_concat_reshape_calls)
+        + _orchestrated_pass_count("run_flatten_concat_reshape_cleanup")
+        == 1
+    )
 
     singleton_spatial_reshape_calls = [
         call
@@ -12069,7 +12088,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_spatial_reshape_cleanup"
     ]
-    assert len(singleton_spatial_reshape_calls) == 1
+    assert (
+        len(singleton_spatial_reshape_calls)
+        + _orchestrated_pass_count("run_singleton_spatial_reshape_cleanup")
+        == 1
+    )
 
     singleton_channel_transpose_calls = [
         call
@@ -12317,7 +12340,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_multi_branch_gate_layout_cleanup"
     ]
-    assert len(multi_branch_gate_calls) == 1
+    assert (
+        len(multi_branch_gate_calls)
+        + _orchestrated_pass_count("run_multi_branch_gate_layout_cleanup")
+        == 1
+    )
 
     dual_postconv_gate_calls = [
         call
@@ -12732,7 +12759,8 @@ def test_singleton_maxpool_rewrites_have_single_owner() -> None:
         for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Name)
     }
-    assert "run_singleton_maxpool_layout_cleanup" in lowerer_names
+    assert "run_singleton_maxpool_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_singleton_maxpool_layout_cleanup") == 2
 
 
 def test_singleton_reshape_rewrites_have_single_owner() -> None:
@@ -12777,10 +12805,14 @@ def test_singleton_reshape_rewrites_have_single_owner() -> None:
         for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Name)
     }
-    assert "run_flatten_concat_reshape_cleanup" in lowerer_names
-    assert "run_singleton_reshape_layout_cleanup" in lowerer_names
-    assert "run_singleton_spatial_reshape_cleanup" in lowerer_names
-    assert "run_singleton_channel_transpose_cleanup" in lowerer_names
+    assert "run_flatten_concat_reshape_cleanup" not in lowerer_names
+    assert "run_singleton_reshape_layout_cleanup" not in lowerer_names
+    assert "run_singleton_spatial_reshape_cleanup" not in lowerer_names
+    assert "run_singleton_channel_transpose_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_flatten_concat_reshape_cleanup") == 1
+    assert _orchestrated_pass_count("run_singleton_reshape_layout_cleanup") == 1
+    assert _orchestrated_pass_count("run_singleton_spatial_reshape_cleanup") == 1
+    assert _orchestrated_pass_count("run_singleton_channel_transpose_cleanup") == 2
 
 
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:

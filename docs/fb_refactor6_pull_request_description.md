@@ -2566,3 +2566,25 @@ caller multiplicity; and all four boundaries. The 253-test focused/architecture
 set, 31 pass-efficiency tests, and all 11 TensorFlow-import-blocked tests pass.
 Runtime behavior and all public/dependency contracts remain unchanged. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+The singleton-reshape cluster now delegates to a dedicated frozen context and
+stable layout, prefix, duplicate, base-tail, multi-branch, active-policy, and
+ten-owner union sequences. One selector covers all eight optional-owner
+combinations, and independent forwarding of both spatial-CONCAT policy values
+brings focused coverage to all sixteen combinations. Each invocation build
+creates one fresh main-model pass-state scope shared by its selected owners.
+The fixed reshape-only duplicate policy, both helper caller policies, four
+keyword-only defaults, caller multiplicity, and all boundaries are unchanged.
+
+Accounting replaces ten direct owner calls with ten stable IDs and preserves
+the 120 effective-call total. The explicit ten-owner efficiency fixture confirms
+one graph-index build and thirteen diagnostic events. An AST audit confirms
+that every nested `_run_*` conversion cluster in the lowerer is now a one-runner
+delegate rather than an inline multi-pass executor. The 285-test focused/
+architecture set, 31 pass-efficiency tests, 32 core smoke tests, and all 11
+TensorFlow-import-blocked tests pass. Focused Ruff formatting/lint, Python
+compilation, and whitespace checks also pass. No real-model conversion or
+broad corpus suite ran. No public API, artifact, dependency, policy, runtime
+order, caller, boundary, scope-sharing, or TensorFlow-isolation contract
+changed. PR #952 remains closed, and no pull request was created, reopened, or
+updated.

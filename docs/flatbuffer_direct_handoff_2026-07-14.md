@@ -15596,3 +15596,51 @@ only defaults and both caller forms as a delegate. Move the existing full-union
 efficiency fixture to the explicit runner and replace ten direct owner calls
 with ten stable IDs without changing the 120 effective-call total. Validate
 sequentially, commit and push only, and do not create or reopen a pull request.
+
+## Singleton-reshape orchestration extraction: completed state
+
+`passes/singleton_reshape_orchestration.py` now owns a frozen
+`SingletonReshapeContext` and stable layout, prefix, duplicate, base-tail,
+multi-branch, base, active-policy, and ten-owner union sequences. Its selector
+covers all eight combinations of the three optional-owner guards. The spatial
+CONCAT-post-transpose policy remains independent and is forwarded unchanged,
+so focused build and instrumented-runner tests cover all sixteen combinations.
+The reshape-only duplicate owner always receives `include_transpose=False`.
+
+Every invocation build creates one fresh main-model/session-layout
+`ModelIRPassStateScope` shared by exactly the selected owners. The historical
+helper is now a single-call delegate with its keyword-only `False`, `False`,
+`False`, `True` defaults intact. The nine-owner layout/multi caller and the
+eight-owner duplicate/no-spatial-post caller retain their exact keywords,
+multiplicity, and all four surrounding boundaries.
+
+Architecture accounting moves ten direct owner calls out of the lowerer and
+replaces them with ten stable IDs, retaining 120 effective ordered calls. The
+explicit ten-owner efficiency fixture observes one graph-index refresh and
+thirteen diagnostic events. A fresh AST inventory confirms that every nested
+lowerer `_run_*` conversion cluster is now a one-runner delegate; no inline
+multi-pass execution remains in those helpers.
+
+Sequential implementation validation completed as follows:
+
+- focused all-policy, delegate, caller, and boundary contracts plus ordered
+  architecture: `285 passed in 20.71s`;
+- pass efficiency: `31 passed in 0.58s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 12.32s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, all sixteen
+policy combinations, specialized owner arguments, runtime order, caller
+multiplicity, boundaries, shared-scope semantics, and TensorFlow isolation are
+unchanged. PR #952 remains closed, and no pull request was created, reopened,
+or updated.
+
+At restart, do not search for another inline nested lowerer multi-pass cluster:
+that inventory is now empty. Re-read the remaining architecture plan and select
+the next bounded boundary that advances the fixed ConversionSession/GraphIndex/
+ordered-pass contract. Preserve sequential validation and minimal real-model
+conversion, commit and push each coherent unit, and do not create, reopen, or
+update a pull request.

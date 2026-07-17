@@ -124,6 +124,10 @@ from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
     MeanAttentionContext,
     run_mean_attention,
 )
+from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
+    SingletonReshapeContext,
+    run_singleton_reshape,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1510,58 +1514,16 @@ def test_singleton_reshape_layout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_layout_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_channel_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_duplicate_fanout_cleanup(
-        model_ir,
-        include_transpose=False,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_reshape_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_maxpool_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_flatten_concat_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_squeeze_reshape_identity_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_spatial_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_multi_branch_gate_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_singleton_reshape(
+        SingletonReshapeContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
+        include_layout_transpose=True,
+        include_duplicate_fanout=True,
+        include_multi_branch_gate=True,
+        include_spatial_concat_post_transpose=True,
     )
 
     assert refresh_count == 1

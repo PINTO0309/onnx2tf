@@ -9507,3 +9507,23 @@ duplicate fanout, disables the spatial post-transpose policy, and runs eight
 owners. Focused contracts freeze all ten owner contracts/order, exact guards,
 the two specialized owner keywords, defaults, both caller forms, and all four
 boundaries.
+
+That cluster now delegates to `SingletonReshapeContext` and stable layout,
+prefix, duplicate, base-tail, multi-branch, active-policy, and ten-owner union
+sequences in `passes/singleton_reshape_orchestration.py`. A single selector
+covers all eight optional-owner combinations, while the independent spatial
+CONCAT-post-transpose value is forwarded for both of its values; focused tests
+therefore cover all sixteen boolean combinations. Every invocation build owns
+one fresh main-model pass-state scope shared by exactly the selected owners.
+The duplicate owner retains `include_transpose=False`, and the spatial owner
+retains the forwarded `include_concat_post_transpose` value.
+
+The historical helper is a one-call delegate with all four keyword-only
+defaults intact. Both production caller forms, their exact keywords, and all
+four surrounding boundaries are unchanged. Multiplicity-aware architecture
+accounting replaces ten direct owner calls with ten stable IDs while preserving
+120 effective ordered calls. The explicit ten-owner efficiency fixture observes
+one graph-index build and thirteen diagnostic events. An AST audit now finds no
+nested lowerer helper that directly executes more than one conversion pass;
+every `_run_*` conversion cluster delegates to a dedicated orchestration
+module.

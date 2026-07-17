@@ -280,6 +280,10 @@ from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
     MeanAttentionContext,
     run_mean_attention,
 )
+from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
+    SingletonReshapeContext,
+    run_singleton_reshape,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -458,7 +462,6 @@ from onnx2tf.tflite_builder.passes.elementwise_gate_layout import (
 )
 from onnx2tf.tflite_builder.passes.multi_branch_gate_layout import (
     _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains as _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains_pass,
-    run_multi_branch_gate_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.dual_postconv_gate_layout import (
     _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains as _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains_pass,
@@ -680,7 +683,6 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
 from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
     _optimize_singleton_layout_reshape_maxpool_binary_cast_chains as _optimize_singleton_layout_reshape_maxpool_binary_cast_chains_pass,
     _optimize_singleton_nms_maxpool_nhwc_chains as _optimize_singleton_nms_maxpool_nhwc_chains_pass,
-    run_singleton_maxpool_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
     _optimize_singleton_channel_layout_transpose_to_reshape as _optimize_singleton_channel_layout_transpose_to_reshape_pass,
@@ -689,10 +691,6 @@ from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
     _optimize_singleton_layout_reshape_unary_passthrough_chains as _optimize_singleton_layout_reshape_unary_passthrough_chains_pass,
     _optimize_singleton_reshape_concat_post_transpose_nhwc_chains as _optimize_singleton_reshape_concat_post_transpose_nhwc_chains_pass,
     _optimize_singleton_spatial_nhwc_transpose_reshape_flatten as _optimize_singleton_spatial_nhwc_transpose_reshape_flatten_pass,
-    run_flatten_concat_reshape_cleanup,
-    run_singleton_channel_transpose_cleanup,
-    run_singleton_reshape_layout_cleanup,
-    run_singleton_spatial_reshape_cleanup,
 )
 from onnx2tf.tflite_builder.passes.cast_cleanup import (
     _optimize_redundant_int32_to_int64_passthrough_cast_chains as _optimize_redundant_int32_to_int64_passthrough_cast_chains_pass,
@@ -4187,75 +4185,15 @@ def lower_onnx_to_ir(
         include_multi_branch_gate: bool = False,
         include_spatial_concat_post_transpose: bool = True,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
+        run_singleton_reshape(
+            singleton_reshape_context,
+            include_layout_transpose=include_layout_transpose,
+            include_duplicate_fanout=include_duplicate_fanout,
+            include_multi_branch_gate=include_multi_branch_gate,
+            include_spatial_concat_post_transpose=(
+                include_spatial_concat_post_transpose
+            ),
         )
-        if include_layout_transpose:
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_singleton_channel_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        if include_duplicate_fanout:
-            run_duplicate_fanout_cleanup(
-                model_ir,
-                include_transpose=False,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_singleton_reshape_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_singleton_maxpool_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_flatten_concat_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_consecutive_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_singleton_spatial_reshape_cleanup(
-            model_ir,
-            include_concat_post_transpose=include_spatial_concat_post_transpose,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        if include_multi_branch_gate:
-            run_multi_branch_gate_layout_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
 
     def _run_singleton_consecutive_reshape_pass_cluster(
         target_model_ir: ModelIR,
@@ -4324,6 +4262,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     mean_attention_context = MeanAttentionContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    singleton_reshape_context = SingletonReshapeContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
