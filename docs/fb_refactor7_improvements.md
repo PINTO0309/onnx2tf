@@ -222,6 +222,11 @@ Primary final high-rank BatchMatMul reconciliation staging extends the gate to
 shape evidence as the recursive fallback without changing compression,
 pruning, layout sync, sorting, or the following Pad owner.
 
+Primary final Pad reconciliation staging extends the expanded gate to `570
+passed in 28.52s`. Its exact adapter-insertion counter controls the unchanged
+guard, and the complete shape result is retained without changing Pad matching,
+lineage, layout sync, sorting, or the following Conv-input repair.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -230,6 +235,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the primary final-pass reconciliation
-inventory with `final_pad_layout_stats` and its guarded static-shape result.
-Any new mutation evidence must preserve current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+inventory with `final_conv_input_stats`. Its cleanup behavior must be audited
+before deciding whether the raw counter alone is complete. Any new mutation
+evidence must preserve current pass order, TensorFlow-free boundary, dependency
+set, and sequential validation policy.

@@ -3426,3 +3426,27 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final Pad reconciliation
 contract; there are no unexpected failures.
+
+## Primary final Pad reconciliation implementation checkpoint
+
+The primary path now initializes `_final_pad_layout_static_shape_stats` with
+both stable zero keys and stores the opt-in complete reconciliation result
+under the unchanged positive Pad-repair guard. The guarded topological sort and
+following Conv-input owner retain their positions.
+
+Pad matching, adapter/constant/Transpose construction, lineage, GraphIndex
+mutation, layout-state sync, raw result schema, dependencies, and the
+TensorFlow-free boundary are unchanged. The strict characterization contract
+is now a normal passing test.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal orchestration and Pad owner: `8 passed`
+- expanded broad related gate plus Pad/rank-6 coverage:
+  `570 passed in 28.52s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit `final_conv_input_stats` for zero-rewrite cleanup/pruning
+before retaining its guarded reconciliation result. Keep the following mixed-
+Concat owner boundary fixed. Commit and push only; do not create or update a
+pull request.

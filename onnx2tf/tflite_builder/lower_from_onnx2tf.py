@@ -5965,13 +5965,20 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_pad_layout_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_pad_layout_stats.get(
             "repaired_channel_last_inputs_for_channel_first_pad",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_pad_layout_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
     final_conv_input_stats = (
         _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)

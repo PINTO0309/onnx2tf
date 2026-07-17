@@ -2342,9 +2342,8 @@ following channel-first Pad repair boundary.
 
 The final channel-first Pad repair mutates and synchronizes layout state only
 when its exact adapter-insertion counter increments. Its zero path performs no
-cleanup. Characterization therefore requires only retaining stable complete
-shape evidence under the existing guard, with its sort and following Conv-
-input repair boundary fixed.
+cleanup. The caller retains stable complete shape evidence under the existing
+guard, with its sort and following Conv-input repair boundary fixed.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
