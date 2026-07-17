@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -8400,13 +8398,6 @@ def test_mixed_singleton_concat_repair_has_indexed_owner() -> None:
     assert "sync_from_model_ir" in owner_calls
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the absolute-final mixed-singleton Concat owner reconciles shapes "
-        "even when its complete mutation counter is zero"
-    ),
-)
 def test_absolute_final_mixed_singleton_concat_reconciles_only_after_change() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

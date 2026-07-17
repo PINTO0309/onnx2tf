@@ -9691,3 +9691,12 @@ production changes. Nearby owners are not equivalent: the PReLU owner prunes
 unused tensors even on a zero rewrite count, while the SE/FC/Gather cluster
 currently discards multiple pass results. They must not reuse this guard without
 separate counter-completeness work.
+
+The absolute-final mixed-singleton Concat call now assigns that owner result and
+guards only its immediately following static-shape reconciliation with the
+exact counter. The owner still executes once in the same position with the same
+Session LayoutState. A lowerer-level zero/one fixture proves that a positive
+counter adds exactly one reconciliation over the zero-counter path, while the
+complete owner suite preserves positive and no-op behavior. The unrelated
+PReLU and SE/FC/Gather boundaries remain unconditional pending their separate
+mutation-accounting contracts.

@@ -1358,6 +1358,46 @@ def test_final_sinet_counters_gate_shape_reconciliation(monkeypatch) -> None:
         assert run_with_changed_pass(pass_name) == unchanged_count + 1
 
 
+def test_final_mixed_singleton_concat_counter_gates_shape_reconciliation(
+    monkeypatch,
+) -> None:
+    counter_name = "repaired_mixed_singleton_nchw_inputs_for_nhwc_concat"
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+
+    def counted_reconcile(*args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        return original_reconcile(*args, **kwargs)
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_changed_counter(changed: bool) -> int:
+        nonlocal reconcile_count
+
+        def pass_result(*args, **kwargs):
+            return {counter_name: int(changed)}
+
+        monkeypatch.setattr(
+            lowering_module,
+            "_repair_mixed_singleton_nchw_inputs_for_nhwc_concat",
+            pass_result,
+        )
+        reconcile_count = 0
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"mixed_singleton_concat_reconcile_{int(changed)}",
+        )
+        return reconcile_count
+
+    unchanged_count = run_with_changed_counter(False)
+    assert run_with_changed_counter(True) == unchanged_count + 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod

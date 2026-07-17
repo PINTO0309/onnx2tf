@@ -245,3 +245,24 @@ counter wiring coverage, and preserve its order and Session LayoutState. Run the
 complete mixed-singleton owner, core, architecture, pass-efficiency, and
 TensorFlow-import-blocked gates sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Mixed-singleton Concat reconciliation implementation checkpoint
+
+The terminal mixed-singleton Concat owner still runs exactly once in its
+original position with the Session LayoutState. Its result is now assigned, and
+the immediately following `_reconcile_static_tensor_shapes()` runs only when
+`repaired_mixed_singleton_nchw_inputs_for_nhwc_concat` is positive. No matcher,
+rewrite, GraphIndex update, layout update, or neighboring owner changed.
+
+The strict architecture expectation is green. A synthetic lowerer fixture
+proves that the positive counter adds exactly one reconciliation relative to
+the zero-counter path. Sequential validation across the complete owner, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked optional-boundary
+suites is `363 passed in 25.91s`. Focused owner coverage is `31 passed`.
+
+At resume, the absolute-final consecutive-Reshape runner is the next possible
+complete-counter candidate: it exposes three mutation counters and mutates only
+when their sum is positive. Characterize the exact terminal call before
+changing it. Do not guard the PReLU or SE/FC/Gather boundaries without first
+making their mutation accounting complete. Commit and push only; do not create
+or update a pull request.

@@ -5415,11 +5415,19 @@ def lower_onnx_to_ir(
         _reconcile_static_tensor_shapes(model_ir)
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
-    _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
-        model_ir,
-        layout_state=session.layout_state,
+    final_mixed_singleton_concat_stats = (
+        _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    if int(
+        final_mixed_singleton_concat_stats.get(
+            "repaired_mixed_singleton_nchw_inputs_for_nhwc_concat",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
     if int(
         _restore_placeholder_matmul_flattened_inputs(
             model_ir,
