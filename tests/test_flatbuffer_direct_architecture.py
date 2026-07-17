@@ -9173,12 +9173,23 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
         == "_restore_placeholder_matmul_flattened_inputs"
     )
 
-    outer_guard = lowerer.body[restore_index + 1]
+    result_names = (
+        "_final_placeholder_matmul_static_shape_stats",
+        "_final_placeholder_binary_static_shape_stats",
+    )
+    for offset, result_name in enumerate(result_names, start=1):
+        default_stats = lowerer.body[restore_index + offset]
+        assert isinstance(default_stats, ast.Assign)
+        assert isinstance(default_stats.targets[0], ast.Name)
+        assert default_stats.targets[0].id == result_name
+        assert isinstance(default_stats.value, ast.Dict)
+
+    outer_guard = lowerer.body[restore_index + 3]
     assert isinstance(outer_guard, ast.If)
-    assert len(outer_guard.body) == 6
+    assert len(outer_guard.body) == 7
     expected_assignments = [
         (
-            "final_placeholder_reconcile_stats",
+            result_names[0],
             "_reconcile_static_tensor_shapes",
         ),
         (
@@ -9194,8 +9205,19 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
             "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
         ),
     ]
+    legacy_projection = outer_guard.body[1]
+    assert isinstance(legacy_projection, ast.Assign)
+    assert isinstance(legacy_projection.targets[0], ast.Name)
+    assert legacy_projection.targets[0].id == "final_placeholder_reconcile_stats"
+    assert isinstance(legacy_projection.value, ast.Dict)
+
     for statement, (target_name, call_name) in zip(
-        outer_guard.body[:4],
+        (
+            outer_guard.body[0],
+            outer_guard.body[2],
+            outer_guard.body[3],
+            outer_guard.body[4],
+        ),
         expected_assignments,
         strict=True,
     ):
@@ -9207,7 +9229,14 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
         assert isinstance(statement.value.func, ast.Name)
         assert statement.value.func.id == call_name
 
-    reconcile_guard = outer_guard.body[4]
+    first_reconcile = outer_guard.body[0]
+    assert isinstance(first_reconcile, ast.Assign)
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in first_reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    reconcile_guard = outer_guard.body[5]
     assert isinstance(reconcile_guard, ast.If)
     assert ast.unparse(reconcile_guard.test) == (
         "_stats_have_positive_count(final_placeholder_reconcile_stats, "
@@ -9217,12 +9246,18 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
     )
     assert len(reconcile_guard.body) == 1
     reconcile = reconcile_guard.body[0]
-    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile, ast.Assign)
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == result_names[1]
     assert isinstance(reconcile.value, ast.Call)
     assert isinstance(reconcile.value.func, ast.Name)
     assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
 
-    topology_sort = outer_guard.body[5]
+    topology_sort = outer_guard.body[6]
     assert isinstance(topology_sort, ast.Expr)
     assert isinstance(topology_sort.value, ast.Call)
     assert isinstance(topology_sort.value.func, ast.Name)

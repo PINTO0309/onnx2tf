@@ -3939,3 +3939,32 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet two-result placeholder
 reconciliation contract; there are no unexpected failures.
+
+## Primary final placeholder-MatMul reconciliation implementation checkpoint
+
+The primary path now initializes stable complete results for the restore
+reconciliation and nested binary-repair reconciliation. After a positive
+restore, the first existing reconciliation opts into complete accounting. Its
+legacy output-shape count is projected into the original one-key
+`final_placeholder_reconcile_stats` dictionary, so the exact existing
+`_stats_have_positive_count(...)` guard is preserved. The second existing
+reconciliation stores its complete result under that unchanged guard.
+
+No reconciliation, graph traversal, or binary-owner invocation is added. The
+restore and binary owners, raw counter schemas, matching, rewiring, pruning,
+tensor-count sample, inner condition, topological sort, pass order, fallback
+path, dependencies, and TensorFlow-free behavior are unchanged. Runtime tests
+confirm the second reconciliation invocation count remains identical for
+unchanged, first-shape, exact-binary, singleton-binary, and cleanup-only cases.
+
+Implementation validation completed sequentially under `uv`:
+
+- restore, binary adapters, terminal orchestration, core guard, and architecture:
+  `382 passed in 19.28s`
+- expanded broad related gate: `1181 passed in 30.44s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the preceding `final_mixed_singleton_concat_stats` owner and
+guard before retaining its reconciliation result. Keep the following
+placeholder-MatMul block fixed. Commit and push only; do not create or update a
+pull request.

@@ -5745,15 +5745,34 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
+    _final_placeholder_matmul_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    _final_placeholder_binary_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_placeholder_matmul_stats.get(
             "restored_placeholder_matmul_flattened_inputs",
             0,
         )
     ) > 0:
-        final_placeholder_reconcile_stats = _reconcile_static_tensor_shapes(
-            model_ir
+        _final_placeholder_matmul_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
         )
+        final_placeholder_reconcile_stats = {
+            "reconciled_static_tensor_shapes": int(
+                _final_placeholder_matmul_static_shape_stats.get(
+                    "reconciled_static_tensor_shapes",
+                    0,
+                )
+            )
+        }
         final_placeholder_binary_tensor_count = len(model_ir.tensors)
         final_placeholder_exact_binary_stats = (
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(
@@ -5768,7 +5787,12 @@ def lower_onnx_to_ir(
             final_placeholder_exact_binary_stats,
             final_placeholder_singleton_binary_stats,
         ) or len(model_ir.tensors) < final_placeholder_binary_tensor_count:
-            _reconcile_static_tensor_shapes(model_ir)
+            _final_placeholder_binary_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    model_ir,
+                    include_mutation_count=True,
+                )
+            )
         _topologically_sort_operators(model_ir)
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle

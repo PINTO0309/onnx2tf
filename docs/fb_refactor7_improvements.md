@@ -282,6 +282,15 @@ This checkpoint extends the expanded related gate to `1136 passed in 30.02s`;
 the focused three-owner, orchestration, core-guard, and architecture gate is
 `543 passed in 17.93s`.
 
+The final placeholder-MatMul conditional block now retains complete results for
+both of its existing reconciliation calls. A one-key in-memory projection keeps
+the nested binary-repair guard on its exact legacy output-shape semantics, so
+the additional complete mutation key cannot cause an extra second scan.
+
+This checkpoint extends the expanded related gate to `1181 passed in 30.44s`;
+the focused restore, binary-adapter, terminal, core-guard, and architecture gate
+is `382 passed in 19.28s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -291,6 +300,6 @@ full model-corpus run for this observation and accounting unit.
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
 reconciliation inventory immediately before the completed final PReLU boundary,
-beginning with the `final_placeholder_matmul_stats` conditional block. Any new
-mutation evidence must preserve current pass order, TensorFlow-free boundary,
-dependency set, and sequential validation policy.
+beginning with `final_mixed_singleton_concat_stats`. Any new mutation evidence
+must preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

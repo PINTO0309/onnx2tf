@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -633,10 +630,6 @@ def test_primary_path_stages_final_prelu_reconciliation() -> None:
     assert following.targets[0].id == "final_consecutive_reshape_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final placeholder-MatMul reconciliation results are incomplete",
-)
 def test_primary_path_stages_complete_final_placeholder_reconciliations() -> None:
     body = _lowerer_body()
     restore_index = next(

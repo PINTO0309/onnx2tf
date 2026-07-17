@@ -10675,3 +10675,9 @@ characterization therefore requires two stable complete results while
 projecting only `reconciled_static_tensor_shapes` into the unchanged legacy
 guard input. Both existing reconciliation calls opt into complete evidence; no
 scan is added and the final SE/FC/Gather boundary stays adjacent.
+
+The primary caller now initializes both stable results. After a positive
+restore, it stores the complete first result and builds the one-key legacy guard
+input from that in-memory dictionary. The unchanged inner guard stores the
+complete second result when it already reconciles. No complete-only key can
+trigger the second scan.
