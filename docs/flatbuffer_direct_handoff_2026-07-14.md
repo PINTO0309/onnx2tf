@@ -14978,3 +14978,56 @@ semantically represented by the phase, and leave all unrelated direct owner
 calls untouched. Move the efficiency fixture to the explicit runner, prove
 one graph-index build and instrumented order, validate sequentially, then
 commit and push only. Do not create or reopen a pull request.
+
+## Explicit terminal-boundary layout orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/terminal_boundary_layout_orchestration.py`. A frozen
+`TerminalBoundaryLayoutContext` contains the main ModelIR, optional layout
+state, and session diagnostics. Five stable IDs preserve dual-MUL/CONCAT,
+boundary-input, PAD, layout-transpose, and transpose-gather channel-fanout
+cleanup in the original order. The phase imports each owner directly and does
+not import the central lowerer.
+
+Every invocation builder allocates one fresh `ModelIRPassStateScope` and
+attaches that same scope, context ModelIR/layout, and diagnostics to all five
+immutable invocations. The shared executor validates the complete stable-ID
+sequence before execution. The PAD step remains after boundary-input recovery,
+and the transpose sweep remains after PAD recovery, preserving the two
+dependencies formerly documented only by comments in the lowerer.
+
+The historical helper is now a zero-argument one-line delegate to a frozen
+main-model context. Its only production call and both outer boundaries are
+unchanged. The lowerer no longer imports the boundary-input runner directly;
+the other four owner imports remain because independent direct call sites still
+use them. Architecture accounting moves one syntactic call for each owner to
+the five stable IDs while preserving the ordered total of 120. The efficiency
+fixture now calls the explicit no-layout phase and still observes one graph-
+index build and the same seven diagnostics events.
+
+Sequential validation completed as follows:
+
+- focused terminal-boundary orchestration: `8 passed in 0.56s`;
+- focused orchestration plus ordered architecture:
+  `256 passed in 18.71s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.23s` (`32` plus `11`);
+- targeted Ruff, formatting, Python compilation, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, fixed owner contracts, runtime order, caller multiplicity, terminal
+boundaries, shared-scope efficiency, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the remaining shared-scope helpers again. The bounded
+fixed-target zero-argument terminal phase is complete, so select the smallest
+option-dependent cluster whose complete policy matrix and caller boundaries
+can be characterized without real-model conversions. Preserve option defaults
+and call multiplicity, validate sequentially, make separate characterization
+and implementation checkpoints, commit and push only, and do not create or
+reopen a pull request.

@@ -9366,3 +9366,15 @@ sole call remains between the final InstanceNorm dual-stat residual-add/resize
 rewrite and the terminal layout-optimization conditional. The eventual phase
 should expose five stable IDs in a dedicated direct-owner module while
 preserving the PAD-after-boundary and transpose-after-PAD recovery sequence.
+
+That cluster now uses `TerminalBoundaryLayoutContext` and five stable IDs in
+`passes/terminal_boundary_layout_orchestration.py`. Each build creates one
+fresh scope shared by every immutable invocation, and the module imports all
+owners directly without importing the lowerer. The historical helper is a
+zero-argument delegate to a frozen main-model context at the same sole call and
+outer boundaries. The explicit order retains boundary-input before PAD and PAD
+before the final transpose sweep. One boundary-input direct import disappears;
+unrelated direct uses of the other owners remain. Multiplicity-aware
+architecture accounting preserves 120 effective ordered calls, and the
+efficiency fixture retains one graph-index build. Focused, architecture,
+pass-efficiency, core, and TensorFlow-import-blocked suites pass.

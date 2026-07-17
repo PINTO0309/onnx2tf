@@ -265,6 +265,10 @@ from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration imp
     SEFCGatherChannelFanoutContext,
     run_se_fc_gather_channel_fanout,
 )
+from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
+    TerminalBoundaryLayoutContext,
+    run_terminal_boundary_layout,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -729,7 +733,6 @@ from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
 )
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     _optimize_boundary_input_layout_transposes as _optimize_boundary_input_layout_transposes_pass,
-    run_boundary_input_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
     _optimize_boundary_input_transpose_batchmatmul_chains as _optimize_boundary_input_transpose_batchmatmul_chains_pass,
@@ -4140,42 +4143,7 @@ def lower_onnx_to_ir(
         )
 
     def _run_terminal_boundary_layout_pass_cluster() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_dual_mul_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_boundary_input_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        # Boundary input layout recovery can recreate input-head PAD wrappers.
-        run_pad_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        # Final transpose-only sweep removes pairs introduced by the adapters.
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_transpose_gather_channel_fanout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
+        run_terminal_boundary_layout(terminal_boundary_layout_context)
 
     def _run_gate_layout_pass_cluster(
         *,
@@ -4531,6 +4499,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
+    )
+    terminal_boundary_layout_context = TerminalBoundaryLayoutContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     layout_recovery_context = LayoutRecoveryContext(
         model_ir=model_ir,

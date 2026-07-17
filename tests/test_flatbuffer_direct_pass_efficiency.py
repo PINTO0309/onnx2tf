@@ -100,6 +100,10 @@ from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration imp
     SEFCGatherChannelFanoutContext,
     run_se_fc_gather_channel_fanout,
 )
+from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
+    TerminalBoundaryLayoutContext,
+    run_terminal_boundary_layout,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -710,20 +714,13 @@ def test_terminal_boundary_layout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_dual_mul_concat_layout_cleanup,
-        run_boundary_input_layout_cleanup,
-        run_pad_layout_cleanup,
-        run_layout_transpose_cleanup,
-        run_transpose_gather_channel_fanout_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_terminal_boundary_layout(
+        TerminalBoundaryLayoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 7

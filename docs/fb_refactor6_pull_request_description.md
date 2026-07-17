@@ -2135,6 +2135,21 @@ passed, and targeted static checks passed. Runtime behavior and all public/
 dependency contracts remain unchanged. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
 
+The terminal-boundary cluster now delegates to a dedicated direct-owner phase
+with a frozen main ModelIR/layout/diagnostics context and five stable IDs.
+Every build creates one fresh pass-state scope shared by dual-MUL/CONCAT,
+boundary-input, PAD, layout-transpose, and transpose-gather channel-fanout
+cleanup in the exact existing order. The historical helper is a one-line,
+zero-argument delegate at the same sole call and outer boundaries. The phase
+keeps boundary recovery before PAD recovery and PAD before final transpose
+cleanup, validates the full ID sequence, and does not import the lowerer.
+Architecture accounting preserves 120 effective calls and the efficiency
+fixture retains one graph-index build. The 256-test focused/architecture set,
+30 pass-efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-
+blocked tests pass. No public API, artifact, dependency, runtime-order,
+boundary, scope-sharing, or TensorFlow-isolation contract changed. PR #952
+remains closed, and no pull request was created, reopened, or updated.
+
 That cluster is now implemented in
 `passes/transpose_unary_fanout_orchestration.py` with a frozen
 ModelIR/layout/diagnostics context and four canonical stable IDs. Variant-

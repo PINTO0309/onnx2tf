@@ -78,6 +78,9 @@ from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orche
 from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
     SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
+    TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -107,6 +110,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *CONSTANT_FOLD_CAST_PASS_IDS,
     *VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
     *SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
+    *TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -4808,33 +4812,27 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_dual_mul_concat_layout_cleanup",
         "run_boundary_input_layout_cleanup",
         "run_pad_layout_cleanup",
         "run_layout_transpose_cleanup",
         "run_transpose_gather_channel_fanout_cleanup",
+    )
+    assert TERMINAL_BOUNDARY_LAYOUT_PASS_IDS == expected_order
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    assert len(helper_calls) == 1
+    assert helper_calls[0].func.id == "run_terminal_boundary_layout"
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "terminal_boundary_layout_context"
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -10309,7 +10307,8 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         )
         if isinstance(node, ast.Name)
     }
-    assert "run_boundary_input_layout_cleanup" in lowerer_names
+    assert "run_boundary_input_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_boundary_input_layout_cleanup") == 1
     assert "run_boundary_input_batchmatmul_cleanup" not in lowerer_names
     assert _orchestrated_pass_count("run_boundary_input_batchmatmul_cleanup") == 1
     assert "run_boundary_input_normalization_cleanup" in lowerer_names
@@ -11356,7 +11355,11 @@ def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_mul_concat_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_dual_mul_concat_layout_cleanup")
+        == 2
+    )
 
 
 def test_axis3_const_concat_layout_rewrite_has_single_owner() -> None:
@@ -11844,6 +11847,9 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_transpose_gather_axis_cleanup",
         "run_se_fc_layout_cleanup",
         "run_transpose_gather_channel_fanout_cleanup",
+        "run_dual_mul_concat_layout_cleanup",
+        "run_boundary_input_layout_cleanup",
+        "run_pad_layout_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12242,7 +12248,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_mul_concat_layout_cleanup"
     ]
-    assert len(dual_mul_concat_calls) == 2
+    assert (
+        len(dual_mul_concat_calls)
+        + _orchestrated_pass_count("run_dual_mul_concat_layout_cleanup")
+        == 2
+    )
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:
