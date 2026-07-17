@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -345,3 +346,35 @@ def test_safety_fallback_stages_placeholder_matmul_reconciliation_evidence() -> 
     assert ast.unparse(following.value) == (
         "_topologically_sort_operators(fallback_ir)"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="fallback repeats reconciliation already owned by the unbound-input wrapper",
+)
+def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
+    body = _safety_fallback_body(_lowerer())
+    owner_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_unbound_repair_stats"
+    )
+
+    owner = body[owner_index]
+    assert isinstance(owner, ast.Assign)
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+        for node in ast.walk(owner.value)
+    )
+
+    following = body[owner_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "fallback_conv_input_stats"

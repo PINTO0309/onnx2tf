@@ -2760,3 +2760,34 @@ At resume, audit the following fallback unbound-input repair owner and its
 guarded reconciliation. Confirm whether it performs cleanup or layout
 maintenance outside its rewrite counter before selecting that boundary. Commit
 and push only; do not create or update a pull request.
+
+## Safety-fallback unbound reconciliation characterization checkpoint
+
+`_repair_unbound_nonconstant_operator_inputs_with_layout_transpose()` already
+owns static-shape reconciliation after a positive indexed repair and forwards
+the repair's current GraphIndex. A new positive fixture proves exactly one
+wrapper-owned reconciliation and confirms that the same ModelIR index is
+reused.
+
+The fallback caller nevertheless checks the returned counter and immediately
+runs a second reconciliation, with no intervening graph or metadata mutation.
+A strict expected-failure AST contract requires
+`fallback_conv_input_stats` to follow `fallback_unbound_repair_stats` directly,
+removing only this duplicate full-graph scan. The owner invocation, wrapper
+reconciliation, return schema, following Conv-input owner, and all guards after
+it remain unchanged.
+
+Focused indexed-unbound and safety-fallback characterization is `11 passed, 1
+xfailed`. It also exposed a stale test assumption that removed legacy
+producer/consumer map-builder attributes still existed; the sentinel
+monkeypatches now use `raising=False` and still fail if either builder is
+reintroduced and called. The broader sequential fallback-owner,
+reconciliation, convergence, core, pass-efficiency, architecture, and
+TensorFlow import-blocking gate is `469 passed, 1 xfailed in 27.76s`. Ruff and
+whitespace validation pass.
+
+At implementation, delete only the redundant caller-side guard and
+reconciliation. Validate positive/no-op unbound repair, safety fallback,
+static reconciliation, core, pass efficiency, architecture, and TensorFlow
+import blocking sequentially. Commit and push only; do not create or update a
+pull request.

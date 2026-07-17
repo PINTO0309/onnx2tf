@@ -2266,6 +2266,12 @@ separated from its guard, and both the owner result and complete reconciliation
 result are staged while preserving the single invocation and following
 topological sort.
 
+The unbound-input compatibility wrapper owns static reconciliation after a
+positive indexed repair and reuses the repair's live GraphIndex. The fallback
+caller historically repeated the same reconciliation immediately, with no
+intervening mutation. Characterization requires the wrapper's one-call
+contract and removal of only that duplicate caller-side scan.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct
