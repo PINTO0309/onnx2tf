@@ -86,6 +86,12 @@ compatible; only the selected very-late call requests the additional
 `_very_late_static_shape_stats`. No fingerprint, graph copy, pre/post scan, or
 new dependency is required.
 
+The guarded reconciliation after unsupported-dtype Split fallback uses the
+same complete evidence contract. Its owner counter already covers every
+rewrite and cleanup path, so the existing positive guard remains unchanged.
+The no-rewrite path exposes a stable two-key zero value; the rewrite path
+stages the opt-in result as `_post_split_fallback_static_shape_stats`.
+
 ## Smaller internal owners
 
 - Typed ONNX `Constant` lowering is isolated in its op-family module while
@@ -116,7 +122,7 @@ owners, late/terminal orchestrators, static-shape reconciliation, shared
 ModelIR pass context, core contracts, pass efficiency, architecture
 constraints, and the optional TensorFlow import boundary. Result: `1339
 passed`. The dedicated reconciliation/convergence gate was repeated for the
-current checkpoint and produced `428 passed in 26.85s`.
+current post-Split checkpoint and produced `433 passed in 26.91s`.
 
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new

@@ -2475,3 +2475,31 @@ sync, or conditional execution. Run Split fallback, static reconciliation,
 very-late orchestration, core, pass-efficiency, architecture, and TensorFlow
 import-blocking tests sequentially. Commit and push only; do not create or
 update a pull request.
+
+## Post-Split fallback reconciliation implementation checkpoint
+
+The Split owner, its exact one-key result, and the existing positive guard are
+unchanged. The lowerer now initializes
+`_post_split_fallback_static_shape_stats` with both complete reconciliation
+keys set to zero. Only a positive
+`replaced_unsupported_split_with_slice` value replaces that default by calling
+`_reconcile_static_tensor_shapes(model_ir, include_mutation_count=True)`.
+
+This is observation-only result plumbing. It adds no graph scan, fingerprint,
+copy, dependency, rewrite, pruning, layout synchronization, or unconditional
+maintenance work. The strict expected-failure contract is now green while the
+zero/positive Split owner fixtures continue to prove that the raw rewrite
+counter fully covers its maintenance paths.
+
+Focused Split/orchestration/architecture validation is `7 passed, 278
+deselected`. The broader sequential Split, reconciliation, convergence, core,
+pass-efficiency, architecture, and TensorFlow import-blocking gate is `433
+passed in 26.91s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, audit the safety-fallback boundary beginning with
+`_find_unbound_nonconstant_operator_inputs(model_ir)`. Characterize the
+fallback-only reconciliation results and recursive relowering boundaries
+before changing them; do not alter fallback eligibility or broaden inference
+validation. Commit and push coherent units only, and do not create or update a
+pull request.

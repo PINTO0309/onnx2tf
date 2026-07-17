@@ -2228,9 +2228,10 @@ mutation evidence for this owner. Tensor pruning and `LayoutState` syncing are
 both nested under a positive rewrite count; a zero result changes neither the
 ModelIR nor layout metadata. The direct lowerer therefore retains its existing
 positive guard around the immediately following static-shape reconciliation.
-Characterization separately requires that reconciliation's complete opt-in
-result to be staged instead of discarded, without changing the guard or pass
-order.
+The lowerer initializes a stable two-key zero result and, on a positive Split
+rewrite, replaces it with the reconciliation's complete opt-in result. This
+stages mutation evidence instead of discarding it without changing the guard,
+Split result schema, or pass order.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to

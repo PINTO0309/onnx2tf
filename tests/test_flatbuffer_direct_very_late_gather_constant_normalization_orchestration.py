@@ -772,10 +772,6 @@ def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -
     assert following.targets[0].id == "split_fallback_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the post-split conditional reconciliation result is discarded",
-)
 def test_post_split_fallback_reconciliation_captures_complete_mutation_evidence() -> (
     None
 ):
@@ -807,7 +803,7 @@ def test_post_split_fallback_reconciliation_captures_complete_mutation_evidence(
     guard = lowerer.body[split_index + 2]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
-        'int(split_fallback_stats.get("replaced_unsupported_split_with_slice", 0)) > 0'
+        "int(split_fallback_stats.get('replaced_unsupported_split_with_slice', 0)) > 0"
     )
     assert len(guard.body) == 1
     invocation = guard.body[0]
