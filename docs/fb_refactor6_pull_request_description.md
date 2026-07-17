@@ -2541,3 +2541,17 @@ attention-quantized-suffix/architecture set, 30 pass-efficiency tests, and all
 11 TensorFlow-import-blocked tests pass. Runtime behavior and all public/
 dependency contracts remain unchanged. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+The mean/attention cluster now delegates to a dedicated frozen context and
+stable prefix, base-tail, base, layer-normalization, conv-attention, default,
+and seven-owner union sequences. A single selector covers all four policy
+combinations; every build creates one fresh main-model pass-state scope shared
+by selected owners. Both helper defaults, direct caller forms, boundaries, and
+argument-free callback identities in both parent compositions are unchanged.
+Accounting replaces seven direct owner calls with seven stable IDs, preserves
+120 effective calls, and a new explicit seven-owner efficiency fixture confirms
+one graph-index build. The 278-test focused/parent/architecture set, 31 pass-
+efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests
+pass. No public API, artifact, dependency, policy, runtime-order, callback,
+boundary, scope-sharing, or TensorFlow-isolation contract changed. PR #952
+remains closed, and no pull request was created, reopened, or updated.

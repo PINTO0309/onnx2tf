@@ -120,6 +120,10 @@ from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     ChannelShuffleGatherContext,
     run_channel_shuffle_gather,
 )
+from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
+    MeanAttentionContext,
+    run_mean_attention,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -372,6 +376,50 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
             "fingerprint_count": 0,
         }
         for event in diagnostics
+    )
+
+
+def test_mean_attention_cluster_reuses_one_lazy_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "mean_attention_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "MEAN",
+                "MUL",
+                "ADD",
+                "CONV_2D",
+                "FULLY_CONNECTED",
+                "BATCH_MATMUL",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    run_mean_attention(
+        MeanAttentionContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
+        include_layernorm=True,
+        include_conv_attention=True,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 8
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False for event in diagnostics[1:]
     )
 
 

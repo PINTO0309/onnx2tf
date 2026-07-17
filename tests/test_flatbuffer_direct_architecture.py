@@ -98,6 +98,15 @@ from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_POST_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
+    MEAN_ATTENTION_BASE_PASS_IDS,
+    MEAN_ATTENTION_BASE_TAIL_PASS_IDS,
+    MEAN_ATTENTION_CONV_PASS_IDS,
+    MEAN_ATTENTION_DEFAULT_PASS_IDS,
+    MEAN_ATTENTION_LAYERNORM_PASS_IDS,
+    MEAN_ATTENTION_PASS_IDS,
+    MEAN_ATTENTION_PREFIX_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -131,6 +140,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
     *GATE_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
+    *MEAN_ATTENTION_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -1443,35 +1453,42 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
         if isinstance(node, ast.FunctionDef)
         and node.name == "_run_mean_attention_layout_pass_cluster"
     )
-    expected_order = [
-        "run_transpose_mean_passthrough_cleanup",
-        "run_mean_mul_add_conv_layout_cleanup",
-        "run_layernorm_statistics_layout_cleanup",
-        "run_terminal_mean_layout_cleanup",
-        "run_se_conv_layout_cleanup",
-        "run_se_fc_layout_cleanup",
-        "run_conv_attention_layout_cleanup",
+    assert MEAN_ATTENTION_BASE_PASS_IDS == (
+        *MEAN_ATTENTION_PREFIX_PASS_IDS,
+        *MEAN_ATTENTION_BASE_TAIL_PASS_IDS,
+    )
+    assert MEAN_ATTENTION_DEFAULT_PASS_IDS == (
+        *MEAN_ATTENTION_BASE_PASS_IDS,
+        *MEAN_ATTENTION_CONV_PASS_IDS,
+    )
+    assert MEAN_ATTENTION_PASS_IDS == (
+        *MEAN_ATTENTION_PREFIX_PASS_IDS,
+        *MEAN_ATTENTION_LAYERNORM_PASS_IDS,
+        *MEAN_ATTENTION_BASE_TAIL_PASS_IDS,
+        *MEAN_ATTENTION_CONV_PASS_IDS,
+    )
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_mean_attention"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert statement.value.args[0].id == "mean_attention_context"
+    assert [keyword.arg for keyword in statement.value.keywords] == [
+        "include_layernorm",
+        "include_conv_attention",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
+    assert [argument.arg for argument in helper.args.kwonlyargs] == [
+        "include_layernorm",
+        "include_conv_attention",
+    ]
     assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        value.value
+        for value in helper.args.kw_defaults
+        if isinstance(value, ast.Constant)
+    ] == [False, True]
 
     helper_invocations = [
         node
@@ -10742,10 +10759,8 @@ def test_mean_layout_rewrites_have_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.mean_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_mean_mul_add_conv_layout_cleanup",
-        "run_transpose_mean_passthrough_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == function_names
+    assert _orchestrated_pass_count("run_transpose_mean_passthrough_cleanup") == 1
 
 
 def test_layernorm_layout_rewrites_have_single_owner() -> None:
@@ -10838,10 +10853,8 @@ def test_terminal_mean_layout_rewrite_has_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.terminal_mean_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_terminal_mean_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert _orchestrated_pass_count("run_terminal_mean_layout_cleanup") == 1
 
 
 def test_se_layout_rewrites_have_single_owner() -> None:
@@ -10910,9 +10923,9 @@ def test_se_layout_rewrites_have_single_owner() -> None:
     ]
     assert len(imports) == 1
     assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_se_conv_layout_cleanup",
         "run_se_fc_layout_cleanup",
     }
+    assert _orchestrated_pass_count("run_se_conv_layout_cleanup") == 1
 
 
 def test_elementwise_gate_layout_rewrites_have_single_owner() -> None:
@@ -11883,6 +11896,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_nchw_channel_shuffle_cleanup",
         "run_nhwc_channel_shuffle_cleanup",
         "run_two_way_channel_shuffle_cleanup",
+        "run_transpose_mean_passthrough_cleanup",
+        "run_layernorm_statistics_layout_cleanup",
+        "run_terminal_mean_layout_cleanup",
+        "run_se_conv_layout_cleanup",
+        "run_conv_attention_layout_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12203,7 +12221,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_mean_passthrough_cleanup"
     ]
-    assert len(transpose_mean_calls) == 1
+    assert (
+        len(transpose_mean_calls)
+        + _orchestrated_pass_count("run_transpose_mean_passthrough_cleanup")
+        == 1
+    )
 
     mean_mul_add_conv_calls = [
         call
@@ -12223,7 +12245,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_layernorm_statistics_layout_cleanup"
     ]
-    assert len(layernorm_statistics_calls) == 2
+    assert (
+        len(layernorm_statistics_calls)
+        + _orchestrated_pass_count("run_layernorm_statistics_layout_cleanup")
+        == 2
+    )
 
     terminal_mean_calls = [
         call
@@ -12231,7 +12257,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_terminal_mean_layout_cleanup"
     ]
-    assert len(terminal_mean_calls) == 1
+    assert (
+        len(terminal_mean_calls)
+        + _orchestrated_pass_count("run_terminal_mean_layout_cleanup")
+        == 1
+    )
 
     se_conv_calls = [
         call
@@ -12239,7 +12269,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_se_conv_layout_cleanup"
     ]
-    assert len(se_conv_calls) == 1
+    assert (
+        len(se_conv_calls)
+        + _orchestrated_pass_count("run_se_conv_layout_cleanup")
+        == 1
+    )
 
     se_fc_calls = [
         call
@@ -12251,6 +12285,18 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         len(se_fc_calls)
         + _orchestrated_pass_count("run_se_fc_layout_cleanup")
         == 3
+    )
+
+    conv_attention_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_conv_attention_layout_cleanup"
+    ]
+    assert (
+        len(conv_attention_calls)
+        + _orchestrated_pass_count("run_conv_attention_layout_cleanup")
+        == 1
     )
 
     elementwise_gate_calls = [
@@ -12507,7 +12553,8 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         )
         if isinstance(node, ast.Name)
     }
-    assert "run_conv_attention_layout_cleanup" in lowerer_names
+    assert "run_conv_attention_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_conv_attention_layout_cleanup") == 1
     assert "run_mixed_attention_layout_cleanup" in lowerer_names
     assert "run_qkv_attention_bridge_cleanup" not in lowerer_names
     assert "run_qkv_attention_prefix_cleanup" not in lowerer_names

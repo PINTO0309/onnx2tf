@@ -76,8 +76,6 @@ from onnx2tf.tflite_builder.passes.channel_shuffle import (
 from onnx2tf.tflite_builder.passes.mean_layout import (
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains as _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains_pass,
     _optimize_transpose_mean_prepost_nhwc_passthrough_chains as _optimize_transpose_mean_prepost_nhwc_passthrough_chains_pass,
-    run_mean_mul_add_conv_layout_cleanup,
-    run_transpose_mean_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layernorm_layout import (
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains as _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains_pass,
@@ -278,6 +276,10 @@ from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     ChannelShuffleGatherContext,
     run_channel_shuffle_gather,
 )
+from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
+    MeanAttentionContext,
+    run_mean_attention,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -442,12 +444,10 @@ from onnx2tf.tflite_builder.passes.sinet_sa_pa_mirrorpad_layout import (
 )
 from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
     _optimize_transpose_pre_unary_mean_terminal_nhwc_chains as _optimize_transpose_pre_unary_mean_terminal_nhwc_chains_pass,
-    run_terminal_mean_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.se_layout import (
     _optimize_transpose_se_conv_mul_prepost_nhwc_chains as _optimize_transpose_se_conv_mul_prepost_nhwc_chains_pass,
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains as _optimize_transpose_se_fc_mul_prepost_nhwc_chains_pass,
-    run_se_conv_layout_cleanup,
     run_se_fc_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.elementwise_gate_layout import (
@@ -719,7 +719,6 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_attention_qkv_slice_to_split_chains as _optimize_attention_qkv_slice_to_split_chains_pass,
     _optimize_attention_split_post_reshape_collapse_chains as _optimize_attention_split_post_reshape_collapse_chains_pass,
     _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains as _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains_pass,
-    run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
@@ -4049,54 +4048,11 @@ def lower_onnx_to_ir(
         include_layernorm: bool = False,
         include_conv_attention: bool = True,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
+        run_mean_attention(
+            mean_attention_context,
+            include_layernorm=include_layernorm,
+            include_conv_attention=include_conv_attention,
         )
-        run_transpose_mean_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_mean_mul_add_conv_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        if include_layernorm:
-            run_layernorm_statistics_layout_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_terminal_mean_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_se_conv_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_se_fc_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        if include_conv_attention:
-            run_conv_attention_layout_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
 
     def _run_qkv_attention_layout_pass_cluster(
         *,
@@ -4363,6 +4319,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     channel_shuffle_gather_context = ChannelShuffleGatherContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    mean_attention_context = MeanAttentionContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

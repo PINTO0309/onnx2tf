@@ -9484,3 +9484,14 @@ while retaining conv attention; the terminal direct caller disables conv
 attention while retaining the default-disabled layer normalization. Focused
 contracts freeze all owner contracts/order, both exact guards, defaults,
 callback identities, caller keywords, multiplicity, and all direct boundaries.
+
+That cluster now delegates to `MeanAttentionContext` and stable prefix, base-
+tail, base, layer-normalization, conv-attention, default, and seven-owner union
+sequences in `passes/mean_attention_orchestration.py`. One selector covers all
+four policy combinations in the fixed insertion order, and each invocation
+build owns one fresh main-model scope shared by its selected owners. The helper
+retains both keyword-only defaults, both direct caller forms and boundaries are
+unchanged, and both parent compositions still store the helper itself as an
+argument-free callback. Multiplicity-aware accounting replaces seven direct
+owner calls with seven stable IDs while preserving 120 effective ordered calls.
+The new explicit seven-owner efficiency fixture observes one graph-index build.

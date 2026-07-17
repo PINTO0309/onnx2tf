@@ -15491,3 +15491,55 @@ identity as both argument-free callbacks. Add an explicit full-policy
 efficiency fixture and replace seven direct owner calls with seven stable IDs
 without changing the 120 effective-call total. Validate sequentially, commit
 and push only, and do not create or reopen a pull request.
+
+## Mean/attention orchestration extraction: completed state
+
+`passes/mean_attention_orchestration.py` now owns a frozen
+`MeanAttentionContext` and stable prefix, base-tail, base, layer-normalization,
+conv-attention, default, and seven-owner union sequences. One selector composes
+the prefix, optional layer-normalization insertion, base tail, and optional
+conv-attention suffix. Focused parameterization covers all four boolean
+combinations, including the currently unused layernorm-without-conv form.
+
+Every invocation build creates one fresh `ModelIRPassStateScope` for the fixed
+main ModelIR/session layout and shares it across every selected owner. The
+historical helper is now a one-call delegate with its keyword-only `False`,
+`True` defaults intact and forwards both switches explicitly. Its layernorm-
+plus-conv direct caller and terminal base-only direct caller retain exact
+keywords and all four boundaries. Both `AttentionRecoveryContext` and
+`LayoutAttentionQuantizedSuffixContext` still store the helper itself, and
+their argument-free invocations continue to select the default base-plus-conv
+policy.
+
+Architecture accounting imports the seven-owner union. Seven direct owner
+calls moved out of the lowerer and became seven stable IDs, retaining 120
+effective ordered calls. Existing independent layer-normalization and SE-FC
+calls and prior orchestrated occurrences remain separately counted. A new
+explicit full-policy efficiency fixture covers all seven owners with no layout
+state and observes one graph-index refresh across eight diagnostic events.
+
+Sequential implementation validation completed as follows:
+
+- focused all-policy contracts, delegate, callbacks, and boundaries:
+  `14 passed in 0.67s`;
+- focused mean/attention, both parent orchestrations, and ordered architecture:
+  `278 passed in 22.48s`;
+- pass efficiency: `31 passed in 0.62s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 12.02s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer retains exactly the two pre-existing F401 findings and
+  introduces no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, all four
+policy combinations, runtime order, caller multiplicity, callback wiring,
+boundaries, shared-scope semantics, and TensorFlow isolation are unchanged.
+PR #952 remains closed, and no pull request was created, reopened, or updated.
+
+At restart, the only remaining nested lowerer helper with inline multi-pass
+execution is `_run_singleton_reshape_layout_pass_cluster`. Characterize its ten
+owner calls, three policy switches, two active caller forms, exact guards, and
+boundaries before extraction. Keep characterization and implementation as
+separate checkpoints, validate sequentially, minimize real-model conversion,
+commit and push only, and do not create or reopen a pull request.
