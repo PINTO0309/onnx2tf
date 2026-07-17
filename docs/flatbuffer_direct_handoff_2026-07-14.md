@@ -14843,3 +14843,43 @@ freeze both target forms, diagnostics routing, shared scope, caller
 multiplicity, and boundaries before deciding how its context should be created.
 Validate sequentially, keep real-model conversion minimal, commit and push
 only, and do not create a pull request.
+
+## SE-FC and gather-channel-fanout orchestration characterization: completed state
+
+The 20-line `_run_se_fc_gather_channel_fanout_pass_cluster` remains unchanged
+in production. It requires positional target ModelIR and target layout values,
+creates one fresh `ModelIRPassStateScope` for that target, and executes SE-FC
+layout cleanup followed by transpose-gather channel-fanout cleanup. Both owners
+receive the target ModelIR/layout, session diagnostics, and the same scope.
+
+There are two production target forms. The fallback block passes
+`(fallback_ir, None)`, while the absolute-final main path passes
+`(model_ir, session.layout_state)`. In both paths the pair remains immediately
+after SiNet shuffle/residual/mul/post-transpose tail cleanup and before static
+shape reconciliation. Neither caller supplies options or keyword arguments.
+
+Sequential validation completed as follows:
+
+- focused SE-FC/gather-fanout characterization: `5 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 16.60s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.41s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, target routing, caller multiplicity,
+boundaries, shared-scope behavior, and TensorFlow isolation are unchanged. PR
+#952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen target ModelIR/layout/diagnostics context and
+two stable owner IDs with direct imports from `se_layout` and
+`layout_transpose`. Because target values differ per call, construct the
+context inside the historical helper from its positional arguments and session
+diagnostics rather than storing fallback state in one long-lived context.
+Preserve both positional caller forms and every boundary as a delegate. Prove
+fresh/shared scope identity and instrumented order before switching production;
+validate sequentially, commit and push, and do not create a pull request.

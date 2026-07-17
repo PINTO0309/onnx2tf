@@ -2376,3 +2376,13 @@ tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests pass. No
 public API, artifact, dependency, fixed normalization policy, runtime order,
 terminal boundary, scope-sharing behavior, or TensorFlow isolation changed. PR
 #952 remains closed, and no pull request was created, reopened, or updated.
+
+The SE-FC/gather-channel-fanout pair is now characterized without production
+changes. Five focused tests freeze its two required positional target values,
+target-specific fresh pass-state scope, both complete target ModelIR/layout/
+session-diagnostics contracts, fallback and main-model caller forms, caller
+multiplicity, and all four surrounding boundaries. The focused plus
+architecture suite passed 253 tests, the 30 pass-efficiency tests and all 11
+TensorFlow-import-blocked tests passed, and targeted static checks passed.
+Runtime behavior and all public/dependency contracts remain unchanged. PR #952
+remains closed, and no pull request was created, reopened, or updated.

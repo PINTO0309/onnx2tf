@@ -9336,3 +9336,13 @@ caller plus one explicit builder composition; multiplicity-aware architecture
 accounting records both executions and the efficiency fixture retains one
 graph-index build. Focused, architecture, pass-efficiency, core, and
 TensorFlow-import-blocked suites pass.
+
+The SE-FC/gather-channel-fanout pair is now characterized without production
+changes. It accepts positional target ModelIR/layout values, creates one fresh
+target-specific pass-state scope, and forwards session diagnostics to two
+ordered owners. One caller uses fallback ModelIR with no layout state; the
+absolute-final caller uses the main ModelIR and session layout state. Focused
+contracts freeze both forms and their identical SiNet-tail/reconciliation
+boundaries. The eventual phase should use a frozen target context and two
+stable IDs, with the historical helper constructing a context per call rather
+than capturing one long-lived target.
