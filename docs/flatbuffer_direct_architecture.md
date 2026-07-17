@@ -10334,3 +10334,10 @@ sanitization and before `_absolute_final_instancenorm_post_bias_stats`, for a
 future `_absolute_final_affine_post_add_stats` assignment. The first
 pre-terminal call retains its existing staged target and the intervening
 very-late call remains an expression.
+
+That absolute-final third call now assigns its unchanged raw result to
+`_absolute_final_affine_post_add_stats`. It remains observation-only and is
+followed directly by `_absolute_final_instancenorm_post_bias_stats`. The first
+call retains `_pre_terminal_affine_post_add_stats`, and the second very-late
+call remains an expression. No tensor-count proxy, reconciliation consumer,
+pass invocation, or graph traversal is added.

@@ -242,7 +242,10 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert layout_keyword.value.attr == "layout_state"
 
     previous = lowerer.body[normalization_index - 2]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_absolute_final_affine_post_add_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
@@ -275,10 +278,6 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert direct_statements[3] is invocation
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the absolute-final affine post-ADD result is discarded",
-)
 def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() -> (
     None
 ):

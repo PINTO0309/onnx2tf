@@ -5621,6 +5621,17 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
         previous_boundary.value.func.id
         == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
+    affine_boundary = lowerer.body[invocation_index - 2]
+    assert isinstance(affine_boundary, ast.Assign)
+    assert len(affine_boundary.targets) == 1
+    assert isinstance(affine_boundary.targets[0], ast.Name)
+    assert affine_boundary.targets[0].id == "_absolute_final_affine_post_add_stats"
+    assert isinstance(affine_boundary.value, ast.Call)
+    assert isinstance(affine_boundary.value.func, ast.Name)
+    assert (
+        affine_boundary.value.func.id
+        == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Expr)
     assert isinstance(next_boundary.value, ast.Call)

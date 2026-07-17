@@ -5535,9 +5535,11 @@ def lower_onnx_to_ir(
     _sanitize_static_shape_signature_consistency(model_ir)
     # Absolute-final guard: topological sort + signature sanitize can expose
     # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.
-    _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _absolute_final_affine_post_add_stats = (
+        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _absolute_final_instancenorm_post_bias_stats = (
         _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(

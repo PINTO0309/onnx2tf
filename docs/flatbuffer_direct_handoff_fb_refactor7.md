@@ -1977,3 +1977,28 @@ expression, ModelIR/LayoutState forwarding, and all pass order. Validate the
 indexed affine owner, absolute-final normalization, pre-terminal affine
 boundary, core, pass-efficiency, architecture, and TensorFlow import blocking
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Absolute-final affine post-ADD implementation checkpoint
+
+Only the third direct affine post-ADD call now assigns its unchanged result to
+`_absolute_final_affine_post_add_stats`. The first call retains the existing
+`_pre_terminal_affine_post_add_stats` target, and the second very-late call
+remains an expression.
+
+The staged raw counter is complete under the owner's positive-only pruning
+contract. It is observation-only and does not feed reconciliation. Boundary
+signature realignment and sanitization still precede it, and
+`_absolute_final_instancenorm_post_bias_stats` still follows immediately with
+the same ModelIR and Session LayoutState.
+
+Focused absolute-final, indexed-owner, pre-terminal, and architecture coverage
+is `71 passed, 344 deselected`. The expanded sequential indexed-owner,
+late/terminal orchestration, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `1201 passed in 29.71s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the remaining second direct affine post-ADD call after
+unbound-input repair and immediately before the very-late Gather/Constant
+normalization cluster. Characterize its exact boundaries independently before
+considering a `_very_late_affine_post_add_stats` target. Commit and push only;
+do not create or update a pull request.
