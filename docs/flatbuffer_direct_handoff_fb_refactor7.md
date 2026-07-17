@@ -2994,3 +2994,28 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet complete-evidence contract
 defined by this checkpoint; there are no unexpected failures.
+
+## Safety-fallback binary-layout evidence implementation checkpoint
+
+Only the recursive safety-fallback occurrence now records the stale-binary
+owner's complete local evidence. It captures the tensor count before the owner,
+merges a clamped `pruned_unused_tensors` delta into the exact rewrite counter,
+and initializes `_fallback_binary_layout_static_shape_stats` with both stable
+zero keys. A positive rewrite still controls the same reconciliation guard,
+which now stores the opt-in complete result instead of discarding it.
+
+Cleanup-only calls do not trigger shape propagation. Indexed matching,
+rewiring, output metadata, pruning behavior, the raw owner schema, and the
+following unconditional topological sort are unchanged. The preceding
+Concat-axis orchestration contract now identifies the binary-layout tensor
+count as the next owner's first statement.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused fallback/binary/convergence selection: `23 passed, 12 deselected`
+- broad related regression gate: `534 passed in 27.64s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the fallback layout-validation metadata boundary before the
+high-rank BatchMatMul compression owner. Commit and push coherent units only;
+do not create or update a pull request.

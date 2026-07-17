@@ -5572,18 +5572,32 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-        fallback_binary_layout_stats = (
-            _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+        fallback_binary_layout_tensor_count = len(fallback_ir.tensors)
+        fallback_binary_layout_stats = {
+            **_repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                 fallback_ir
-            )
-        )
+            ),
+            "pruned_unused_tensors": max(
+                0,
+                fallback_binary_layout_tensor_count - len(fallback_ir.tensors),
+            ),
+        }
+        _fallback_binary_layout_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_binary_layout_stats.get(
                 "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_binary_layout_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         _topologically_sort_operators(fallback_ir)
         fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
         if len(fallback_layout_problems) > 0:

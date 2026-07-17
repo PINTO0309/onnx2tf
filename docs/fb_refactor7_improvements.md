@@ -183,14 +183,21 @@ extends the current focused branch gate to `491 passed in 29.82s`.
 Fallback Concat-axis reconciliation staging extends that gate to `520 passed
 in 27.79s`.
 
+Complete fallback stale-binary-layout evidence extends the focused gate to
+`534 passed in 27.64s`. This checkpoint records cleanup-only tensor pruning,
+initializes a stable two-key reconciliation result, and captures the opt-in
+complete reconciliation result without changing the repair-only guard or the
+following topological sort.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
 
 ## Remaining work
 
-The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the fallback Concat-axis repair and its guarded
-reconciliation, followed by the stale binary-layout repair. Any new mutation
-evidence must preserve the recursive fallback boundary, current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+The broader `flatbuffer_direct` refactor remains active. The next
+characterized unit should audit the fallback layout-validation metadata
+boundary and then the high-rank BatchMatMul compression owner. Any new
+mutation evidence must preserve the recursive fallback boundary, current pass
+order, TensorFlow-free boundary, dependency set, and sequential validation
+policy.

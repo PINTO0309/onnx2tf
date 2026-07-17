@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -577,7 +576,7 @@ def test_safety_fallback_stages_concat_axis_reconciliation_evidence() -> None:
     following = body[owner_index + 3]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "fallback_binary_layout_stats"
+    assert following.targets[0].id == "fallback_binary_layout_tensor_count"
 
 
 def test_fallback_binary_layout_owner_can_prune_without_a_rewrite() -> None:
@@ -601,10 +600,6 @@ def test_fallback_binary_layout_owner_can_prune_without_a_rewrite() -> None:
     assert "unused" not in model_ir.tensors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback binary-layout stats omit cleanup and reconciliation evidence",
-)
 def test_safety_fallback_stages_complete_binary_layout_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
     stats_index = next(
