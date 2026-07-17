@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_attention_gather_transpose_reshape_cleanup_chains,
 )
+from onnx2tf.tflite_builder.passes.attention_gather_cleanup_layout import (
+    _optimize_attention_gather_transpose_reshape_cleanup_chains as _optimize_attention_gather_transpose_reshape_cleanup_chains_owner,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -329,6 +332,65 @@ def _append_identity_consumer(
     )
     model_ir.outputs.append(output_name)
     model_ir.operators.append(OperatorIR("IDENTITY", [input_name], [output_name]))
+
+
+def _owner_wrapper_case(case: str) -> ModelIR:
+    if case == "ordinary-b":
+        return _model(pattern_b=1)
+    if case == "multiple":
+        return _model(pattern_a=2, pattern_b=2)
+    if case == "negative-axes":
+        return _model(pattern_a=1, pattern_b=1, negative_axes=True)
+
+    model_ir = _model(pattern_a=1)
+    if case == "scalar-index":
+        tensor = model_ir.tensors["a0_index"]
+        tensor.shape = []
+        tensor.shape_signature = []
+        tensor.data = np.asarray(0, dtype=np.int32)
+    elif case == "dynamic-signature":
+        model_ir.tensors["a0_x"].shape_signature = [1, 2, -1, 4]
+        model_ir.tensors["a0_gather"].shape_signature = [2, -1, 4]
+        model_ir.tensors["a0_transpose"].shape_signature = [-1, 2, 4]
+    elif case == "shared-permutation":
+        _append_identity_consumer(model_ir, "a0_perm", "perm_copy")
+    elif case == "public-permutation":
+        model_ir.outputs.append("a0_perm")
+    elif case == "variable-index":
+        model_ir.tensors["a0_index"].is_variable = True
+    elif case == "per-axis":
+        model_ir.tensors["a0_transpose"].quantization = QuantParamIR(
+            scale=[0.1, 0.2],
+            zero_point=[0, 0],
+            quantized_dimension=1,
+        )
+    elif case == "unmatched":
+        _tensor(model_ir, "unused", [1])
+        model_ir.tensors["a0_perm"].data = np.asarray([0, 2, 1], dtype=np.int32)
+    elif case == "pattern-b-quantization-mismatch":
+        model_ir = _model(pattern_b=1)
+        model_ir.tensors["b0_reshape"].quantization = QuantParamIR(
+            scale=[0.25],
+            zero_point=[3],
+            quantized_dimension=0,
+        )
+    elif case == "missing-metadata":
+        del model_ir.tensors["a0_reshape"]
+    elif case == "reverse-topology":
+        model_ir.operators[0], model_ir.operators[1] = (
+            model_ir.operators[1],
+            model_ir.operators[0],
+        )
+    elif case == "public-internal":
+        model_ir.inputs.append("a0_gather")
+    elif case == "duplicate-source":
+        model_ir.operators.extend(
+            [
+                OperatorIR("IDENTITY", ["a0_output"], ["a0_x"]),
+                OperatorIR("IDENTITY", ["a0_output"], ["a0_x"]),
+            ]
+        )
+    return model_ir
 
 
 def test_attention_gather_cleanup_rewrites_pattern_a() -> None:
@@ -838,19 +900,63 @@ def test_attention_gather_cleanup_accepts_scalar_index_representation() -> None:
     assert validate_model_ir_invariants(model_ir) == []
 
 
-def test_attention_gather_cleanup_keeps_raw_owner_and_calls() -> None:
-    lowering_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
-    lowering_source = lowering_path.read_text(encoding="utf-8")
-    lowering_tree = ast.parse(lowering_source)
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary-a",
+        "ordinary-b",
+        "multiple",
+        "negative-axes",
+        "scalar-index",
+        "dynamic-signature",
+        "shared-permutation",
+        "public-permutation",
+        "variable-index",
+        "per-axis",
+        "unmatched",
+        "pattern-b-quantization-mismatch",
+        "missing-metadata",
+        "reverse-topology",
+        "public-internal",
+        "duplicate-source",
+    ],
+)
+def test_attention_gather_cleanup_owner_and_wrapper_are_identical(
+    case: str,
+) -> None:
+    owner_model = _owner_wrapper_case(case)
+    wrapper_model = copy.deepcopy(owner_model)
+
+    owner_stats = _optimize_attention_gather_transpose_reshape_cleanup_chains_owner(
+        owner_model
+    )
+    wrapper_stats = _optimize_attention_gather_transpose_reshape_cleanup_chains(
+        wrapper_model
+    )
+
+    assert wrapper_stats == owner_stats
+    assert _normalize(wrapper_model) == _normalize(owner_model)
+
+
+def test_attention_gather_cleanup_keeps_owner_wrapper_and_calls() -> None:
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "attention_gather_cleanup_layout.py"
+    )
+    pass_source = pass_path.read_text(encoding="utf-8")
+    pass_tree = ast.parse(pass_source)
     owner = next(
         node
-        for node in lowering_tree.body
+        for node in pass_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_optimize_attention_gather_transpose_reshape_cleanup_chains"
     )
     assert owner.end_lineno - owner.lineno + 1 == 740
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 2
-    owner_source = ast.get_source_segment(lowering_source, owner)
+    owner_source = ast.get_source_segment(pass_source, owner)
     assert owner_source is not None
     assert "Pattern A:" in owner_source
     assert "Pattern B:" in owner_source
@@ -859,6 +965,41 @@ def test_attention_gather_cleanup_keeps_raw_owner_and_calls() -> None:
     assert "graph_index.remove_operators(remove_indices)" in owner_source
     assert "graph_index.remove_operator(int(gather_idx))" in owner_source
     assert "_prune_unused_tensors(model_ir)" in owner_source
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and (
+            any(
+                alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+                for alias in node.names
+            )
+            if isinstance(node, ast.Import)
+            else node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        )
+        for node in pass_tree.body
+    )
+
+    lowering_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_optimize_attention_gather_transpose_reshape_cleanup_chains"
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    wrapper_call = wrapper.body[0].value
+    assert isinstance(wrapper_call, ast.Call)
+    assert isinstance(wrapper_call.func, ast.Name)
+    assert (
+        wrapper_call.func.id
+        == "_optimize_attention_gather_transpose_reshape_cleanup_chains_pass"
+    )
+    assert len(wrapper_call.args) == 1
+    assert isinstance(wrapper_call.args[0], ast.Name)
+    assert wrapper_call.args[0].id == "model_ir"
+    assert wrapper_call.keywords == []
 
     lowerer = next(
         node

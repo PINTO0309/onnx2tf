@@ -1767,4 +1767,12 @@ dynamic-signature rank lifting, QDIM remapping, and indexed removals turn all
 46 former xfails green. Focused coverage now has 81 green cases, including
 single-index reuse and ONNX scalar index representations, while both production
 calls remain unchanged. Resume by mechanically extracting the corrected owner
-with exact AST and owner/wrapper equality; do not create a pull request.
+with exact AST and owner/wrapper equality; do not create a pull request. That
+extraction is now complete in `passes/attention_gather_cleanup_layout.py`. Its
+740-line function AST is exact to checkpoint `a48ee607`, the lowerer retains a
+one-return compatibility wrapper, and both production calls are unchanged.
+Sixteen direct owner/wrapper families produce identical statistics and complete
+normalized ModelIR state. Resume by inventorying and characterizing the next
+substantive raw source-order owner,
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains` (190
+lines), before semantic or ownership changes. Do not create a pull request.

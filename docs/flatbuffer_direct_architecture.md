@@ -8670,6 +8670,23 @@ multiple matches, fixed point, collision naming, public Pattern-A Reshape
 outputs, and both production calls remain unchanged. The 740-line count is
 descriptive only; 2,000 remains the ONNX operation-count tier threshold.
 
+Ownership now resides in
+`passes/attention_gather_cleanup_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `a48ee607` are each 740 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias,
+retains the historical private name as a one-return compatibility wrapper, and
+keeps both production calls unchanged. The focused module does not import the
+lowerer.
+
+Sixteen direct owner/wrapper comparisons cover both ordinary patterns,
+multiple and negative-axis matches, scalar and dynamic metadata, shared and
+public permutation clones, unsafe variable indices, per-axis quantization,
+zero-match no-prune, Pattern-B quantization mismatch, missing metadata, reverse
+topology, a public internal alias, and duplicate source producers. Statistics
+and complete normalized ModelIR state are identical in every case. The
+mechanical move does not alter public APIs, artifacts, dependencies, corpus
+policy, ordered runtime behavior, or TensorFlow isolation.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

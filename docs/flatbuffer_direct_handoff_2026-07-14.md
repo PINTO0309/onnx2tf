@@ -12376,3 +12376,51 @@ AST identity and direct owner/wrapper equality for both patterns, dynamic and
 scalar metadata, multiple matches, constant ownership/cloning, quantization,
 pruning, rejection, topology, and atomicity cases. Validate sequentially,
 commit and push, and do not create a pull request.
+
+## Attention Gather cleanup ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/attention_gather_cleanup_layout.py`. Its function
+and the corrected raw owner at checkpoint `a48ee607` are each 740 lines and
+have identical ASTs. The central lowerer imports it under the private
+`_optimize_attention_gather_transpose_reshape_cleanup_chains_pass` alias and
+keeps the historical private name as a one-return wrapper. Both production
+calls remain unchanged. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary Pattern A and Pattern
+B, two matches of each, negative axes, scalar indices, dynamic signatures,
+shared and public permutation cloning, variable-index rejection, per-axis
+QDIM, zero-match no-prune, Pattern-B quantization mismatch, missing metadata,
+reverse topology, a public internal alias, and duplicate source producers.
+Deep-copied executions produce identical statistics and complete normalized
+ModelIR state, including buffers, quantization, options, provenance, topology,
+metadata, lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 740 lines each;
+- focused safety plus owner/wrapper contract: `97 passed in 0.63s`;
+- focused contract plus ordered architecture suite: `345 passed in 17.51s`;
+- focused contract, six adjacent extracted bridge/collapse contracts, and
+  ordered architecture suite: `747 passed in 18.22s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.61s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly six pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. PR #952 remains closed;
+no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next substantive raw source-order
+owner before editing it: the 190-line
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains`. It
+currently has only architecture references and no focused public fixture.
+Build focused synthetic ModelIR cases for valid and multiple matches, dynamic
+shape/signature metadata, Reshape constants/options, BatchMatMul flags,
+quantization, topology, public boundaries, pruning, fixed point, statistics,
+and both production-call boundaries. Record unsafe behavior as strict xfails
+before correction. Keep validation minimal and strictly sequential, commit and
+push coherent checkpoints, and do not create a pull request.
