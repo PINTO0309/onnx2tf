@@ -734,6 +734,45 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
     assert sorted(remaining_inputs) == ["fallback_ir", "model_ir"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late static reconciliation result is discarded",
+)
+def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -> (
+    None
+):
+    lowerer, _ = _lowerer_and_helper()
+    dynamic_rank1_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
+    )
+    invocation = lowerer.body[dynamic_rank1_index + 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_very_late_static_shape_stats"
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    mutation_keyword = invocation.value.keywords[0]
+    assert mutation_keyword.arg == "include_mutation_count"
+    assert isinstance(mutation_keyword.value, ast.Constant)
+    assert mutation_keyword.value.value is True
+
+    following = lowerer.body[dynamic_rank1_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "split_fallback_stats"
+
+
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = [

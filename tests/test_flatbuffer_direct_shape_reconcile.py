@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -30,6 +31,61 @@ def _tensor(
         shape_signature=list(shape),
         data=data,
     )
+
+
+def _parameter_only_expand_dims_model_ir() -> ModelIR:
+    model_ir = ModelIR("parameter_only_expand_dims_reconcile")
+    model_ir.tensors = {
+        "x": _tensor("x", [2]),
+        "shape": _tensor(
+            "shape",
+            [2],
+            dtype="INT32",
+            data=np.asarray([2, 1], dtype=np.int32),
+        ),
+        "y": _tensor("y", [2, 1]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "shape"],
+            outputs=["y"],
+            options={
+                "newShape": [999],
+                "onnxExpandDimsAxis": 1,
+            },
+        )
+    ]
+    return model_ir
+
+
+def test_reconcile_legacy_tensor_counter_excludes_parameter_only_mutation() -> None:
+    model_ir = _parameter_only_expand_dims_model_ir()
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+
+    assert stats == {"reconciled_static_tensor_shapes": 0}
+    assert model_ir.operators[0].options["newShape"] == [2, 1]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="static reconciliation has no opt-in complete mutation counter",
+)
+def test_reconcile_can_report_parameter_only_mutation_without_changing_legacy_key() -> (
+    None
+):
+    model_ir = _parameter_only_expand_dims_model_ir()
+
+    stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        include_mutation_count=True,
+    )
+
+    assert stats == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 1,
+    }
 
 
 def test_reconcile_strided_slice_repairs_lowered_squeeze_target() -> None:

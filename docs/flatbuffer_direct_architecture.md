@@ -10453,3 +10453,13 @@ That selected call now assigns its unchanged raw result to
 the existing static-shape reconciliation. The fallback and absolute-final calls
 remain expressions, and no proxy, summary, or reconciliation consumer is
 added.
+
+The immediately following reconciliation owner exposes the legacy
+`reconciled_static_tensor_shapes` count, but that key intentionally counts only
+output tensor shape updates. A RESHAPE option or shape-parameter tensor can
+change while the legacy count remains zero. Strict characterization therefore
+preserves that key and requires an opt-in
+`reconciled_static_shape_mutations` key that also covers parameter/option-only
+changes. Only the very-late call requests it and stages
+`_very_late_static_shape_stats`; existing callers retain their exact result
+schema.

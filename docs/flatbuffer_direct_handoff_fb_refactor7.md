@@ -2390,3 +2390,31 @@ At resume, inspect the immediately following direct
 many conditional and convergence-owned reconciliations, confirm its result
 schema and mutation completeness, and characterize only this very-late
 boundary. Commit and push only; do not create or update a pull request.
+
+## Very-late static reconciliation characterization checkpoint
+
+The legacy `reconciled_static_tensor_shapes` key counts updates applied through
+the output-tensor shape helper. It is not complete mutation evidence: a focused
+RESHAPE fixture begins with correct output metadata but a stale `newShape`
+option, and reconciliation corrects that option while returning the unchanged
+legacy value `0`.
+
+To preserve every existing caller and exact-dictionary contract, strict
+expected-failure coverage requires an opt-in `include_mutation_count=True`
+parameter. Only that mode adds `reconciled_static_shape_mutations`, covering
+output shapes, constant shape parameters, operator options, and direct tensor
+metadata updates. Default calls must continue returning only the legacy key.
+
+A second strict expected-failure contract selects only the direct
+reconciliation after `_very_late_dynamic_rank1_reshape_stats`, requires
+`_very_late_static_shape_stats`, and freezes the following
+`split_fallback_stats` assignment. Focused characterization is `24 passed, 2
+xfailed`.
+
+At implementation, instrument mutation sites during the existing fixed-point
+walk; do not add a pre/post ModelIR fingerprint or another graph traversal.
+Return the extra key only when requested, and enable it only at the selected
+very-late call. Validate parameter-only mutation, all static-shape
+reconciliation suites, dynamic-Reshape, very-late orchestration, core,
+pass-efficiency, architecture, and TensorFlow import blocking sequentially.
+Commit and push only; do not create or update a pull request.
