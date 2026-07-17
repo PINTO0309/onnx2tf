@@ -1669,13 +1669,6 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
         assert run_with_outcome(outcome) == unchanged_count + 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the placeholder-MatMul restoration block still performs its second "
-        "reconciliation when the first scan and both repairs are unchanged"
-    ),
-)
 def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
     monkeypatch,
 ) -> None:

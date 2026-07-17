@@ -8736,6 +8736,90 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
     assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
 
 
+def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    restore_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "final_placeholder_matmul_stats"
+            for target in statement.targets
+        )
+    )
+    restore_assignment = lowerer.body[restore_index]
+    assert isinstance(restore_assignment.value, ast.Call)
+    assert isinstance(restore_assignment.value.func, ast.Name)
+    assert (
+        restore_assignment.value.func.id
+        == "_restore_placeholder_matmul_flattened_inputs"
+    )
+
+    outer_guard = lowerer.body[restore_index + 1]
+    assert isinstance(outer_guard, ast.If)
+    assert len(outer_guard.body) == 6
+    expected_assignments = [
+        (
+            "final_placeholder_reconcile_stats",
+            "_reconcile_static_tensor_shapes",
+        ),
+        (
+            "final_placeholder_binary_tensor_count",
+            "len",
+        ),
+        (
+            "final_placeholder_exact_binary_stats",
+            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
+        ),
+        (
+            "final_placeholder_singleton_binary_stats",
+            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
+        ),
+    ]
+    for statement, (target_name, call_name) in zip(
+        outer_guard.body[:4],
+        expected_assignments,
+        strict=True,
+    ):
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        assert isinstance(statement.value, ast.Call)
+        assert isinstance(statement.value.func, ast.Name)
+        assert statement.value.func.id == call_name
+
+    reconcile_guard = outer_guard.body[4]
+    assert isinstance(reconcile_guard, ast.If)
+    assert ast.unparse(reconcile_guard.test) == (
+        "_stats_have_positive_count(final_placeholder_reconcile_stats, "
+        "final_placeholder_exact_binary_stats, "
+        "final_placeholder_singleton_binary_stats) or "
+        "len(model_ir.tensors) < final_placeholder_binary_tensor_count"
+    )
+    assert len(reconcile_guard.body) == 1
+    reconcile = reconcile_guard.body[0]
+    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+
+    topology_sort = outer_guard.body[5]
+    assert isinstance(topology_sort, ast.Expr)
+    assert isinstance(topology_sort.value, ast.Call)
+    assert isinstance(topology_sort.value.func, ast.Name)
+    assert topology_sort.value.func.id == "_topologically_sort_operators"
+
+
 def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

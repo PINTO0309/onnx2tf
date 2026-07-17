@@ -824,3 +824,29 @@ LayoutState forwarding, and the following topology sort. Validate placeholder
 MatMul restoration, binary adapters, shape reconciliation, core,
 architecture, pass-efficiency, and TensorFlow-import-blocked suites
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Placeholder-MatMul repair reconciliation implementation checkpoint
+
+The restoration result is now assigned to
+`final_placeholder_matmul_stats` before the unchanged positive-result guard.
+Inside that block, the first reconciliation remains mandatory and its result is
+captured. The lowerer then records tensor count and captures exact and
+singleton binary-repair results in the original order.
+
+The second reconciliation now runs only when the first scan or either repair
+reports a positive mutation, or when zero-rewrite exact repair pruning reduces
+the tensor table. The topology sort remains unconditional inside the
+restoration block. A structural contract fixes all six statements and the
+complete guard; lowerer wiring independently covers every mutation source and
+prune-only behavior.
+
+Sequential validation across placeholder-MatMul/dynamic Reshape, binary
+adapters, shape reconciliation, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked suites is `403 passed in 26.48s`. Focused wiring and
+structure coverage is `2 passed in 2.27s`.
+
+At resume, continue the direct lowerer reconciliation inventory. Avoid the
+large phase-barrier scans unless every intervening owner result is preserved;
+prefer another local conditional block with a complete result interval.
+Characterize before production changes, then commit and push only. Do not
+create or update a pull request.

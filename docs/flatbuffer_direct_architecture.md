@@ -9912,3 +9912,11 @@ rewrite. A strict expected-failure lowerer fixture requires the second scan
 only after a changing first reconciliation, either repair counter, or a
 tensor-count decrease. Production remains unchanged at this characterization
 checkpoint.
+
+The restoration result is now assigned before the unchanged outer guard. A
+positive restoration retains the first reconciliation, then records tensor
+count and captures both binary-repair results. The second reconciliation runs
+only after a changing first scan, either repair counter, or exact-repair
+pruning. The following topology sort remains unconditional inside the outer
+restoration block. Lowerer wiring covers unchanged, all three counters, and
+prune-only behavior independently.

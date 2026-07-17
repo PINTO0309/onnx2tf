@@ -5551,19 +5551,36 @@ def lower_onnx_to_ir(
         )
     ) > 0:
         _reconcile_static_tensor_shapes(model_ir)
-    if int(
+    final_placeholder_matmul_stats = (
         _restore_placeholder_matmul_flattened_inputs(
             model_ir,
             layout_state=session.layout_state,
-        ).get(
+        )
+    )
+    if int(
+        final_placeholder_matmul_stats.get(
             "restored_placeholder_matmul_flattened_inputs",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
-        _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-        _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-        _reconcile_static_tensor_shapes(model_ir)
+        final_placeholder_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir
+        )
+        final_placeholder_binary_tensor_count = len(model_ir.tensors)
+        final_placeholder_exact_binary_stats = (
+            _repair_rank4_binary_layout_mismatch_with_transpose_adapter(
+                model_ir
+            )
+        )
+        final_placeholder_singleton_binary_stats = (
+            _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
+        )
+        if _stats_have_positive_count(
+            final_placeholder_reconcile_stats,
+            final_placeholder_exact_binary_stats,
+            final_placeholder_singleton_binary_stats,
+        ) or len(model_ir.tensors) < final_placeholder_binary_tensor_count:
+            _reconcile_static_tensor_shapes(model_ir)
         _topologically_sort_operators(model_ir)
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
