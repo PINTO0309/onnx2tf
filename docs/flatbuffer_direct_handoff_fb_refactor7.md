@@ -1326,3 +1326,23 @@ compilation, and whitespace validation pass.
 At resume, move backward to the shape-extract owner immediately before late
 QKV. Confirm whether its return counter fully accounts for pruning before
 staging it. Commit and push only; do not create or update a pull request.
+
+## Pre-QKV shape-extract evidence characterization checkpoint
+
+The shape-extract owner prunes unused tensors only after its rewrite counter is
+positive. Its idempotence coverage and eight unsafe/unsupported snapshot
+fixtures confirm that zero means no ModelIR mutation, so the raw result is
+complete evidence.
+
+Three production invocations share the same owner. A strict expected-failure
+contract selects only the terminal call between the late SPP pair and
+`late_qkv_tensor_count` and requires it to assign
+`_late_pre_qkv_shape_extract_stats`. It also freezes the total call count at
+three to prevent another ambiguous first-match edit. No arguments, order, or
+reconciliation behavior change.
+
+At implementation, replace only that exact terminal expression and update the
+late-SPP, QKV, and architecture boundary contracts. Validate the complete
+shape-extract suite and adjacent terminal orchestration, core, pass efficiency,
+architecture, and TensorFlow import blocker sequentially. Commit and push only;
+do not create or update a pull request.

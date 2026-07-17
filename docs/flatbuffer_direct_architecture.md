@@ -10141,3 +10141,10 @@ fills inactive family keys with zeros, copies only ten declared mutation
 counters, excludes `iterations`, and adds clamped net pruning. Only the
 terminal form stages starting count, raw results, and `_late_qkv_stats`; the two
 default forms continue to ignore their return values.
+
+Immediately before late QKV, the shape-extract owner prunes only after a
+positive rewrite, so its single returned counter fully describes mutation.
+There are three production calls to this owner. Strict characterization selects
+only the call between late SPP and the QKV starting-count capture and requires
+it to assign `_late_pre_qkv_shape_extract_stats`. The other two calls must remain
+untouched at this checkpoint.
