@@ -207,17 +207,8 @@ def test_constant_fold_cast_builder_is_composed_by_late_layout_phase() -> None:
     assert len(calls) == 1
     call = calls[0]
     assert len(call.args) == 1
-    assert isinstance(call.args[0], ast.Call)
-    assert isinstance(call.args[0].func, ast.Name)
-    assert call.args[0].func.id == "ConstantFoldCastContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in call.args[0].keywords
-    } == {
-        "model_ir": "context.model_ir",
-        "layout_state": "context.layout_state",
-        "diagnostics": "context.diagnostics",
-    }
+    assert isinstance(call.args[0], ast.Name)
+    assert call.args[0].id == "context"
     assert {
         str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
     } == {"state_scope": "state_scope"}
@@ -242,17 +233,8 @@ def test_constant_fold_cast_builder_is_composed_by_very_late_phase() -> None:
     assert len(calls) == 1
     call = calls[0]
     assert len(call.args) == 1
-    assert isinstance(call.args[0], ast.Call)
-    assert isinstance(call.args[0].func, ast.Name)
-    assert call.args[0].func.id == "ConstantFoldCastContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in call.args[0].keywords
-    } == {
-        "model_ir": "context.model_ir",
-        "layout_state": "context.layout_state",
-        "diagnostics": "context.diagnostics",
-    }
+    assert isinstance(call.args[0], ast.Name)
+    assert call.args[0].id == "context"
     assert {
         str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
     } == {"state_scope": "state_scope"}

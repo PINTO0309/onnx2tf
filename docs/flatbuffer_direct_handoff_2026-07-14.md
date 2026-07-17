@@ -15685,3 +15685,55 @@ callback-bearing parent contexts. Keep every pass ID, policy argument, fresh
 scope-per-build rule, diagnostic list identity, and caller boundary unchanged;
 validate the complete focused orchestration set sequentially before committing
 and pushing, and do not create or update a pull request.
+
+## Shared ModelIR-pass context consolidation: completed state
+
+`core/model_ir_pass_context.py` now defines the single frozen
+`ModelIRPassContext` identity contract. `ConversionSession.__post_init__`
+constructs it after the Session-owned `GraphIndex` and `LayoutState`, binding
+the main `ModelIR`, the exact LayoutState object, and the exact diagnostics
+list. It is also exported from the internal `tflite_builder.core` seam without
+exposing it through the public onnx2tf API.
+
+The twenty-one prior three-field context names remain available as aliases to
+the common type, preserving internal imports, constructor signatures, type
+annotations, and runner APIs. The lowerer maps all eighteen long-lived
+main-model context variables to `session.model_ir_pass_context`. The SE-FC/
+gather-fanout and singleton/consecutive-reshape helpers construct a fresh
+`ModelIRPassContext` for each positional target call, so fallback and primary
+state cannot leak. The late layout/mean/SPP/gather and very-late gather/
+normalization parents pass their existing context directly into the reusable
+constant-fold/cast child builder, eliminating the final two redundant
+constructions. Callback-bearing recovery contexts remain deliberately
+separate.
+
+Sharing the immutable context does not widen any graph-index scope. Every phase
+builder still creates one fresh `ModelIRPassStateScope`, and only its immutable
+invocations share that scope. Stable IDs, option defaults and forwarding,
+callback identities, runtime owner order, target routing, diagnostics list
+identity, and all lowerer boundaries are unchanged.
+
+Sequential implementation validation completed as follows:
+
+- all twenty-one affected orchestration families plus the shared-context
+  contract: `250 passed in 2.92s`;
+- shared-context contract plus ordered architecture: `273 passed in 18.07s`;
+- pass efficiency: `31 passed in 0.51s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 10.29s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer retains only its two pre-existing F401 findings.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, pass IDs,
+runtime order, caller policies, target identity, scope lifetime, diagnostics,
+and TensorFlow isolation remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory the callback-bearing recovery context types before
+changing them. Determine whether they can embed the Session-owned
+`ModelIRPassContext` while retaining their callback identities and argument
+contracts; characterize that boundary first. Do not merge callbacks into the
+common core context, do not widen any `ModelIRPassStateScope`, keep validation
+sequential and real-model conversion minimal, commit and push coherent units,
+and do not create or update a pull request.

@@ -152,7 +152,7 @@ def test_singleton_consecutive_context_and_delegate_are_explicit() -> None:
     assert len(call.args) == 1
     assert isinstance(call.args[0], ast.Call)
     assert isinstance(call.args[0].func, ast.Name)
-    assert call.args[0].func.id == "SingletonConsecutiveReshapeContext"
+    assert call.args[0].func.id == "ModelIRPassContext"
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in call.args[0].keywords

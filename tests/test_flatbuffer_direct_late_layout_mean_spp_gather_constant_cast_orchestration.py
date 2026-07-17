@@ -154,19 +154,8 @@ def test_late_layout_context_and_delegate_are_explicit() -> None:
             for target in node.targets
         )
     )
-    assert isinstance(context_assignment.value, ast.Call)
-    assert isinstance(context_assignment.value.func, ast.Name)
-    assert (
-        context_assignment.value.func.id == "LateLayoutMeanSPPGatherConstantCastContext"
-    )
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in context_assignment.value.keywords
-    } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
+    assert isinstance(context_assignment.value, ast.Name)
+    assert context_assignment.value.id == "shared_model_ir_pass_context"
 
 
 @pytest.mark.parametrize("include_layout_transpose", [False, True])
@@ -320,17 +309,8 @@ def test_late_layout_composes_child_builder_without_lowerer_import() -> None:
     assert len(child_calls) == 1
     child_call = child_calls[0]
     assert len(child_call.args) == 1
-    assert isinstance(child_call.args[0], ast.Call)
-    assert isinstance(child_call.args[0].func, ast.Name)
-    assert child_call.args[0].func.id == "ConstantFoldCastContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in child_call.args[0].keywords
-    } == {
-        "model_ir": "context.model_ir",
-        "layout_state": "context.layout_state",
-        "diagnostics": "context.diagnostics",
-    }
+    assert isinstance(child_call.args[0], ast.Name)
+    assert child_call.args[0].id == "context"
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in child_call.keywords

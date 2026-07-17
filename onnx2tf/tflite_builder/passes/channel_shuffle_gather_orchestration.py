@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
-from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     run_nchw_channel_shuffle_cleanup,
     run_nhwc_channel_shuffle_cleanup,
@@ -46,11 +44,7 @@ CHANNEL_SHUFFLE_GATHER_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class ChannelShuffleGatherContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
-    diagnostics: List[Dict[str, Any]]
+ChannelShuffleGatherContext = ModelIRPassContext
 
 
 def _selected_pass_ids(

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
-from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.cast_cleanup import run_redundant_cast_cleanup
 from onnx2tf.tflite_builder.passes.constant_fold import (
     run_constant_input_fold_cleanup,
@@ -22,11 +20,7 @@ CONSTANT_FOLD_CAST_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class ConstantFoldCastContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
-    diagnostics: List[Dict[str, Any]]
+ConstantFoldCastContext = ModelIRPassContext
 
 
 def build_constant_fold_cast_invocations(

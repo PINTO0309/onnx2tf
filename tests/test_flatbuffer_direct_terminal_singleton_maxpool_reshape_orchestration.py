@@ -235,17 +235,8 @@ def test_terminal_singleton_maxpool_reshape_context_and_wrapper_are_explicit() -
             for target in statement.targets
         )
     )
-    assert isinstance(context_assignment.value, ast.Call)
-    assert isinstance(context_assignment.value.func, ast.Name)
-    assert context_assignment.value.func.id == "TerminalSingletonMaxPoolReshapeContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in context_assignment.value.keywords
-    } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
+    assert isinstance(context_assignment.value, ast.Name)
+    assert context_assignment.value.id == "shared_model_ir_pass_context"
 
 
 def test_terminal_singleton_maxpool_reshape_runner_preserves_order(

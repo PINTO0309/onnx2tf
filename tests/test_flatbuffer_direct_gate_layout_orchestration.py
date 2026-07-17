@@ -154,17 +154,8 @@ def test_gate_layout_context_and_delegate_are_explicit() -> None:
             for target in statement.targets
         )
     )
-    assert isinstance(context_assignment.value, ast.Call)
-    assert isinstance(context_assignment.value.func, ast.Name)
-    assert context_assignment.value.func.id == "GateLayoutContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in context_assignment.value.keywords
-    } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
+    assert isinstance(context_assignment.value, ast.Name)
+    assert context_assignment.value.id == "shared_model_ir_pass_context"
 
 
 @pytest.mark.parametrize("use_layout_state", [False, True])

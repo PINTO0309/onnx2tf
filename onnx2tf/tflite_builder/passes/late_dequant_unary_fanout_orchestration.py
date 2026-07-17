@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
-from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     run_dequant_concat_quantize_layout_cleanup,
 )
@@ -26,11 +24,7 @@ LATE_DEQUANT_UNARY_FANOUT_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class LateDequantUnaryFanoutContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
-    diagnostics: List[Dict[str, Any]]
+LateDequantUnaryFanoutContext = ModelIRPassContext
 
 
 def build_late_dequant_unary_fanout_invocations(

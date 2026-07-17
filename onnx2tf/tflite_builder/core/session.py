@@ -7,6 +7,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import GraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
 
 
@@ -21,11 +22,17 @@ class ConversionSession:
     constants: Dict[str, np.ndarray]
     graph_index: GraphIndex = field(init=False)
     layout_state: LayoutState = field(init=False)
+    model_ir_pass_context: ModelIRPassContext = field(init=False)
     diagnostics: List[Dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.graph_index = GraphIndex(self.onnx_model)
         self.layout_state = LayoutState.from_model_ir(self.model_ir)
+        self.model_ir_pass_context = ModelIRPassContext(
+            model_ir=self.model_ir,
+            layout_state=self.layout_state,
+            diagnostics=self.diagnostics,
+        )
 
     @property
     def tensor_consumer_count(self) -> Dict[str, int]:

@@ -2600,3 +2600,18 @@ architecture set, 31 pass-efficiency tests, and all 11 TensorFlow-import-
 blocked tests pass. Focused static checks pass. No runtime, API, artifact,
 dependency, pass-order, or TensorFlow boundary changed. PR #952 remains closed,
 and no pull request was created, reopened, or updated.
+
+The shared-context boundary is now implemented with one frozen core
+`ModelIRPassContext` owned by `ConversionSession`. Twenty-one historical context
+names remain compatible internal aliases. Eighteen main-model consumers use
+the exact Session-owned object; the two target-aware helpers create fresh
+common contexts for their selected ModelIR/LayoutState; and both composed
+constant-fold/cast phases reuse their parent context directly. Callback-bearing
+parent contexts and the fresh-scope-per-invocation rule are unchanged.
+
+The 250-test related orchestration set, 273-test shared-context/architecture
+set, 31 pass-efficiency tests, 32 core smoke tests, and all 11 TensorFlow-
+import-blocked tests pass. No real-model conversion or broad corpus suite ran.
+No public API, artifact, dependency, pass ID/order, policy, target-routing,
+scope, diagnostics, or TensorFlow boundary changed. PR #952 remains closed,
+and no pull request was created, reopened, or updated.

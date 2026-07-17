@@ -4786,7 +4786,7 @@ def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
     assert len(statement.value.args) == 1
     assert isinstance(statement.value.args[0], ast.Call)
     assert isinstance(statement.value.args[0].func, ast.Name)
-    assert statement.value.args[0].func.id == "SEFCGatherChannelFanoutContext"
+    assert statement.value.args[0].func.id == "ModelIRPassContext"
     assert statement.value.keywords == []
 
     helper_invocations = [
@@ -7292,10 +7292,7 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     assert len(short_statement.value.args) == 1
     assert isinstance(short_statement.value.args[0], ast.Call)
     assert isinstance(short_statement.value.args[0].func, ast.Name)
-    assert (
-        short_statement.value.args[0].func.id
-        == "SingletonConsecutiveReshapeContext"
-    )
+    assert short_statement.value.args[0].func.id == "ModelIRPassContext"
     short_invocations = [
         node
         for node in ast.walk(lowerer)

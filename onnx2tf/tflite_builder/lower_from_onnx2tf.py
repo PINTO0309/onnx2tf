@@ -14,6 +14,7 @@ from onnx2tf.utils.onnx_graph_repair import (
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.node import NodeView as _NodeWrap
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -205,83 +206,63 @@ from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration 
     run_sinet_terminal_layout_recovery,
 )
 from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
-    TerminalClampUnaryReLUContext,
     run_terminal_clamp_unary_relu,
 )
 from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
-    TerminalSingletonMaxPoolReshapeContext,
     run_terminal_singleton_maxpool_reshape,
 )
 from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
-    LateDequantUnaryFanoutContext,
     run_late_dequant_unary_fanout,
 )
 from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
-    TransposeUnaryFanoutContext,
     run_transpose_unary_fanout,
 )
 from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
-    LateSPPConcatUnaryConvContext,
     run_late_spp_concat_unary_conv,
 )
 from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
-    BoundaryBatchMatMulUnaryContext,
     run_boundary_batchmatmul_unary,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
-    ChannelSlicePadMulContext,
     run_channel_slice_pad_mul,
 )
 from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
-    LateHardActivationLayoutContext,
     run_late_hard_activation_layout,
 )
 from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
-    AbsoluteFinalNormalizationAttentionContext,
     run_absolute_final_normalization_attention,
 )
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
-    QKVAttentionContext,
     run_qkv_attention,
 )
 from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
-    DuplicateQuantizedPReLUContext,
     run_duplicate_quantized_prelu,
 )
 from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
-    VeryLateGatherConstantNormalizationContext,
     run_very_late_gather_constant_normalization,
 )
 from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
-    SEFCGatherChannelFanoutContext,
     run_se_fc_gather_channel_fanout,
 )
 from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
-    TerminalBoundaryLayoutContext,
     run_terminal_boundary_layout,
 )
 from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
-    LateLayoutMeanSPPGatherConstantCastContext,
     run_late_layout_mean_spp_gather_constant_cast,
 )
 from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
-    SingletonConsecutiveReshapeContext,
     run_singleton_consecutive_reshape,
 )
 from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
-    GateLayoutContext,
     run_gate_layout,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
-    ChannelShuffleGatherContext,
     run_channel_shuffle_gather,
 )
 from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
-    MeanAttentionContext,
     run_mean_attention,
 )
 from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
-    SingletonReshapeContext,
     run_singleton_reshape,
 )
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
@@ -4082,7 +4063,7 @@ def lower_onnx_to_ir(
         target_layout_state: LayoutState | None,
     ) -> None:
         run_se_fc_gather_channel_fanout(
-            SEFCGatherChannelFanoutContext(
+            ModelIRPassContext(
                 model_ir=target_model_ir,
                 layout_state=target_layout_state,
                 diagnostics=session.diagnostics,
@@ -4200,84 +4181,27 @@ def lower_onnx_to_ir(
         target_layout_state: LayoutState | None,
     ) -> None:
         run_singleton_consecutive_reshape(
-            SingletonConsecutiveReshapeContext(
+            ModelIRPassContext(
                 model_ir=target_model_ir,
                 layout_state=target_layout_state,
                 diagnostics=session.diagnostics,
             )
         )
 
-    boundary_batchmatmul_unary_context = BoundaryBatchMatMulUnaryContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    channel_slice_pad_mul_context = ChannelSlicePadMulContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    late_hard_activation_layout_context = LateHardActivationLayoutContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    absolute_final_normalization_attention_context = (
-        AbsoluteFinalNormalizationAttentionContext(
-            model_ir=model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
-    qkv_attention_context = QKVAttentionContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    duplicate_quantized_prelu_context = DuplicateQuantizedPReLUContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    very_late_gather_constant_normalization_context = (
-        VeryLateGatherConstantNormalizationContext(
-            model_ir=model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
-    terminal_boundary_layout_context = TerminalBoundaryLayoutContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    gate_layout_context = GateLayoutContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    channel_shuffle_gather_context = ChannelShuffleGatherContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    mean_attention_context = MeanAttentionContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    singleton_reshape_context = SingletonReshapeContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    late_layout_mean_spp_gather_constant_cast_context = (
-        LateLayoutMeanSPPGatherConstantCastContext(
-            model_ir=model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
+    shared_model_ir_pass_context = session.model_ir_pass_context
+    boundary_batchmatmul_unary_context = shared_model_ir_pass_context
+    channel_slice_pad_mul_context = shared_model_ir_pass_context
+    late_hard_activation_layout_context = shared_model_ir_pass_context
+    absolute_final_normalization_attention_context = shared_model_ir_pass_context
+    qkv_attention_context = shared_model_ir_pass_context
+    duplicate_quantized_prelu_context = shared_model_ir_pass_context
+    very_late_gather_constant_normalization_context = shared_model_ir_pass_context
+    terminal_boundary_layout_context = shared_model_ir_pass_context
+    gate_layout_context = shared_model_ir_pass_context
+    channel_shuffle_gather_context = shared_model_ir_pass_context
+    mean_attention_context = shared_model_ir_pass_context
+    singleton_reshape_context = shared_model_ir_pass_context
+    late_layout_mean_spp_gather_constant_cast_context = shared_model_ir_pass_context
     layout_recovery_context = LayoutRecoveryContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
@@ -4319,33 +4243,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    terminal_clamp_unary_relu_context = TerminalClampUnaryReLUContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    terminal_singleton_maxpool_reshape_context = (
-        TerminalSingletonMaxPoolReshapeContext(
-            model_ir=model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
-    late_dequant_unary_fanout_context = LateDequantUnaryFanoutContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    transpose_unary_fanout_context = TransposeUnaryFanoutContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    late_spp_concat_unary_conv_context = LateSPPConcatUnaryConvContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    terminal_clamp_unary_relu_context = shared_model_ir_pass_context
+    terminal_singleton_maxpool_reshape_context = shared_model_ir_pass_context
+    late_dequant_unary_fanout_context = shared_model_ir_pass_context
+    transpose_unary_fanout_context = shared_model_ir_pass_context
+    late_spp_concat_unary_conv_context = shared_model_ir_pass_context
     sinet_preadd_resize_recovery_context = SINetPreaddResizeRecoveryContext(
         model_ir=model_ir,
         layout_state=session.layout_state,

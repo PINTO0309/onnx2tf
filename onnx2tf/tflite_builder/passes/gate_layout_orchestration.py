@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
-from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.add_concat_suffix_layout import (
     run_add_concat_suffix_layout_cleanup,
 )
@@ -49,11 +47,7 @@ GATE_LAYOUT_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class GateLayoutContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
-    diagnostics: List[Dict[str, Any]]
+GateLayoutContext = ModelIRPassContext
 
 
 def build_gate_layout_invocations(

@@ -9537,3 +9537,20 @@ No site stores an option, callback, or other hidden policy in these types, and
 none of the owner modules imports the lowerer. This makes a single core
 ModelIR-pass context owned by `ConversionSession` a mechanical next step while
 keeping callback-bearing parent contexts separate.
+
+That boundary now uses the frozen `ModelIRPassContext` core contract.
+`ConversionSession` constructs one identity-bound instance after its
+`GraphIndex` and `LayoutState` and exposes it as `model_ir_pass_context`.
+Twenty-one historical context names remain as internal aliases, so their
+builders and runners keep the same signatures while importing one core type.
+All eighteen main-model orchestration consumers reference the Session-owned
+instance. The two primary/fallback helpers still create a fresh common context
+per target call, preventing ModelIR or LayoutState leakage across targets.
+
+Both composed constant-fold/cast parents now pass their existing common context
+directly to the child builder instead of reconstructing an identical object.
+Callback-bearing recovery contexts remain separate. Context reuse does not
+reuse pass state: every invocation builder still creates one fresh
+`ModelIRPassStateScope`, and only the owners selected within that build share
+its lazy graph index. Pass IDs, policy arguments, runtime order, diagnostics
+identity, and all caller boundaries remain unchanged.

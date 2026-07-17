@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
-from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_consecutive_reshape_cleanup,
     run_duplicate_fanout_cleanup,
@@ -26,11 +24,7 @@ SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class SingletonConsecutiveReshapeContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
-    diagnostics: List[Dict[str, Any]]
+SingletonConsecutiveReshapeContext = ModelIRPassContext
 
 
 def build_singleton_consecutive_reshape_invocations(

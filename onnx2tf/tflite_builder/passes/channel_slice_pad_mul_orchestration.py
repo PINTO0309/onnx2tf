@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
-from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
     run_channel_slice_merge_layout_cleanup,
 )
@@ -22,11 +20,7 @@ CHANNEL_SLICE_PAD_MUL_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class ChannelSlicePadMulContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
-    diagnostics: List[Dict[str, Any]]
+ChannelSlicePadMulContext = ModelIRPassContext
 
 
 def build_channel_slice_pad_mul_invocations(

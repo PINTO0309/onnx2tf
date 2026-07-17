@@ -140,18 +140,8 @@ def test_terminal_boundary_context_and_delegate_are_explicit() -> None:
         and isinstance(node.targets[0], ast.Name)
         and node.targets[0].id == "terminal_boundary_layout_context"
     )
-    assert isinstance(context_assignment.value, ast.Call)
-    assert isinstance(context_assignment.value.func, ast.Name)
-    assert context_assignment.value.func.id == "TerminalBoundaryLayoutContext"
-    assert context_assignment.value.args == []
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in context_assignment.value.keywords
-    } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
+    assert isinstance(context_assignment.value, ast.Name)
+    assert context_assignment.value.id == "shared_model_ir_pass_context"
 
 
 @pytest.mark.parametrize("use_layout_state", [False, True])

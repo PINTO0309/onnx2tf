@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import ast
-from collections import Counter
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 from importlib import import_module
 from pathlib import Path
 
+import onnx
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.core.session import ConversionSession
 from onnx2tf.tflite_builder.ir import ModelIR
 
 
@@ -71,6 +73,26 @@ SHARED_CONTEXT_TYPES = (
         "VeryLateGatherConstantNormalizationContext",
     ),
 )
+MAIN_SHARED_CONTEXT_NAMES = (
+    "absolute_final_normalization_attention_context",
+    "boundary_batchmatmul_unary_context",
+    "channel_shuffle_gather_context",
+    "channel_slice_pad_mul_context",
+    "duplicate_quantized_prelu_context",
+    "gate_layout_context",
+    "late_dequant_unary_fanout_context",
+    "late_hard_activation_layout_context",
+    "late_layout_mean_spp_gather_constant_cast_context",
+    "late_spp_concat_unary_conv_context",
+    "mean_attention_context",
+    "qkv_attention_context",
+    "singleton_reshape_context",
+    "terminal_boundary_layout_context",
+    "terminal_clamp_unary_relu_context",
+    "terminal_singleton_maxpool_reshape_context",
+    "transpose_unary_fanout_context",
+    "very_late_gather_constant_normalization_context",
+)
 
 
 def _expression_path(expression: ast.expr) -> object:
@@ -94,6 +116,7 @@ def test_orchestration_contexts_share_one_frozen_identity_contract(
     layout_state = LayoutState.from_model_ir(model_ir)
     diagnostics: list[dict] = []
 
+    assert context_type is ModelIRPassContext
     assert is_dataclass(context_type)
     assert tuple(field.name for field in fields(context_type)) == (
         "model_ir",
@@ -113,33 +136,56 @@ def test_orchestration_contexts_share_one_frozen_identity_contract(
         context.model_ir = ModelIR("replacement")
 
 
-def test_shared_context_construction_sites_have_no_hidden_policy_state() -> None:
-    context_names = {context_name for _, context_name in SHARED_CONTEXT_TYPES}
-    construction_sites: list[tuple[str, ast.Call]] = []
-    source_paths = (LOWERER_PATH, *sorted(PASSES_ROOT.glob("*orchestration.py")))
-    for path in source_paths:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id in context_names
-            ):
-                continue
-            construction_sites.append((path.name, node))
-
-    assert Counter(
-        call.func.id
-        for _, call in construction_sites
-        if isinstance(call.func, ast.Name)
-    ) == Counter(
-        {
-            **{context_name: 1 for _, context_name in SHARED_CONTEXT_TYPES},
-            "ConstantFoldCastContext": 2,
-        }
+def test_conversion_session_owns_the_main_model_ir_pass_context() -> None:
+    onnx_model = onnx.helper.make_model(
+        onnx.helper.make_graph([], "shared_context_graph", [], [])
     )
-    assert len(construction_sites) == 22
-    for _, call in construction_sites:
+    model_ir = ModelIR("shared_context_session")
+    session = ConversionSession(
+        onnx_model=onnx_model,
+        model_ir=model_ir,
+        shape_map={},
+        dtype_map={},
+        constants={},
+    )
+
+    assert session.model_ir_pass_context.model_ir is model_ir
+    assert session.model_ir_pass_context.layout_state is session.layout_state
+    assert session.model_ir_pass_context.diagnostics is session.diagnostics
+    session.diagnostics.append({"code": "identity_probe"})
+    assert session.model_ir_pass_context.diagnostics == [{"code": "identity_probe"}]
+
+
+def test_main_and_target_context_wiring_preserves_identity_boundaries() -> None:
+    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    assignments = {
+        target.id: _expression_path(statement.value)
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance((target := statement.targets[0]), ast.Name)
+    }
+    assert assignments["shared_model_ir_pass_context"] == (
+        "session.model_ir_pass_context"
+    )
+    assert {name: assignments[name] for name in MAIN_SHARED_CONTEXT_NAMES} == {
+        name: "shared_model_ir_pass_context" for name in MAIN_SHARED_CONTEXT_NAMES
+    }
+
+    target_constructions = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ModelIRPassContext"
+    ]
+    assert len(target_constructions) == 2
+    for call in target_constructions:
         assert call.args == []
         assert [keyword.arg for keyword in call.keywords] == [
             "model_ir",
@@ -150,25 +196,32 @@ def test_shared_context_construction_sites_have_no_hidden_policy_state() -> None
             str(keyword.arg): _expression_path(keyword.value)
             for keyword in call.keywords
         }
-        source = contract["model_ir"]
-        if source == "model_ir":
-            assert contract == {
-                "model_ir": "model_ir",
-                "layout_state": "session.layout_state",
-                "diagnostics": "session.diagnostics",
-            }
-        elif source == "target_model_ir":
-            assert contract == {
-                "model_ir": "target_model_ir",
-                "layout_state": "target_layout_state",
-                "diagnostics": "session.diagnostics",
-            }
-        else:
-            assert contract == {
-                "model_ir": "context.model_ir",
-                "layout_state": "context.layout_state",
-                "diagnostics": "context.diagnostics",
-            }
+        assert contract == {
+            "model_ir": "target_model_ir",
+            "layout_state": "target_layout_state",
+            "diagnostics": "session.diagnostics",
+        }
+
+
+def test_composed_constant_fold_cast_builders_reuse_the_parent_context() -> None:
+    parent_modules = (
+        "late_layout_mean_spp_gather_constant_cast_orchestration",
+        "very_late_gather_constant_normalization_orchestration",
+    )
+    for module_name in parent_modules:
+        path = PASSES_ROOT / f"{module_name}.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_constant_fold_cast_invocations"
+        ]
+        assert len(calls) == 1
+        assert len(calls[0].args) == 1
+        assert isinstance(calls[0].args[0], ast.Name)
+        assert calls[0].args[0].id == "context"
 
 
 def test_shared_context_modules_do_not_import_the_lowerer() -> None:
