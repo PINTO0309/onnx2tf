@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -100,3 +103,64 @@ def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> Non
     terminal = body[validation_index + 2]
     assert isinstance(terminal, ast.Return)
     assert ast.unparse(terminal.value) == "_finalize_model_ir(model_ir)"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="primary terminal owner results are discarded",
+)
+def test_primary_path_retains_terminal_mutation_results() -> None:
+    body = _lowerer_body()
+    convergence_index = _call_index(
+        body,
+        "_run_indexed_binary_layout_convergence",
+    )
+    coalesce_index = _call_index(
+        body,
+        "coalesce_static_high_rank_binary_operators",
+        start=convergence_index + 1,
+    )
+    realign_index = _call_index(
+        body,
+        "_realign_dynamic_boundary_shape_signature_map",
+        start=coalesce_index + 1,
+    )
+
+    expected = (
+        (
+            convergence_index,
+            "_final_binary_layout_convergence_stats",
+            "_run_indexed_binary_layout_convergence",
+            ["model_ir"],
+            {},
+        ),
+        (
+            coalesce_index,
+            "_final_high_rank_binary_stats",
+            "coalesce_static_high_rank_binary_operators",
+            ["model_ir"],
+            {"layout_state": "session.layout_state"},
+        ),
+        (
+            realign_index,
+            "_final_dynamic_boundary_signature_stats",
+            "_realign_dynamic_boundary_shape_signature_map",
+            ["model_ir"],
+            {},
+        ),
+    )
+    for index, result_name, function_name, arguments, keywords in expected:
+        statement = body[index]
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == result_name
+        call = statement.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == function_name
+        assert [ast.unparse(argument) for argument in call.args] == arguments
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == keywords

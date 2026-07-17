@@ -3283,3 +3283,35 @@ Implementation validation completed sequentially under `uv`:
 At resume, audit result capture for the primary terminal indexed convergence,
 high-rank binary coalescing, and boundary-signature realignment calls. Commit
 and push only; do not create or update a pull request.
+
+## Primary terminal mutation-result characterization checkpoint
+
+The primary terminal indexed binary-convergence owner returns its complete
+three-counter aggregate. Static high-rank binary coalescing mutates only when
+its exact rewrite counter increments and its zero path is covered as a no-op.
+Dynamic-boundary signature realignment returns the exact updated-tensor count,
+with changed, no-op, missing-metadata, wrapper-equivalence, and idempotency
+coverage. None requires caller-side reconciliation.
+
+The primary caller currently discards all three dictionaries. A strict
+expected-failure orchestration contract requires assigning them respectively
+to `_final_binary_layout_convergence_stats`,
+`_final_high_rank_binary_stats`, and
+`_final_dynamic_boundary_signature_stats`. Calls, arguments, layout-state
+handoff, order, final sort, terminal validation, and finalization remain fixed.
+
+At implementation, replace only the three expressions with assignments. Do
+not change any owner, result schema, GraphIndex use, layout sync, sort,
+validation, dependency, or TensorFlow boundary. Validate sequentially, then
+commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused terminal/convergence/high-rank/signature selection:
+  `22 passed, 11 deselected, 1 xfailed`
+- expanded broad related gate plus rank-6 structure/numeric parity:
+  `563 passed, 1 xfailed in 28.27s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet three-result capture contract;
+there are no unexpected failures.

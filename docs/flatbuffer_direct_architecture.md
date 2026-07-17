@@ -2329,6 +2329,13 @@ error-list schema and removes a stale validation-error key when the terminal
 graph is valid. Progress reporting and all mutation owners remain outside this
 diagnostic-only change.
 
+All three terminal mutation owners already return complete evidence: indexed
+binary convergence aggregates its bounded-round counters, high-rank binary
+coalescing returns an exact rewrite count, and boundary-signature realignment
+returns its update count. Characterization requires the primary caller to
+retain those dictionaries without adding reconciliation, scans, or changing
+the final sort/validation boundary.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct
