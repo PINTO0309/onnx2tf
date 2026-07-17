@@ -7,6 +7,25 @@ import onnx
 from onnx import numpy_helper
 
 
+class _ValueView:
+    """Typed tensor reference exposed through :class:`NodeView`."""
+
+    __slots__ = ("name", "onnx_name", "shape", "dtype")
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        onnx_name: str,
+        shape: Any,
+        dtype: Optional[str],
+    ) -> None:
+        self.name = name
+        self.onnx_name = onnx_name
+        self.shape = shape
+        self.dtype = dtype
+
+
 class NodeView:
     """Minimal stable view of an ONNX NodeProto used by op-family builders."""
 
@@ -45,28 +64,20 @@ class NodeView:
         shapes = shape_map if isinstance(shape_map, dict) else {}
         dtypes = dtype_map if isinstance(dtype_map, dict) else {}
         self.inputs = [
-            type(
-                "In",
-                (),
-                {
-                    "name": remap.get(name, name) if name else "",
-                    "onnx_name": name if name else "",
-                    "shape": shapes.get(name),
-                    "dtype": dtypes.get(name),
-                },
+            _ValueView(
+                name=remap.get(name, name) if name else "",
+                onnx_name=name if name else "",
+                shape=shapes.get(name),
+                dtype=dtypes.get(name),
             )
             for name in node.input
         ]
         self.outputs = [
-            type(
-                "Out",
-                (),
-                {
-                    "name": name,
-                    "onnx_name": name,
-                    "shape": shapes.get(name),
-                    "dtype": dtypes.get(name),
-                },
+            _ValueView(
+                name=name,
+                onnx_name=name,
+                shape=shapes.get(name),
+                dtype=dtypes.get(name),
             )
             for name in node.output
             if name
