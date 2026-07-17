@@ -33,6 +33,9 @@ from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchest
 from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
     SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
+    SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -47,6 +50,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
     *TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
     *SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
+    *SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -1683,26 +1687,31 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert helper_calls[0].args[0].id == "sinet_preadd_resize_recovery_context"
     assert helper_calls[0].keywords == []
 
-    terminal_helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_sinet_terminal_layout_recovery_sequence"
-    )
-    nested_index = next(
-        index
-        for index, statement in enumerate(terminal_helper.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
-    )
-    assert terminal_helper.body[nested_index - 1].value.func.id == (
+    nested_index = SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS.index(helper_name)
+    assert SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS[nested_index - 1] == (
         "_optimize_sinet_shuffle_residual_transpose_chains"
     )
-    assert terminal_helper.body[nested_index + 1].value.func.id == (
+    assert SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS[nested_index + 1] == (
         "_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains"
     )
+    terminal_context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "sinet_terminal_layout_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(terminal_context_assignment.value, ast.Call)
+    callback_keyword = next(
+        keyword
+        for keyword in terminal_context_assignment.value.keywords
+        if keyword.arg == "preadd_resize_recovery"
+    )
+    assert isinstance(callback_keyword.value, ast.Name)
+    assert callback_keyword.value.id == helper_name
 
     invocation_indexes = [
         index
@@ -1745,7 +1754,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(all_invocations) == 4
+    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 4
 
 
 def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
@@ -1776,7 +1785,14 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert tuple(expected_order) == SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_sinet_terminal_layout_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "sinet_terminal_layout_recovery_context"
+    assert helper_calls[0].keywords == []
 
     invocation_indexes = [
         index
@@ -1871,7 +1887,7 @@ def test_terminal_affine_prelu_owner_has_one_lowerer_adapter() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
 
 
 def test_mean_affine_prepost_owner_has_one_lowerer_adapter() -> None:
@@ -5929,14 +5945,15 @@ def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> 
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert layout_keyword.value.attr == "layout_state"
 
     postmul_wrapper_name = (
         "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"

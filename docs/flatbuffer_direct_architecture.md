@@ -9070,3 +9070,13 @@ outer boundaries. The eventual phase needs a frozen ModelIR/layout context,
 direct imports for the outer owners, and one explicit callback to retain the
 historical nested helper boundary. The focused plus architecture suite passed
 252 tests, and all 11 TensorFlow-import-blocked tests passed.
+
+That sequence now uses `SINetTerminalLayoutRecoveryContext` and three stable
+IDs in `passes/sinet_terminal_layout_recovery_orchestration.py`. The two outer
+owners are direct imports, while the historical pre-add/resize helper is an
+explicit zero-argument callback. The old helper is a four-line delegate and
+both top-level boundaries remain unchanged. Stable-ID multiplicity retains the
+nested pre-add/resize execution alongside its three direct calls. Focused,
+outer-owner, architecture, core, and TensorFlow-import-blocked suites pass.
+The next candidate is the terminal clamp/unary/ReLU cluster; characterize its
+shared pass-state scope and every outer boundary before extraction.

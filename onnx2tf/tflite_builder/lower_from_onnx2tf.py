@@ -205,6 +205,10 @@ from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration im
     SINetPreaddResizeRecoveryContext,
     run_sinet_preadd_resize_recovery,
 )
+from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
+    SINetTerminalLayoutRecoveryContext,
+    run_sinet_terminal_layout_recovery,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4779,13 +4783,16 @@ def lower_onnx_to_ir(
             sinet_preadd_resize_recovery_context
         )
 
+    sinet_terminal_layout_recovery_context = SINetTerminalLayoutRecoveryContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        preadd_resize_recovery=_run_sinet_preadd_resize_recovery_sequence,
+    )
+
     def _run_sinet_terminal_layout_recovery_sequence() -> None:
-        _optimize_sinet_shuffle_residual_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        run_sinet_terminal_layout_recovery(
+            sinet_terminal_layout_recovery_context
         )
-        _run_sinet_preadd_resize_recovery_sequence()
-        _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains(model_ir)
 
     _set_post_progress_desc("outputs")
 

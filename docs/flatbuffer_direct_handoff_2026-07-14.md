@@ -13561,3 +13561,50 @@ nested pre-add/resize helper call, and both neighboring boundary pairs. Prove
 builder argument equality and instrumented order before switching the helper
 to a delegate, validate sequentially, commit and push, and do not create a pull
 request.
+
+## Explicit SINet terminal-layout recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/sinet_terminal_layout_recovery_orchestration.py`. A frozen
+`SINetTerminalLayoutRecoveryContext` contains ModelIR, layout state, and one
+explicit zero-argument pre-add/resize recovery callback. The shuffle-residual
+and terminal affine/PReLU owners are imported directly; the module does not
+import the central lowerer.
+
+`SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS` declares the exact three-step order.
+Immutable invocations preserve the first ModelIR/layout contract, the middle
+zero-argument callback, and the final ModelIR-only contract. The shared
+executor validates all IDs before running an owner. The historical terminal
+helper is now a four-line delegate, while both zero-argument top-level calls
+and their two distinct predecessor/follower pairs remain unchanged.
+
+The pre-add/resize helper remains the identical callback object stored in the
+new context. Its three direct top-level calls plus the stable nested callback
+retain the former total of four executions. Architecture accounting likewise
+combines stable phase occurrences with remaining direct calls for the two
+outer module owners.
+
+Sequential validation completed as follows:
+
+- both adjacent SINet orchestration fixtures: `14 passed in 0.70s`;
+- ordered architecture: `248 passed in 17.77s`;
+- both orchestration fixtures, both outer owner suites, and ordered
+  architecture: `470 passed in 17.38s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.01s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize
+`_run_terminal_clamp_unary_relu_pass_cluster` before changing production code.
+Freeze its three cleanup calls, shared per-invocation `ModelIRPassStateScope`,
+ModelIR/layout/diagnostics routing, repetition count, and outer boundaries.
+Preserve the existing scope-efficiency invariant, validate sequentially,
+commit and push, and do not create a pull request.

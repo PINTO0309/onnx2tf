@@ -2043,3 +2043,14 @@ plus architecture suite passed 252 tests, all 11 TensorFlow-import-blocked
 tests passed, and targeted static checks passed. Runtime behavior and all
 public/dependency contracts remain unchanged. PR #952 remains closed, and no
 pull request was created, reopened, or updated.
+
+That sequence is now implemented in
+`passes/sinet_terminal_layout_recovery_orchestration.py` with a frozen
+ModelIR/layout context, one explicit pre-add/resize callback, three stable IDs,
+and direct imports of both outer owners. The historical helper remains a four-
+line delegate, its two top-level boundaries are unchanged, and the identical
+nested callback preserves the former four total pre-add/resize executions.
+The 470-test related orchestration/owner/architecture set, 32 core smoke tests,
+and all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
+dependency, runtime order, or TensorFlow boundary changed. PR #952 remains
+closed, and no pull request was created, reopened, or updated.

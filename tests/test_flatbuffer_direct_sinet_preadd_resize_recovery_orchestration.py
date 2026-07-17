@@ -17,6 +17,9 @@ from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration im
     build_sinet_preadd_resize_recovery_invocations,
     run_sinet_preadd_resize_recovery,
 )
+from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
+    SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -166,28 +169,36 @@ def test_sinet_preadd_resize_recovery_invocations_remain_zero_argument() -> None
         and node.func.id == SINET_PREADD_RESIZE
     ]
 
-    assert len(invocations) == 4
+    assert len(invocations) == 3
     assert all(call.args == [] for call in invocations)
     assert all(call.keywords == [] for call in invocations)
+
+    terminal_context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "sinet_terminal_layout_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(terminal_context_assignment.value, ast.Call)
+    callback_keyword = next(
+        keyword
+        for keyword in terminal_context_assignment.value.keywords
+        if keyword.arg == "preadd_resize_recovery"
+    )
+    assert isinstance(callback_keyword.value, ast.Name)
+    assert callback_keyword.value.id == SINET_PREADD_RESIZE
 
 
 def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    terminal_helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef) and node.name == SINET_TERMINAL
-    )
-    terminal_calls = [
-        statement.value
-        for statement in terminal_helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    terminal_names = [call.func.id for call in terminal_calls]
-    nested_index = terminal_names.index(SINET_PREADD_RESIZE)
-    assert terminal_names[nested_index - 1 : nested_index + 2] == [
+    nested_index = SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS.index(SINET_PREADD_RESIZE)
+    assert list(
+        SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS[nested_index - 1 : nested_index + 2]
+    ) == [
         "_optimize_sinet_shuffle_residual_transpose_chains",
         SINET_PREADD_RESIZE,
         "_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains",
