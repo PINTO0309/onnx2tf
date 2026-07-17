@@ -2005,3 +2005,15 @@ the terminal slice/concat phase. The 806-test related family, 32 core smoke
 tests, and all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
 dependency, runtime order, or TensorFlow boundary changed, and no pull request
 was created, reopened, or updated.
+
+The neighboring six-step SINet pre-add/resize recovery sequence is now
+characterized without production changes. Four focused tests freeze its exact
+order, the two ModelIR-only and four ModelIR/layout argument contracts, all
+three top-level invocations, the nested terminal-layout invocation, and every
+surrounding boundary. All six targets already have direct module owners; no
+callback, diagnostics, option, or local pass-state scope is required. The
+focused plus architecture suite passed 252 tests, all 11 TensorFlow-import-
+blocked tests passed, and targeted static checks passed. Runtime behavior,
+public contracts, dependency boundaries, corpus policy, and operation tiers
+remain unchanged. PR #952 remains closed, and no pull request was created,
+reopened, or updated.

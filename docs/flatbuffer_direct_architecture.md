@@ -9036,3 +9036,15 @@ multiplicity handles owners shared with the preceding terminal slice/concat
 phase without losing execution-count guarantees. Focused, adjacent-owner,
 core, and TensorFlow-import-blocked suites pass. Characterize the neighboring
 SINet pre-add/resize sequence before the next extraction.
+
+The neighboring SINet pre-add/resize sequence is now characterized without
+production changes. It is a 20-line parameterless straight-line closure with
+six ordered calls: two ModelIR-only calls followed by four ModelIR/layout
+calls. All targets already have extracted owners, so the eventual context does
+not need callbacks, diagnostics, or conversion options. Focused contracts
+freeze every argument and all four zero-argument invocations, including the
+one nested terminal-layout boundary and its three top-level repetitions. The
+focused plus architecture suite passed 252 tests, and all 11 TensorFlow-import-
+blocked tests passed. The next change should introduce a frozen ModelIR/layout
+context and six stable IDs, then prove builder equality and instrumented order
+before switching the historical helper to a delegate.

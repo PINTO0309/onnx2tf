@@ -13424,3 +13424,44 @@ At restart, inventory and characterize the adjacent
 Freeze its exact call/argument list, lowerer-local dependencies, captures,
 repetition, and outer boundaries before defining another phase context.
 Validate sequentially, commit and push, and do not create a pull request.
+
+## SINet pre-add/resize recovery orchestration characterization: completed state
+
+The 20-line `_run_sinet_preadd_resize_recovery_sequence` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session, has no control flow or local pass-state scope, and contains six
+ordered calls. The first two calls are ModelIR-only and the final four route
+the session layout state explicitly. Every target already has an extracted
+module owner; no lowerer-local callback, diagnostics, or conversion option is
+required.
+
+The focused
+`test_flatbuffer_direct_sinet_preadd_resize_recovery_orchestration.py` freezes
+all six positional/keyword argument contracts and their exact order. It also
+proves all four zero-argument invocations remain present: three top-level
+pipeline boundaries and one nested boundary inside
+`_run_sinet_terminal_layout_recovery_sequence`. The nested predecessor and
+follower and all three distinct top-level predecessor/follower pairs are
+recorded explicitly.
+
+Validation completed sequentially as follows:
+
+- focused SINet pre-add/resize characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.74s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.86s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout context, six stable IDs, and
+direct imports of every existing owner. Preserve the historical helper, all
+three top-level invocations, the one nested invocation, and every neighboring
+boundary. Prove builder argument equality and instrumented order before
+switching the helper to a delegate, validate sequentially, commit and push,
+and do not create a pull request.
