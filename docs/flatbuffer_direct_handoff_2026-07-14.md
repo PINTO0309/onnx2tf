@@ -13608,3 +13608,47 @@ Freeze its three cleanup calls, shared per-invocation `ModelIRPassStateScope`,
 ModelIR/layout/diagnostics routing, repetition count, and outer boundaries.
 Preserve the existing scope-efficiency invariant, validate sequentially,
 commit and push, and do not create a pull request.
+
+## Terminal clamp/unary/ReLU orchestration characterization: completed state
+
+The 26-line `_run_terminal_clamp_unary_relu_pass_cluster` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session, has no control flow, and is invoked exactly once. It creates one
+`ModelIRPassStateScope` from ModelIR and layout state, then routes that same
+scope, ModelIR, layout state, and diagnostics through three ordered cleanup
+runners: clamp canonicalization, transpose-unary passthrough, and maximum-zero
+ReLU canonicalization.
+
+The focused
+`test_flatbuffer_direct_terminal_clamp_unary_relu_orchestration.py` freezes the
+single scope-construction contract, the complete three-runner argument order,
+the shared `state_scope` identity by name, the zero-argument outer invocation,
+and its location after the layout-gated singleton-reshape boundary and before
+the SINet terminal-layout boundary. The existing runtime efficiency fixture
+continues to prove that these runners build the graph index once and reuse it
+for both later calls.
+
+Validation completed sequentially as follows:
+
+- focused terminal clamp/unary/ReLU characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.48s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 9.86s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and three
+stable IDs with direct imports from `graph_cleanup` and `layout_transpose`.
+Construct exactly one fresh `ModelIRPassStateScope` for each phase invocation
+and attach that same object to all three immutable invocations. Preserve the
+historical zero-argument helper and its sole outer boundary, prove builder
+arguments, scope identity, and instrumented order before switching it to a
+delegate, validate sequentially, commit and push, and do not create a pull
+request.

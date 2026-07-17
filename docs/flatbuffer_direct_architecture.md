@@ -9080,3 +9080,13 @@ nested pre-add/resize execution alongside its three direct calls. Focused,
 outer-owner, architecture, core, and TensorFlow-import-blocked suites pass.
 The next candidate is the terminal clamp/unary/ReLU cluster; characterize its
 shared pass-state scope and every outer boundary before extraction.
+
+That terminal clamp/unary/ReLU cluster is now characterized without production
+changes. It contains three ordered cleanup runners and constructs exactly one
+`ModelIRPassStateScope`, shared by all three along with the same ModelIR,
+layout, and diagnostics values. It has one zero-argument outer invocation
+between the layout-gated singleton-reshape and SINet terminal-layout
+boundaries. Focused contracts freeze every argument and boundary, while the
+existing pass-efficiency fixture proves one graph-index build at runtime. The
+eventual phase needs a frozen ModelIR/layout/diagnostics context, three stable
+IDs, and a fresh shared scope per phase invocation.
