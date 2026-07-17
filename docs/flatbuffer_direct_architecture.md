@@ -2335,6 +2335,11 @@ coalescing returns an exact rewrite count, and boundary-signature realignment
 returns its update count. The primary caller retains those dictionaries without
 adding reconciliation, scans, or changing the final sort/validation boundary.
 
+The earlier final high-rank BatchMatMul owner is the same counter-complete
+implementation used by the safety fallback. Characterization requires the
+primary guard to retain the same stable, opt-in complete static-shape result
+without changing its sort or the following channel-first Pad repair boundary.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

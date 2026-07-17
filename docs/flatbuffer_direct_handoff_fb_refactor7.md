@@ -3341,3 +3341,33 @@ At resume, continue the primary final-pass reconciliation inventory with
 `final_high_rank_bmm_stats`. Confirm counter/cleanup completeness before
 retaining its guarded reconciliation result. Commit and push only; do not
 create or update a pull request.
+
+## Primary final high-rank BatchMatMul characterization checkpoint
+
+`final_high_rank_bmm_stats` uses the same static high-rank BatchMatMul owner
+already characterized in the recursive fallback. Its exact positive counter
+contains every reshape/prune/layout-sync mutation, while zero is a true no-op.
+Existing rank-6 structure and numeric-parity tests cover the positive path.
+
+A strict expected-failure primary-path contract requires a stable
+`_final_high_rank_bmm_static_shape_stats` zero dictionary and assigns the
+opt-in complete reconciliation result under the unchanged positive guard. The
+guarded topological sort and immediately following `final_pad_layout_stats`
+owner remain fixed.
+
+At implementation, add only result plumbing. Do not change compression
+eligibility, graph-index mutation, pruning, layout sync, owner schema, guard,
+sort, Pad boundary, dependencies, or TensorFlow behavior. Validate
+sequentially, then commit and push only; do not create or update a pull
+request.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal orchestration plus rank-6 structure/numeric parity:
+  `4 passed, 1 xfailed`
+- expanded broad related gate plus rank-6 structure/numeric parity:
+  `564 passed, 1 xfailed in 28.33s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final high-rank reconciliation
+contract; there are no unexpected failures.
