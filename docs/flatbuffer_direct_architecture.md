@@ -9448,3 +9448,15 @@ holds the helper itself as an argument-free callback. Multiplicity-aware
 accounting replaces eight direct owner calls with eight stable IDs while
 preserving 120 effective ordered calls. The explicit full-policy efficiency
 fixture retains one graph-index build.
+
+The channel-shuffle/gather cluster is now characterized without production
+changes. Its three keyword-only switches default to two-way shuffle enabled,
+NHWC shuffle enabled, and post-gather cleanup disabled. Two owners form the
+unconditional NCHW-shuffle/gather base; two optional shuffle owners precede it,
+and the optional post group appends layout-transpose plus unary and binary-
+fanout cleanup. The layout-recovery context stores the helper as an argument-
+free callback and therefore selects the four-owner default. One direct caller
+selects the seven-owner full-plus-post policy, while the late direct caller
+disables both leading shuffles and selects only the two-owner base. Focused
+contracts freeze the exact guards, all owner contracts/order, caller keywords,
+callback identity, and both direct caller boundaries.

@@ -2503,3 +2503,14 @@ smoke tests, and all 11 TensorFlow-import-blocked tests pass. No public API,
 artifact, dependency, policy, runtime-order, callback, boundary, scope-sharing,
 or TensorFlow-isolation contract changed. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+The three-switch channel-shuffle/gather cluster is now characterized without
+production changes. Five focused tests freeze its keyword-only `True`, `True`,
+`False` defaults; one shared main-model scope; exact optional leading and post
+guards; seven-owner union; two-owner unconditional base; argument-free layout-
+recovery callback; seven-owner direct full-plus-post policy; two-owner late
+base policy; caller keywords; multiplicity; and all four direct boundaries.
+The 259-test focused/layout-recovery/architecture set, 30 pass-efficiency
+tests, and all 11 TensorFlow-import-blocked tests pass. Runtime behavior and all
+public/dependency contracts remain unchanged. PR #952 remains closed, and no
+pull request was created, reopened, or updated.

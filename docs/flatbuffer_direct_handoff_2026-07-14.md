@@ -15333,3 +15333,56 @@ callback-driven compositions invoke it, and preserve all full/reduced policy
 combinations. Continue with separate characterization and implementation
 checkpoints, sequential tests, minimal real-model conversion, commit and push
 only, and do not create or reopen a pull request.
+
+## Channel-shuffle/gather orchestration characterization: completed state
+
+The 55-line `_run_channel_shuffle_gather_layout_pass_cluster` remains unchanged
+in production. It has three keyword-only switches with defaults
+`include_two_way_shuffle=True`, `include_nhwc_shuffle=True`, and
+`include_post_gather_cleanup=False`. One main-model/session-layout
+`ModelIRPassStateScope` is shared by every selected owner.
+
+Its exact union order is two-way channel shuffle, NHWC channel shuffle, NCHW
+channel shuffle, transpose/GATHER-axis cleanup, layout-transpose cleanup,
+transpose/unary-fanout cleanup, and transpose/unary/binary-fanout cleanup. The
+first two owners have separate one-owner guards, the NCHW-shuffle/gather pair
+is unconditional, and one exact post-gather guard owns the final three calls.
+All owners receive the same ModelIR, layout state, session diagnostics, and
+scope.
+
+Three caller forms are active. `LayoutRecoveryContext` stores the helper, and
+the final layout-recovery invocation calls it without arguments or keywords,
+selecting the default four-owner sequence. One direct caller inside the layout-
+optimization block passes only `include_post_gather_cleanup=True`, selecting
+all seven owners between slice/logistic/CONCAT tail cleanup and pre-add/mean-
+attention recovery. The late direct caller passes both leading-shuffle switches
+as `False`, leaves post cleanup at its default, and selects only the NCHW-
+shuffle/gather pair between reshape/transpose collapse and attention-QKV
+reshape cleanup.
+
+Sequential characterization validation completed as follows:
+
+- focused helper policy/caller/callback contracts: `5 passed in 0.65s`;
+- focused channel-shuffle/gather, layout-recovery, and ordered architecture:
+  `259 passed in 20.82s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 12.09s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation-count tiers, all three policy forms, callback
+wiring, caller multiplicity, boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and
+stable base, default, post, and seven-owner union ID sequences in
+`channel_shuffle_gather_orchestration.py`. Construct each selected owner once
+under one fresh scope, preserve the helper's three keyword-only defaults as a
+delegate, retain both direct caller forms and its argument-free layout-recovery
+callback identity, and move the full-policy efficiency fixture to the explicit
+runner. Replace seven direct owner calls with seven stable IDs without changing
+the 120 effective-call total. Validate sequentially, commit and push only, and
+do not create or reopen a pull request.
