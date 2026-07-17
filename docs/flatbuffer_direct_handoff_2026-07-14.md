@@ -14027,3 +14027,49 @@ argument call, both outer neighbors, and runtime efficiency. Prove builder
 arguments, fresh/shared scope identity, and instrumented order before switching
 to a delegate; validate sequentially, commit and push, and do not create a pull
 request.
+
+## Explicit late SPP/concat-unary-conv orchestration: completed state
+
+The characterized pair now delegates to
+`passes/late_spp_concat_unary_conv_orchestration.py`. A frozen
+`LateSPPConcatUnaryConvContext` contains only ModelIR, layout state, and
+diagnostics. The SPP and concat/unary/conv cleanup owners are imported directly
+from their existing pass modules; the phase module does not import the central
+lowerer.
+
+`LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS` declares the exact two-step order. Every
+builder call constructs one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope, ModelIR, layout, and
+diagnostics values to both immutable invocations. The shared executor validates
+both IDs before running an owner.
+
+The historical helper is now a four-line zero-argument delegate at the same
+sole terminal boundary between strided-slice/pad/concat bridge recovery and
+shape-extract layout recovery. Architecture accounting combines both stable
+IDs with all remaining direct owner calls. The runtime efficiency fixture now
+executes the explicit phase runner and still proves one graph-index build with
+reuse by the second cleanup.
+
+Sequential validation completed as follows:
+
+- focused late SPP/concat-unary-conv orchestration: `7 passed in 0.61s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 19.72s`;
+- pass-efficiency: `30 passed in 0.55s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.06s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize another small still-central shared-
+scope cluster before changing production. The 17-line boundary-batchmatmul/
+input-unary pair is a likely candidate, but first freeze all of its actual
+callback and outer phase boundaries. Validate sequentially, keep real-model
+conversion minimal, commit and push only, and do not create a pull request.

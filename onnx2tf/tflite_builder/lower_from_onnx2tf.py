@@ -225,6 +225,10 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
     TransposeUnaryFanoutContext,
     run_transpose_unary_fanout,
 )
+from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
+    LateSPPConcatUnaryConvContext,
+    run_late_spp_concat_unary_conv,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4396,21 +4400,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_late_spp_concat_unary_conv_pass_pair() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_concat_unary_conv_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_late_spp_concat_unary_conv(
+            late_spp_concat_unary_conv_context
         )
 
     def _run_late_hard_activation_layout_pass_pair(
@@ -4661,6 +4652,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     transpose_unary_fanout_context = TransposeUnaryFanoutContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    late_spp_concat_unary_conv_context = LateSPPConcatUnaryConvContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

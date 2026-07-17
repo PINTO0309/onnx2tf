@@ -9167,3 +9167,11 @@ flow. Focused contracts freeze all ModelIR/layout/diagnostics/scope arguments
 and both outer boundaries. The eventual phase should use one frozen ModelIR/
 layout/diagnostics context, two direct owner imports, two stable IDs, and a
 fresh shared scope per build.
+
+That pair now uses `LateSPPConcatUnaryConvContext` and two stable IDs in
+`passes/late_spp_concat_unary_conv_orchestration.py`. Both owners are direct
+imports, and every builder creates one fresh scope shared by the two immutable
+invocations. The historical helper is a zero-argument delegate at the same
+terminal boundary. The efficiency fixture now exercises the explicit runner
+and retains one graph-index build. Focused, architecture, pass-efficiency,
+core, and TensorFlow-import-blocked suites pass.

@@ -61,6 +61,10 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
     TransposeUnaryFanoutContext,
     run_transpose_unary_fanout,
 )
+from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
+    LateSPPConcatUnaryConvContext,
+    run_late_spp_concat_unary_conv,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1091,17 +1095,12 @@ def test_late_spp_concat_unary_conv_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_spp_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_concat_unary_conv_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_late_spp_concat_unary_conv(
+        LateSPPConcatUnaryConvContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1

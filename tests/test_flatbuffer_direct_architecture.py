@@ -48,6 +48,9 @@ from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration impor
 from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
     TRANSPOSE_UNARY_FANOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
+    LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -67,6 +70,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
     *LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
     *TRANSPOSE_UNARY_FANOUT_PASS_IDS,
+    *LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -5193,26 +5197,15 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         "run_spp_layout_cleanup",
         "run_concat_unary_conv_layout_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        and node.func.id == "run_late_spp_concat_unary_conv"
+    ]
+    assert len(helper_calls) == 1
 
     invocation_index = next(
         index
@@ -11698,7 +11691,11 @@ def test_concat_unary_conv_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_concat_unary_conv_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_concat_unary_conv_layout_cleanup")
+        == 2
+    )
 
 
 def test_spp_layout_rewrite_has_single_owner() -> None:
@@ -11925,6 +11922,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert orchestrated_runner_names == {
         "run_clamp_cleanup",
         "run_consecutive_reshape_cleanup",
+        "run_concat_unary_conv_layout_cleanup",
         "run_dequant_concat_quantize_layout_cleanup",
         "run_hard_activation_passthrough_cleanup",
         "run_layout_transpose_cleanup",
