@@ -10372,3 +10372,12 @@ clamped `pruned_unused_tensors`. The lowerer stages
 `very_late_normalization_results`, and `_very_late_normalization_stats` around
 the cluster. The summary remains observation-only and shares the existing pass
 state; no owner is invoked twice.
+
+The immediately following dynamic-Reshape resolver has one fixed
+`resolved_dynamic_reshape_shapes` counter. It mutates only RESHAPE options,
+shape-tensor metadata/data, and output metadata, increments the counter for
+each changed operator, and performs no pruning or topology removal. Of two
+direct lowerer calls, strict characterization selects only the very-late call
+with `prefer_runtime_inferable_from_onnx_raw=True` for a future
+`_very_late_dynamic_reshape_stats` assignment. The earlier core-cleanup call
+remains unchanged, as do the two already consumed convergence-helper calls.

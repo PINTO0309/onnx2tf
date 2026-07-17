@@ -2111,3 +2111,29 @@ prefer_runtime_inferable_from_onnx_raw=True)` owner. Confirm its fixed result
 schema, occurrence count, and cleanup behavior before selecting this very-late
 call for an independent observation point. Commit and push only; do not create
 or update a pull request.
+
+## Very-late dynamic-Reshape characterization checkpoint
+
+The dynamic-Reshape resolver has four lowerer occurrences. Two are already
+captured inside indexed convergence helpers. Two are direct top-level calls:
+an earlier core-cleanup expression and the distinct very-late call with
+`prefer_runtime_inferable_from_onnx_raw=True` immediately after
+`_very_late_normalization_stats`.
+
+The owner returns one fixed `resolved_dynamic_reshape_shapes` counter. Source
+and behavior coverage confirm that it updates RESHAPE options, the optional
+shape tensor, and output shape metadata, counts each changed operator, and does
+not prune tensors or remove operators. Its raw result is therefore complete
+mutation evidence.
+
+Strict expected-failure coverage requires only the very-late direct call to
+assign `_very_late_dynamic_reshape_stats`, preserves the earlier direct
+expression, and freezes the following indexed Conv-input adapter boundary.
+Focused very-late and dynamic-Reshape coverage is `28 passed, 1 xfailed`.
+
+At implementation, replace only that selected expression and update the
+very-late and architecture boundary contracts. Do not add a tensor-count
+proxy, summary adapter, or reconciliation consumer. Validate dynamic-Reshape,
+very-late normalization, indexed convergence, core, pass-efficiency,
+architecture, and TensorFlow import blocking sequentially. Commit and push
+only; do not create or update a pull request.

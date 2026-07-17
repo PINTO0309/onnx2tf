@@ -388,6 +388,72 @@ def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late dynamic-Reshape result is discarded",
+)
+def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_resolve_dynamic_reshape_shapes"
+            and any(
+                keyword.arg == "prefer_runtime_inferable_from_onnx_raw"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in node.keywords
+            )
+            for node in ast.walk(statement)
+        )
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_very_late_dynamic_reshape_stats"
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == "_resolve_dynamic_reshape_shapes"
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    prefer_runtime = invocation.value.keywords[0]
+    assert prefer_runtime.arg == "prefer_runtime_inferable_from_onnx_raw"
+    assert isinstance(prefer_runtime.value, ast.Constant)
+    assert prefer_runtime.value.value is True
+
+    previous = lowerer.body[invocation_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_very_late_normalization_stats"
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == "_run_indexed_conv_input_adapter_repairs"
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_resolve_dynamic_reshape_shapes"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 2
+    assert isinstance(direct_statements[0], ast.Expr)
+    assert direct_statements[1] is invocation
+
+
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = [
