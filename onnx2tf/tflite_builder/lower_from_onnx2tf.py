@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import onnx
@@ -3855,7 +3855,10 @@ def lower_onnx_to_ir(
 
     # Inputs
     initializer_names = {ini.name for ini in onnx_graph.graph.initializer}
-    for graph_input in onnx_graph.graph.input:
+    for raw_graph_input in onnx_graph.graph.input:
+        # protobuf's generic repeated-field stub can expose the iterator item
+        # as ``type[In]`` to Pylance instead of the concrete message type.
+        graph_input = cast(onnx.ValueInfoProto, raw_graph_input)
         if graph_input.name in initializer_names:
             continue
         input_name = str(graph_input.name)

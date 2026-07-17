@@ -3019,3 +3019,12 @@ Implementation validation completed sequentially under `uv`:
 At resume, audit the fallback layout-validation metadata boundary before the
 high-rank BatchMatMul compression owner. Commit and push coherent units only;
 do not create or update a pull request.
+
+## ONNX graph-input type-checking checkpoint
+
+The ONNX protobuf repeated-field stub can cause Pylance to infer a graph input
+iterator item as the generic class `type[In]`, which hides the concrete
+`ValueInfoProto.name` attribute. The lowerer now narrows only that local item
+with `typing.cast(onnx.ValueInfoProto, ...)`. This is a static-analysis-only
+clarification: graph traversal, input filtering, names, shapes, and runtime
+behavior are unchanged.
