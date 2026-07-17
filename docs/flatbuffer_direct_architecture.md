@@ -9403,3 +9403,14 @@ IDs, retaining 120 effective ordered calls and two constant-fold/cast
 compositions. The full-policy efficiency fixture retains one graph-index build.
 Focused parent/child, architecture, pass-efficiency, core, and TensorFlow-
 import-blocked suites pass.
+
+The singleton/consecutive-reshape cluster is now characterized without
+production changes. It accepts positional target ModelIR/layout values,
+creates one fresh target-specific scope, and runs singleton-channel transpose,
+reshape-only duplicate-fanout, and consecutive-reshape owners in fixed order.
+Two callers use the main ModelIR/session layout; a normalization-rewrite-guarded
+fallback caller uses fallback ModelIR with no layout state. Focused contracts
+freeze all three owner contracts, `include_transpose=False`, caller forms,
+multiplicity, the fallback guard, and all six surrounding boundaries. The
+eventual phase should use a frozen target context constructed inside the
+historical helper for each call and expose three stable IDs.

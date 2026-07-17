@@ -15137,3 +15137,48 @@ fallback caller, target/layout forms, and every boundary before extraction.
 Validate sequentially, keep real-model conversion minimal, make separate
 characterization and implementation checkpoints, commit and push only, and do
 not create or reopen a pull request.
+
+## Singleton/consecutive-reshape orchestration characterization: completed state
+
+The 27-line `_run_singleton_consecutive_reshape_pass_cluster` remains
+unchanged in production. It requires positional target ModelIR/layout values,
+creates one fresh target-specific `ModelIRPassStateScope`, and runs singleton-
+channel transpose cleanup, duplicate-fanout cleanup with
+`include_transpose=False`, and consecutive-reshape cleanup in that exact order.
+All three owners receive the target ModelIR/layout, session diagnostics, and
+the same scope.
+
+There are three production calls. Two pass
+`(model_ir, session.layout_state)` and one conditional fallback call passes
+`(fallback_ir, None)`. The first main call remains after terminal InstanceNorm
+dual-stat residual-add/resize cleanup and before the optional layout-transpose
+sweep. The second remains between rank-4 singleton-broadcast repair and static
+shape reconciliation. The fallback call remains under the positive
+normalization-rewrite guard, between the equivalent fallback repair and
+reconciliation calls.
+
+Sequential characterization validation completed as follows:
+
+- focused target/caller/boundary contracts: `5 passed in 0.18s`;
+- focused contracts plus ordered architecture: `253 passed in 16.92s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.36s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, target routing, duplicate-fanout
+policy, caller multiplicity, conditional guard, boundaries, shared-scope
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed, and
+no pull request was created, reopened, or updated.
+
+At restart, introduce a frozen target ModelIR/layout/diagnostics context and
+three stable IDs in a dedicated phase module. Build one fresh target-specific
+scope, preserve fixed `include_transpose=False`, and import the owners directly
+from `singleton_reshape_layout`, `graph_cleanup`, and their owning modules
+without importing the lowerer. Construct the context inside the historical
+helper for every positional call so main and fallback state cannot leak.
+Preserve all three callers and every boundary, move the efficiency fixture to
+the explicit no-layout runner, validate sequentially, commit and push only,
+and do not create or reopen a pull request.
