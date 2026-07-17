@@ -45,6 +45,10 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
 )
+from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
+    TerminalClampUnaryReLUContext,
+    run_terminal_clamp_unary_relu,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -923,18 +927,13 @@ def test_terminal_clamp_unary_relu_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_clamp_cleanup,
-        run_transpose_unary_passthrough_cleanup,
-        run_maximum_zero_relu_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_terminal_clamp_unary_relu(
+        TerminalClampUnaryReLUContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3

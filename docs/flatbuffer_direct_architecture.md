@@ -9090,3 +9090,12 @@ boundaries. Focused contracts freeze every argument and boundary, while the
 existing pass-efficiency fixture proves one graph-index build at runtime. The
 eventual phase needs a frozen ModelIR/layout/diagnostics context, three stable
 IDs, and a fresh shared scope per phase invocation.
+
+That cluster now uses `TerminalClampUnaryReLUContext` and three stable IDs in
+`passes/terminal_clamp_unary_relu_orchestration.py`. Each invocation builder
+creates exactly one fresh scope and shares it across all three cleanup calls.
+The historical helper is a four-line delegate and its single outer boundary is
+unchanged. The efficiency fixture now drives the explicit runner and still
+observes one graph-index build. Focused, architecture, pass-efficiency, core,
+and TensorFlow-import-blocked suites pass. Characterize the neighboring
+terminal singleton-maxpool/reshape pair and its shared scope next.

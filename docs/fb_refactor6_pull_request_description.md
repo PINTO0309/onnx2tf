@@ -2065,3 +2065,15 @@ efficiency tests and all 11 TensorFlow-import-blocked tests passed, and targeted
 static checks passed. Runtime behavior and all public/dependency contracts
 remain unchanged. PR #952 remains closed, and no pull request was created,
 reopened, or updated.
+
+That cluster is now implemented in
+`passes/terminal_clamp_unary_relu_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context, three stable IDs, and direct owner imports.
+Each builder call creates one fresh `ModelIRPassStateScope` shared by all three
+immutable invocations. The historical helper remains a four-line delegate at
+its original boundary, and the efficiency fixture now exercises the explicit
+runner while preserving one graph-index build. The 285-test focused/
+architecture/efficiency set, 32 core smoke tests, and all 11 TensorFlow-import-
+blocked tests pass. No public API, artifact, dependency, runtime order, scope-
+sharing behavior, or TensorFlow boundary changed. PR #952 remains closed, and
+no pull request was created, reopened, or updated.

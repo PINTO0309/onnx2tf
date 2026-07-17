@@ -13652,3 +13652,50 @@ historical zero-argument helper and its sole outer boundary, prove builder
 arguments, scope identity, and instrumented order before switching it to a
 delegate, validate sequentially, commit and push, and do not create a pull
 request.
+
+## Explicit terminal clamp/unary/ReLU orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/terminal_clamp_unary_relu_orchestration.py`. A frozen
+`TerminalClampUnaryReLUContext` contains only ModelIR, layout state, and
+diagnostics. The three cleanup owners are imported directly from
+`graph_cleanup` and `layout_transpose`; the phase module does not import the
+central lowerer.
+
+`TERMINAL_CLAMP_UNARY_RELU_PASS_IDS` declares the exact three-step order. Each
+builder call creates one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope object, ModelIR, layout,
+and diagnostics to all three immutable invocations. The shared executor
+validates every ID before running an owner. The canonicalization-order comment
+was moved with the second invocation rather than discarded.
+
+The historical helper is now a four-line delegate, and its sole zero-argument
+top-level call remains between the same layout-gated singleton-reshape and
+SINet terminal-layout boundaries. Architecture accounting combines the three
+stable IDs with remaining direct runner calls. The runtime efficiency fixture
+now executes the explicit phase runner itself and still proves one graph-index
+build followed by two scope reuses.
+
+Sequential validation completed as follows:
+
+- focused terminal clamp/unary/ReLU orchestration: `7 passed in 0.59s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `285 passed in 19.09s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.71s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; two moved cleanup imports were removed and the central lowerer now
+  retains exactly its two pre-existing F401 findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_terminal_singleton_maxpool_reshape_pass_pair` before changing production
+code. Freeze both cleanup calls, their shared per-invocation
+`ModelIRPassStateScope`, all ModelIR/layout/diagnostics arguments, repetition,
+and outer boundaries. Validate sequentially, commit and push, and do not create
+a pull request.

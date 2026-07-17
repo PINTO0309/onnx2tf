@@ -209,6 +209,10 @@ from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration 
     SINetTerminalLayoutRecoveryContext,
     run_sinet_terminal_layout_recovery,
 )
+from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
+    TerminalClampUnaryReLUContext,
+    run_terminal_clamp_unary_relu,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -612,11 +616,9 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
     prune_dead_operators as _prune_dead_operators_pass,
-    run_clamp_cleanup,
     run_consecutive_reshape_cleanup,
     run_consecutive_mul_constants_cleanup,
     run_duplicate_fanout_cleanup,
-    run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
 )
 from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
@@ -4403,30 +4405,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_terminal_clamp_unary_relu_pass_cluster() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_clamp_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        # MAXIMUM/MINIMUM -> RELU_0_TO_1 canonicalization can expose fresh
-        # NHWC<->NCHW unary wrappers (e.g. HardSigmoid clamp). Re-run the
-        # strict transpose-unary passthrough fold once in terminal stage.
-        run_transpose_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_maximum_zero_relu_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_terminal_clamp_unary_relu(
+            terminal_clamp_unary_relu_context
         )
 
     def _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
@@ -4713,6 +4693,11 @@ def lower_onnx_to_ir(
             model_ir=model_ir,
             layout_state=session.layout_state,
         )
+    )
+    terminal_clamp_unary_relu_context = TerminalClampUnaryReLUContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     sinet_preadd_resize_recovery_context = SINetPreaddResizeRecoveryContext(
         model_ir=model_ir,

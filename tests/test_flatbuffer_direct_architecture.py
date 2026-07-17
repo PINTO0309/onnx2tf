@@ -36,6 +36,9 @@ from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration im
 from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
     SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
+    TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -51,6 +54,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
     *SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
     *SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
+    *TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -5028,26 +5032,21 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         "run_transpose_unary_passthrough_cleanup",
         "run_maximum_zero_relu_cleanup",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert tuple(expected_order) == TERMINAL_CLAMP_UNARY_RELU_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_clamp_unary_relu"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "terminal_clamp_unary_relu_context"
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -10562,7 +10561,11 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         )
         if isinstance(node, ast.Name)
     }
-    assert "run_clamp_cleanup" in lowerer_names
+    assert (
+        int("run_clamp_cleanup" in lowerer_names)
+        + _orchestrated_pass_count("run_clamp_cleanup")
+        == 1
+    )
     assert "run_consecutive_reshape_cleanup" in lowerer_names
     assert "run_squeeze_reshape_identity_cleanup" in lowerer_names
 
@@ -11899,13 +11902,16 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
 
     orchestrated_runner_names = runner_names & ORCHESTRATED_PASS_IDS
     assert orchestrated_runner_names == {
+        "run_clamp_cleanup",
         "run_hard_activation_passthrough_cleanup",
         "run_layout_transpose_cleanup",
+        "run_maximum_zero_relu_cleanup",
         "run_ndhwc_concat_layout_cleanup",
         "run_quantized_reshape_cleanup",
         "run_spp_layout_cleanup",
         "run_squeeze_reshape_identity_cleanup",
         "run_trailing_output_transpose_cleanup",
+        "run_transpose_unary_passthrough_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12104,7 +12110,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_passthrough_cleanup"
     ]
-    assert len(transpose_unary_calls) == 3
+    assert (
+        len(transpose_unary_calls)
+        + _orchestrated_pass_count("run_transpose_unary_passthrough_cleanup")
+        == 3
+    )
 
     transpose_unary_fanout_calls = [
         call
