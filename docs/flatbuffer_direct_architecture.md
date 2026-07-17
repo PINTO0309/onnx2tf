@@ -2247,6 +2247,13 @@ immediately following topological sort and logical-layout inference remain
 unconditional until the recursive return state and all prior fallback
 mutations have a stronger equivalence proof.
 
+The following fallback rank-four broadcast-constant repair has a complete
+counter and no cleanup-only path. Its reconciliation is already guarded by a
+positive rewrite and followed by topological/layout refreshes in the same
+branch. Characterization requires only a stable zero result and assigned
+opt-in complete reconciliation evidence; the guard and both refreshes remain
+unchanged.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -135,5 +136,69 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     layout_inference = body[invocation_index + 2]
     assert isinstance(layout_inference, ast.Expr)
     assert ast.unparse(layout_inference.value) == (
+        "infer_model_ir_logical_layouts(fallback_ir)"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the fallback broadcast reconciliation result is discarded",
+)
+def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
+    body = _safety_fallback_body(_lowerer())
+    owner_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_broadcast_repair_stats"
+    )
+
+    default_stats = body[owner_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert len(default_stats.targets) == 1
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_fallback_broadcast_static_shape_stats"
+    )
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(default_stats.value.keys, default_stats.value.values)
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = body[owner_index + 2]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "int(fallback_broadcast_repair_stats.get("
+        "'repaired_rank4_channelwise_broadcast_constants', 0)) > 0"
+    )
+    assert len(guard.body) == 3
+    reconciliation = guard.body[0]
+    assert isinstance(reconciliation, ast.Assign)
+    assert len(reconciliation.targets) == 1
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == (
+        "_fallback_broadcast_static_shape_stats"
+    )
+    assert isinstance(reconciliation.value, ast.Call)
+    assert isinstance(reconciliation.value.func, ast.Name)
+    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
+        "fallback_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+    assert ast.unparse(guard.body[1]) == (
+        "_topologically_sort_operators(fallback_ir)"
+    )
+    assert ast.unparse(guard.body[2]) == (
         "infer_model_ir_logical_layouts(fallback_ir)"
     )

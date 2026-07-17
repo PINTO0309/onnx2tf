@@ -2608,3 +2608,31 @@ norm and dynamic-rank-one evidence is sufficient to guard either refresh. If
 that equivalence cannot be proven locally, leave both unconditional and audit
 the following `fallback_broadcast_repair_stats` reconciliation result instead.
 Commit and push only; do not create or update a pull request.
+
+## Safety-fallback broadcast reconciliation characterization checkpoint
+
+`repair_rank4_channelwise_broadcast_constants_to_runtime_layout()` mutates
+constant data/metadata or creates and rewires a clone only when
+`repaired_rank4_channelwise_broadcast_constants` increments. It performs no
+pruning or zero-rewrite cleanup, and existing positive, no-op, shared-constant,
+and convergence fixtures cover its one-key result. The fallback guard is
+therefore a complete mutation predicate.
+
+The guarded static-shape reconciliation result is still discarded. A strict
+expected-failure AST contract requires a stable two-key zero default named
+`_fallback_broadcast_static_shape_stats` and an opt-in complete result on the
+positive path. The existing guard, topological sort, logical-layout inference,
+and following SE/FC/Gather recovery order remain unchanged.
+
+Focused safety-fallback/broadcast/convergence characterization is `17 passed,
+1 xfailed`. The broader sequential fallback-owner, reconciliation,
+convergence, core, pass-efficiency, architecture, and TensorFlow
+import-blocking gate is `450 passed, 1 xfailed in 27.02s`. Ruff and whitespace
+validation pass.
+
+At implementation, add only this reconciliation result plumbing. Do not alter
+the broadcast matcher, clone behavior, raw result schema, convergence owner,
+guard, or refresh calls. Validate binary layout, safety fallback, static
+reconciliation, convergence, core, pass efficiency, architecture, and
+TensorFlow import blocking sequentially. Commit and push only; do not create or
+update a pull request.
