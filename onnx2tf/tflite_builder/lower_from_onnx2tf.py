@@ -213,6 +213,10 @@ from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration impor
     TerminalClampUnaryReLUContext,
     run_terminal_clamp_unary_relu,
 )
+from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
+    TerminalSingletonMaxPoolReshapeContext,
+    run_terminal_singleton_maxpool_reshape,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4385,23 +4389,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_terminal_singleton_maxpool_reshape_pass_pair() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_singleton_maxpool_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        # Boundary cleanup can recreate a terminal no-op RESHAPE.
-        # Run one last pass to remove shape-preserving single reshapes.
-        run_consecutive_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_terminal_singleton_maxpool_reshape(
+            terminal_singleton_maxpool_reshape_context
         )
 
     def _run_terminal_clamp_unary_relu_pass_cluster() -> None:
@@ -4698,6 +4687,13 @@ def lower_onnx_to_ir(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+    )
+    terminal_singleton_maxpool_reshape_context = (
+        TerminalSingletonMaxPoolReshapeContext(
+            model_ir=model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     sinet_preadd_resize_recovery_context = SINetPreaddResizeRecoveryContext(
         model_ir=model_ir,

@@ -13743,3 +13743,50 @@ the historical helper, its sole zero-argument call, both layout-gated outer
 boundaries, and the canonicalization-order comment. Prove builder arguments,
 scope identity, and instrumented order before switching to a delegate,
 validate sequentially, commit and push, and do not create a pull request.
+
+## Explicit terminal singleton-maxpool/reshape orchestration: completed state
+
+The characterized pair now delegates to
+`passes/terminal_singleton_maxpool_reshape_orchestration.py`. A frozen
+`TerminalSingletonMaxPoolReshapeContext` contains only ModelIR, layout state,
+and diagnostics. The two cleanup owners are imported directly from
+`singleton_maxpool_layout` and `graph_cleanup`; the phase module does not
+import the central lowerer.
+
+`TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS` declares the exact two-step
+order. Every builder call constructs one fresh `ModelIRPassStateScope` from the
+context's ModelIR/layout pair and attaches the identical scope, ModelIR,
+layout, and diagnostics values to both immutable invocations. The shared
+executor validates both IDs before running an owner, and the boundary-cleanup
+comment moved with the second invocation.
+
+The historical helper is now a four-line delegate. Its sole zero-argument call
+remains between the same two layout-gated blocks. Architecture accounting
+combines both stable IDs with remaining direct runner calls. The runtime
+efficiency fixture now executes this explicit runner and still proves one
+graph-index build with reuse by consecutive-reshape cleanup.
+
+Sequential validation completed as follows:
+
+- focused terminal singleton-maxpool/reshape orchestration:
+  `7 passed in 0.60s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `285 passed in 18.86s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.94s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_late_dequant_unary_fanout_pass_cluster` before changing production code.
+Freeze its three cleanup calls, shared per-invocation pass-state scope,
+ModelIR/layout/diagnostics arguments, sole outer invocation, and both
+neighbors. Validate sequentially, commit and push, and do not create a pull
+request.

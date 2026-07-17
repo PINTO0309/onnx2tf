@@ -39,6 +39,9 @@ from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration 
 from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
     TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
+    TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -55,6 +58,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
     *SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
     *TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
+    *TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -4956,26 +4960,24 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
         "run_singleton_maxpool_layout_cleanup",
         "run_consecutive_reshape_cleanup",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert tuple(expected_order) == TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_singleton_maxpool_reshape"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "terminal_singleton_maxpool_reshape_context"
+    )
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -11903,6 +11905,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     orchestrated_runner_names = runner_names & ORCHESTRATED_PASS_IDS
     assert orchestrated_runner_names == {
         "run_clamp_cleanup",
+        "run_consecutive_reshape_cleanup",
         "run_hard_activation_passthrough_cleanup",
         "run_layout_transpose_cleanup",
         "run_maximum_zero_relu_cleanup",
@@ -11910,6 +11913,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_quantized_reshape_cleanup",
         "run_spp_layout_cleanup",
         "run_squeeze_reshape_identity_cleanup",
+        "run_singleton_maxpool_layout_cleanup",
         "run_trailing_output_transpose_cleanup",
         "run_transpose_unary_passthrough_cleanup",
     }
@@ -12034,7 +12038,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_maxpool_layout_cleanup"
     ]
-    assert len(singleton_maxpool_calls) == 2
+    assert (
+        len(singleton_maxpool_calls)
+        + _orchestrated_pass_count("run_singleton_maxpool_layout_cleanup")
+        == 2
+    )
 
     singleton_reshape_calls = [
         call
@@ -12050,7 +12058,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_consecutive_reshape_cleanup"
     ]
-    assert len(consecutive_reshape_calls) == 4
+    assert (
+        len(consecutive_reshape_calls)
+        + _orchestrated_pass_count("run_consecutive_reshape_cleanup")
+        == 4
+    )
 
     flatten_concat_reshape_calls = [
         call

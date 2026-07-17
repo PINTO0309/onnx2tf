@@ -9108,3 +9108,12 @@ between two layout-gated blocks. Focused contracts freeze every argument and
 boundary, while the existing efficiency fixture proves one graph-index build.
 The eventual phase needs a frozen ModelIR/layout/diagnostics context, two
 stable IDs, and one fresh shared scope per invocation.
+
+That pair now uses `TerminalSingletonMaxPoolReshapeContext` and two stable IDs
+in `passes/terminal_singleton_maxpool_reshape_orchestration.py`. Each builder
+creates exactly one fresh scope shared by both cleanup invocations. The
+historical helper is a four-line delegate and remains between the same layout-
+gated blocks. The efficiency fixture now drives the explicit runner and still
+observes one graph-index build. Focused, architecture, pass-efficiency, core,
+and TensorFlow-import-blocked suites pass. Characterize the neighboring late
+dequant/unary/fanout cluster and its shared scope next.
