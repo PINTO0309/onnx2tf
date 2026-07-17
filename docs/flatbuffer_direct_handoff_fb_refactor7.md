@@ -955,3 +955,26 @@ lowering loop, especially the demand-driven unresolved-rank reconciliation
 before shape-sensitive ops. Characterize its trigger and no-op behavior before
 extracting it. Do not fold Constant into registry dispatch as part of that unit.
 Commit and push only; do not create or update a pull request.
+
+## Demand-driven shape readiness characterization checkpoint
+
+The remaining inline special control flow in the ONNX node loop reconciles the
+partial ModelIR immediately before six shape-sensitive op types. Five
+characterization cases freeze the trigger: an unresolved nonconstant MatMul
+input reconciles once; an equally unresolved Add input, fully known MatMul
+input, explicit rank-one hint, and constant tensor do not reconcile before
+dispatch.
+
+A strict expected-failure architecture contract requires one
+TensorFlow-independent `core.shape_readiness` owner to contain the target-op
+set, unresolved-input test, and static-shape reconciliation. The central loop
+must make one typed `node`/`ctx` call and must no longer define the nested
+`_has_unresolved_rank` closure.
+
+At implementation, preserve the exact six-op set and return the existing shape
+reconciliation result, or its exact zero dictionary when no scan is requested.
+Do not broaden unresolved-rank semantics or combine this lowering-time scan with
+post-lowering phase barriers. Validate focused trigger/owner/core/architecture
+coverage, then the sequential core, pass-efficiency, architecture, and
+TensorFlow-import-blocked suites. Commit and push only; do not create or update
+a pull request.

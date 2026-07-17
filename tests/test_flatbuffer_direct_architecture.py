@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -224,6 +226,57 @@ def test_constant_lowering_has_one_typed_op_family_owner() -> None:
     assert "def lower_constant_node(" in owner_source
     assert "node: onnx.NodeProto" in owner_source
     assert "cast(onnx.AttributeProto" in owner_source
+    assert "tensorflow" not in owner_source.lower()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "demand-driven shape readiness is still expanded inline in the "
+        "central node loop"
+    ),
+)
+def test_demand_driven_shape_readiness_has_one_core_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "core"
+        / "shape_readiness.py"
+    )
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    owner_source = owner_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    owner_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "reconcile_shape_sensitive_inputs_on_demand"
+    ]
+
+    assert len(owner_calls) == 1
+    assert owner_calls[0].args == []
+    assert {keyword.arg for keyword in owner_calls[0].keywords} == {
+        "node",
+        "ctx",
+    }
+    assert not any(
+        isinstance(node, ast.FunctionDef)
+        and node.name == "_has_unresolved_rank"
+        for node in ast.walk(lowerer)
+    )
+    assert "def reconcile_shape_sensitive_inputs_on_demand(" in owner_source
+    assert "_SHAPE_SENSITIVE_OPS" in owner_source
+    assert "reconcile_static_tensor_shapes(" in owner_source
     assert "tensorflow" not in owner_source.lower()
 
 

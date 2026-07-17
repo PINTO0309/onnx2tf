@@ -71,6 +71,61 @@ def _constant_onnx_model(*, include_value: bool = True) -> onnx.ModelProto:
     )
 
 
+def _shape_readiness_probe_model(
+    *,
+    consumer_op: str,
+    unresolved_input: bool,
+    known_rank1_input: bool = False,
+) -> onnx.ModelProto:
+    lhs = helper.make_tensor_value_info("lhs", TensorProto.FLOAT, [1, 2])
+    rhs = helper.make_tensor_value_info("rhs", TensorProto.FLOAT, [2, 2])
+    output = helper.make_tensor_value_info(
+        "probe_output",
+        TensorProto.FLOAT,
+        [1, 2],
+    )
+    nodes = []
+    value_info = []
+    lhs_name = "lhs"
+    opsets = [helper.make_opsetid("", 13)]
+    if unresolved_input:
+        nodes.append(
+            helper.make_node(
+                "ProbeUnknown",
+                ["lhs"],
+                ["probe_mid"],
+                name="probe_unknown",
+                domain="shape.readiness.probe",
+            )
+        )
+        lhs_name = "probe_mid"
+        opsets.append(helper.make_opsetid("shape.readiness.probe", 1))
+        if known_rank1_input:
+            value_info.append(
+                helper.make_tensor_value_info(
+                    "probe_mid",
+                    TensorProto.FLOAT,
+                    [1],
+                )
+            )
+    nodes.append(
+        helper.make_node(
+            consumer_op,
+            [lhs_name, "rhs"],
+            ["probe_output"],
+            name="shape_sensitive_consumer",
+        )
+    )
+    graph = helper.make_graph(
+        nodes,
+        "shape_readiness_probe",
+        [lhs, rhs],
+        [output],
+        value_info=value_info,
+    )
+    return helper.make_model(graph, opset_imports=opsets)
+
+
 def _add_model_ir() -> ModelIR:
     return ModelIR(
         name="add",
@@ -145,6 +200,72 @@ def test_lowerer_rejects_constant_without_tensor_value() -> None:
             _constant_onnx_model(include_value=False),
             "constant_without_value",
         )
+
+
+@pytest.mark.parametrize(
+    (
+        "consumer_op",
+        "unresolved_input",
+        "known_rank1_input",
+        "constant_mid",
+        "expected_reconcile_count",
+    ),
+    [
+        ("MatMul", True, False, False, 1),
+        ("Add", True, False, False, 0),
+        ("MatMul", False, False, False, 0),
+        ("MatMul", True, True, False, 0),
+        ("MatMul", True, False, True, 0),
+    ],
+)
+def test_shape_sensitive_input_reconciliation_is_demand_driven(
+    monkeypatch,
+    consumer_op: str,
+    unresolved_input: bool,
+    known_rank1_input: bool,
+    constant_mid: bool,
+    expected_reconcile_count: int,
+) -> None:
+    reconcile_count = 0
+    dispatch_observations: list[tuple[str, int]] = []
+
+    def counted_reconcile(_model_ir, *args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        return {"reconciled_static_tensor_shapes": 0}
+
+    def tracking_dispatch(node, ctx):
+        dispatch_observations.append((str(node.op), int(reconcile_count)))
+        for output in node.outputs:
+            ctx.ensure_tensor(str(output.name))
+        if str(node.op) == "ProbeUnknown" and constant_mid:
+            ctx.model_ir.tensors["probe_mid"].data = np.asarray(
+                [1.0],
+                dtype=np.float32,
+            )
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+    monkeypatch.setattr(lowering_module, "dispatch_node", tracking_dispatch)
+
+    lower_onnx_to_ir(
+        _shape_readiness_probe_model(
+            consumer_op=consumer_op,
+            unresolved_input=unresolved_input,
+            known_rank1_input=known_rank1_input,
+        ),
+        "shape_readiness_probe",
+    )
+
+    consumer_observation = next(
+        observation
+        for observation in dispatch_observations
+        if observation[0] == consumer_op
+    )
+    assert consumer_observation[1] == expected_reconcile_count
 
 
 def test_conversion_request_normalizes_artifact_dependencies() -> None:

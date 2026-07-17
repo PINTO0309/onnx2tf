@@ -9975,3 +9975,18 @@ normalization, provenance, the absence of a ModelIR operator, and the exact
 missing tensor-`value` error. It deliberately does not add other ONNX Constant
 attribute encodings or change registry dispatch. Focused owner and contract
 coverage plus the core/architecture/TensorFlow-boundary gate are green.
+
+The remaining special branch in the ONNX node loop performs demand-driven
+shape reconciliation before Attention, Gather, GatherElements,
+LayerNormalization, MatMul, and MultiHeadAttention. Characterization now fixes
+its exact trigger: at least one wrapped input must still have rank zero or one,
+must not carry constant data, and must have no raw shape hint. Non-target ops,
+known rank-two-or-higher inputs, explicit rank-one hints, and constant tensors
+remain no-ops.
+
+A strict expected-failure architecture contract requires one
+TensorFlow-independent `core.shape_readiness` owner to hold the target-op set,
+unresolved-input predicate, and reconciliation call. The lowerer must call it
+once with the wrapped node and `LoweringContext`, eliminating the per-node
+nested closure while preserving the demand-driven scan boundary. Production is
+unchanged at this characterization checkpoint.
