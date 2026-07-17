@@ -203,6 +203,77 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the absolute-final InstanceNorm post-bias result is discarded",
+)
+def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    normalization_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+    )
+    invocation = lowerer.body[normalization_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_absolute_final_instancenorm_post_bias_stats"
+    )
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[normalization_index - 2]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    following = lowerer.body[normalization_index]
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 4
+    assert all(isinstance(statement, ast.Expr) for statement in direct_statements[:2])
+    assert isinstance(direct_statements[2], ast.Assign)
+    third_target = direct_statements[2].targets[0]
+    assert isinstance(third_target, ast.Name)
+    assert third_target.id == "_pre_terminal_affine_instancenorm_post_bias_stats"
+    assert direct_statements[3] is invocation
+
+
 def test_absolute_final_normalization_attention_context_and_wrapper_are_explicit() -> (
     None
 ):

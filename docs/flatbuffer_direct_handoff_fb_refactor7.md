@@ -1902,3 +1902,22 @@ absolute-final fourth InstanceNorm post-bias call after final signature
 sanitization. Characterize its distinct surrounding affine and normalization
 owners before capturing its result. Commit and push only; do not create or
 update a pull request.
+
+## Absolute-final InstanceNorm post-bias characterization checkpoint
+
+The fourth direct InstanceNorm post-transpose bias/add call is a distinct
+absolute-final occurrence after boundary-signature sanitization. Its fixed raw
+counter remains complete under the already frozen positive-only pruning
+contract.
+
+Strict expected-failure coverage requires
+`_absolute_final_instancenorm_post_bias_stats` between the absolute-final affine
+post-ADD owner and normalization/attention pair. It also freezes four direct
+occurrences, with only the third pre-terminal call already staged and the first
+two unchanged.
+
+At implementation, replace only the fourth expression and update the
+normalization/attention outer-boundary contract. Validate all post-bias owner
+tests, occurrence targets, affine post-ADD, absolute-final normalization,
+architecture, core, pass-efficiency, and TensorFlow import blocking
+sequentially. Commit and push only; do not create or update a pull request.

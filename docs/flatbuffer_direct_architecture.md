@@ -10310,3 +10310,10 @@ mutation counters plus clamped net tensor reduction, and its production guard
 reconciles on any positive field. A structural contract connects that guarded
 branch directly to the staged terminal post-bias result, so no duplicate
 summary or counter is needed between them.
+
+The same post-bias owner has a distinct absolute-final fourth direct call after
+boundary-signature sanitization and affine post-ADD cleanup. Its positive-only
+counter remains complete. Strict characterization requires that fourth call to
+assign `_absolute_final_instancenorm_post_bias_stats` immediately before the
+absolute-final normalization/attention pair, while preserving the separately
+staged third call.
