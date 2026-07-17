@@ -10421,3 +10421,9 @@ nor topology mutation. Strict characterization selects only the direct
 very-late call for a future
 `_very_late_concat_transpose_conv_axis_stats` assignment; the fallback and
 final result assignments remain unchanged.
+
+That selected call now assigns its unchanged raw result to
+`_very_late_concat_transpose_conv_axis_stats`. It remains observation-only
+between the staged channel-shuffle result and the NCHW
+Concat/global-pool/Conv-axis owner. The fallback and final result assignments
+and their reconciliation guards remain unchanged.

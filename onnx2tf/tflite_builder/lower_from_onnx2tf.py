@@ -5321,9 +5321,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
     )
-    _repair_nchw_concat_transpose_conv_axes(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_concat_transpose_conv_axis_stats = (
+        _repair_nchw_concat_transpose_conv_axes(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _repair_nchw_concat_global_pool_conv_axes(
         model_ir,

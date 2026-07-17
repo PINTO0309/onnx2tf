@@ -2279,3 +2279,25 @@ Validate indexed Concat/Transpose/Conv layout, legacy Conv layout, very-late
 orchestration, core, pass-efficiency, architecture, and TensorFlow import
 blocking sequentially. Commit and push only; do not create or update a pull
 request.
+
+## Very-late Concat/Transpose/Conv-axis implementation checkpoint
+
+Only the direct very-late occurrence now assigns its unchanged result to
+`_very_late_concat_transpose_conv_axis_stats`. The fallback and final
+assignments retain their existing targets and reconciliation decisions.
+
+The single raw counter is complete because the owner neither prunes tensors nor
+changes topology. The result remains observation-only between
+`_very_late_stale_channel_shuffle_stats` and the NCHW
+Concat/global-pool/Conv-axis repair.
+
+Focused indexed-owner, legacy Conv-layout, very-late, and architecture coverage
+is `63 passed, 254 deselected`. The expanded sequential gate, explicitly
+including the indexed Concat/Transpose/Conv suite, is `1299 passed in 30.62s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the immediately following
+`_repair_nchw_concat_global_pool_conv_axes(model_ir)` owner. Confirm its result
+schema, production occurrence count, and pruning behavior before selecting the
+very-late direct call. Commit and push only; do not create or update a pull
+request.

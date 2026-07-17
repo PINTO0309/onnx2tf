@@ -108,7 +108,7 @@ new full model-corpus run for this final observation-only unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should inspect the NCHW Concat/Transpose/Conv-axis repair immediately after
-the newly staged channel-shuffle result. Any new mutation evidence must preserve
-the current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should inspect the NCHW Concat/global-pool/Conv-axis repair immediately
+after the newly staged Concat/Transpose/Conv result. Any new mutation evidence
+must preserve the current pass order, TensorFlow-free boundary, dependency set,
+and sequential validation policy.
