@@ -10055,3 +10055,14 @@ the derived summary in `_late_layout_cluster_stats` before the existing
 Expand/Squeeze call. The leading underscore marks this as staged evidence until
 the rest of the terminal phase has complete accounting. No phase guard or
 reconciliation behavior changes in this checkpoint.
+
+The adjacent terminal Expand/Squeeze-to-Reshape owner is the next evidence
+boundary. It already returns `replaced_expand_dims_and_squeeze_with_reshape`
+and `expand_dims_squeeze_rewrite_shape_tensors`, and it prunes only after a
+positive rewrite. Its result is currently discarded immediately before the
+same unconditional phase reconciliation.
+
+A strict expected-failure structural contract requires that call to be assigned
+to staged `_terminal_expand_squeeze_stats` while preserving its LayoutState and
+the immediate reconciliation statement. This checkpoint does not use either
+terminal evidence dictionary as a guard. Production remains unchanged.

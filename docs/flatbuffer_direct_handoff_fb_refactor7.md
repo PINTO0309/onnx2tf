@@ -1099,3 +1099,21 @@ same terminal interval. Do not use `_late_layout_cluster_stats` to guard the
 phase reconciliation until every preceding owner since the prior mandatory
 shape barrier is accounted for. Commit and push only; do not create or update a
 pull request.
+
+## Terminal Expand/Squeeze result capture characterization checkpoint
+
+Immediately after the staged late-layout summary, the terminal
+Expand/Squeeze-to-Reshape owner returns two complete mutation counters but its
+result is discarded. The owner prunes only after a positive rewrite, so those
+counters completely describe whether it changed ModelIR.
+
+A strict expected-failure structure test requires the production call to assign
+`_terminal_expand_squeeze_stats`, preserve Session LayoutState forwarding, and
+leave the following unconditional static reconciliation immediately in place.
+No phase barrier is guarded in this checkpoint.
+
+At implementation, change only the expression to a staged underscored
+assignment and update the two surrounding boundary contracts. Validate the
+complete Expand/Squeeze owner suite, late-layout orchestration, core,
+architecture, pass efficiency, and TensorFlow import blocking sequentially.
+Commit and push only; do not create or update a pull request.
