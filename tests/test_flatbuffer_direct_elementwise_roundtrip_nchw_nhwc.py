@@ -10,6 +10,7 @@ from typing import Any, Callable
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import (
     validate_model_ir_invariants,
 )
@@ -21,6 +22,9 @@ from onnx2tf.tflite_builder.ir import (
 )
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains,
+)
+from onnx2tf.tflite_builder.passes.elementwise_roundtrip_nchw_nhwc_layout import (
+    _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains as _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains_owner,
 )
 
 
@@ -297,6 +301,96 @@ def _two_chain_model_ir() -> ModelIR:
     return first
 
 
+def _owner_wrapper_case(case: str) -> ModelIR:
+    if case == "multiple":
+        return _two_chain_model_ir()
+
+    model_ir = _make_model_ir()
+    if case == "dynamic":
+        for name in ("x_nchw", "y_nchw", "root_nchw", "final"):
+            model_ir.tensors[name].shape_signature = [1, 3, -1, -1]
+        for name in ("x_nhwc", "y_nhwc", "sum_nhwc", "root_nhwc"):
+            model_ir.tensors[name].shape_signature = [1, -1, -1, 3]
+    elif case in {"local-channel", "constant-qdim", "variable-feature"}:
+        bias = model_ir.tensors["bias"]
+        bias.data = np.asarray([0.5, 1.0, 1.5], dtype=np.float32)
+        bias.shape = [3]
+        bias.shape_signature = [3]
+        if case == "constant-qdim":
+            bias.quantization = QuantParamIR(
+                scale=[0.1, 0.2, 0.3],
+                zero_point=[0, 0, 0],
+                quantized_dimension=0,
+            )
+        elif case == "variable-feature":
+            bias.is_variable = True
+    elif case == "shared-constant":
+        bias = model_ir.tensors["bias"]
+        bias.data = np.asarray([0.5, 1.0, 1.5], dtype=np.float32).reshape(1, 1, 1, 3)
+        bias.shape = [1, 1, 1, 3]
+        bias.shape_signature = [1, 1, 1, 3]
+        model_ir.inputs.append("other_nhwc")
+        model_ir.outputs.append("shared_out")
+        model_ir.tensors["other_nhwc"] = TensorIR(
+            name="other_nhwc",
+            dtype="FLOAT32",
+            shape=[1, 8, 8, 3],
+            shape_signature=[1, 8, 8, 3],
+        )
+        model_ir.tensors["shared_out"] = TensorIR(
+            name="shared_out",
+            dtype="FLOAT32",
+            shape=[1, 8, 8, 3],
+            shape_signature=[1, 8, 8, 3],
+        )
+        model_ir.operators.append(
+            OperatorIR("ADD", ["other_nhwc", "bias"], ["shared_out"])
+        )
+    elif case == "per-axis":
+        for name in ("sum_nhwc", "root_nhwc"):
+            model_ir.tensors[name].quantization = QuantParamIR(
+                scale=[0.1, 0.2, 0.3],
+                zero_point=[0, 0, 0],
+                quantized_dimension=3,
+            )
+    elif case == "variable-permutation":
+        model_ir.tensors["perm_to_nhwc"].is_variable = True
+    elif case == "public-permutation":
+        model_ir.inputs.append("perm_to_nchw")
+    elif case == "unmatched":
+        model_ir.tensors["unrelated"] = TensorIR(
+            name="unrelated",
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+        )
+        model_ir.tensors["perm_to_nchw"].data = np.asarray([0, 2, 3, 1], dtype=np.int32)
+    elif case == "missing-output":
+        model_ir.tensors.pop("root_nchw")
+    elif case == "public-internal":
+        model_ir.inputs.append("sum_nhwc")
+    elif case == "reverse-topology":
+        model_ir.operators[3], model_ir.operators[4] = (
+            model_ir.operators[4],
+            model_ir.operators[3],
+        )
+    elif case == "duplicate-root":
+        model_ir.operators.insert(
+            4,
+            OperatorIR("MUL", ["sum_nhwc", "y_nhwc"], ["root_nhwc"]),
+        )
+    elif case == "duplicate-pre":
+        model_ir.operators.insert(
+            1,
+            OperatorIR(
+                "TRANSPOSE",
+                ["x_nchw", "perm_to_nhwc"],
+                ["x_nhwc"],
+            ),
+        )
+    return model_ir
+
+
 def test_elementwise_roundtrip_nchw_nhwc_rewrites_closed_subgraph() -> None:
     model_ir = _make_model_ir()
 
@@ -542,23 +636,22 @@ def test_elementwise_roundtrip_nchw_nhwc_preserves_existing_rejections(
     _assert_transactional_rejection(model_ir)
 
 
-def test_elementwise_roundtrip_nchw_nhwc_raw_owner_and_call_are_characterized() -> None:
-    lowerer_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
-    tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+def test_elementwise_roundtrip_nchw_nhwc_keeps_owner_wrapper_and_call() -> None:
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "elementwise_roundtrip_nchw_nhwc_layout.py"
+    )
+    pass_source = pass_path.read_text(encoding="utf-8")
+    pass_tree = ast.parse(pass_source)
     owner = next(
         node
-        for node in tree.body
+        for node in pass_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains"
     )
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == owner.name
-    ]
-
     assert owner.end_lineno is not None
     assert owner.end_lineno - owner.lineno + 1 == 705
     assert sum(isinstance(node, ast.While) for node in ast.walk(owner)) == 3
@@ -586,7 +679,58 @@ def test_elementwise_roundtrip_nchw_nhwc_raw_owner_and_call_are_characterized() 
         )
         == 1
     )
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and (
+            any(
+                alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+                for alias in node.names
+            )
+            if isinstance(node, ast.Import)
+            else node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        )
+        for node in pass_tree.body
+    )
+
+    lowerer_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains"
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    wrapper_call = wrapper.body[0].value
+    assert isinstance(wrapper_call, ast.Call)
+    assert isinstance(wrapper_call.func, ast.Name)
+    assert (
+        wrapper_call.func.id
+        == "_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains_pass"
+    )
+    assert len(wrapper_call.args) == 1
+    assert isinstance(wrapper_call.args[0], ast.Name)
+    assert wrapper_call.args[0].id == "model_ir"
+    assert wrapper_call.keywords == []
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains"
+    ]
     assert len(calls) == 1
+    assert len(calls[0].args) == 1
+    assert isinstance(calls[0].args[0], ast.Name)
+    assert calls[0].args[0].id == "model_ir"
+    assert calls[0].keywords == []
 
 
 def test_elementwise_roundtrip_nchw_nhwc_does_not_prune_unmatched_graph() -> None:
@@ -883,3 +1027,63 @@ def test_elementwise_roundtrip_nchw_nhwc_rejects_incomplete_candidate(
     mutate(model_ir)
 
     _assert_transactional_rejection(model_ir)
+
+
+def test_elementwise_roundtrip_nchw_nhwc_reuses_one_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _two_chain_model_ir()
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
+
+    assert stats == {
+        "optimized_transpose_elementwise_roundtrip_nchw_nhwc_chains": 2,
+    }
+    assert refresh_count == 1
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary",
+        "multiple",
+        "dynamic",
+        "local-channel",
+        "shared-constant",
+        "per-axis",
+        "constant-qdim",
+        "variable-permutation",
+        "public-permutation",
+        "unmatched",
+        "missing-output",
+        "public-internal",
+        "reverse-topology",
+        "duplicate-root",
+        "duplicate-pre",
+        "variable-feature",
+    ],
+)
+def test_elementwise_roundtrip_nchw_nhwc_owner_and_wrapper_are_identical(
+    case: str,
+) -> None:
+    owner_model = _owner_wrapper_case(case)
+    wrapper_model = copy.deepcopy(owner_model)
+
+    owner_stats = _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains_owner(
+        owner_model
+    )
+    wrapper_stats = _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(
+        wrapper_model
+    )
+
+    assert wrapper_stats == owner_stats
+    assert _normalize(wrapper_model) == _normalize(owner_model)

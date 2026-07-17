@@ -12676,3 +12676,53 @@ module AST identity and direct owner/wrapper equality for valid, multiple,
 dynamic, constant-remap/clone, layout/QDIM, permutation-ownership, missing-
 metadata, public-boundary, reverse-topology, duplicate-producer, and zero-match
 cases. Validate sequentially, commit and push, and do not create a pull request.
+
+## NCHW-to-NHWC elementwise roundtrip ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/elementwise_roundtrip_nchw_nhwc_layout.py`.
+Its function and the corrected raw owner at checkpoint `79862309` are each 705
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains_pass` alias, keeps
+the historical private name as a one-return wrapper, and preserves the single
+ordered production call. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary and two-chain rewrites,
+dynamic signatures, local and shared constant remapping, output and constant
+per-axis QDIM, variable/public permutation rejection, zero-match no-prune,
+missing output metadata, a public internal alias, reverse topology, duplicate
+root/pre producers, and variable feature constants. Deep-copied executions
+produce identical statistics and complete normalized ModelIR state, including
+buffers, quantization, layouts, provenance, topology, metadata, lineage, and
+diagnostics. A runtime contract also proves that two matches construct and
+refresh exactly one `ModelIRGraphIndex`.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 705 lines each;
+- focused safety plus owner/wrapper contract: `81 passed in 0.62s`;
+- focused contract, the two preceding attention contracts, six adjacent
+  extracted bridge/collapse contracts, and ordered architecture suite:
+  `894 passed in 18.16s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.37s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, ordered runtime
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed; no
+pull request was created, reopened, or updated.
+
+No substantive top-level raw owner remains outside `lower_onnx_to_ir`; the
+remaining central body is now mostly ordered orchestration and small
+compatibility wrappers. At restart, inventory the nested layout orchestration
+before editing it, beginning with the 66-line
+`_run_layout_recovery_prefix_pass_sequence` and adjacent 51-line
+`_run_layout_reshape_attention_recovery_prefix`. Freeze their exact order,
+repetition, session/layout-state/diagnostic dependencies, and call boundaries;
+then design the smallest explicit phase-runner contract that can move them out
+of the 2,634-line lowerer without changing pass order or behavior. Record unsafe
+or implicit coupling before correction, validate sequentially, commit and push,
+and do not create a pull request.

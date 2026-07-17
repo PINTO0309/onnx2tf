@@ -1822,3 +1822,13 @@ contracts, while valid numerical behavior, all allowed ops, statistics, fixed
 point, and the production call remain unchanged. Resume by mechanically
 extracting the corrected owner with exact AST and owner/wrapper equality; do
 not create a pull request.
+That extraction is now complete in
+`passes/elementwise_roundtrip_nchw_nhwc_layout.py`. Its 705-line function AST
+is exact to checkpoint `79862309`, the lowerer retains a one-return
+compatibility wrapper, and the ordered production call is unchanged. Sixteen
+direct owner/wrapper families produce identical statistics and complete
+normalized ModelIR state, while a two-match contract proves one graph-index
+construction. No substantive top-level pass owner now remains in the lowerer.
+Resume by characterizing the nested 66-line layout-recovery prefix and adjacent
+51-line layout/reshape/attention prefix before designing an explicit phase-
+runner boundary; do not create a pull request.

@@ -8821,6 +8821,25 @@ statistics, multiple matches, fixed point, and the production call are
 unchanged. The 705-line count is descriptive only; 2,000 remains the ONNX
 operation-count tier threshold.
 
+Ownership now resides in
+`passes/elementwise_roundtrip_nchw_nhwc_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `79862309` are each 705 lines and have
+identical ASTs. The lowerer retains a one-return compatibility wrapper and the
+single ordered production call. Sixteen direct owner/wrapper families produce
+identical statistics and complete normalized ModelIR state; a two-match runtime
+case also proves one index construction with no refresh rebuild. The module
+does not import the lowerer and the mechanical move does not alter public API,
+artifacts, dependencies, corpus policy, ordered behavior, or TensorFlow
+isolation.
+
+All substantive top-level pass owners have now moved out of the lowerer. The
+next structural boundary is its nested ordered orchestration. Before moving any
+cluster, characterize the 66-line layout-recovery prefix and neighboring
+51-line layout/reshape/attention prefix, including exact call order,
+repetitions, layout-state and diagnostic propagation, and conditional gates.
+Use that evidence to introduce an explicit phase-runner contract without
+changing the current sequence.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
