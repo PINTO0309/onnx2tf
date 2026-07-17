@@ -9990,3 +9990,16 @@ unresolved-input predicate, and reconciliation call. The lowerer must call it
 once with the wrapped node and `LoweringContext`, eliminating the per-node
 nested closure while preserving the demand-driven scan boundary. Production is
 unchanged at this characterization checkpoint.
+
+`core.shape_readiness.reconcile_shape_sensitive_inputs_on_demand()` now owns
+the complete policy. It performs one constant-time op-set check for every
+non-Constant node, inspects inputs only for the six target ops, returns the
+exact zero reconciliation dictionary on every stable path, and invokes the
+existing static-shape owner only when an unresolved nonconstant input has no
+raw shape hint.
+
+The central loop now constructs `NodeView`, makes one typed `node`/`ctx` call,
+and dispatches. The target set, raw-shape rules, constant exclusion, and nested
+predicate are no longer duplicated there. Dedicated tests cover every target
+op, all four no-op classes, the integration trigger before dispatch, and the
+one-owner architecture contract.

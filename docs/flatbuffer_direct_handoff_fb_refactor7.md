@@ -978,3 +978,29 @@ post-lowering phase barriers. Validate focused trigger/owner/core/architecture
 coverage, then the sequential core, pass-efficiency, architecture, and
 TensorFlow-import-blocked suites. Commit and push only; do not create or update
 a pull request.
+
+## Demand-driven shape readiness implementation checkpoint
+
+`core.shape_readiness.reconcile_shape_sensitive_inputs_on_demand()` now owns
+the six-op target set, unresolved-rank predicate, and lowering-time static-shape
+scan. It returns `{"reconciled_static_tensor_shapes": 0}` for non-target ops,
+known rank-two-or-higher inputs, explicit rank-one shape hints, and constant
+tensors. An unresolved nonconstant input with no raw shape hint invokes the
+same static reconciliation owner as before.
+
+The ONNX node loop now contains one typed `node`/`ctx` call between `NodeView`
+construction and dispatch. Its inline op set, input-name collection, and nested
+closure were removed. This preserves demand-driven behavior while making the
+policy independently testable and avoiding graph scans for stable paths.
+
+Focused owner, integration-trigger, and architecture coverage is `16 passed in
+2.27s`. The sequential shape-readiness, Constant, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `367 passed in 26.36s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, return to the post-lowering phase inventory. The broad terminal
+phase before its unconditional reconciliation is still unsafe to guard until
+all participating owners return complete mutation and prune evidence. Select a
+smaller orchestration cluster inside that interval and characterize its result
+propagation before changing the phase barrier. Commit and push only; do not
+create or update a pull request.

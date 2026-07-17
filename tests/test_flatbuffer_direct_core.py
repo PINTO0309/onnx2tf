@@ -7,6 +7,7 @@ import onnx
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 import onnx2tf.tflite_builder.core.validation as validation_module
+import onnx2tf.tflite_builder.core.shape_readiness as shape_readiness_module
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 
 from onnx2tf.tflite_builder.core import (
@@ -245,8 +246,8 @@ def test_shape_sensitive_input_reconciliation_is_demand_driven(
             )
 
     monkeypatch.setattr(
-        lowering_module,
-        "_reconcile_static_tensor_shapes",
+        shape_readiness_module,
+        "reconcile_static_tensor_shapes",
         counted_reconcile,
     )
     monkeypatch.setattr(lowering_module, "dispatch_node", tracking_dispatch)

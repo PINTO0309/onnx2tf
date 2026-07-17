@@ -41,6 +41,9 @@ from onnx2tf.tflite_builder.core.onnx_analysis import (
     _node_attr_ints,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.core.session import ConversionSession
+from onnx2tf.tflite_builder.core.shape_readiness import (
+    reconcile_shape_sensitive_inputs_on_demand,
+)
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_registry import (
     NodeValidationError,
@@ -3967,37 +3970,10 @@ def lower_onnx_to_ir(
                     shape_map=shape_map,
                     dtype_map=dtype_map,
                 )
-                # ONNX shape inference can stop at contrib/domain operators and
-                # leave later tensors as unresolved rank-one placeholders.  At
-                # this point their producer operators have already been lowered,
-                # so recover the available rank before validating shape-sensitive
-                # consumers.  Keep this demand-driven instead of rescanning the
-                # partial graph before every node.
-                if str(node.op_type) in {
-                    "Attention",
-                    "Gather",
-                    "GatherElements",
-                    "LayerNormalization",
-                    "MatMul",
-                    "MultiHeadAttention",
-                }:
-                    wrapped_input_names = [
-                        str(input_value.name)
-                        for input_value in list(wrapped.inputs)
-                        if str(input_value.name) != ""
-                    ]
-
-                    def _has_unresolved_rank(input_name: str) -> bool:
-                        if len(ctx.get_tensor_shape(input_name)) > 1:
-                            return False
-                        tensor = model_ir.tensors.get(input_name, None)
-                        if tensor is not None and tensor.data is not None:
-                            return False
-                        raw_shape = shape_map.get(input_name, None)
-                        return raw_shape is None or len(list(raw_shape)) == 0
-
-                    if any(_has_unresolved_rank(name) for name in wrapped_input_names):
-                        _reconcile_static_tensor_shapes(model_ir)
+                reconcile_shape_sensitive_inputs_on_demand(
+                    node=wrapped,
+                    ctx=ctx,
+                )
                 try:
                     dispatch_node(wrapped, ctx)
                 except NodeValidationError as ve:

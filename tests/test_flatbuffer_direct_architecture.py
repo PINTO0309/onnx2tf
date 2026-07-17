@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -229,13 +227,6 @@ def test_constant_lowering_has_one_typed_op_family_owner() -> None:
     assert "tensorflow" not in owner_source.lower()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "demand-driven shape readiness is still expanded inline in the "
-        "central node loop"
-    ),
-)
 def test_demand_driven_shape_readiness_has_one_core_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
