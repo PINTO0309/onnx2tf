@@ -2290,6 +2290,12 @@ counter and no cleanup-only path. The same stable zero and opt-in complete
 reconciliation result replace the discarded return under its unchanged guard,
 with the following stale binary-layout repair fixed as the outer boundary.
 
+The stale channelwise binary-layout owner unconditionally prunes unused
+tensors, including zero-rewrite calls. Characterization therefore requires a
+clamped tensor-count delta and stable complete reconciliation result in the
+fallback branch. The existing repair-only guard and following topological sort
+remain unchanged; cleanup alone does not require shape propagation.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

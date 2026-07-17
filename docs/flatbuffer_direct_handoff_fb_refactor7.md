@@ -2963,3 +2963,34 @@ validation pass.
 At resume, audit `fallback_binary_layout_stats` and its guarded reconciliation.
 Confirm the owner's cleanup behavior and counter completeness before changing
 that boundary. Commit and push only; do not create or update a pull request.
+
+## Safety-fallback binary-layout evidence characterization checkpoint
+
+`_repair_stale_nchw_to_nhwc_channelwise_binary_transposes()` has one exact
+rewrite counter but unconditionally prunes unused tensors. A focused zero-
+rewrite fixture removes an unused constant while returning zero, proving that
+the raw result is incomplete mutation evidence.
+
+A strict expected-failure fallback contract requires
+`fallback_binary_layout_tensor_count`, a clamped `pruned_unused_tensors` delta,
+and a stable `_fallback_binary_layout_static_shape_stats` zero dictionary. The
+existing stale-binary repair guard remains unchanged and assigns an opt-in
+complete reconciliation result instead of discarding it. Cleanup-only evidence
+does not broaden the guard, and the immediately following topological sort is
+fixed.
+
+At implementation, add only this result plumbing. Do not alter indexed
+matching, rewiring, output metadata, pruning, raw counter, guard, or sort.
+Validate stale binary repair, safety fallback, static reconciliation,
+convergence, core, pass efficiency, architecture, and TensorFlow import
+blocking sequentially. Commit and push only; do not create or update a pull
+request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused fallback/binary/convergence selection: `22 passed, 12 deselected, 1 xfailed`
+- broad related regression gate: `533 passed, 1 xfailed`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet complete-evidence contract
+defined by this checkpoint; there are no unexpected failures.
