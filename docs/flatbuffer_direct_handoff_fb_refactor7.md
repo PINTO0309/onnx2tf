@@ -1795,3 +1795,21 @@ At resume, inspect the immediately preceding
 Confirm all occurrence forms and its pruning contract before selecting only the
 last direct call for evidence. Commit and push only; do not create or update a
 pull request.
+
+## Pre-terminal affine InstanceNorm residual/Mul/Concat characterization checkpoint
+
+The indexed InstanceNorm residual/Mul/Concat/Conv owner has four production
+occurrences, three as direct top-level calls. It returns one fixed rewrite
+counter and prunes only after a positive rewrite; an explicit prune-hook test
+freezes the completeness of that counter.
+
+Strict expected-failure coverage selects only the last direct call between the
+terminal InstanceNorm post-bias owner and the staged dual-statistics result. It
+requires `_pre_terminal_affine_instancenorm_residual_mul_concat_stats`; the two
+earlier direct calls and nested occurrence remain unchanged.
+
+At implementation, replace only that exact expression and update the adjacent
+dual-statistics and first terminal-affine boundary contracts. Validate the
+complete indexed residual/Mul/Concat owner, dual-statistics, terminal-affine,
+pre-ADD, core, pass-efficiency, architecture, and TensorFlow import blocking
+sequentially. Commit and push only; do not create or update a pull request.

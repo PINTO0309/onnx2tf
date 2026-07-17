@@ -627,6 +627,76 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
     assert direct_statements[2] is invocation
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the terminal InstanceNorm residual/Mul/Concat result is discarded",
+)
+def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    dualstats_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
+    invocation = lowerer.body[dualstats_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
+    )
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[dualstats_index - 2]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )
+    following = lowerer.body[dualstats_index]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 3
+    assert all(isinstance(statement, ast.Expr) for statement in direct_statements[:2])
+    assert direct_statements[2] is invocation
+
+
 def test_terminal_affine_concat_split_module_does_not_import_lowerer() -> None:
     module_path = (
         REPO_ROOT

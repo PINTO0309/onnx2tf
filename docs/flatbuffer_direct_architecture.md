@@ -10279,3 +10279,10 @@ That selected call now assigns its unchanged raw result to
 count follows immediately, and the other three production occurrences retain
 their existing forms. No tensor-count proxy or reconciliation consumer is
 added because the counter already covers every owner mutation.
+
+The immediately preceding indexed InstanceNorm residual/Mul/Concat/Conv owner
+has the same four-occurrence shape: three direct calls and one nested call. Its
+single counter is complete because pruning is positive-only. Strict
+characterization selects only the last direct call, immediately before the
+staged dual-statistics result, for
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`.
