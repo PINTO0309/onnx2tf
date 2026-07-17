@@ -9774,3 +9774,10 @@ also prunes unused tensors on a zero rewrite. A new fixture freezes that prune
 side effect. A strict structural expectation therefore requires all three
 counters plus tensor-count reduction before this specific reconciliation may
 be guarded. Production remains unchanged at this characterization checkpoint.
+
+That late boundary now records tensor count and assigns all three results before
+guarding its immediate reconciliation. A positive sanitizer or repair counter,
+or a tensor-count decrease from exact-adapter pruning, preserves the scan; the
+all-zero/no-prune path skips it. The surrounding first repair reconciliation
+and later final signature sanitization are unchanged. Lowerer wiring covers all
+three counters and prune-only behavior independently.

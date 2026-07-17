@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -8568,13 +8566,6 @@ def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
     assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the late static-signature and binary-layout repair boundary still "
-        "reconciles when all mutation counters and prune accounting are zero"
-    ),
-)
 def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

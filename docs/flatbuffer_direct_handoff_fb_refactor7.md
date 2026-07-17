@@ -452,3 +452,24 @@ wiring coverage for unchanged, all three positive counters, and prune-only
 outcomes. Run the complete binary-adapter, static-signature, core,
 pass-efficiency, architecture, and TensorFlow-import-blocked suites
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Late binary-repair reconciliation implementation checkpoint
+
+The second late repair boundary now records tensor count and assigns the static
+signature, exact binary adapter, and singleton adapter results. Its immediate
+reconciliation runs only after one of the three exact mutation counters is
+positive or the exact adapter's zero-rewrite prune reduced the tensor table.
+The first repair boundary and final boundary-signature sanitizer are unchanged.
+
+The strict architecture expectation is green. A synthetic lowerer fixture
+covers unchanged, all three individual positive counters, and prune-only
+outcomes; every changed outcome adds exactly one reconciliation. Sequential
+validation across the complete binary-adapter, static-signature, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked suites is
+`402 passed in 26.49s`; focused owner coverage is `63 passed`.
+
+At resume, inspect the earlier shared reconciliation after static sanitizers,
+two binary repairs, and the singleton-consecutive-Reshape cluster. It needs a
+combined aggregate result from that cluster before it can be guarded safely.
+Do not infer no-op status from only the two repair counters. Characterize first,
+then commit and push only; do not create or update a pull request.

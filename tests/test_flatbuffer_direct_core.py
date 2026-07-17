@@ -1571,6 +1571,104 @@ def test_final_se_fc_gather_reconciles_after_rewrite_or_prune(monkeypatch) -> No
         assert run_with_outcome(outcome) == unchanged_count + 1
 
 
+def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> None:
+    signature_counter = "sanitized_static_shape_signature_consistency"
+    exact_counter = "inserted_rank4_binary_layout_fix_transpose"
+    singleton_counter = (
+        "repaired_rank4_binary_singleton_broadcast_layout_mismatch"
+    )
+    probe_name = "unused_late_binary_repair_probe"
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+    signature_invocations = 0
+    exact_invocations = 0
+    singleton_invocations = 0
+
+    def counted_reconcile(model_ir, *args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        result = original_reconcile(model_ir, *args, **kwargs)
+        model_ir.tensors[probe_name] = TensorIR(
+            name=probe_name,
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+        )
+        return result
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_outcome(outcome: str) -> int:
+        nonlocal reconcile_count
+        nonlocal signature_invocations, exact_invocations, singleton_invocations
+        reconcile_count = 0
+        signature_invocations = 0
+        exact_invocations = 0
+        singleton_invocations = 0
+
+        def signature_result(*args, **kwargs):
+            nonlocal signature_invocations
+            signature_invocations += 1
+            return {
+                signature_counter: int(
+                    signature_invocations == 1 and outcome == "signature"
+                )
+            }
+
+        def exact_result(model_ir, *args, **kwargs):
+            nonlocal exact_invocations
+            exact_invocations += 1
+            is_late_boundary = exact_invocations == 2
+            if is_late_boundary and outcome == "prune":
+                assert model_ir.tensors.pop(probe_name, None) is not None
+            return {
+                exact_counter: int(
+                    is_late_boundary and outcome == "exact"
+                )
+            }
+
+        def singleton_result(*args, **kwargs):
+            nonlocal singleton_invocations
+            singleton_invocations += 1
+            return {
+                singleton_counter: int(
+                    singleton_invocations == 2 and outcome == "singleton"
+                )
+            }
+
+        monkeypatch.setattr(
+            lowering_module,
+            "_sanitize_static_shape_signature_consistency",
+            signature_result,
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
+            exact_result,
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
+            singleton_result,
+        )
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"late_binary_reconcile_{outcome}",
+        )
+        assert signature_invocations == 2
+        assert exact_invocations >= 2
+        assert singleton_invocations >= 2
+        return reconcile_count
+
+    unchanged_count = run_with_outcome("unchanged")
+    for outcome in ("signature", "exact", "singleton", "prune"):
+        assert run_with_outcome(outcome) == unchanged_count + 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod

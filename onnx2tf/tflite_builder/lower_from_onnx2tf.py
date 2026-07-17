@@ -5040,10 +5040,39 @@ def lower_onnx_to_ir(
         session.layout_state,
     )
     _reconcile_static_tensor_shapes(model_ir)
-    _sanitize_static_shape_signature_consistency(model_ir)
-    _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-    _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
+    late_binary_repair_tensor_count = len(model_ir.tensors)
+    late_signature_stats = _sanitize_static_shape_signature_consistency(
+        model_ir
+    )
+    late_binary_adapter_stats = (
+        _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
+    )
+    late_singleton_adapter_stats = (
+        _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
+    )
+    if (
+        int(
+            late_signature_stats.get(
+                "sanitized_static_shape_signature_consistency",
+                0,
+            )
+        )
+        + int(
+            late_binary_adapter_stats.get(
+                "inserted_rank4_binary_layout_fix_transpose",
+                0,
+            )
+        )
+        + int(
+            late_singleton_adapter_stats.get(
+                "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
+                0,
+            )
+        )
+        > 0
+        or len(model_ir.tensors) < late_binary_repair_tensor_count
+    ):
+        _reconcile_static_tensor_shapes(model_ir)
     if optimize_layout_transpose_chains or apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # Late binary-layout repairs can recreate PRELU bridge wrappers.
         # Run PRELU transpose passthrough once more before final safety checks,
