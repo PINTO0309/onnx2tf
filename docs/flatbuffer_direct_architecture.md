@@ -9136,3 +9136,15 @@ efficiency fixture now drives the explicit phase while observing one graph-
 index build. Focused, architecture, pass-efficiency, core, and TensorFlow-
 import-blocked suites pass. Characterize the option-dependent transpose-unary
 fanout cluster and its shared scope next.
+
+That option-dependent cluster is now characterized without production
+changes. It has four ordered runner slots and one fresh shared pass-state scope
+per invocation. Layout-transpose and unary-passthrough cleanup are controlled
+by separate keyword-only options; unary-fanout and unary-binary-fanout cleanup
+always run. The attention-recovery callback exercises the default
+`False`/`True` combination, while the direct post-QDQ boundary explicitly uses
+`True`/`False`. Focused contracts freeze both active sequences, all ModelIR/
+layout/diagnostics/scope arguments, both outer placements, and the callback
+identity. The eventual phase should keep options outside its frozen context,
+derive variant-specific expected IDs, and construct one fresh shared scope for
+each build.

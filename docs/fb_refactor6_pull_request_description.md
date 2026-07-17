@@ -2123,3 +2123,14 @@ test focused/architecture/efficiency set, 32 core smoke tests, and all 11
 TensorFlow-import-blocked tests pass. No public API, artifact, dependency,
 runtime order, scope-sharing behavior, or TensorFlow boundary changed. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+The option-dependent transpose/unary-fanout cluster is now characterized
+without production changes. Four focused tests freeze its keyword-only
+`False`/`True` defaults, four runner slots, one fresh shared
+`ModelIRPassStateScope`, complete ModelIR/layout/diagnostics contracts, both
+runtime option combinations, the attention callback identity, and all direct
+and stable-list boundaries. The focused plus architecture suite passed 252
+tests, the 30 pass-efficiency tests and all 11 TensorFlow-import-blocked tests
+passed, and targeted static checks passed. Runtime behavior and all public/
+dependency contracts remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
