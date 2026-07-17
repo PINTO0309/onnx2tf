@@ -12929,3 +12929,42 @@ activation/binary sequence form a likely next nested boundary, but first freeze
 their exact shared invocation multiplicity and module-owner/callback routing.
 Keep validation sequential, commit and push coherent checkpoints, and do not
 create a pull request.
+
+## Quantized activation/binary orchestration characterization: completed state
+
+The next extraction boundary is the five-line one-step
+`_run_safe_binary_bridge_recovery_sequence` and the nineteen-line six-step
+`_run_quantized_activation_binary_bridge_recovery_sequence`. Production is
+unchanged. Safe-binary has three zero-argument outer invocations, including the
+nested final step of quantized activation/binary; the latter has two
+zero-argument outer invocations.
+
+The focused `test_flatbuffer_direct_quantized_recovery_orchestration.py`
+fixture freezes both helpers as parameterless straight-line closures over only
+`model_ir` and `session`, with no local pass-state scope or control flow. It
+fixes the safe-binary ModelIR/layout arguments; the hard-sigmoid, max-pool,
+softmax, and logistic ModelIR/layout calls; the model-only softmax
+canonicalization; the nested safe-binary final step; and every zero-argument
+outer boundary.
+
+Validation completed sequentially as follows:
+
+- focused quantized-recovery characterization: `4 passed in 0.21s`;
+- focused characterization plus ordered architecture suite:
+  `252 passed in 16.85s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.51s`;
+- focused-test Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, pass order, real-model conversion, or broad direct suite
+changed or ran. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, map the five quantized targets and safe-binary target directly to
+their existing module owners. This boundary requires no lowerer-local composite
+callback: an immutable ModelIR/layout context and a nested stable-ID runner are
+sufficient. Preserve the historical helper names, both outer invocation
+counts, and the three total safe-binary invocations. Prove instrumented order
+and arguments before switching production wiring, validate sequentially,
+commit and push, and do not create a pull request.

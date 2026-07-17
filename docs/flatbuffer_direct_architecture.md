@@ -8921,3 +8921,11 @@ through `passes/recovery_orchestration.py` by both attention and layout
 orchestration. Architecture accounting retains an ordered ID sequence in
 addition to its unique-ID set so a pass present in more than one phase
 contributes its exact multiplicity to former direct-call totals.
+
+The next characterized nested boundary is a one-step safe-binary recovery
+runner reused as the final step of a six-step quantized activation/binary
+runner. Both are parameterless straight-line lowerer closures over ModelIR and
+layout state. Focused contracts fix the three total safe-binary invocations,
+two quantized runner invocations, all ModelIR/layout arguments, the model-only
+softmax canonicalization, and the nested final-step relationship before
+production extraction.

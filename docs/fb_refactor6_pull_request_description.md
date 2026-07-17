@@ -1895,3 +1895,11 @@ quantized expected-builders now import graph mutation helpers from their real
 focused target suite, architecture suite, adjacent 909-test regression set,
 and all TensorFlow-import-blocked tests pass. No pull request was created,
 reopened, or updated.
+
+The next one-step safe-binary and six-step quantized activation/binary nested
+boundary is now characterized without production changes. Four focused tests
+freeze both helpers' straight-line ModelIR/session captures, every argument,
+the nested safe-binary final step, three total safe-binary invocations, and two
+quantized runner invocations. The focused plus architecture suite passed 252
+tests and all 11 TensorFlow-import-blocked tests passed. No pull request was
+created, reopened, or updated.
