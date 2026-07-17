@@ -247,6 +247,11 @@ gate to `633 passed in 28.54s`. Its transactional counter controls the same
 guard, which now retains complete shape evidence without changing matching,
 rewiring, pruning, layout sync, or the following high-rank BMM owner.
 
+The remaining five primary final SiNet guards now retain complete
+reconciliation evidence, extending the expanded gate to `1090 passed in 29.25s`.
+All transactional owners, exact counters, positive-only prune/layout sync, and
+the late-residual-to-Concat/Resize order are unchanged.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -255,7 +260,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
-reconciliation inventory immediately before `final_high_rank_bmm_stats`,
-continuing with `final_sinet_deep_skip_stats`. Any new mutation evidence must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+reconciliation inventory immediately before the final SiNet cluster, beginning
+with `final_consecutive_reshape_stats`. Any new mutation evidence must preserve
+current pass order, TensorFlow-free boundary, dependency set, and sequential
+validation policy.

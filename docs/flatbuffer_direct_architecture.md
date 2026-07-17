@@ -2369,8 +2369,8 @@ high-rank BatchMatMul boundary.
 
 The five preceding final SiNet owners—late residual, pre-add fan-out, dual
 Resize, shared-post fan-out, and deep-skip—share the same transactional
-positive-only prune/layout-sync contract. Characterization groups their stable
-complete shape results while preserving every guard and the exact owner order.
+positive-only prune/layout-sync contract. Their stable complete shape results
+preserve every guard and the exact owner order.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to

@@ -6731,6 +6731,21 @@ def test_absolute_final_sinet_reconciles_only_after_changed_passes() -> None:
         ),
     }
     complete_result_names = {
+        "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains": (
+            "_final_sinet_late_residual_static_shape_stats"
+        ),
+        "_optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains": (
+            "_final_sinet_preadd_fanout_static_shape_stats"
+        ),
+        "_optimize_sinet_deep_skip_dual_resize_affine_transpose_chains": (
+            "_final_sinet_dual_resize_static_shape_stats"
+        ),
+        "_optimize_sinet_shared_post_prelu_transpose_fanout_chains": (
+            "_final_sinet_shared_post_static_shape_stats"
+        ),
+        "_optimize_sinet_deep_skip_concat_resize_affine_tail_chains": (
+            "_final_sinet_deep_skip_static_shape_stats"
+        ),
         "_optimize_sinet_concat_resize_affine_transpose_chains": (
             "_final_sinet_concat_resize_static_shape_stats"
         ),

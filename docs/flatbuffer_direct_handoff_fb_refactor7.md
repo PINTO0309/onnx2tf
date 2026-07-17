@@ -3697,3 +3697,28 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet five-owner result contract;
 there are no unexpected failures.
+
+## Remaining primary final SiNet reconciliation implementation checkpoint
+
+The primary path now initializes stable two-key static-shape results for late
+residual, pre-add fan-out, dual Resize, shared-post fan-out, and deep-skip, and
+stores each opt-in complete result under its unchanged positive guard. No sort
+or additional scan is added, and the exact owner order remains unchanged.
+
+All five transactional owners, matching/planning, rewiring, metadata, pruning,
+layout-state sync, raw schemas, dependencies, and TensorFlow-free behavior are
+unchanged. The shared architecture contract now requires complete results for
+all six final SiNet owners.
+
+Implementation validation completed sequentially under `uv`:
+
+- all five owner suites plus orchestration/architecture selection:
+  `470 passed, 253 deselected in 3.57s`
+- expanded broad related gate: `1090 passed in 29.25s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, continue the remaining primary final-pass reconciliation inventory
+immediately before this SiNet cluster, beginning with
+`final_consecutive_reshape_stats`. Confirm its multi-counter and cleanup
+completeness before changing the caller. Commit and push only; do not create or
+update a pull request.

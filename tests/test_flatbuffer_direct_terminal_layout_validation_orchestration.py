@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -620,10 +617,6 @@ def test_primary_path_stages_final_sinet_concat_resize_reconciliation() -> None:
     assert following.targets[0].id == "final_high_rank_bmm_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="remaining final SiNet reconciliation results are discarded",
-)
 def test_primary_path_stages_remaining_final_sinet_reconciliations() -> None:
     body = _lowerer_body()
     owners = (
