@@ -1836,16 +1836,38 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     for position, index in enumerate(invocation_indexes):
         invocation_statement = lowerer.body[index]
         if position == 0:
-            assert isinstance(invocation_statement, ast.Expr)
-            previous = lowerer.body[index - 1]
-            tensor_count = lowerer.body[index + 1]
-            assert isinstance(tensor_count, ast.Assign)
-            assert len(tensor_count.targets) == 1
-            assert isinstance(tensor_count.targets[0], ast.Name)
-            assert tensor_count.targets[0].id == (
+            assert isinstance(invocation_statement, ast.Assign)
+            assert len(invocation_statement.targets) == 1
+            assert isinstance(invocation_statement.targets[0], ast.Name)
+            assert invocation_statement.targets[0].id == (
+                "pre_terminal_affine_results"
+            )
+            recovery_count = lowerer.body[index - 1]
+            assert isinstance(recovery_count, ast.Assign)
+            assert len(recovery_count.targets) == 1
+            assert isinstance(recovery_count.targets[0], ast.Name)
+            assert recovery_count.targets[0].id == (
+                "pre_terminal_affine_tensor_count"
+            )
+            previous = lowerer.body[index - 2]
+            recovery_summary = lowerer.body[index + 1]
+            assert isinstance(recovery_summary, ast.Assign)
+            assert len(recovery_summary.targets) == 1
+            assert isinstance(recovery_summary.targets[0], ast.Name)
+            assert recovery_summary.targets[0].id == "_pre_terminal_affine_stats"
+            assert isinstance(recovery_summary.value, ast.Call)
+            assert isinstance(recovery_summary.value.func, ast.Name)
+            assert recovery_summary.value.func.id == (
+                "summarize_terminal_affine_concat_split_mutations"
+            )
+            pre_add_count = lowerer.body[index + 2]
+            assert isinstance(pre_add_count, ast.Assign)
+            assert len(pre_add_count.targets) == 1
+            assert isinstance(pre_add_count.targets[0], ast.Name)
+            assert pre_add_count.targets[0].id == (
                 "pre_terminal_pre_add_tensor_count"
             )
-            following = lowerer.body[index + 2]
+            following = lowerer.body[index + 3]
         else:
             assert isinstance(invocation_statement, ast.Assign)
             assert len(invocation_statement.targets) == 1

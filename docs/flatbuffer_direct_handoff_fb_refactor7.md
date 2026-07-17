@@ -1725,3 +1725,28 @@ Validate both occurrence targets, all eleven child results, pre-ADD,
 channel-slice, core, pass-efficiency, architecture, and TensorFlow import
 blocking sequentially. Commit and push only; do not create or update a pull
 request.
+
+## First terminal affine mutation evidence implementation checkpoint
+
+The first terminal affine recovery now stages
+`pre_terminal_affine_tensor_count`, `pre_terminal_affine_results`, and
+`_pre_terminal_affine_stats`. It reuses the existing exact eleven-result,
+twelve-key summary and records its own clamped net tensor reduction.
+
+The independently staged second recovery retains `terminal_affine_tensor_count`,
+`terminal_affine_results`, and `_terminal_affine_stats`. Neither summary is
+consumed by reconciliation, and child order, ModelIR/LayoutState forwarding,
+and recovery semantics are unchanged.
+
+Focused terminal-affine, pre-ADD, channel-slice, and architecture coverage is
+`45 passed in 2.55s`. The sequential indexed/compatibility pre-ADD,
+channel-slice, pad, terminal-slice, callback, affine, bridge, SPP, QKV,
+hard-activation, SINet, late-layout, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `807 passed in 28.59s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the immediately preceding
+`_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains`
+owner. Confirm its occurrence count, fixed result schema, and whether pruning
+can occur with a zero counter before staging evidence. Commit and push only; do
+not create or update a pull request.

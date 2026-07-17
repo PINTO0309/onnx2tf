@@ -462,11 +462,14 @@ def test_pre_terminal_pre_add_captures_zero_rewrite_pruning_evidence() -> None:
     assert prune_call.func.id == "max"
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_affine_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
-        "_run_terminal_affine_concat_split_recovery_sequence"
+        "summarize_terminal_affine_concat_split_mutations"
     )
     following = lowerer.body[first_index + 2]
     assert isinstance(following, ast.Assign)

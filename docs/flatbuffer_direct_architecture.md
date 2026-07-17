@@ -10259,3 +10259,9 @@ complete contract. Strict characterization requires distinct
 `pre_terminal_affine_tensor_count`, `pre_terminal_affine_results`, and
 `_pre_terminal_affine_stats` assignments while preserving the independently
 staged second occurrence.
+
+The first recovery now stages those three assignments and reuses
+`summarize_terminal_affine_concat_split_mutations()` with its own clamped
+tensor-count delta. The second occurrence retains the separate
+`terminal_affine_*` targets. Both summaries remain observation-only and no
+reconciliation branch consumes either result.

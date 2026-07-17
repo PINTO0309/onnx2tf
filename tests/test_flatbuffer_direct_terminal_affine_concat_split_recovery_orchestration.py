@@ -207,16 +207,34 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
     for position, index in enumerate(invocation_indexes):
         if position == 0:
             invocation = lowerer.body[index]
-            assert isinstance(invocation, ast.Expr)
-            previous = lowerer.body[index - 1]
-            tensor_count = lowerer.body[index + 1]
-            assert isinstance(tensor_count, ast.Assign)
-            assert len(tensor_count.targets) == 1
-            assert isinstance(tensor_count.targets[0], ast.Name)
-            assert tensor_count.targets[0].id == (
+            assert isinstance(invocation, ast.Assign)
+            assert len(invocation.targets) == 1
+            assert isinstance(invocation.targets[0], ast.Name)
+            assert invocation.targets[0].id == "pre_terminal_affine_results"
+            recovery_count = lowerer.body[index - 1]
+            assert isinstance(recovery_count, ast.Assign)
+            assert len(recovery_count.targets) == 1
+            assert isinstance(recovery_count.targets[0], ast.Name)
+            assert recovery_count.targets[0].id == "pre_terminal_affine_tensor_count"
+            previous = lowerer.body[index - 2]
+            recovery_summary = lowerer.body[index + 1]
+            assert isinstance(recovery_summary, ast.Assign)
+            assert len(recovery_summary.targets) == 1
+            assert isinstance(recovery_summary.targets[0], ast.Name)
+            assert recovery_summary.targets[0].id == "_pre_terminal_affine_stats"
+            assert isinstance(recovery_summary.value, ast.Call)
+            assert isinstance(recovery_summary.value.func, ast.Name)
+            assert recovery_summary.value.func.id == (
+                "summarize_terminal_affine_concat_split_mutations"
+            )
+            pre_add_count = lowerer.body[index + 2]
+            assert isinstance(pre_add_count, ast.Assign)
+            assert len(pre_add_count.targets) == 1
+            assert isinstance(pre_add_count.targets[0], ast.Name)
+            assert pre_add_count.targets[0].id == (
                 "pre_terminal_pre_add_tensor_count"
             )
-            following = lowerer.body[index + 2]
+            following = lowerer.body[index + 3]
         else:
             invocation = lowerer.body[index]
             assert isinstance(invocation, ast.Assign)
@@ -457,14 +475,13 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
         )
     ]
     assert len(recovery_statements) == 2
-    assert isinstance(recovery_statements[0], ast.Expr)
+    assert isinstance(recovery_statements[0], ast.Assign)
+    assert len(recovery_statements[0].targets) == 1
+    assert isinstance(recovery_statements[0].targets[0], ast.Name)
+    assert recovery_statements[0].targets[0].id == "pre_terminal_affine_results"
     assert recovery_statements[1] is lowerer.body[first_index + 1]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the first terminal affine recovery result is still discarded",
-)
 def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     target_names = (
