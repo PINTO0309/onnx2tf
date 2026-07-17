@@ -5836,6 +5836,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
+    _final_consecutive_reshape_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if (
         int(
             final_consecutive_reshape_stats.get(
@@ -5856,7 +5860,12 @@ def lower_onnx_to_ir(
             )
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_consecutive_reshape_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     # Keep this after the final shape reconciliation: earlier than this,
     # SiNet-specific residual branches are not yet in their terminal form and
     # the strict matcher can fire on upstream blocks instead.

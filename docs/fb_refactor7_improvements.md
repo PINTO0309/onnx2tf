@@ -252,6 +252,16 @@ reconciliation evidence, extending the expanded gate to `1090 passed in 29.25s`.
 All transactional owners, exact counters, positive-only prune/layout sync, and
 the late-residual-to-Concat/Resize order are unchanged.
 
+The absolute-final consecutive-Reshape guard now retains the same stable,
+complete reconciliation evidence. Its three existing counters already cover
+every no-op removal, single-consumer chain removal, and fan-out bypass, while
+pruning and layout synchronization remain positive-only. The aggregate guard,
+runner schema, and following final SiNet boundary are unchanged.
+
+This checkpoint extends the expanded related gate to `1094 passed in 29.69s`;
+the focused consecutive-Reshape, terminal-orchestration, and architecture gate
+is `282 passed in 18.99s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -260,7 +270,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
-reconciliation inventory immediately before the final SiNet cluster, beginning
-with `final_consecutive_reshape_stats`. Any new mutation evidence must preserve
-current pass order, TensorFlow-free boundary, dependency set, and sequential
-validation policy.
+reconciliation inventory immediately before the completed consecutive-Reshape
+boundary, beginning with `final_prelu_stats`. Any new mutation evidence must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

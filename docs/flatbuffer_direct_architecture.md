@@ -10630,3 +10630,8 @@ and requires a stable two-key `_final_consecutive_reshape_static_shape_stats`
 value that receives the opt-in complete reconciliation result only inside that
 guard. The following final SiNet owner remains adjacent and no sort or scan is
 added.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary only after the unchanged aggregate
+guard succeeds. The runner result, duplicate positive fan-out accounting,
+pruning/layout synchronization, and final SiNet boundary are unchanged.

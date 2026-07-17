@@ -3754,3 +3754,29 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final consecutive-Reshape
 reconciliation-result contract; there are no unexpected failures.
+
+## Primary final consecutive-Reshape reconciliation implementation checkpoint
+
+The primary path now initializes
+`_final_consecutive_reshape_static_shape_stats` with the stable legacy-plus-
+complete two-key schema and replaces it with the opt-in complete reconciliation
+result only under the unchanged three-counter aggregate guard. This adds no
+scan: reconciliation already ran on the same positive path.
+
+The runner, its returned counter schema, matching, rewiring, operator removal,
+positive-only pruning/layout synchronization, guard expression, pass order,
+dependencies, and TensorFlow-free behavior are unchanged. The strict
+characterization contract is now a normal passing contract, and the existing
+architecture guard has been updated only for the retained result assignment.
+
+Implementation validation completed sequentially under `uv`:
+
+- consecutive-Reshape owner, terminal orchestration, and architecture:
+  `282 passed in 18.99s`
+- expanded broad related gate: `1094 passed in 29.69s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit `final_prelu_stats` and its tensor-count-assisted guard for
+counter and cleanup completeness before retaining its guarded reconciliation
+result. Keep the following consecutive-Reshape boundary fixed. Commit and push
+only; do not create or update a pull request.
