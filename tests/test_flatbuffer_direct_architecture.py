@@ -2349,19 +2349,36 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    calls = [
+    direct_calls = [
         statement.value
         for statement in helper.body
         if isinstance(statement, (ast.Assign, ast.AnnAssign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in calls] == [
+    assert [call.func.id for call in direct_calls] == [
         "_prune_dead_operators",
         "_reconcile_static_tensor_shapes",
         "_resolve_dynamic_reshape_shapes",
-        "_reconcile_static_tensor_shapes",
     ]
+    guard = next(
+        statement for statement in helper.body if isinstance(statement, ast.If)
+    )
+    assert isinstance(guard.test, ast.Call)
+    assert isinstance(guard.test.func, ast.Name)
+    assert guard.test.func.id == "_stats_have_positive_count"
+    assert [
+        argument.id
+        for argument in guard.test.args
+        if isinstance(argument, ast.Name)
+    ] == ["prune_stats", "first_reconcile_stats", "reshape_stats"]
+    assert len(guard.body) == 1
+    guarded_assignment = guard.body[0]
+    assert isinstance(guarded_assignment, ast.Assign)
+    guarded_call = guarded_assignment.value
+    assert isinstance(guarded_call, ast.Call)
+    assert isinstance(guarded_call.func, ast.Name)
+    assert guarded_call.func.id == "_reconcile_static_tensor_shapes"
     assert len(
         [
             node
@@ -2371,7 +2388,7 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
             and node.func.id == "ModelIRGraphIndex"
         ]
     ) == 1
-    for call in calls:
+    for call in [*direct_calls, guarded_call]:
         graph_index_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "graph_index"
         )

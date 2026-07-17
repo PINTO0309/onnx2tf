@@ -9843,3 +9843,12 @@ perform only the first reconciliation while retaining the one shared index.
 Separate passing cases require the final reconciliation after a mutation from
 each of the three owners, preserving possible second-order shape convergence.
 Production remains unchanged at this characterization checkpoint.
+
+The helper now initializes the final result with the exact zero counter and
+uses `_stats_have_positive_count()` across prune, first-reconciliation, and
+dynamic-Reshape results before invoking the second reconciliation. The stable
+path therefore performs one shape scan, while any mutation retains the former
+second scan and its aggregate statistic. Both production call boundaries,
+LayoutState forwarding, and the one-index contract are unchanged. The original
+dynamic-Reshape graph remains fully equivalent to the former four-call
+sequence.

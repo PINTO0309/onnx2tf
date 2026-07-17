@@ -1253,10 +1253,16 @@ def _run_indexed_shape_convergence_cleanup(
         model_ir,
         graph_index=graph_index,
     )
-    final_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    final_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if _stats_have_positive_count(
+        prune_stats,
+        first_reconcile_stats,
+        reshape_stats,
+    ):
+        final_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
     return {
         "removed_dead_operators": int(
             prune_stats.get("removed_dead_operators", 0)

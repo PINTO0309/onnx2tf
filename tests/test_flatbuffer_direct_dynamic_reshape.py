@@ -204,13 +204,6 @@ def test_indexed_shape_convergence_matches_legacy_sequence(monkeypatch) -> None:
             )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the indexed shape-convergence helper still runs its final "
-        "reconciliation after a complete zero-mutation round"
-    ),
-)
 def test_indexed_shape_convergence_skips_final_reconcile_when_stable(
     monkeypatch,
 ) -> None:

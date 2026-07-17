@@ -629,3 +629,29 @@ index, LayoutState forwarding, and both production call boundaries. Validate
 dynamic Reshape, shape reconciliation, final convergence, core, architecture,
 pass-efficiency, and TensorFlow-import-blocked suites sequentially. Commit and
 push only; do not create or update a pull request.
+
+## Indexed shape-convergence stable-scan implementation checkpoint
+
+`_run_indexed_shape_convergence_cleanup()` now initializes the final
+reconciliation result with the exact zero counter. It runs the second static
+shape scan only when dead pruning, the first reconciliation, or dynamic-Reshape
+resolution reports a positive mutation count.
+
+The all-zero path therefore uses one reconciliation. Each independently
+changing owner still triggers the second scan, preserving possible second-order
+metadata convergence. Aggregate statistics, the shared `ModelIRGraphIndex`,
+LayoutState forwarding, and both production call boundaries are unchanged. The
+architecture contract directly verifies the three-result guard and the guarded
+call's shared index.
+
+Sequential validation across dynamic Reshape, shape reconciliation, indexed
+final convergence, graph cleanup, core, pass-efficiency, architecture, and
+TensorFlow-import-blocked suites is `380 passed in 25.82s`. Focused stable,
+per-owner mutation, structure, and end-to-end equivalence coverage is
+`6 passed in 2.07s`.
+
+At resume, inspect the larger final shape/activation convergence coordinator.
+Do not guard any of its three remaining reconciliation boundaries until the
+preceding sanitizer, Reshape resolver, or fusion result completely accounts for
+the relevant mutation interval. Characterize each candidate independently,
+then commit and push only. Do not create or update a pull request.
