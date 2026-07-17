@@ -1446,6 +1446,65 @@ def test_final_consecutive_reshape_counters_gate_shape_reconciliation(
         assert run_with_changed_counter(counter_name) == unchanged_count + 1
 
 
+def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
+    counter_name = "rewritten_prelu_transpose_passthrough_chains"
+    probe_name = "unused_final_prelu_probe"
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+    prelu_invocations = 0
+
+    def counted_reconcile(model_ir, *args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        result = original_reconcile(model_ir, *args, **kwargs)
+        model_ir.tensors[probe_name] = TensorIR(
+            name=probe_name,
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+        )
+        return result
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_outcome(outcome: str) -> int:
+        nonlocal reconcile_count, prelu_invocations
+        reconcile_count = 0
+        prelu_invocations = 0
+
+        def pass_result(model_ir, *args, **kwargs):
+            nonlocal prelu_invocations
+            prelu_invocations += 1
+            is_final_invocation = prelu_invocations == 2
+            if is_final_invocation and outcome == "prune":
+                assert model_ir.tensors.pop(probe_name, None) is not None
+            return {
+                counter_name: int(
+                    is_final_invocation and outcome == "rewrite"
+                )
+            }
+
+        monkeypatch.setattr(
+            lowering_module,
+            "_optimize_prelu_transpose_passthrough_chains",
+            pass_result,
+        )
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"prelu_reconcile_{outcome}",
+        )
+        assert prelu_invocations == 2
+        return reconcile_count
+
+    unchanged_count = run_with_outcome("unchanged")
+    assert run_with_outcome("rewrite") == unchanged_count + 1
+    assert run_with_outcome("prune") == unchanged_count + 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod

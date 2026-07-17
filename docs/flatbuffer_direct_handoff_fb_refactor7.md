@@ -328,3 +328,25 @@ call and Session LayoutState, and add lowerer wiring coverage for zero-change,
 rewrite, and prune-only outcomes. Run the complete PReLU owner, core,
 pass-efficiency, architecture, and TensorFlow-import-blocked suites
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Absolute-final PReLU reconciliation implementation checkpoint
+
+The absolute-final PReLU owner remains in its original position with the same
+Session LayoutState and its intentional unconditional tensor prune. The lowerer
+now records the tensor-table size immediately before the owner, assigns its
+result, and runs the existing following reconciliation only after a positive
+rewrite counter or a tensor-count decrease.
+
+The strict architecture expectation is green. A synthetic lowerer fixture
+separately proves unchanged, rewrite, and prune-only outcomes; both changed
+outcomes add exactly one reconciliation over the unchanged baseline. Sequential
+validation across the complete PReLU owner, core, pass-efficiency, architecture,
+and TensorFlow-import-blocked suites is `365 passed in 26.66s`; focused owner
+coverage is `29 passed`.
+
+At resume, the remaining absolute-final SE/FC/Gather reconciliation still has
+no aggregate mutation result. Characterize the two-runner orchestration return
+contracts and decide whether aggregation can be introduced without changing
+their public runner results or diagnostics. If not, leave it unconditional and
+inventory another bounded scan/allocation. Commit and push only; do not create
+or update a pull request.

@@ -5457,11 +5457,22 @@ def lower_onnx_to_ir(
     # Absolute-final PRELU cleanup:
     # late layout/broadcast/singleton repairs can still recreate strict
     # TRANSPOSE->PRELU->inverse-TRANSPOSE wrappers (e.g. SiNet entry blocks).
-    _optimize_prelu_transpose_passthrough_chains(
+    final_prelu_tensor_count = len(model_ir.tensors)
+    final_prelu_stats = _optimize_prelu_transpose_passthrough_chains(
         model_ir,
         layout_state=session.layout_state,
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    if (
+        int(
+            final_prelu_stats.get(
+                "rewritten_prelu_transpose_passthrough_chains",
+                0,
+            )
+        )
+        > 0
+        or len(model_ir.tensors) < final_prelu_tensor_count
+    ):
+        _reconcile_static_tensor_shapes(model_ir)
     # Absolute-final reshape cleanup:
     # very late repair/reconciliation passes above can still recreate trivial
     # singleton-growth RESHAPE chains (e.g. 2D->3D->4D Conv1D input shims).

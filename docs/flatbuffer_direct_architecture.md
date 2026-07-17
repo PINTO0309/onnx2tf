@@ -9726,3 +9726,10 @@ therefore records the tensor-table size immediately before the owner and
 requires reconciliation after either a positive rewrite counter or a tensor
 count reduction. Production remains unconditional at this characterization
 checkpoint.
+
+The absolute-final PReLU call now records the tensor count, assigns the owner
+result, and reconciles only after a positive rewrite or a tensor-count decrease.
+The owner still performs its unconditional prune and retains the same Session
+LayoutState. A lowerer-level fixture covers unchanged, rewrite, and prune-only
+outcomes, so the optimized guard preserves the previously unreported cleanup
+mutation rather than treating a zero rewrite count as a no-op.
