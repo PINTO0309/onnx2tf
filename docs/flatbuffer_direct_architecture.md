@@ -9212,3 +9212,12 @@ additional late-terminal direct call as a four-line delegate. Stable helper
 multiplicity preserves two executions, and the efficiency fixture now
 exercises the explicit runner while retaining one graph-index build. Focused,
 architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The late hard-activation/layout pair is now characterized without production
+changes. It always runs hard-activation passthrough with four fixed terminal
+policy flags and conditionally runs layout-transpose cleanup under one required
+keyword-only option. Both active runners share one fresh pass-state scope. The
+sole caller forwards the global layout optimization choice, and focused
+contracts freeze its outer terminal boundaries. The eventual phase should keep
+the option outside a frozen ModelIR/layout/diagnostics context, derive active
+expected IDs, and construct one fresh shared scope per build.

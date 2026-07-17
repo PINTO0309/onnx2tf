@@ -14265,3 +14265,51 @@ candidate; freeze its required option, active runner sequence, scope sharing,
 sole direct boundary, and all arguments before editing production. Validate
 sequentially, keep real-model conversion minimal, commit and push only, and do
 not create a pull request.
+
+## Late hard-activation/layout orchestration characterization: completed state
+
+The 25-line `_run_late_hard_activation_layout_pass_pair` remains unchanged in
+production. It requires the keyword-only `include_layout_transpose` option,
+creates one `ModelIRPassStateScope` from ModelIR and layout state, always runs
+hard-activation passthrough cleanup, and conditionally runs layout-transpose
+cleanup with the same scope, ModelIR, layout, and diagnostics values.
+
+The hard-activation invocation retains the exact terminal policy:
+`include_hardswish=False`, `include_hardsigmoid=True`,
+`include_hardsigmoid_mul=True`, and `reverse_hardsigmoid_order=True`. Its sole
+caller forwards `optimize_layout_transpose_chains` unchanged to the required
+option. The pair remains between the specialized hard-swish/SE/hard-sigmoid
+fusion and final pre-concat cleanup.
+
+The focused
+`test_flatbuffer_direct_late_hard_activation_layout_orchestration.py` freezes
+the required signature, scope construction, conditional placement, both full
+runner contracts, all four hard-activation policy flags, caller option value,
+and outer boundaries. The existing efficiency fixture exercises the enabled
+two-step form and continues to prove one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused late hard-activation/layout characterization: `4 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 18.31s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.86s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `input_passthrough_layout` and
+`layout_transpose`. Keep `include_layout_transpose` as a required runner
+argument, derive the active expected-ID sequence, and create one fresh shared
+scope per build. Preserve all four hard-activation flags, the historical
+required keyword-only helper, caller option value, and both outer boundaries.
+Prove both enabled and disabled builder forms, fresh/shared scope identity, and
+instrumented order before switching to a delegate; validate sequentially,
+commit and push, and do not create a pull request.

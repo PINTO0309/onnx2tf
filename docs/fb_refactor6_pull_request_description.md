@@ -2219,3 +2219,14 @@ and all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
 dependency, callback identity, runtime order, scope-sharing behavior, or
 TensorFlow boundary changed. PR #952 remains closed, and no pull request was
 created, reopened, or updated.
+
+The late hard-activation/layout pair is now characterized without production
+changes. Four focused tests freeze its required keyword-only option, shared
+`ModelIRPassStateScope`, unconditional hard-activation owner, conditional
+layout-transpose owner, complete ModelIR/layout/diagnostics contracts, all four
+terminal hard-activation policy flags, sole caller value, and both outer
+boundaries. The focused plus architecture suite passed 252 tests, the 30 pass-
+efficiency tests and all 11 TensorFlow-import-blocked tests passed, and targeted
+static checks passed. Runtime behavior and all public/dependency contracts
+remain unchanged. PR #952 remains closed, and no pull request was created,
+reopened, or updated.
