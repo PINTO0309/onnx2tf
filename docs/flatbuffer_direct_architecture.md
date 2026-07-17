@@ -10348,3 +10348,9 @@ the Gather/Constant normalization cluster. The same positive-only pruning
 contract makes its raw counter complete. Strict characterization selects only
 that second call for a future `_very_late_affine_post_add_stats` assignment,
 while preserving the already staged first and third calls.
+
+That second call now assigns its unchanged result to
+`_very_late_affine_post_add_stats`. The three direct occurrences therefore have
+distinct pre-terminal, very-late, and absolute-final targets. All remain
+observation-only, and no reconciliation guard, tensor-count proxy, graph scan,
+or pass invocation is added.

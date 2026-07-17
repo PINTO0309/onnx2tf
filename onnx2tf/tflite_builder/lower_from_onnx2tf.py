@@ -5278,9 +5278,11 @@ def lower_onnx_to_ir(
     # The late unbound-input repair can inject strict
     # NHWC->NCHW->NHWC MUL/ADD wrappers (repair_perm tensors).
     # Fold them again before final shape/topology reconciliation.
-    _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_affine_post_add_stats = (
+        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _run_very_late_gather_constant_normalization_pass_cluster()
     # Very late terminal bridge/transpose rewrites above can still stale out

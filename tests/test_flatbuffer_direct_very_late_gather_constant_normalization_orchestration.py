@@ -243,21 +243,22 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_very_late_affine_post_add_stats"
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
         == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
     )
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_resolve_dynamic_reshape_shapes"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the very-late affine post-ADD result is discarded",
-)
 def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_index = next(

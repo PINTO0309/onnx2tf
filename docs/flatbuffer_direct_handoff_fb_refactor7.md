@@ -2025,3 +2025,28 @@ the indexed owner, all three occurrence contracts, very-late and absolute-final
 orchestration, core, pass-efficiency, architecture, and TensorFlow import
 blocking sequentially. Commit and push only; do not create or update a pull
 request.
+
+## Very-late affine post-ADD implementation checkpoint
+
+The second direct affine post-ADD call now assigns its unchanged result to
+`_very_late_affine_post_add_stats`. Together with
+`_pre_terminal_affine_post_add_stats` and
+`_absolute_final_affine_post_add_stats`, every direct occurrence has a distinct
+observation point.
+
+The result remains unused by reconciliation. Unbound-input repair still runs
+immediately before it, the very-late Gather/Constant normalization cluster
+still runs immediately after it, and ModelIR/LayoutState forwarding and pass
+order are unchanged.
+
+Focused three-occurrence, very-late, absolute-final, indexed-owner, and
+architecture coverage is `80 passed, 343 deselected`. The expanded sequential
+gate, now explicitly including the complete very-late orchestration suite, is
+`1209 passed in 30.03s`. Ruff, Python bytecode compilation, and whitespace
+validation pass.
+
+At resume, audit result propagation from the immediately following very-late
+Gather/Constant normalization cluster. Determine whether its child owners
+already expose complete mutation evidence and whether any cleanup-only path
+requires net tensor-count accounting before adding a new observation point.
+Commit and push only; do not create or update a pull request.

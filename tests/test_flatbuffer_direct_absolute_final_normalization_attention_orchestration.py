@@ -342,7 +342,10 @@ def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() ->
     first_target = direct_statements[0].targets[0]
     assert isinstance(first_target, ast.Name)
     assert first_target.id == "_pre_terminal_affine_post_add_stats"
-    assert isinstance(direct_statements[1], ast.Expr)
+    assert isinstance(direct_statements[1], ast.Assign)
+    second_target = direct_statements[1].targets[0]
+    assert isinstance(second_target, ast.Name)
+    assert second_target.id == "_very_late_affine_post_add_stats"
     assert direct_statements[2] is invocation
 
 

@@ -108,8 +108,7 @@ new full model-corpus run for this final observation-only unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should inspect the remaining very-late affine post-ADD occurrence after
-unbound-input repair. Any new mutation evidence must remain distinct from the
-existing pre-terminal and absolute-final observation points and must preserve
-the current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit result propagation from the very-late Gather/Constant
+normalization cluster. Any new mutation evidence must account for cleanup-only
+paths conservatively and preserve the current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

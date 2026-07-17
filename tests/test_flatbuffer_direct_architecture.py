@@ -4976,7 +4976,10 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_very_late_affine_post_add_stats"
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (

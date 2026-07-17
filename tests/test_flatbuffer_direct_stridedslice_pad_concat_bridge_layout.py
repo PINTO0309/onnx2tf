@@ -1442,7 +1442,10 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
     ]
     assert len(direct_statements) == 3
     assert direct_statements[0] is invocation
-    assert isinstance(direct_statements[1], ast.Expr)
+    assert isinstance(direct_statements[1], ast.Assign)
+    second_target = direct_statements[1].targets[0]
+    assert isinstance(second_target, ast.Name)
+    assert second_target.id == "_very_late_affine_post_add_stats"
     assert isinstance(direct_statements[2], ast.Assign)
     third_target = direct_statements[2].targets[0]
     assert isinstance(third_target, ast.Name)
