@@ -307,3 +307,24 @@ SE/FC/Gather cluster likewise needs an aggregate result contract before its
 reconciliation can be guarded. Inventory another bounded scan or allocation
 with a complete owner contract, characterize it first, then commit and push
 only. Do not create or update a pull request.
+
+## Absolute-final PReLU reconciliation characterization checkpoint
+
+The absolute-final PReLU owner has one rewrite counter but also intentionally
+calls `_prune_unused_tensors()` for zero-match invocations. A new owner fixture
+uses `max_rewrites=0` with one unused tensor and freezes the complete behavior:
+the rewrite counter remains zero, the tensor count decreases by one, and the
+LayoutState stays synchronized.
+
+A strict expected-failure architecture contract therefore does not permit a
+rewrite-only guard. It requires the terminal lowerer to record the tensor-table
+size immediately before the owner and reconcile when either the exact rewrite
+counter is positive or the tensor count decreased. This preserves the existing
+zero-rewrite cleanup contract without paying for reconciliation when neither a
+rewrite nor pruning occurred. Production is unchanged at this checkpoint.
+
+At implementation, change only the absolute-final call site, retain the owner
+call and Session LayoutState, and add lowerer wiring coverage for zero-change,
+rewrite, and prune-only outcomes. Run the complete PReLU owner, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked suites
+sequentially. Commit and push only; do not create or update a pull request.

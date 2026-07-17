@@ -9717,3 +9717,12 @@ counters. The runner remains in its original position with the same Session
 LayoutState and diagnostics. A lowerer-level fixture proves the zero path and
 each individual positive counter; the complete runner suite retains both
 rewrite behavior and its state-free no-candidate fast path.
+
+The absolute-final PReLU boundary cannot use its rewrite counter alone. The
+owner intentionally prunes unused tensors on every invocation, including when
+the rewrite count is zero. A new owner fixture freezes that behavior and proves
+the corresponding LayoutState remains current. The bounded guard contract
+therefore records the tensor-table size immediately before the owner and
+requires reconciliation after either a positive rewrite counter or a tensor
+count reduction. Production remains unconditional at this characterization
+checkpoint.
