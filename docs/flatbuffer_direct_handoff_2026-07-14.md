@@ -14657,3 +14657,45 @@ small ordered boundary. Characterize required options, all active forms,
 caller multiplicity, callback ownership, and outer boundaries before changing
 production. Validate sequentially, keep real-model conversion minimal, commit
 and push only, and do not create a pull request.
+
+## Constant-fold and redundant-cast orchestration characterization: completed state
+
+The 21-line `_run_constant_fold_cast_cleanup_pass_cluster` remains unchanged
+in production. Its keyword-only `state_scope` defaults to `None`; that form
+creates a fresh `ModelIRPassStateScope` from the current ModelIR and layout
+state. A supplied scope bypasses allocation. Constant-input folding then
+redundant-cast cleanup receive the same ModelIR, layout, diagnostics, and
+resolved scope.
+
+Both current production calls supply an existing scope. The very-late gather/
+constant/normalization parent places the pair after transpose-gather cleanup
+and before fixed-policy normalization-pad cleanup. The late layout/mean/SPP/
+gather parent places it after transpose-gather cleanup as the terminal action.
+The implicit fresh-scope form remains a supported internal capability even
+though no current production caller relies on it.
+
+Sequential validation completed as follows:
+
+- focused constant-fold/cast characterization: `5 passed in 0.18s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.47s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.41s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, scope-allocation semantics, parent
+boundaries, shared-scope behavior, and TensorFlow isolation are unchanged. PR
+#952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable owner IDs with direct imports from `constant_fold` and `cast_cleanup`.
+Keep the optional external scope as a runner/builder argument; allocate a fresh
+scope only when it is absent. Preserve the historical helper signature, both
+external-scope production callers, and all internal parent boundaries as a
+delegate. Prove implicit and external scope identity plus instrumented order
+before switching production; validate sequentially, commit and push, and do
+not create a pull request.

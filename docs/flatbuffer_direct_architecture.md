@@ -9293,3 +9293,13 @@ suffix, with unchanged option routing and stable neighbors. Other independent
 direct calls to both cleanup runners remain untouched. The efficiency fixture
 now exercises the explicit phase and retains one graph-index build. Focused,
 architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The constant-fold/redundant-cast pair is now characterized without production
+changes. Its optional keyword-only pass-state scope supports either fresh
+allocation or reuse of a parent scope, and both ordered owners receive the
+same ModelIR/layout/diagnostics/scope contract. Both current production calls
+use the external-scope form: one between very-late gather and normalization,
+and one after late layout/mean/SPP/gather cleanup. Focused contracts freeze
+both caller parents and their internal boundaries. The eventual phase should
+keep the optional scope outside a frozen ModelIR/layout/diagnostics context,
+allocate only when absent, and expose two stable owner IDs.

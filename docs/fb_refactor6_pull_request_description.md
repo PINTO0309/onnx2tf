@@ -2322,3 +2322,13 @@ blocked tests pass. No public API, artifact, dependency, option semantics,
 runtime order, callback identity, scope-sharing behavior, or TensorFlow
 boundary changed. PR #952 remains closed, and no pull request was created,
 reopened, or updated.
+
+The constant-fold/redundant-cast pair is now characterized without production
+changes. Five focused tests freeze its optional keyword-only pass-state scope,
+fresh-scope fallback, both complete ModelIR/layout/diagnostics contracts, both
+external-scope production calls, their parent ownership, and every internal
+boundary. The focused plus architecture suite passed 253 tests, the 30 pass-
+efficiency tests and all 11 TensorFlow-import-blocked tests passed, and
+targeted static checks passed. Runtime behavior and all public/dependency
+contracts remain unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
