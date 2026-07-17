@@ -9575,3 +9575,14 @@ All four lowerer constructors receive the exact
 arguments, stable pass IDs, execution order, and fresh pass-state-scope behavior
 are unchanged. `SINetTerminalLayoutRecoveryContext` remains independent because
 its diagnostics-free identity contract is intentionally different.
+
+The next diagnostics-free model/layout context boundary is characterized
+without production changes. `SINetPreaddResizeRecoveryContext`,
+`QuantizedRecoveryContext`, and `TerminalAffineConcatSplitRecoveryContext` are
+frozen dataclasses with exactly the same ModelIR/LayoutState fields. Their four
+invocation builders never read or forward diagnostics, and a full
+`ModelIRPassContext` is already a behaviorally identical input: every ModelIR,
+LayoutState, and nested-context identity remains exact. The lowerer constructs
+all three from the main Session identities. The model-only QLinear context and
+callback-bearing SINet terminal context remain explicitly outside this
+boundary.

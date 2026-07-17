@@ -2645,3 +2645,20 @@ its two pre-existing F401 findings. No real-model conversion or broad corpus
 suite ran. No public API, CLI, artifact, dependency, corpus exclusion,
 operation-count tier, pass policy, callback, or TensorFlow boundary changed. PR
 #952 remains closed, and no pull request was created, reopened, or updated.
+
+The next diagnostics-free model/layout context boundary is characterized
+without production changes. Three frozen context types repeat exactly the
+ModelIR/LayoutState pair across four invocation builders. Tests prove that the
+builders neither read nor forward diagnostics and that a full
+`ModelIRPassContext` preserves every ModelIR, LayoutState, keyword, and nested-
+context identity. All three lowerer constructors and their main Session wiring
+are frozen. The model-only QLinear context and callback-bearing SINet terminal
+context are explicitly excluded.
+
+The 12 focused contracts, 321-test related orchestration/shared-context/
+architecture set, 31 pass-efficiency tests, and all 11 TensorFlow-import-
+blocked tests pass. Focused formatting, lint, Python compilation, and whitespace
+checks pass. No production source, real-model conversion, or broad corpus suite
+changed or ran. No public API, CLI, artifact, dependency, pass order, scope,
+diagnostics, or TensorFlow boundary changed. PR #952 remains closed, and no pull
+request was created, reopened, or updated.

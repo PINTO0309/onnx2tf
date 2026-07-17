@@ -15840,3 +15840,55 @@ changing production code. Continue to keep the diagnostics-free SINet terminal
 context separate unless a broader invariant is first proved. Run validation
 sequentially, keep real-model conversions minimal, commit and push coherent
 units only, and do not create or update a pull request.
+
+## Diagnostics-free model/layout context characterization: completed state
+
+The remaining unconsolidated orchestration context inventory contains five types.
+The next coherent boundary consists of the three frozen types that contain
+exactly `model_ir` and `layout_state` and no callbacks:
+
+- `SINetPreaddResizeRecoveryContext`;
+- `QuantizedRecoveryContext`;
+- `TerminalAffineConcatSplitRecoveryContext`.
+
+Their four builders cover six SINet recovery invocations, one safe-binary
+invocation, six quantized-activation/binary invocations, and eleven terminal
+affine/concat/split invocations. None of the three modules reads a diagnostics
+attribute or imports the lowerer. A Session-shaped `ModelIRPassContext` can
+already be passed to every builder without production changes: all ordinary
+invocations receive the exact ModelIR, all layout-enabled invocations receive
+the exact LayoutState, and the nested safe-binary recovery receives the exact
+context object. Its diagnostics list is never forwarded or observed.
+
+The three lowerer constructors currently pass the same main `model_ir` and
+`session.layout_state` identities. `QLinearRecoveryContext` remains outside the
+boundary because it contains only ModelIR.
+`SINetTerminalLayoutRecoveryContext` also remains outside because it adds a
+callback to the ModelIR/LayoutState pair.
+
+Sequential characterization validation completed as follows:
+
+- focused field, lowerer wiring, behavioral-substitution, exclusion, and import
+  contracts: `12 passed in 0.51s`;
+- the new contract, all three parents, both excluded contexts, shared context,
+  and ordered architecture: `321 passed in 16.99s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.50s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, runtime pass order, nested context identity, diagnostics,
+and TensorFlow isolation remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
+
+At restart, replace only those three simple context dataclasses with compatible
+internal aliases of `ModelIRPassContext`. Pass the exact
+`session.model_ir_pass_context` from their three lowerer construction sites and
+read ModelIR/LayoutState through the common type. Preserve all four builder
+signatures, stable pass IDs, layout-enabled index sets, and the quantized
+nested-context identity. Update their complete focused suites and the new
+characterization contract. Leave QLinear and callback-bearing SINet terminal
+unchanged. Validate sequentially, commit and push only, and do not create or
+update a pull request.
