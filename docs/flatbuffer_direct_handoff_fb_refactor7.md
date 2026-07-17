@@ -3371,3 +3371,27 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final high-rank reconciliation
 contract; there are no unexpected failures.
+
+## Primary final high-rank BatchMatMul implementation checkpoint
+
+The primary path now initializes `_final_high_rank_bmm_static_shape_stats`
+with both stable zero keys and stores the opt-in complete reconciliation result
+under the unchanged positive compression guard. The guarded topological sort
+and following Pad owner retain their positions.
+
+Compression eligibility, reshape construction, graph-index mutation, pruning,
+layout-state sync, raw result schema, dependencies, and the TensorFlow-free
+boundary are unchanged. The strict characterization contract is now a normal
+passing test.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal orchestration plus rank-6 structure/numeric parity: `5 passed`
+- expanded broad related gate plus rank-6 structure/numeric parity:
+  `565 passed in 28.72s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit `final_pad_layout_stats` for counter/cleanup completeness and
+retain its guarded reconciliation result without changing the following Conv-
+input owner boundary. Commit and push only; do not create or update a pull
+request.

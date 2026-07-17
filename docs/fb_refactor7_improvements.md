@@ -217,6 +217,11 @@ the expanded gate to `564 passed in 28.36s`. This adds no scans or
 reconciliation: bounded binary convergence, high-rank binary coalescing, and
 boundary-signature realignment already return complete evidence.
 
+Primary final high-rank BatchMatMul reconciliation staging extends the gate to
+`565 passed in 28.72s`. The primary guard now retains the same stable complete
+shape evidence as the recursive fallback without changing compression,
+pruning, layout sync, sorting, or the following Pad owner.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -225,6 +230,6 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the primary final-pass reconciliation
-inventory, beginning with `final_high_rank_bmm_stats` and its guarded static-
-shape result. Any new mutation evidence must preserve current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+inventory with `final_pad_layout_stats` and its guarded static-shape result.
+Any new mutation evidence must preserve current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -162,10 +159,6 @@ def test_primary_path_retains_terminal_mutation_results() -> None:
         } == keywords
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final high-rank BMM reconciliation result is discarded",
-)
 def test_primary_path_stages_final_high_rank_bmm_reconciliation() -> None:
     body = _lowerer_body()
     stats_index = next(

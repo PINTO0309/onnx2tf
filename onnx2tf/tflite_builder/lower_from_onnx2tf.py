@@ -5944,13 +5944,22 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_high_rank_bmm_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_high_rank_bmm_stats.get(
             "compressed_static_high_rank_batch_matmul",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_high_rank_bmm_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
         _topologically_sort_operators(model_ir)
     final_pad_layout_stats = repair_channel_last_inputs_for_channel_first_pad(
         model_ir,
