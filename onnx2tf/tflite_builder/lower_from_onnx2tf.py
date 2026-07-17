@@ -273,6 +273,10 @@ from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration i
     SingletonConsecutiveReshapeContext,
     run_singleton_consecutive_reshape,
 )
+from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    GateLayoutContext,
+    run_gate_layout,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -450,7 +454,6 @@ from onnx2tf.tflite_builder.passes.elementwise_gate_layout import (
     _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains as _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains_pass,
     _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains as _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains_pass,
     _optimize_transpose_weighted_add_swish_prepost_nhwc_chains as _optimize_transpose_weighted_add_swish_prepost_nhwc_chains_pass,
-    run_elementwise_gate_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.multi_branch_gate_layout import (
     _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains as _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains_pass,
@@ -459,7 +462,6 @@ from onnx2tf.tflite_builder.passes.multi_branch_gate_layout import (
 from onnx2tf.tflite_builder.passes.dual_postconv_gate_layout import (
     _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains as _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains_pass,
     _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains as _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains_pass,
-    run_dual_postconv_gate_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.ndhwc_gate_layout import (
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains as _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains_pass,
@@ -472,11 +474,9 @@ from onnx2tf.tflite_builder.passes.cost_volume_scatter_layout import (
 )
 from onnx2tf.tflite_builder.passes.add_concat_suffix_layout import (
     _optimize_transpose_add_concat_const_suffix_nhwc_chains as _optimize_transpose_add_concat_const_suffix_nhwc_chains_pass,
-    run_add_concat_suffix_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.dual_mul_concat_layout import (
     _optimize_transpose_dual_mul_concat_prepost_nhwc_chains as _optimize_transpose_dual_mul_concat_prepost_nhwc_chains_pass,
-    run_dual_mul_concat_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.axis3_const_concat_layout import (
     _optimize_transpose_axis3_const_concat_bridge_nhwc_chains as _optimize_transpose_axis3_const_concat_bridge_nhwc_chains_pass,
@@ -4144,58 +4144,9 @@ def lower_onnx_to_ir(
         *,
         include_mixed_attention: bool = True,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        if include_mixed_attention:
-            run_mixed_attention_layout_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_elementwise_gate_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_pad_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_dual_postconv_gate_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_ndhwc_gate_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_cost_volume_scatter_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_add_concat_suffix_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_dual_mul_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_gate_layout(
+            gate_layout_context,
+            include_mixed_attention=include_mixed_attention,
         )
 
     def _run_channel_shuffle_gather_layout_pass_cluster(
@@ -4447,6 +4398,11 @@ def lower_onnx_to_ir(
         )
     )
     terminal_boundary_layout_context = TerminalBoundaryLayoutContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    gate_layout_context = GateLayoutContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

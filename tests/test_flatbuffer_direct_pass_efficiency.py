@@ -112,6 +112,10 @@ from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration i
     SingletonConsecutiveReshapeContext,
     run_singleton_consecutive_reshape,
 )
+from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    GateLayoutContext,
+    run_gate_layout,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -399,23 +403,14 @@ def test_adjacent_gate_runners_reuse_one_lazy_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_mixed_attention_layout_cleanup,
-        run_elementwise_gate_layout_cleanup,
-        run_pad_layout_cleanup,
-        run_dual_postconv_gate_layout_cleanup,
-        run_ndhwc_gate_layout_cleanup,
-        run_cost_volume_scatter_layout_cleanup,
-        run_add_concat_suffix_layout_cleanup,
-        run_dual_mul_concat_layout_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_gate_layout(
+        GateLayoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_mixed_attention=True,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 15

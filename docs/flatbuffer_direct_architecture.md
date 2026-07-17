@@ -9436,3 +9436,15 @@ full policy. Focused contracts freeze the exact optional guard, complete owner
 contracts and order, default, direct boundary, callback identity, and empty
 callback arguments. The eventual phase should expose required/full stable-ID
 sequences while retaining the historical helper as both delegate and callback.
+
+That cluster now delegates to `GateLayoutContext` and the stable required/full
+ID sequences in `passes/gate_layout_orchestration.py`. Each invocation build
+creates one fresh main-model scope shared by every selected owner. The full
+policy prepends mixed-attention cleanup to the seven required owners; the
+reduced policy returns those same seven owners without constructing a second
+execution path. The historical helper retains its keyword-only `True` default,
+the direct caller still passes explicit `False`, and attention recovery still
+holds the helper itself as an argument-free callback. Multiplicity-aware
+accounting replaces eight direct owner calls with eight stable IDs while
+preserving 120 effective ordered calls. The explicit full-policy efficiency
+fixture retains one graph-index build.

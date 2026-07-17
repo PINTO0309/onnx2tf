@@ -15283,3 +15283,53 @@ argument-free attention-recovery callback. Move the efficiency fixture to the
 full explicit runner, update multiplicity-aware accounting without changing
 the 120 effective-call total, validate sequentially, commit and push only, and
 do not create or reopen a pull request.
+
+## Gate-layout orchestration extraction: completed state
+
+`passes/gate_layout_orchestration.py` now owns a frozen
+`GateLayoutContext`, the seven-ID `GATE_LAYOUT_REQUIRED_PASS_IDS`, the
+eight-ID `GATE_LAYOUT_PASS_IDS`, invocation construction, and ordered
+execution. Every build creates one fresh `ModelIRPassStateScope` for the
+context's ModelIR/layout and shares it across every selected owner. The
+required sequence is built once; full policy prepends mixed-attention cleanup,
+so the two policy forms cannot silently diverge.
+
+The historical `_run_gate_layout_pass_cluster` is now a one-call delegate. It
+retains the keyword-only `include_mixed_attention=True` contract, forwards the
+policy unchanged, and uses one fixed main-model/session-layout/diagnostics
+context. Its only direct caller still passes explicit `False` between SA/PA
+mirror-PAD propagation and the two-iteration normalization loop. The same
+helper remains the argument-free attention-recovery callback and therefore
+continues to select the default full policy.
+
+Architecture accounting imports the eight full-policy IDs. Eight direct owner
+calls moved out of the lowerer and became eight stable IDs, leaving the total
+at 120 effective ordered calls. Existing independent late mixed-attention,
+PAD, NDHWC-gate, and cost-volume/scatter calls remain direct. The previously
+orchestrated terminal-boundary dual-MUL/CONCAT occurrence remains separately
+counted. The efficiency fixture now exercises the explicit full-policy runner
+with no layout state and still observes one graph-index refresh.
+
+Sequential implementation validation completed as follows:
+
+- focused required/full policies, contracts, delegate, callback, and boundaries:
+  `10 passed in 0.58s`;
+- focused gate, attention-recovery, and ordered architecture:
+  `267 passed in 19.80s`;
+- pass efficiency: `30 passed in 0.58s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 15.46s` (`32` plus `11`).
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, full/reduced
+policy, runtime order, caller multiplicity, callback wiring, boundaries,
+shared-scope semantics, and TensorFlow isolation are unchanged. PR #952 remains
+closed, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the still-inline channel-shuffle/gather
+cluster and its three independent policy switches before extraction. Freeze
+every caller's keyword form and surrounding boundary, verify whether any
+callback-driven compositions invoke it, and preserve all full/reduced policy
+combinations. Continue with separate characterization and implementation
+checkpoints, sequential tests, minimal real-model conversion, commit and push
+only, and do not create or reopen a pull request.

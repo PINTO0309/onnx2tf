@@ -87,6 +87,10 @@ from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orc
 from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
     SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    GATE_LAYOUT_PASS_IDS,
+    GATE_LAYOUT_REQUIRED_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -118,6 +122,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
     *TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
     *SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
+    *GATE_LAYOUT_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -6613,7 +6618,7 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         if isinstance(node, ast.FunctionDef)
         and node.name == "_run_gate_layout_pass_cluster"
     )
-    expected_order = [
+    assert GATE_LAYOUT_PASS_IDS == (
         "run_mixed_attention_layout_cleanup",
         "run_elementwise_gate_layout_cleanup",
         "run_pad_layout_cleanup",
@@ -6622,27 +6627,30 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         "run_cost_volume_scatter_layout_cleanup",
         "run_add_concat_suffix_layout_cleanup",
         "run_dual_mul_concat_layout_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
+    )
+    assert GATE_LAYOUT_REQUIRED_PASS_IDS == GATE_LAYOUT_PASS_IDS[1:]
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_gate_layout"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert statement.value.args[0].id == "gate_layout_context"
+    assert len(statement.value.keywords) == 1
+    policy_keyword = statement.value.keywords[0]
+    assert policy_keyword.arg == "include_mixed_attention"
+    assert isinstance(policy_keyword.value, ast.Name)
+    assert policy_keyword.value.id == "include_mixed_attention"
 
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    assert helper.args.args == []
+    assert [argument.arg for argument in helper.args.kwonlyargs] == [
+        "include_mixed_attention"
+    ]
+    assert len(helper.args.kw_defaults) == 1
+    assert isinstance(helper.args.kw_defaults[0], ast.Constant)
+    assert helper.args.kw_defaults[0].value is True
 
     helper_invocations = [
         node
@@ -10935,9 +10943,8 @@ def test_elementwise_gate_layout_rewrites_have_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.elementwise_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_elementwise_gate_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == function_names
+    assert _orchestrated_pass_count("run_elementwise_gate_layout_cleanup") == 1
 
 
 def test_multi_branch_gate_layout_rewrite_has_single_owner() -> None:
@@ -11058,9 +11065,8 @@ def test_complementary_gate_layout_rewrites_have_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.dual_postconv_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_dual_postconv_gate_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == function_names
+    assert _orchestrated_pass_count("run_dual_postconv_gate_layout_cleanup") == 1
 
 
 def test_ndhwc_gate_layout_rewrites_have_single_owner() -> None:
@@ -11193,7 +11199,11 @@ def test_cost_volume_scatter_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_cost_volume_scatter_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_cost_volume_scatter_layout_cleanup")
+        == 2
+    )
 
 
 def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
@@ -11247,10 +11257,7 @@ def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.add_concat_suffix_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_add_concat_suffix_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
     production_calls = [
         call
         for call in ast.walk(lowering_tree)
@@ -11266,7 +11273,11 @@ def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_add_concat_suffix_layout_cleanup"
     ]
-    assert len(runner_calls) == 1
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_add_concat_suffix_layout_cleanup")
+        == 1
+    )
 
 
 def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
@@ -11320,10 +11331,7 @@ def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.dual_mul_concat_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_dual_mul_concat_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
     production_calls = [
         call
         for call in ast.walk(lowering_tree)
@@ -11836,6 +11844,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_pad_layout_cleanup",
         "run_mean_mul_add_conv_layout_cleanup",
         "run_singleton_channel_transpose_cleanup",
+        "run_elementwise_gate_layout_cleanup",
+        "run_dual_postconv_gate_layout_cleanup",
+        "run_ndhwc_gate_layout_cleanup",
+        "run_cost_volume_scatter_layout_cleanup",
+        "run_add_concat_suffix_layout_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12200,7 +12213,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_elementwise_gate_layout_cleanup"
     ]
-    assert len(elementwise_gate_calls) == 1
+    assert (
+        len(elementwise_gate_calls)
+        + _orchestrated_pass_count("run_elementwise_gate_layout_cleanup")
+        == 1
+    )
 
     multi_branch_gate_calls = [
         call
@@ -12216,7 +12233,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_postconv_gate_layout_cleanup"
     ]
-    assert len(dual_postconv_gate_calls) == 1
+    assert (
+        len(dual_postconv_gate_calls)
+        + _orchestrated_pass_count("run_dual_postconv_gate_layout_cleanup")
+        == 1
+    )
 
     ndhwc_gate_calls = [
         call
@@ -12224,7 +12245,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_ndhwc_gate_layout_cleanup"
     ]
-    assert len(ndhwc_gate_calls) == 2
+    assert (
+        len(ndhwc_gate_calls)
+        + _orchestrated_pass_count("run_ndhwc_gate_layout_cleanup")
+        == 2
+    )
 
     cost_volume_scatter_calls = [
         call
@@ -12232,7 +12257,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_cost_volume_scatter_layout_cleanup"
     ]
-    assert len(cost_volume_scatter_calls) == 2
+    assert (
+        len(cost_volume_scatter_calls)
+        + _orchestrated_pass_count("run_cost_volume_scatter_layout_cleanup")
+        == 2
+    )
 
     add_concat_suffix_calls = [
         call
@@ -12240,7 +12269,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_add_concat_suffix_layout_cleanup"
     ]
-    assert len(add_concat_suffix_calls) == 1
+    assert (
+        len(add_concat_suffix_calls)
+        + _orchestrated_pass_count("run_add_concat_suffix_layout_cleanup")
+        == 1
+    )
 
     dual_mul_concat_calls = [
         call
