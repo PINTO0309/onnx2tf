@@ -10731,6 +10731,10 @@ strict characterization selects only the absolute-final direct expression for
 an `_absolute_final_dynamic_rank1_stats` assignment while preserving the
 following unconditional sort, layout inference, and ConvInteger boundary.
 
+The absolute-final call now assigns its unchanged raw dictionary to that target.
+The other two occurrences, all owner behavior, and the unconditional following
+operations are unchanged; no guard, reconciliation, or traversal is added.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

@@ -4225,3 +4225,33 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet absolute-final raw-result
 assignment; there are no unexpected failures.
+
+## Absolute-final dynamic rank-one result implementation checkpoint
+
+The primary path now assigns the unchanged raw result of the absolute-final
+dynamic rank-one Unsqueeze/Reshape-shape rewrite to
+`_absolute_final_dynamic_rank1_stats`. Together with the existing very-late and
+recursive-fallback assignments, all three production occurrences now retain
+their exact mutation evidence.
+
+The owner, counter schema, option/tensor/operator mutations, positive-only
+layout synchronization, input ModelIR selection, and the following
+unconditional topological sort, layout inference, and final ConvInteger owner
+are unchanged. No guard, reconciliation, graph traversal, or dependency is
+added. The occurrence contract was updated to require the three assignments
+and reject any remaining discarded-result expression.
+
+Implementation validation completed sequentially under `uv`:
+
+- dynamic-Reshape owner, terminal orchestration, architecture, and occurrence
+  contracts: `311 passed in 18.45s`
+- expanded broad related gate: `1257 passed in 30.51s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit result propagation through
+`_run_absolute_final_normalization_attention_pass_pair()` and
+`run_absolute_final_normalization_attention()`. The shared recovery runner
+returns per-pass results, while this boundary currently declares and discards
+`None`; characterize the exact caller and ordering contract before changing
+it. Keep the following absolute-final dynamic rank-one rewrite fixed. Commit
+and push only; do not create or update a pull request.

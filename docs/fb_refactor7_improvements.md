@@ -327,16 +327,24 @@ This checkpoint extends the expanded related gate to `1256 passed in 30.30s`;
 the focused quantized-layout, terminal, and architecture gate is
 `277 passed in 17.28s`.
 
+The absolute-final dynamic rank-one Unsqueeze/Reshape-shape call now retains its
+exact raw result, completing result capture across its very-late, recursive-
+fallback, and absolute-final occurrences without adding a guard or
+reconciliation.
+
+This checkpoint extends the expanded related gate to `1257 passed in 30.51s`;
+the focused dynamic-Reshape, terminal-orchestration, architecture, and
+occurrence gate is `311 passed in 18.45s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
 
 ## Remaining work
 
-The broader `flatbuffer_direct` refactor remains active. The next
-characterized unit should continue the remaining primary final-pass
-reconciliation inventory immediately before the completed final PReLU boundary,
-beginning with the absolute-final dynamic rank-one rewrite immediately before
-`final_convinteger_layout_stats`. Any new mutation evidence must preserve current
-pass order, TensorFlow-free boundary, dependency set, and sequential validation
-policy.
+The broader `flatbuffer_direct` refactor remains active. The next characterized
+unit should audit result propagation through
+`_run_absolute_final_normalization_attention_pass_pair()` and its orchestration
+boundary immediately before the completed absolute-final dynamic rank-one
+rewrite. Any new mutation evidence must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

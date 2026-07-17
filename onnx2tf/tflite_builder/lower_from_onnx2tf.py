@@ -5694,9 +5694,11 @@ def lower_onnx_to_ir(
         )
     )
     _run_absolute_final_normalization_attention_pass_pair()
-    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
-        model_ir,
-        layout_state=session.layout_state,
+    _absolute_final_dynamic_rank1_stats = (
+        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)

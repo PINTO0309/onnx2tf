@@ -720,6 +720,33 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_reconcile_static_tensor_shapes"
 
+    result_assignments = sorted(
+        [
+            node
+            for node in ast.walk(lowerer)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id
+            == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+        ],
+        key=lambda node: node.lineno,
+    )
+    assert [assignment.targets[0].id for assignment in result_assignments] == [
+        "_very_late_dynamic_rank1_reshape_stats",
+        "_fallback_dynamic_rank1_stats",
+        "_absolute_final_dynamic_rank1_stats",
+    ]
+    assignment_inputs = []
+    for assignment in result_assignments:
+        assert len(assignment.value.args) == 1
+        argument = assignment.value.args[0]
+        assert isinstance(argument, ast.Name)
+        assignment_inputs.append(argument.id)
+    assert assignment_inputs == ["model_ir", "fallback_ir", "model_ir"]
+
     remaining_expressions = [
         node
         for node in ast.walk(lowerer)
@@ -729,14 +756,7 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
         and node.value.func.id
         == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
     ]
-    assert len(remaining_expressions) == 1
-    remaining_inputs = []
-    for expression in remaining_expressions:
-        assert len(expression.value.args) == 1
-        argument = expression.value.args[0]
-        assert isinstance(argument, ast.Name)
-        remaining_inputs.append(argument.id)
-    assert remaining_inputs == ["model_ir"]
+    assert remaining_expressions == []
 
 
 def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -> (
