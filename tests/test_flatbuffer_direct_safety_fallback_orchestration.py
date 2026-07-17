@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -860,4 +861,38 @@ def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
     assert isinstance(following, ast.Expr)
     assert ast.unparse(following.value) == (
         "_run_indexed_binary_layout_convergence(fallback_ir)"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="fallback indexed binary convergence result is discarded",
+)
+def test_safety_fallback_retains_indexed_binary_convergence_result() -> None:
+    body = _safety_fallback_body(_lowerer())
+    owner_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, (ast.Assign, ast.Expr))
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "_run_indexed_binary_layout_convergence"
+    )
+
+    owner = body[owner_index]
+    assert isinstance(owner, ast.Assign)
+    assert isinstance(owner.targets[0], ast.Name)
+    assert owner.targets[0].id == "_fallback_binary_layout_convergence_stats"
+    assert isinstance(owner.value, ast.Call)
+    assert isinstance(owner.value.func, ast.Name)
+    assert owner.value.func.id == "_run_indexed_binary_layout_convergence"
+    assert [ast.unparse(argument) for argument in owner.value.args] == [
+        "fallback_ir"
+    ]
+    assert owner.value.keywords == []
+
+    following = body[owner_index + 1]
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following.value) == (
+        "_topologically_sort_operators(fallback_ir)"
     )

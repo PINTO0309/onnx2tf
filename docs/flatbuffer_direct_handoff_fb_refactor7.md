@@ -3172,3 +3172,35 @@ At resume, audit the result returned by
 `_run_indexed_binary_layout_convergence(fallback_ir)` and retain its following
 terminal sort/validation boundary. Commit and push only; do not create or
 update a pull request.
+
+## Safety-fallback indexed binary-convergence characterization checkpoint
+
+`_run_indexed_binary_layout_convergence()` owns up to three rounds of
+rank-four broadcast repair, stale binary-Transpose repair, and static-shape
+reconciliation with one GraphIndex. It aggregates all three pure mutation
+counters and stops after the first all-zero round. Existing immediate-stable,
+second-round-stable, three-round-cap, multi-repair, index-reuse, and
+legacy-equivalence tests prove its result is complete.
+
+The fallback caller currently discards that complete dictionary. A strict
+expected-failure orchestration contract requires only assigning it to
+`_fallback_binary_layout_convergence_stats`. The owner call remains single and
+the following terminal sort/validation boundary remains fixed; no additional
+reconciliation is required.
+
+At implementation, replace only the fallback expression with a result-capture
+assignment. Do not change convergence rounds, owner order, GraphIndex reuse,
+statistics, sorting, terminal validation, dependencies, or TensorFlow
+boundary. Validate sequentially, then commit and push only; do not create or
+update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused convergence/high-rank/terminal-layout selection:
+  `14 passed, 13 deselected, 1 xfailed`
+- broad related gate plus rank-6 structure/numeric parity:
+  `540 passed, 1 xfailed in 28.63s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet result-capture contract; there
+are no unexpected failures.
