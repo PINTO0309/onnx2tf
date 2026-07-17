@@ -10153,3 +10153,10 @@ That exact invocation now assigns its unchanged return dictionary to
 `_late_pre_qkv_shape_extract_stats`. The earlier call and the later absolute-end
 call remain discarded expressions. This preserves all three execution points
 while giving the current terminal interval unambiguous mutation evidence.
+
+The preceding late SPP pair contains two transactional owners. Each prunes only
+after a positive rewrite, so their two returned counters completely describe
+mutation and no separate tensor-count delta is needed. Strict characterization
+requires ordered tuple propagation, exact two-result validation, and a fixed
+two-counter summary staged between the preceding raw layout rewrite and the
+pre-QKV shape-extract result.

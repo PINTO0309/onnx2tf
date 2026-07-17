@@ -240,6 +240,104 @@ def test_late_spp_concat_unary_conv_runner_preserves_instrumented_order(
     assert events == list(LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the late SPP pair still discards ordered mutation results",
+)
+def test_late_spp_concat_unary_conv_returns_and_summarizes_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    spp_result = {
+        "optimized_transpose_resize_add_concat_affine_conv_spp_nhwc_chains": 2,
+    }
+    concat_result = {
+        "optimized_transpose_concat_unary_fanout_conv_nhwc_chains": 3,
+    }
+    expected_results = (spp_result, concat_result)
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(
+            invocation.pass_id for invocation in invocations
+        ) == LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS
+        assert tuple(expected_pass_ids) == LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS
+        assert phase_name == "late SPP/concat-unary-conv"
+        return expected_results
+
+    monkeypatch.setattr(
+        late_spp_concat_unary_conv_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    results = run_late_spp_concat_unary_conv(context)
+    summarize = getattr(
+        late_spp_concat_unary_conv_orchestration,
+        "summarize_late_spp_concat_unary_conv_mutations",
+    )
+    summary = summarize(results)
+
+    assert results == expected_results
+    assert summary == {**spp_result, **concat_result}
+    with pytest.raises(
+        ValueError,
+        match=r"late SPP mutation summary expected 2 pass results",
+    ):
+        summarize(())
+
+    _, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the lowerer does not capture late SPP mutation evidence",
+)
+def test_lowerer_captures_late_spp_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = ("late_spp_results", "_late_spp_stats")
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+    }
+    result_call = assignments[target_names[0]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == LATE_SPP_CONCAT_UNARY_CONV
+    summary_call = assignments[target_names[1]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == (
+        "summarize_late_spp_concat_unary_conv_mutations"
+    )
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+    )
+    following = lowerer.body[first_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+
+
 def test_late_spp_concat_unary_conv_module_does_not_import_lowerer() -> None:
     module_path = (
         REPO_ROOT

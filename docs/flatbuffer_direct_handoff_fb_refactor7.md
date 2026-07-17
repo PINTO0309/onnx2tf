@@ -1370,3 +1370,24 @@ compilation, and whitespace validation pass.
 At resume, propagate ordered results and net-prune evidence from the late SPP
 pair immediately before this owner. Commit and push only; do not create or
 update a pull request.
+
+## Late SPP pair mutation evidence characterization checkpoint
+
+Inspection shows that both late SPP child owners prune only after a positive
+rewrite. Their preflight/no-op paths leave ModelIR unchanged, so the SPP and
+concat-unary-conv counters already provide complete evidence and no separate
+net-prune count is required.
+
+Strict expected-failure coverage requires the orchestration runner and lowerer
+delegate to return the ordered two-result tuple. A pure summary validates the
+exact length and emits the two declared mutation counters. The production call
+must stage `late_spp_results` and `_late_spp_stats` between the preceding raw
+layout rewrite and `_late_pre_qkv_shape_extract_stats`. No reconciliation guard
+changes.
+
+At implementation, return results through both layers, add the pure fixed-key
+summary, and stage both assignments at the existing call. Validate malformed
+length, order, shared state, complete SPP and concat-unary-conv owner suites,
+adjacent terminal orchestration, core, pass efficiency, architecture, and the
+TensorFlow import blocker sequentially. Commit and push only; do not create or
+update a pull request.
