@@ -9006,3 +9006,15 @@ pad/mul cluster is the only lowerer-local callback dependency. Focused tests
 freeze all arguments and the two distinct outer neighbors. The eventual phase
 should therefore use one frozen explicit context, one injected callback, and
 fourteen stable IDs while preserving both top-level boundaries.
+
+That sequence now uses a frozen `TerminalSliceConcatRecoveryContext` and
+fourteen stable IDs in
+`passes/terminal_slice_concat_recovery_orchestration.py`. Thirteen owners are
+direct imports and the channel-slice/pad/mul boundary is one explicit callback.
+The historical helper remains a zero-argument top-level boundary but now
+captures only the context and delegates to the runner; both invocations and
+their distinct neighbors are unchanged. Architecture and adjacent owner tests
+combine stable phase multiplicity with remaining direct calls, preserving all
+former execution totals. Focused, related-owner, core, and TensorFlow-import-
+blocked suites pass. Characterize the neighboring terminal affine/concat/split
+sequence before the next extraction.

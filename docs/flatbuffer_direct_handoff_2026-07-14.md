@@ -13278,3 +13278,60 @@ slice/pad/mul callback plus fourteen stable IDs. Prove every builder argument
 and instrumented order before switching the historical helper, preserve both
 outer boundaries, validate sequentially, commit and push, and do not create a
 pull request.
+
+## Explicit terminal slice/concat recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/terminal_slice_concat_recovery_orchestration.py`. A frozen
+`TerminalSliceConcatRecoveryContext` carries ModelIR, layout state,
+diagnostics, and the one lowerer-local channel-slice/pad/mul composite
+callback. The remaining thirteen targets are imported directly from their
+existing pass modules; the new phase module does not import the central
+lowerer.
+
+`TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS` declares the exact fourteen-step
+order. Immutable invocations preserve each model-only, layout-aware, and final
+layout/diagnostics argument contract. Shared execution validates the complete
+ID sequence before running the first callback.
+
+The historical zero-argument helper and both top-level outer calls remain. Its
+body shrinks from 37 to four lines and captures only the explicit context. Both
+distinct outer neighbors and the earlier predecessor's layout keyword remain
+unchanged. Multiplicity-aware architecture accounting preserves the prior
+sanitizer, affine-post-add, channel-cluster, split-family, singleton-gate,
+stride-slice bridge, layout-cleanup, and overall registered-runner totals.
+
+Focused tests prove all fourteen IDs and arguments, callback identity, context
+and wrapper wiring, both outer invocation contracts and neighbors,
+instrumented order, and lowerer-import isolation. Four concat-family fixtures
+now check the moved terminal adjacency through stable IDs while continuing to
+check the separate terminal affine/concat/split sequence directly. The stride-
+slice fixture similarly combines its moved stable occurrence with remaining
+direct calls.
+
+Sequential validation completed as follows:
+
+- focused terminal slice/concat orchestration: `7 passed in 0.58s`;
+- focused orchestration plus ordered architecture: `255 passed in 18.62s`;
+- five adjacent concat/stride-slice fixtures plus orchestration and
+  architecture: `607 passed in 18.43s`;
+- related fourteen-slot owner and phase-family set:
+  `867 passed in 18.64s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.76s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_terminal_affine_concat_split_recovery_sequence` before changing
+production code. Several owner fixtures already expose its relationship to the
+new stable terminal slice/concat phase; freeze its complete call/argument list,
+captures, repetition, and outer boundaries before choosing the next explicit
+context. Validate sequentially, commit and push, and do not create a pull
+request.

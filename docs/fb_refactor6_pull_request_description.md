@@ -1976,3 +1976,14 @@ neighbors. Thirteen slots have direct module owners and only one lowerer-local
 cluster requires an explicit callback. The focused plus architecture suite
 passed 252 tests and all 11 TensorFlow-import-blocked tests passed. No pull
 request was created, reopened, or updated.
+
+That sequence is now implemented in
+`passes/terminal_slice_concat_recovery_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context, fourteen stable IDs, thirteen direct owner
+imports, and one explicit lowerer-local callback. The historical helper, both
+top-level outer calls, and their distinct neighbors remain unchanged as a
+four-line delegate. Focused and architecture contracts preserve exact
+arguments, callback identity, order, and invocation totals. The 867-test
+related family, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests
+pass. No public API, artifact, dependency, runtime order, or TensorFlow
+boundary changed, and no pull request was created, reopened, or updated.

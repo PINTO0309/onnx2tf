@@ -24,6 +24,9 @@ from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
 from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
     LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
+    TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -35,6 +38,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
     *QLINEAR_MEAN_CONCAT_PASS_IDS,
     *LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
+    *TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -1477,7 +1481,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_run_channel_slice_pad_mul_layout_pass_cluster",
         "_optimize_transpose_mul_posttranspose_add_nhwc_chains",
         "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
@@ -1492,7 +1496,8 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
         "_optimize_transpose_pre_add_nhwc_chains",
         "run_layout_transpose_cleanup",
-    ]
+    )
+    assert TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -1500,10 +1505,16 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-    assert all(
-        keyword.arg != "state_scope" for keyword in helper_calls[-1].keywords
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_slice_concat_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "terminal_slice_concat_recovery_context"
     )
+    assert helper_calls[0].keywords == []
 
     invocation_indexes = [
         index
@@ -2132,7 +2143,7 @@ def test_probable_nhwc_axis_sanitizer_has_one_lowerer_adapter() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
 
 
 def test_elementwise_fanout_owner_has_one_lowerer_adapter() -> None:
@@ -5807,7 +5818,7 @@ def test_indexed_affine_post_add_layout_owner_is_bounded_and_separate_from_pad()
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 4
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -7183,7 +7194,7 @@ def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 2
 
 
 def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
@@ -11844,6 +11855,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     orchestrated_runner_names = runner_names & ORCHESTRATED_PASS_IDS
     assert orchestrated_runner_names == {
         "run_hard_activation_passthrough_cleanup",
+        "run_layout_transpose_cleanup",
         "run_ndhwc_concat_layout_cleanup",
         "run_quantized_reshape_cleanup",
         "run_spp_layout_cleanup",
@@ -12019,7 +12031,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_layout_transpose_cleanup"
     ]
-    assert len(layout_transpose_calls) == 12
+    assert (
+        len(layout_transpose_calls)
+        + _orchestrated_pass_count("run_layout_transpose_cleanup")
+        == 12
+    )
 
     transpose_gather_axis_calls = [
         call
@@ -14726,7 +14742,11 @@ def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == 2
+        assert (
+            len(production_calls)
+            + _orchestrated_pass_count(wrapper_name)
+            == 2
+        )
         for production_call in production_calls:
             layout_keyword = next(
                 keyword
@@ -15329,7 +15349,7 @@ def test_indexed_singleton_gate_layout_owner_is_bounded_and_transactional() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword

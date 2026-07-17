@@ -25,6 +25,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.concat_mul_add_transpose_add_bridge_layout import (
     _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains as _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains_owner,
 )
+from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
+    TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1062,11 +1065,16 @@ def test_concat_mul_add_transpose_add_keeps_owner_wrapper_and_boundaries() -> No
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
+    target_name = "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains"
+    terminal_index = TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS.index(target_name)
+    assert (
+        TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS[terminal_index - 1],
+        TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS[terminal_index + 1],
+    ) == (
+        "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
+        "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",
+    )
     expected = {
-        "_run_terminal_slice_concat_layout_recovery_sequence": (
-            "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
-            "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",
-        ),
         "_run_terminal_affine_concat_split_recovery_sequence": (
             "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
             "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",
@@ -1086,9 +1094,7 @@ def test_concat_mul_add_transpose_add_keeps_owner_wrapper_and_boundaries() -> No
             and isinstance(candidate.value.func, ast.Name)
         ]
         call_names = [call.func.id for call in calls]
-        index = call_names.index(
-            "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains"
-        )
+        index = call_names.index(target_name)
         observed[statement.name] = (
             call_names[index - 1],
             call_names[index + 1],

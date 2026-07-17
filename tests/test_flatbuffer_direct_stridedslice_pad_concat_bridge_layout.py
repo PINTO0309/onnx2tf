@@ -25,6 +25,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.stridedslice_pad_concat_bridge_layout import (
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains as _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains_owner,
 )
+from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
+    TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1192,7 +1195,13 @@ def test_slice_pad_concat_keeps_owner_wrapper_and_ordered_calls() -> None:
         and node.func.id
         == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
     ]
-    assert len(calls) == 3
+    assert (
+        len(calls)
+        + TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS.count(
+            "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+        )
+        == 3
+    )
     for call in calls:
         assert len(call.args) == 1
         assert isinstance(call.args[0], ast.Name)
