@@ -2332,3 +2332,20 @@ efficiency tests and all 11 TensorFlow-import-blocked tests passed, and
 targeted static checks passed. Runtime behavior and all public/dependency
 contracts remain unchanged. PR #952 remains closed, and no pull request was
 created, reopened, or updated.
+
+That pair is now implemented in
+`passes/constant_fold_cast_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context, two canonical stable IDs, and direct owner
+imports. The optional pass-state scope remains a per-invocation argument:
+scope-less builds allocate one fresh scope, while supplied scopes are preserved
+by identity. Both immutable owner invocations share the resolved scope. The
+historical helper keeps its `state_scope=None` contract, both production
+parents continue to supply their existing scope, and all internal boundaries
+remain unchanged. Central direct runner imports were removed, architecture
+accounting preserves total multiplicity, and the efficiency fixture exercises
+the explicit external-scope form with one graph-index build. The 258-test
+focused/architecture set, 30 pass-efficiency tests, 32 core smoke tests, and
+all 11 TensorFlow-import-blocked tests pass. No public API, artifact,
+dependency, scope-allocation semantics, runtime order, parent boundary, or
+TensorFlow isolation changed. PR #952 remains closed, and no pull request was
+created, reopened, or updated.

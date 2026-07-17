@@ -9303,3 +9303,14 @@ and one after late layout/mean/SPP/gather cleanup. Focused contracts freeze
 both caller parents and their internal boundaries. The eventual phase should
 keep the optional scope outside a frozen ModelIR/layout/diagnostics context,
 allocate only when absent, and expose two stable owner IDs.
+
+That pair now uses `ConstantFoldCastContext` and two stable IDs in
+`passes/constant_fold_cast_orchestration.py`. The optional scope stays outside
+the frozen ModelIR/layout/diagnostics context: every scope-less build allocates
+one fresh scope, while an external scope is preserved by identity. Both owners
+share the resolved scope and fixed order. The historical helper remains a
+keyword-only delegate, both parent phases retain their external-scope calls and
+internal boundaries, and the central lowerer no longer imports either runner.
+The efficiency fixture now exercises the explicit external-scope phase and
+retains one graph-index build. Focused, architecture, pass-efficiency, core,
+and TensorFlow-import-blocked suites pass.

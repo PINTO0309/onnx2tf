@@ -4,6 +4,19 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import constant_fold_cast_orchestration
+from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
+    CONSTANT_FOLD_CAST_PASS_IDS,
+    ConstantFoldCastContext,
+    build_constant_fold_cast_invocations,
+    run_constant_fold_cast,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -63,25 +76,46 @@ def _direct_invocation_index(parent: ast.FunctionDef) -> int:
     )
 
 
-def test_constant_fold_cast_signature_and_scope_fallback_are_explicit() -> None:
+def _context() -> ConstantFoldCastContext:
+    model_ir = ModelIR("constant_fold_cast_test")
+    return ConstantFoldCastContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+
+
+def _normalize_new_contract(
+    invocation: constant_fold_cast_orchestration.RecoveryInvocation,
+    context: ConstantFoldCastContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "session.layout_state"
+        if value is context.diagnostics:
+            return "session.diagnostics"
+        if isinstance(value, ModelIRPassStateScope):
+            return "state_scope"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
+
+
+def test_constant_fold_cast_signature_and_delegate_are_explicit() -> None:
     _, helper = _lowerer_and_helper()
 
-    assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 21
     assert helper.args.args == []
     assert helper.args.posonlyargs == []
     assert [arg.arg for arg in helper.args.kwonlyargs] == ["state_scope"]
     assert [_expression_path(value) for value in helper.args.kw_defaults] == [None]
     assert helper.args.vararg is None
     assert helper.args.kwarg is None
-
-    conditionals = [node for node in ast.walk(helper) if isinstance(node, ast.If)]
-    assert len(conditionals) == 1
-    conditional = conditionals[0]
-    assert isinstance(conditional.test, ast.Compare)
-    assert _expression_path(conditional.test.left) == "state_scope"
-    assert [type(operator) for operator in conditional.test.ops] == [ast.Is]
-    assert [_expression_path(value) for value in conditional.test.comparators] == [None]
+    assert len(helper.body) == 1
     assert not any(
         isinstance(
             node,
@@ -89,6 +123,7 @@ def test_constant_fold_cast_signature_and_scope_fallback_are_explicit() -> None:
                 ast.AsyncFor,
                 ast.AsyncWith,
                 ast.For,
+                ast.If,
                 ast.Match,
                 ast.Try,
                 ast.While,
@@ -97,49 +132,112 @@ def test_constant_fold_cast_signature_and_scope_fallback_are_explicit() -> None:
         )
         for node in ast.walk(helper)
     )
-
-    scope_calls = [
-        node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "ModelIRPassStateScope"
-    ]
-    assert len(scope_calls) == 1
-    assert tuple(_expression_path(arg) for arg in scope_calls[0].args) == ("model_ir",)
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in scope_calls[0].keywords
-    } == {"layout_state": "session.layout_state"}
-
-
-def test_constant_fold_cast_preserves_both_cleanup_contracts() -> None:
-    _, helper = _lowerer_and_helper()
-    cleanup_names = (
-        "run_constant_input_fold_cleanup",
-        "run_redundant_cast_cleanup",
-    )
-    calls = [
-        node
         for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in cleanup_names
-    ]
-    calls.sort(key=lambda call: call.lineno)
+    )
 
-    assert tuple(call.func.id for call in calls) == cleanup_names
-    expected_contract = {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-        "state_scope": "state_scope",
-    }
-    for call in calls:
-        assert tuple(_expression_path(arg) for arg in call.args) == ("model_ir",)
-        assert {
-            str(keyword.arg): _expression_path(keyword.value)
-            for keyword in call.keywords
-        } == expected_contract
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "run_constant_fold_cast"
+    assert tuple(_expression_path(arg) for arg in call.args) == (
+        "constant_fold_cast_context",
+    )
+    assert {
+        str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
+    } == {"state_scope": "state_scope"}
+
+
+@pytest.mark.parametrize("use_external_scope", [False, True])
+def test_constant_fold_cast_preserves_both_scope_forms(
+    use_external_scope: bool,
+) -> None:
+    context = _context()
+    external_scope = (
+        ModelIRPassStateScope(
+            context.model_ir,
+            layout_state=context.layout_state,
+        )
+        if use_external_scope
+        else None
+    )
+    invocations = build_constant_fold_cast_invocations(
+        context,
+        state_scope=external_scope,
+    )
+
+    assert tuple(step.pass_id for step in invocations) == CONSTANT_FOLD_CAST_PASS_IDS
+    expected_contract = (
+        ("model_ir",),
+        {
+            "layout_state": "session.layout_state",
+            "diagnostics": "session.diagnostics",
+            "state_scope": "state_scope",
+        },
+    )
+    assert {
+        step.pass_id: _normalize_new_contract(step, context) for step in invocations
+    } == {pass_id: expected_contract for pass_id in CONSTANT_FOLD_CAST_PASS_IDS}
+
+    scopes = [dict(step.keyword_args)["state_scope"] for step in invocations]
+    assert scopes[0] is scopes[1]
+    assert isinstance(scopes[0], ModelIRPassStateScope)
+    assert scopes[0].model_ir is context.model_ir
+    assert scopes[0].layout_state is context.layout_state
+    if external_scope is not None:
+        assert scopes[0] is external_scope
+    else:
+        rebuilt_scope = dict(
+            build_constant_fold_cast_invocations(context)[0].keyword_args
+        )["state_scope"]
+        assert rebuilt_scope is not scopes[0]
+
+
+@pytest.mark.parametrize("use_external_scope", [False, True])
+def test_constant_fold_cast_runner_preserves_both_instrumented_orders(
+    monkeypatch: pytest.MonkeyPatch,
+    use_external_scope: bool,
+) -> None:
+    context = _context()
+    external_scope = (
+        ModelIRPassStateScope(
+            context.model_ir,
+            layout_state=context.layout_state,
+        )
+        if use_external_scope
+        else None
+    )
+    events: list[tuple[str, ModelIRPassStateScope]] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append((pass_id, kwargs["state_scope"]))
+
+        return record
+
+    for pass_id in CONSTANT_FOLD_CAST_PASS_IDS:
+        monkeypatch.setattr(
+            constant_fold_cast_orchestration,
+            pass_id,
+            recorder(pass_id),
+        )
+
+    run_constant_fold_cast(
+        context,
+        state_scope=external_scope,
+    )
+
+    assert [pass_id for pass_id, _ in events] == list(CONSTANT_FOLD_CAST_PASS_IDS)
+    assert events[0][1] is events[1][1]
+    if external_scope is not None:
+        assert events[0][1] is external_scope
+    else:
+        assert isinstance(events[0][1], ModelIRPassStateScope)
 
 
 def test_constant_fold_cast_has_two_external_scope_production_calls() -> None:
@@ -188,4 +286,53 @@ def test_constant_fold_cast_preserves_late_layout_parent_boundary() -> None:
     assert invocation_index == len(parent.body) - 1
     assert _direct_call_name(parent.body[invocation_index - 1]) == (
         "run_transpose_gather_axis_cleanup"
+    )
+
+
+def test_constant_fold_cast_context_is_explicit() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "constant_fold_cast_context"
+            for target in statement.targets
+        )
+    )
+
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert context_assignment.value.func.id == "ConstantFoldCastContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+
+def test_constant_fold_cast_module_does_not_import_lowerer() -> None:
+    module_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "constant_fold_cast_orchestration.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        for node in tree.body
+    )
+    assert not any(
+        isinstance(node, ast.Import)
+        and any(
+            alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+            for alias in node.names
+        )
+        for node in tree.body
     )

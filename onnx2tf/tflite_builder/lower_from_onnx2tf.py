@@ -253,6 +253,10 @@ from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration impor
     DuplicateQuantizedPReLUContext,
     run_duplicate_quantized_prelu,
 )
+from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
+    ConstantFoldCastContext,
+    run_constant_fold_cast,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -679,7 +683,6 @@ from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
 from onnx2tf.tflite_builder.passes.cast_cleanup import (
     _optimize_redundant_int32_to_int64_passthrough_cast_chains as _optimize_redundant_int32_to_int64_passthrough_cast_chains_pass,
     _optimize_redundant_int64_to_int32_cast_chains as _optimize_redundant_int64_to_int32_cast_chains_pass,
-    run_redundant_cast_cleanup,
 )
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     _optimize_concat_pre_quantize_dequantize as _optimize_concat_pre_quantize_dequantize_pass,
@@ -741,7 +744,6 @@ from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_constant_input_pad_chains,  # noqa: F401 - compatibility re-export
     _optimize_constant_input_pool_chains,  # noqa: F401 - compatibility re-export
     _optimize_constant_input_scatter_nd_chains,  # noqa: F401 - compatibility re-export
-    run_constant_input_fold_cleanup,
 )
 from onnx2tf.tflite_builder.reporting import (
     build_op_coverage_report as _build_op_coverage_report,
@@ -4107,21 +4109,8 @@ def lower_onnx_to_ir(
         *,
         state_scope: ModelIRPassStateScope | None = None,
     ) -> None:
-        if state_scope is None:
-            state_scope = ModelIRPassStateScope(
-                model_ir,
-                layout_state=session.layout_state,
-            )
-        run_constant_input_fold_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_redundant_cast_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        run_constant_fold_cast(
+            constant_fold_cast_context,
             state_scope=state_scope,
         )
 
@@ -4546,6 +4535,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     duplicate_quantized_prelu_context = DuplicateQuantizedPReLUContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    constant_fold_cast_context = ConstantFoldCastContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

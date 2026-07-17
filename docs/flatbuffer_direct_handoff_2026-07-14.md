@@ -14699,3 +14699,53 @@ external-scope production callers, and all internal parent boundaries as a
 delegate. Prove implicit and external scope identity plus instrumented order
 before switching production; validate sequentially, commit and push, and do
 not create a pull request.
+
+## Explicit constant-fold and redundant-cast orchestration: completed state
+
+The characterized pair now delegates to
+`passes/constant_fold_cast_orchestration.py`. A frozen
+`ConstantFoldCastContext` contains only ModelIR, layout state, and diagnostics.
+`CONSTANT_FOLD_CAST_PASS_IDS` is the canonical two-owner sequence, and the
+phase module imports constant-input folding and redundant-cast cleanup directly
+without importing the central lowerer.
+
+The optional `state_scope` remains a runner/builder argument rather than
+context state. When absent, each builder creates one fresh
+`ModelIRPassStateScope`; when supplied, the builder preserves that exact
+object. In both forms, the same resolved scope, ModelIR, layout, and diagnostics
+are attached to both immutable invocations. The shared executor validates the
+two stable IDs before execution.
+
+The historical helper retains its keyword-only `state_scope=None` signature as
+a delegate. Both production parents still pass their existing scope, and the
+pair remains between the same internal neighbors. Architecture accounting
+moves one syntactic occurrence of each owner to stable IDs without changing
+total multiplicity. The now-unused central runner imports were removed, making
+the phase module their orchestration owner. The efficiency fixture executes
+the explicit external-scope form and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused constant-fold/cast orchestration: `10 passed in 0.60s`;
+- focused orchestration plus ordered architecture:
+  `258 passed in 17.96s`;
+- pass-efficiency: `30 passed in 0.52s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.85s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, optional-scope semantics, parent boundaries, runtime order, invocation
+multiplicity, shared-scope efficiency, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, use the explicit constant-fold/cast builder as the composable
+foundation when characterizing the very-late gather/constant/normalization
+parent. Freeze its four effective owner steps, fixed normalization policy,
+shared external scope, sole call, and outer terminal boundaries before
+production changes. Validate sequentially, keep real-model conversion minimal,
+commit and push only, and do not create a pull request.

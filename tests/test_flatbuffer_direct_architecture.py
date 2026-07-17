@@ -69,6 +69,9 @@ from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
 from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
     DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
+    CONSTANT_FOLD_CAST_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -95,6 +98,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
     *QKV_ATTENTION_PASS_IDS,
     *DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
+    *CONSTANT_FOLD_CAST_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -4689,30 +4693,25 @@ def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_constant_input_fold_cleanup",
         "run_redundant_cast_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    )
+    assert CONSTANT_FOLD_CAST_PASS_IDS == expected_order
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_constant_fold_cast"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert statement.value.args[0].id == "constant_fold_cast_context"
+    assert len(statement.value.keywords) == 1
+    scope_keyword = statement.value.keywords[0]
+    assert scope_keyword.arg == "state_scope"
+    assert isinstance(scope_keyword.value, ast.Name)
+    assert scope_keyword.value.id == "state_scope"
 
     helper_invocations = [
         node
@@ -11856,6 +11855,8 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_qkv_attention_bridge_cleanup",
         "run_duplicate_fanout_cleanup",
         "run_quantized_prelu_cleanup",
+        "run_constant_input_fold_cleanup",
+        "run_redundant_cast_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)

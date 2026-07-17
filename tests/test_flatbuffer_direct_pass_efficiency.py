@@ -88,6 +88,10 @@ from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration impor
     DuplicateQuantizedPReLUContext,
     run_duplicate_quantized_prelu,
 )
+from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
+    ConstantFoldCastContext,
+    run_constant_fold_cast,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -562,14 +566,12 @@ def test_constant_fold_cast_pair_reuses_one_pass_state(monkeypatch) -> None:
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     state_scope = ModelIRPassStateScope(model_ir)
 
-    run_constant_input_fold_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_redundant_cast_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
+    run_constant_fold_cast(
+        ConstantFoldCastContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
         state_scope=state_scope,
     )
 
