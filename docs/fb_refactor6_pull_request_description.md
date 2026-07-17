@@ -2427,3 +2427,13 @@ The 252-test focused/architecture set, 30 pass-efficiency tests, and all 11
 TensorFlow-import-blocked tests pass. Runtime behavior and all public/
 dependency contracts remain unchanged. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+The option-dependent late layout/mean/SPP/gather/constant-fold/cast parent is
+now characterized without production changes. Five focused tests freeze its
+required keyword-only policy, one shared main-model scope, optional layout
+guard, three fixed direct owners, composed constant-fold/cast pair, both
+flattened effective sequences, sole policy-forwarding caller, and outer
+boundaries. The 253-test focused/architecture set, 30 pass-efficiency tests,
+and all 11 TensorFlow-import-blocked tests pass. Runtime behavior and all
+public/dependency contracts remain unchanged. PR #952 remains closed, and no
+pull request was created, reopened, or updated.

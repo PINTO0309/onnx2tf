@@ -9378,3 +9378,14 @@ unrelated direct uses of the other owners remain. Multiplicity-aware
 architecture accounting preserves 120 effective ordered calls, and the
 efficiency fixture retains one graph-index build. Focused, architecture,
 pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The late layout/mean/SPP/gather/constant-fold/cast parent is now characterized
+without production changes. Its required keyword-only policy optionally adds
+layout-transpose cleanup before three fixed direct owners and the existing
+constant-fold/cast child. One fresh main-model scope spans all five required
+effective owners or all six full-policy owners. The sole caller forwards the
+global layout-optimization policy between shape-extract cleanup and expand/
+squeeze canonicalization. The eventual phase should compose the existing
+constant-fold/cast builder with its parent scope; after extraction, its dead
+lowerer delegate/context/imports can be removed while preserving two effective
+production executions of the constant-fold/cast pair.

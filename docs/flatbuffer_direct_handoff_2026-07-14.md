@@ -15031,3 +15031,51 @@ can be characterized without real-model conversions. Preserve option defaults
 and call multiplicity, validate sequentially, make separate characterization
 and implementation checkpoints, commit and push only, and do not create or
 reopen a pull request.
+
+## Late layout/mean/SPP/gather/constant-fold/cast characterization: completed state
+
+The 43-line
+`_run_late_layout_mean_spp_gather_constant_cast_pass_cluster` remains
+unchanged in production. It requires the keyword-only
+`include_layout_transpose` policy, creates one main-model/session-layout
+`ModelIRPassStateScope`, optionally runs layout-transpose cleanup, then always
+runs mean/MUL/ADD/CONV layout cleanup, SPP cleanup, transpose-gather-axis
+cleanup, and the existing constant-fold/cast child with the same scope. The
+child expands to constant-input-fold and redundant-cast owners, producing five
+required effective IDs or six when layout cleanup is enabled.
+
+There is exactly one production call. It forwards
+`optimize_layout_transpose_chains` to the required policy and remains between
+shape-extract layout cleanup and expand/squeeze-to-reshape replacement.
+Focused contracts freeze the required keyword-only signature, one scope,
+complete direct and child contracts, both flattened policy sequences, the
+single exact optional guard, caller multiplicity, policy forwarding, and both
+outer boundaries.
+
+Sequential characterization validation completed as follows:
+
+- focused late-layout policy contracts: `5 passed in 0.61s`;
+- focused contracts plus ordered architecture: `253 passed in 16.46s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.14s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, optional policy, owner contracts,
+caller multiplicity, boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context, required and
+full stable-ID sequences, and a dedicated phase module. Build the optional
+layout invocation locally, build the three required direct owners locally,
+and compose `build_constant_fold_cast_invocations` with the same external
+scope. Preserve both policy forms and the historical helper as a keyword-only
+delegate. Because that extraction removes the last production caller of the
+constant-fold/cast helper, remove its now-dead lowerer helper/context/imports
+and transfer its production accounting to the new parent IDs without changing
+the pair's effective multiplicity. Move the efficiency fixture to the full
+explicit policy, validate sequentially, commit and push only, and do not create
+or reopen a pull request.
