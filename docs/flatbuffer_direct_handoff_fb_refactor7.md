@@ -3395,3 +3395,34 @@ At resume, audit `final_pad_layout_stats` for counter/cleanup completeness and
 retain its guarded reconciliation result without changing the following Conv-
 input owner boundary. Commit and push only; do not create or update a pull
 request.
+
+## Primary final Pad reconciliation characterization checkpoint
+
+`repair_channel_last_inputs_for_channel_first_pad()` inserts its adapter,
+constant, and Transpose only when
+`repaired_channel_last_inputs_for_channel_first_pad` increments. Optional
+layout-state sync is under the same positive predicate. The zero path has no
+pruning or cleanup, and existing positive/native-NCHW/unproven-mismatch tests
+cover both paths plus GraphIndex/layout-state consistency.
+
+A strict expected-failure primary-path contract requires a stable
+`_final_pad_layout_static_shape_stats` zero dictionary and assigns the opt-in
+complete reconciliation result under the unchanged positive guard. The
+guarded topological sort and following `final_conv_input_stats` owner remain
+fixed.
+
+At implementation, add only result plumbing. Do not change Pad matching,
+adapter construction, lineage, GraphIndex mutation, layout sync, result schema,
+guard, sort, Conv boundary, dependencies, or TensorFlow behavior. Validate
+sequentially, then commit and push only; do not create or update a pull
+request.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal orchestration and Pad owner: `7 passed, 1 xfailed`
+- expanded broad related gate plus Pad/rank-6 coverage:
+  `569 passed, 1 xfailed in 28.54s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final Pad reconciliation
+contract; there are no unexpected failures.

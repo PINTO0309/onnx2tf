@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -218,3 +221,66 @@ def test_primary_path_stages_final_high_rank_bmm_reconciliation() -> None:
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_pad_layout_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="final Pad reconciliation result is discarded",
+)
+def test_primary_path_stages_final_pad_reconciliation() -> None:
+    body = _lowerer_body()
+    stats_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "final_pad_layout_stats"
+    )
+
+    default_stats = body[stats_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == "_final_pad_layout_static_shape_stats"
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(default_stats.value.keys, default_stats.value.values)
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = body[stats_index + 2]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "int(final_pad_layout_stats.get("
+        "'repaired_channel_last_inputs_for_channel_first_pad', 0)) > 0"
+    )
+    assert len(guard.body) == 2
+    reconciliation = guard.body[0]
+    assert isinstance(reconciliation, ast.Assign)
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == (
+        "_final_pad_layout_static_shape_stats"
+    )
+    assert isinstance(reconciliation.value, ast.Call)
+    assert isinstance(reconciliation.value.func, ast.Name)
+    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+    assert isinstance(guard.body[1], ast.Expr)
+    assert ast.unparse(guard.body[1].value) == (
+        "_topologically_sort_operators(model_ir)"
+    )
+
+    following = body[stats_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "final_conv_input_stats"
