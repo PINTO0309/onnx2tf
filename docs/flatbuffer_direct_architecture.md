@@ -9962,3 +9962,16 @@ for protobuf attributes, and remain TensorFlow-independent. This removes the
 protobuf stub's ambiguous `type[In]` inference from the central lowerer without
 changing supported Constant attribute forms. Production remains unchanged at
 this characterization checkpoint.
+
+`op_families.constant.lower_constant_node()` now owns the tensor-valued
+Constant path. The central node loop retains only the op-type guard, one typed
+call with `node` and `ctx`, and `continue`. The owner uses an explicit
+`onnx.AttributeProto` cast before reading `name` or `t`, removing the protobuf
+stub ambiguity that Pylance reported in the central lowerer.
+
+The extraction preserves new-tensor creation, in-place placeholder replacement,
+legacy collision renaming, constants-map updates, dtype and shape/signature
+normalization, provenance, the absence of a ModelIR operator, and the exact
+missing tensor-`value` error. It deliberately does not add other ONNX Constant
+attribute encodings or change registry dispatch. Focused owner and contract
+coverage plus the core/architecture/TensorFlow-boundary gate are green.

@@ -927,3 +927,31 @@ Constant attribute encodings in this mechanical extraction. Validate focused
 Constant/core/architecture tests, then the sequential core, architecture,
 pass-efficiency, and TensorFlow-import-blocked suites. Commit and push only;
 do not create or update a pull request.
+
+## Typed Constant lowering implementation checkpoint
+
+`op_families.constant.lower_constant_node()` now owns the existing
+tensor-valued ONNX Constant lowering behavior. The lowerer keeps the same
+`Constant` guard and progress/error boundary but delegates through one typed
+`node`/`ctx` call. The owner explicitly casts protobuf attributes to
+`onnx.AttributeProto`, so Pylance no longer has to infer `name` and `t` from the
+ambiguous generated container element type.
+
+The new owner preserves direct tensor creation, in-place placeholder updates,
+legacy collision renaming, constants-map synchronization, dtype and
+shape/signature normalization, graph-output behavior, provenance, and the exact
+missing tensor-`value` exception. No additional Constant encodings were added,
+and the path remains TensorFlow-independent.
+
+Focused owner, public behavior, and architecture coverage is `5 passed in
+2.27s`. The sequential core, pass-efficiency, architecture, and
+TensorFlow-import-blocked gate is `351 passed in 26.06s`. Ruff, Python bytecode
+compilation, and whitespace validation pass. Pyright is not installed in the
+existing uv environment; the source contract directly verifies the explicit
+`AttributeProto` cast without adding a dependency.
+
+At resume, inventory the remaining special control flow inside the ONNX node
+lowering loop, especially the demand-driven unresolved-rank reconciliation
+before shape-sensitive ops. Characterize its trigger and no-op behavior before
+extracting it. Do not fold Constant into registry dispatch as part of that unit.
+Commit and push only; do not create or update a pull request.

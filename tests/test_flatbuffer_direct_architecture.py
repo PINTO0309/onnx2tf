@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -188,12 +186,6 @@ def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Constant lowering is still expanded inline in the central lowerer"
-    ),
-)
 def test_constant_lowering_has_one_typed_op_family_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

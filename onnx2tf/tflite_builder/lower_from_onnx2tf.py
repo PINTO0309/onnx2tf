@@ -52,10 +52,9 @@ from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
     infer_model_ir_logical_layouts,
-    normalize_onnx_shape,
     validate_model_ir_layout_annotations,
 )
-from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
+from onnx2tf.tflite_builder.op_families.constant import lower_constant_node
 from onnx2tf.tflite_builder.passes.precision import (
     _restore_precision_sensitive_reciprocal_divisions,
     _rewrite_constant_divisors_to_multiplicative_reciprocals,
@@ -3959,29 +3958,7 @@ def lower_onnx_to_ir(
         for node in graph_nodes:
             try:
                 if node.op_type == "Constant":
-                    output_name = node.output[0]
-                    value_attr = None
-                    for attr in node.attribute:
-                        if attr.name == "value":
-                            value_attr = attr
-                            break
-                    if value_attr is None:
-                        raise NotImplementedError(f"Constant node without value is not supported. op={node.name}")
-                    const_array = np.asarray(numpy_helper.to_array(value_attr.t))
-                    if output_name in model_ir.tensors:
-                        # Replace existing placeholder tensor data.
-                        t = model_ir.tensors[output_name]
-                        t.data = const_array
-                        t.dtype = tflite_dtype_from_numpy(const_array.dtype)
-                        t.shape, t.shape_signature = normalize_onnx_shape(list(const_array.shape))
-                        constants[output_name] = const_array
-                    else:
-                        name = ctx.add_const_tensor(output_name, const_array)
-                        if name != output_name:
-                            # keep graph output name stable if collision happened.
-                            model_ir.tensors[output_name] = model_ir.tensors.pop(name)
-                            model_ir.tensors[output_name].name = output_name
-                            constants[output_name] = constants.pop(name)
+                    lower_constant_node(node=node, ctx=ctx)
                     continue
 
                 wrapped = _NodeWrap(
