@@ -64,11 +64,22 @@ def _direct_call_name(statement: ast.stmt) -> str:
     return statement.value.func.id
 
 
+def _statement_call_name(statement: ast.stmt) -> str:
+    value = (
+        statement.value
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        else None
+    )
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Name)
+    return value.func.id
+
+
 def _main_invocation_indexes(lowerer: ast.FunctionDef) -> list[int]:
     return [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, (ast.Expr, ast.Assign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_CONSECUTIVE
@@ -316,11 +327,16 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     assert isinstance(first_following.test, ast.Name)
     assert first_following.test.id == "optimize_layout_transpose_chains"
 
-    assert _direct_call_name(lowerer.body[second_index - 1]) == (
+    assert _statement_call_name(lowerer.body[second_index - 1]) == (
         "_repair_rank4_binary_singleton_broadcast_layout_mismatch"
     )
-    assert _direct_call_name(lowerer.body[second_index + 1]) == (
-        "_reconcile_static_tensor_shapes"
+    second_following = lowerer.body[second_index + 1]
+    assert isinstance(second_following, ast.If)
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_stats_have_positive_count"
+        for node in ast.walk(second_following.test)
     )
 
 

@@ -531,3 +531,32 @@ results in their existing order, and guard only the immediate shared
 reconciliation. Add helper unit tests and lowerer wiring for every dictionary
 plus prune-only behavior. Validate all owner/orchestration/core gates
 sequentially, then commit and push only; do not create or update a pull request.
+
+## Shared late-reconciliation implementation checkpoint
+
+The earlier shared boundary now records its tensor count, assigns the six
+direct sanitizer/repair results, and unpacks the three ordered
+singleton/consecutive cluster results without changing their execution order.
+Its immediate static-shape reconciliation runs only when one of those nine
+pure mutation-count dictionaries contains a positive value or zero-rewrite
+pruning reduces the tensor table.
+
+`_stats_have_positive_count()` is deliberately narrow: it receives only pure
+mutation dictionaries and treats zero or negative values as unchanged. A
+synthetic lowerer fixture covers the all-zero path, every individual result,
+and prune-only behavior; each changed outcome adds exactly one reconciliation.
+The singleton/consecutive boundary contract was updated to recognize the
+result-capturing assignment. Three older indexed-pass tests were also aligned
+with the extracted helper ownership in `core.model_ir_utils`, removing stale
+references to lowerer-private aliases without changing production behavior.
+
+Sequential validation across the complete related owner/orchestration, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked suites is
+`432 passed in 27.29s`. The focused helper, lowerer wiring, extracted-owner,
+and structural checks are `7 passed in 0.70s`.
+
+At resume, re-inventory the remaining unconditional static-shape
+reconciliations and select the next boundary only when every mutating owner has
+a complete returned result or explicit prune accounting. Characterize it
+before changing production, then commit and push only. Do not create or update
+a pull request.

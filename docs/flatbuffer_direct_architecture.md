@@ -9804,3 +9804,13 @@ zero-valued mutation counters. A strict expected-failure boundary contract
 requires all nine dictionaries to pass through one compact positive-count
 predicate, plus tensor-count reduction for zero-rewrite pruning. Production is
 unchanged at this characterization checkpoint.
+
+The shared late boundary now records the tensor count, assigns all six direct
+results, unpacks the three ordered cluster results, and guards only its
+immediate reconciliation with `_stats_have_positive_count()` or a tensor-count
+decrease. The helper accepts only pure mutation-count dictionaries. A synthetic
+lowerer fixture independently covers all nine dictionaries and prune-only
+behavior; every changed outcome adds exactly one reconciliation over the
+all-zero/no-prune path. Structural tests that span extracted owners now resolve
+their helper dependencies from the owning core module instead of the lowerer
+compatibility surface.

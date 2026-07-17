@@ -248,6 +248,7 @@ def test_indexed_activation_fusion_updates_index_without_consumer_rescan(
         lowering_module,
         "_build_tensor_consumer_map",
         unexpected_consumer_rescan,
+        raising=False,
     )
     stats = _optimize_fuse_conv_activation_chains(
         model_ir,

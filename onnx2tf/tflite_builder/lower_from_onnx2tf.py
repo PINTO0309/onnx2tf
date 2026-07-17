@@ -3676,6 +3676,16 @@ def _compress_static_high_rank_batch_matmul(
     )
 
 
+def _stats_have_positive_count(*stats: Dict[str, int]) -> bool:
+    """Return whether pure mutation-count dictionaries report a change."""
+
+    return any(
+        int(value) > 0
+        for result in stats
+        for value in result.values()
+    )
+
+
 def lower_onnx_to_ir(
     onnx_graph: onnx.ModelProto,
     output_file_name: str,
@@ -5025,21 +5035,47 @@ def lower_onnx_to_ir(
         )
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
-    _realign_dynamic_boundary_shape_signature_map(model_ir)
+    shared_late_tensor_count = len(model_ir.tensors)
+    shared_boundary_signature_stats = (
+        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    )
     # Keep final serialized metadata consistent for tools that render
     # shape_signature (e.g. Netron): HARD_SWISH is shape-preserving.
-    _sanitize_hardswish_tensor_shapes(model_ir)
+    shared_hardswish_stats = _sanitize_hardswish_tensor_shapes(model_ir)
     # Final guardrail for runtime validity: ensure SQUEEZE axes target
     # singleton dimensions after all late layout/shape rewrites.
-    _sanitize_squeeze_axes_with_static_input_shapes(model_ir)
-    _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
-    _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-    _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-    _run_singleton_consecutive_reshape_pass_cluster(
+    shared_squeeze_stats = _sanitize_squeeze_axes_with_static_input_shapes(
+        model_ir
+    )
+    shared_conv_transpose_stats = (
+        _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
+    )
+    shared_binary_adapter_stats = (
+        _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
+    )
+    shared_singleton_adapter_stats = (
+        _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
+    )
+    (
+        shared_singleton_channel_stats,
+        shared_duplicate_fanout_stats,
+        shared_consecutive_reshape_stats,
+    ) = _run_singleton_consecutive_reshape_pass_cluster(
         model_ir,
         session.layout_state,
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    if _stats_have_positive_count(
+        shared_boundary_signature_stats,
+        shared_hardswish_stats,
+        shared_squeeze_stats,
+        shared_conv_transpose_stats,
+        shared_binary_adapter_stats,
+        shared_singleton_adapter_stats,
+        shared_singleton_channel_stats,
+        shared_duplicate_fanout_stats,
+        shared_consecutive_reshape_stats,
+    ) or len(model_ir.tensors) < shared_late_tensor_count:
+        _reconcile_static_tensor_shapes(model_ir)
     late_binary_repair_tensor_count = len(model_ir.tensors)
     late_signature_stats = _sanitize_static_shape_signature_consistency(
         model_ir

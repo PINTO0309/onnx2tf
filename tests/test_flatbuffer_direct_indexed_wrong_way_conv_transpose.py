@@ -5,10 +5,15 @@ from dataclasses import fields, is_dataclass
 from typing import Any
 
 import numpy as np
-import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 import onnx2tf.tflite_builder.passes.conv_input_layout as owner_module
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
+    _prune_unused_tensors,
+    _read_transpose_perm,
+    _replace_tensor_inputs,
+)
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv,
@@ -172,7 +177,7 @@ def _run_legacy_wrong_way_sanitizer(model_ir: ModelIR) -> dict[str, int]:
     model_outputs = {str(name) for name in model_ir.outputs}
     while True:
         changed = False
-        consumers = lowering_module._build_tensor_consumer_map(model_ir)
+        consumers = _build_tensor_consumer_map(model_ir)
         for op_index, op in enumerate(model_ir.operators):
             if (
                 str(op.op_type) != "TRANSPOSE"
@@ -180,7 +185,7 @@ def _run_legacy_wrong_way_sanitizer(model_ir: ModelIR) -> dict[str, int]:
                 or len(op.outputs) != 1
             ):
                 continue
-            if lowering_module._read_transpose_perm(model_ir, op) != expected_perm:
+            if _read_transpose_perm(model_ir, op) != expected_perm:
                 continue
             input_name = str(op.inputs[0])
             output_name = str(op.outputs[0])
@@ -223,7 +228,7 @@ def _run_legacy_wrong_way_sanitizer(model_ir: ModelIR) -> dict[str, int]:
                     break
             if not remove_this:
                 continue
-            lowering_module._replace_tensor_inputs(
+            _replace_tensor_inputs(
                 model_ir,
                 output_name,
                 input_name,
@@ -234,7 +239,7 @@ def _run_legacy_wrong_way_sanitizer(model_ir: ModelIR) -> dict[str, int]:
             break
         if not changed:
             break
-    lowering_module._prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir)
     return {
         "sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv": removed,
     }
@@ -259,9 +264,10 @@ def test_indexed_wrong_way_conv_transpose_sanitizer_matches_legacy(
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     monkeypatch.setattr(
-        lowering_module,
+        owner_module,
         "_build_tensor_consumer_map",
         unexpected_consumer_rescan,
+        raising=False,
     )
 
     indexed_stats = _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)

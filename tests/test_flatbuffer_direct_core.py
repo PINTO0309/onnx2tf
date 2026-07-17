@@ -1669,6 +1669,135 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
         assert run_with_outcome(outcome) == unchanged_count + 1
 
 
+def test_stats_have_positive_count_accepts_only_positive_mutations() -> None:
+    assert lowering_module._stats_have_positive_count() is False
+    assert lowering_module._stats_have_positive_count(
+        {"first": 0},
+        {"second": -1},
+    ) is False
+    assert lowering_module._stats_have_positive_count(
+        {"first": 0},
+        {"second": 2},
+        {"third": 0},
+    ) is True
+
+
+def test_shared_late_reconciliation_uses_all_results_and_pruning(
+    monkeypatch,
+) -> None:
+    probe_name = "unused_shared_late_reconcile_probe"
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    reconcile_count = 0
+
+    def counted_reconcile(model_ir, *args, **kwargs):
+        nonlocal reconcile_count
+        reconcile_count += 1
+        result = original_reconcile(model_ir, *args, **kwargs)
+        model_ir.tensors[probe_name] = TensorIR(
+            name=probe_name,
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+        )
+        return result
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    def run_with_outcome(outcome: str) -> int:
+        nonlocal reconcile_count
+        reconcile_count = 0
+        invocations = {
+            "boundary": 0,
+            "hardswish": 0,
+            "squeeze": 0,
+            "wrongway": 0,
+            "exact": 0,
+            "singleton": 0,
+            "cluster": 0,
+        }
+
+        def direct_result(name: str, counter: str, *, target: int = 1):
+            def result(model_ir, *args, **kwargs):
+                invocations[name] += 1
+                is_target = invocations[name] == target
+                if name == "exact" and is_target and outcome == "prune":
+                    assert model_ir.tensors.pop(probe_name, None) is not None
+                return {counter: int(is_target and outcome == name)}
+
+            return result
+
+        def cluster_result(*args, **kwargs):
+            invocations["cluster"] += 1
+            is_target = invocations["cluster"] == 2
+            return (
+                {"singleton_channel": int(is_target and outcome == "cluster_1")},
+                {"duplicate_fanout": int(is_target and outcome == "cluster_2")},
+                {"consecutive_reshape": int(is_target and outcome == "cluster_3")},
+            )
+
+        monkeypatch.setattr(
+            lowering_module,
+            "_realign_dynamic_boundary_shape_signature_map",
+            direct_result("boundary", "boundary_signature"),
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_sanitize_hardswish_tensor_shapes",
+            direct_result("hardswish", "hardswish", target=2),
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_sanitize_squeeze_axes_with_static_input_shapes",
+            direct_result("squeeze", "squeeze"),
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
+            direct_result("wrongway", "wrongway"),
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
+            direct_result("exact", "exact"),
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
+            direct_result("singleton", "singleton"),
+        )
+        monkeypatch.setattr(
+            lowering_module,
+            "run_singleton_consecutive_reshape",
+            cluster_result,
+        )
+        lower_onnx_to_ir(
+            _add_onnx_model(),
+            output_file_name=f"shared_late_reconcile_{outcome}",
+        )
+        assert invocations["boundary"] >= 1
+        assert invocations["cluster"] >= 2
+        return reconcile_count
+
+    unchanged_count = run_with_outcome("unchanged")
+    for outcome in (
+        "boundary",
+        "hardswish",
+        "squeeze",
+        "wrongway",
+        "exact",
+        "singleton",
+        "cluster_1",
+        "cluster_2",
+        "cluster_3",
+        "prune",
+    ):
+        assert run_with_outcome(outcome) == unchanged_count + 1
+
+
 def test_dispatcher_records_onnx_provenance() -> None:
     class _Entry:
         @staticmethod
