@@ -13930,3 +13930,56 @@ identity, the explicit post-QDQ call, and every surrounding boundary. Prove
 both variants, fresh/shared scope identity, and instrumented order before
 switching to a delegate; validate sequentially, commit and push, and do not
 create a pull request.
+
+## Explicit transpose/unary-fanout orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/transpose_unary_fanout_orchestration.py`. A frozen
+`TransposeUnaryFanoutContext` contains only ModelIR, layout state, and
+diagnostics. All four cleanup owners are imported directly from
+`layout_transpose`; the phase module does not import the central lowerer.
+
+`TRANSPOSE_UNARY_FANOUT_PASS_IDS` is the canonical four-owner sequence, while
+`active_transpose_unary_fanout_pass_ids` derives the exact expected sequence
+for each option combination. The default attention callback executes unary-
+passthrough, unary-fanout, and unary-binary-fanout cleanup. The explicit post-
+QDQ call executes layout-transpose, unary-fanout, and unary-binary-fanout
+cleanup. Options remain per-invocation arguments and are not frozen into the
+context. Each builder call creates one fresh `ModelIRPassStateScope` and
+attaches the identical scope, ModelIR, layout, and diagnostics values to all
+active immutable invocations. The shared executor validates the variant-
+specific IDs before executing an owner.
+
+The historical helper is now a ten-line keyword-only delegate with the same
+`False`/`True` defaults. Its attention-recovery callback identity, explicit
+post-QDQ `True`/`False` call, and all adjacent boundaries are unchanged.
+Architecture accounting moves one syntactic occurrence of every owner to its
+stable ID while retaining the callback's separate phase multiplicity. Both
+runtime efficiency fixtures now execute the explicit runner and still prove
+one graph-index build per three-step variant. The obsolete direct unary-
+passthrough import was removed from the central lowerer.
+
+Sequential validation completed as follows:
+
+- focused transpose/unary-fanout orchestration: `9 passed in 0.66s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `287 passed in 19.73s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.00s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, option semantics, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory the next still-central post-lowering cluster before any
+production edit. Prefer a small cluster with existing module owners, freeze
+its complete option/callback/state-scope contract and every runtime boundary,
+then create characterization and implementation as separate sequentially
+validated commits. Continue to minimize real-model conversion, commit and push
+only, and do not create a pull request.

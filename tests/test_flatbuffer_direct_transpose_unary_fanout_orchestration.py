@@ -4,14 +4,32 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import transpose_unary_fanout_orchestration
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     ATTENTION_GATE_QDQ_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
+    TRANSPOSE_UNARY_FANOUT_PASS_IDS,
+    TransposeUnaryFanoutContext,
+    active_transpose_unary_fanout_pass_ids,
+    build_transpose_unary_fanout_invocations,
+    run_transpose_unary_fanout,
 )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 TRANSPOSE_UNARY_FANOUT = "_run_transpose_unary_fanout_layout_pass_cluster"
+DEFAULT_PASS_IDS = TRANSPOSE_UNARY_FANOUT_PASS_IDS[1:]
+POST_QDQ_PASS_IDS = (
+    TRANSPOSE_UNARY_FANOUT_PASS_IDS[0],
+    *TRANSPOSE_UNARY_FANOUT_PASS_IDS[2:],
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -39,11 +57,39 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def test_transpose_unary_fanout_signature_and_scope_are_explicit() -> None:
+def _context() -> TransposeUnaryFanoutContext:
+    model_ir = ModelIR("transpose_unary_fanout_test")
+    return TransposeUnaryFanoutContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+
+
+def _normalize_new_contract(
+    invocation: transpose_unary_fanout_orchestration.RecoveryInvocation,
+    context: TransposeUnaryFanoutContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "session.layout_state"
+        if value is context.diagnostics:
+            return "session.diagnostics"
+        if isinstance(value, ModelIRPassStateScope):
+            return "state_scope"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
+
+
+def test_transpose_unary_fanout_signature_and_delegate_are_explicit() -> None:
     _, helper = _lowerer_and_helper()
 
-    assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 35
     assert helper.args.args == []
     assert helper.args.posonlyargs == []
     assert [arg.arg for arg in helper.args.kwonlyargs] == [
@@ -56,12 +102,7 @@ def test_transpose_unary_fanout_signature_and_scope_are_explicit() -> None:
     ]
     assert helper.args.vararg is None
     assert helper.args.kwarg is None
-
-    conditional_tests = [node.test for node in helper.body if isinstance(node, ast.If)]
-    assert [_expression_path(test) for test in conditional_tests] == [
-        "include_layout_transpose",
-        "include_unary_passthrough",
-    ]
+    assert len(helper.body) == 1
     assert not any(
         isinstance(
             node,
@@ -69,6 +110,7 @@ def test_transpose_unary_fanout_signature_and_scope_are_explicit() -> None:
                 ast.AsyncFor,
                 ast.AsyncWith,
                 ast.For,
+                ast.If,
                 ast.Match,
                 ast.Try,
                 ast.While,
@@ -77,52 +119,146 @@ def test_transpose_unary_fanout_signature_and_scope_are_explicit() -> None:
         )
         for node in ast.walk(helper)
     )
-
-    scope_calls = [
-        node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "ModelIRPassStateScope"
-    ]
-    assert len(scope_calls) == 1
-    assert tuple(_expression_path(arg) for arg in scope_calls[0].args) == ("model_ir",)
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in scope_calls[0].keywords
-    } == {"layout_state": "session.layout_state"}
-
-
-def test_transpose_unary_fanout_preserves_conditional_call_contracts() -> None:
-    _, helper = _lowerer_and_helper()
-    cleanup_names = [
-        "run_layout_transpose_cleanup",
-        "run_transpose_unary_passthrough_cleanup",
-        "run_transpose_unary_fanout_bridge_cleanup",
-        "run_transpose_unary_binary_fanout_bridge_cleanup",
-    ]
-    cleanup_calls = sorted(
-        [
-            node
-            for node in ast.walk(helper)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in cleanup_names
-        ],
-        key=lambda call: call.lineno,
+        for node in ast.walk(helper)
     )
 
-    assert [call.func.id for call in cleanup_calls] == cleanup_names
-    for call in cleanup_calls:
-        assert tuple(_expression_path(arg) for arg in call.args) == ("model_ir",)
-        assert {
-            str(keyword.arg): _expression_path(keyword.value)
-            for keyword in call.keywords
-        } == {
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "run_transpose_unary_fanout"
+    assert tuple(_expression_path(arg) for arg in call.args) == (
+        "transpose_unary_fanout_context",
+    )
+    assert {
+        str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
+    } == {
+        "include_layout_transpose": "include_layout_transpose",
+        "include_unary_passthrough": "include_unary_passthrough",
+    }
+
+
+def test_transpose_unary_fanout_context_is_explicit() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "transpose_unary_fanout_context"
+            for target in statement.targets
+        )
+    )
+
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert context_assignment.value.func.id == "TransposeUnaryFanoutContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+
+@pytest.mark.parametrize(
+    ("include_layout_transpose", "include_unary_passthrough", "expected_ids"),
+    [
+        (False, True, DEFAULT_PASS_IDS),
+        (True, False, POST_QDQ_PASS_IDS),
+    ],
+)
+def test_transpose_unary_fanout_preserves_both_cleanup_contracts(
+    include_layout_transpose: bool,
+    include_unary_passthrough: bool,
+    expected_ids: tuple[str, ...],
+) -> None:
+    context = _context()
+    invocations = build_transpose_unary_fanout_invocations(
+        context,
+        include_layout_transpose=include_layout_transpose,
+        include_unary_passthrough=include_unary_passthrough,
+    )
+
+    assert (
+        active_transpose_unary_fanout_pass_ids(
+            include_layout_transpose=include_layout_transpose,
+            include_unary_passthrough=include_unary_passthrough,
+        )
+        == expected_ids
+    )
+    assert tuple(step.pass_id for step in invocations) == expected_ids
+    expected_contract = (
+        ("model_ir",),
+        {
             "layout_state": "session.layout_state",
             "diagnostics": "session.diagnostics",
             "state_scope": "state_scope",
-        }
+        },
+    )
+    assert {
+        step.pass_id: _normalize_new_contract(step, context) for step in invocations
+    } == {pass_id: expected_contract for pass_id in expected_ids}
+
+    scopes = [dict(step.keyword_args)["state_scope"] for step in invocations]
+    assert all(scope is scopes[0] for scope in scopes)
+    assert isinstance(scopes[0], ModelIRPassStateScope)
+    assert scopes[0].model_ir is context.model_ir
+    assert scopes[0].layout_state is context.layout_state
+    rebuilt_scope = dict(
+        build_transpose_unary_fanout_invocations(
+            context,
+            include_layout_transpose=include_layout_transpose,
+            include_unary_passthrough=include_unary_passthrough,
+        )[0].keyword_args
+    )["state_scope"]
+    assert rebuilt_scope is not scopes[0]
+
+
+@pytest.mark.parametrize(
+    ("include_layout_transpose", "include_unary_passthrough", "expected_ids"),
+    [
+        (False, True, DEFAULT_PASS_IDS),
+        (True, False, POST_QDQ_PASS_IDS),
+    ],
+)
+def test_transpose_unary_fanout_runner_preserves_both_instrumented_orders(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+    include_unary_passthrough: bool,
+    expected_ids: tuple[str, ...],
+) -> None:
+    context = _context()
+    events: list[str] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append(pass_id)
+
+        return record
+
+    for pass_id in expected_ids:
+        monkeypatch.setattr(
+            transpose_unary_fanout_orchestration,
+            pass_id,
+            recorder(pass_id),
+        )
+
+    run_transpose_unary_fanout(
+        context,
+        include_layout_transpose=include_layout_transpose,
+        include_unary_passthrough=include_unary_passthrough,
+    )
+
+    assert events == list(expected_ids)
 
 
 def test_transpose_unary_fanout_preserves_both_invocation_variants() -> None:
@@ -202,4 +338,28 @@ def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> No
     )
     assert ATTENTION_GATE_QDQ_PASS_IDS[callback_index + 1] == (
         "_optimize_transpose_dequant_relu_quantize_bridges"
+    )
+
+
+def test_transpose_unary_fanout_module_does_not_import_lowerer() -> None:
+    module_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "transpose_unary_fanout_orchestration.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        for node in tree.body
+    )
+    assert not any(
+        isinstance(node, ast.Import)
+        and any(
+            alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+            for alias in node.names
+        )
+        for node in tree.body
     )

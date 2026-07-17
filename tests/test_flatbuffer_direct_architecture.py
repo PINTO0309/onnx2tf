@@ -45,6 +45,9 @@ from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestrat
 from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
     LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
+    TRANSPOSE_UNARY_FANOUT_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -63,6 +66,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
     *TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
     *LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
+    *TRANSPOSE_UNARY_FANOUT_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -6999,15 +7003,26 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
     )
 
     unary_helper_name = "_run_transpose_unary_fanout_layout_pass_cluster"
-    _assert_helper(
-        unary_helper_name,
-        [
-            "run_layout_transpose_cleanup",
-            "run_transpose_unary_passthrough_cleanup",
-            "run_transpose_unary_fanout_bridge_cleanup",
-            "run_transpose_unary_binary_fanout_bridge_cleanup",
-        ],
+    expected_unary_order = [
+        "run_layout_transpose_cleanup",
+        "run_transpose_unary_passthrough_cleanup",
+        "run_transpose_unary_fanout_bridge_cleanup",
+        "run_transpose_unary_binary_fanout_bridge_cleanup",
+    ]
+    assert tuple(expected_unary_order) == TRANSPOSE_UNARY_FANOUT_PASS_IDS
+    unary_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == unary_helper_name
     )
+    unary_helper_calls = [
+        node
+        for node in ast.walk(unary_helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_transpose_unary_fanout"
+    ]
+    assert len(unary_helper_calls) == 1
     unary_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -10708,11 +10723,10 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "run_layout_transpose_cleanup",
         "run_trailing_output_transpose_cleanup",
         "run_transpose_gather_axis_cleanup",
-        "run_transpose_gather_channel_fanout_cleanup",
-        "run_transpose_unary_binary_fanout_bridge_cleanup",
-        "run_transpose_unary_fanout_bridge_cleanup",
-        "run_transpose_unary_passthrough_cleanup",
-    }
+            "run_transpose_gather_channel_fanout_cleanup",
+            "run_transpose_unary_binary_fanout_bridge_cleanup",
+            "run_transpose_unary_fanout_bridge_cleanup",
+        }
 
 
 def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
@@ -11923,6 +11937,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_trailing_output_transpose_cleanup",
         "run_transpose_unary_passthrough_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
+        "run_transpose_unary_binary_fanout_bridge_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12153,7 +12168,13 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_binary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_binary_fanout_calls) == 2
+    assert (
+        len(transpose_unary_binary_fanout_calls)
+        + _orchestrated_pass_count(
+            "run_transpose_unary_binary_fanout_bridge_cleanup"
+        )
+        == 2
+    )
 
     trailing_output_transpose_calls = [
         call

@@ -9148,3 +9148,14 @@ layout/diagnostics/scope arguments, both outer placements, and the callback
 identity. The eventual phase should keep options outside its frozen context,
 derive variant-specific expected IDs, and construct one fresh shared scope for
 each build.
+
+That cluster now uses `TransposeUnaryFanoutContext` and four canonical stable
+IDs in `passes/transpose_unary_fanout_orchestration.py`. The frozen context
+contains ModelIR, layout, and diagnostics only. Both Boolean choices remain
+runner arguments, and the active expected-ID sequence is derived before the
+shared executor runs either three-step variant. Every build creates one fresh
+scope shared by all active invocations. The historical keyword-only helper is
+a delegate with unchanged defaults, callback identity, direct option values,
+and outer boundaries. Both efficiency fixtures now exercise the explicit
+runner and retain one graph-index build. Focused, architecture, pass-
+efficiency, core, and TensorFlow-import-blocked suites pass.

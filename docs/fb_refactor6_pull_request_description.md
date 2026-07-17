@@ -2134,3 +2134,18 @@ tests, the 30 pass-efficiency tests and all 11 TensorFlow-import-blocked tests
 passed, and targeted static checks passed. Runtime behavior and all public/
 dependency contracts remain unchanged. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+That cluster is now implemented in
+`passes/transpose_unary_fanout_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context and four canonical stable IDs. Variant-
+specific expected IDs preserve the default attention callback sequence and the
+explicit post-QDQ sequence without storing options in context state. Every
+builder creates one fresh `ModelIRPassStateScope` shared by all active
+immutable invocations. The historical helper keeps its keyword-only defaults,
+callback identity, direct option values, and outer boundaries as a ten-line
+delegate. Both efficiency fixtures now execute the explicit phase and preserve
+one graph-index build. The 257-test focused/architecture set, 30 pass-
+efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked
+tests pass. No public API, artifact, dependency, runtime order, option
+semantics, scope-sharing behavior, or TensorFlow boundary changed. PR #952
+remains closed, and no pull request was created, reopened, or updated.

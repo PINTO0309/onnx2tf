@@ -221,6 +221,10 @@ from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration impor
     LateDequantUnaryFanoutContext,
     run_late_dequant_unary_fanout,
 )
+from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
+    TransposeUnaryFanoutContext,
+    run_transpose_unary_fanout,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -530,7 +534,6 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     run_transpose_gather_channel_fanout_cleanup,
     run_transpose_unary_binary_fanout_bridge_cleanup,
     run_transpose_unary_fanout_bridge_cleanup,
-    run_transpose_unary_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains as _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains_pass,
@@ -4334,35 +4337,10 @@ def lower_onnx_to_ir(
         include_layout_transpose: bool = False,
         include_unary_passthrough: bool = True,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        if include_layout_transpose:
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        if include_unary_passthrough:
-            run_transpose_unary_passthrough_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_transpose_unary_binary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_transpose_unary_fanout(
+            transpose_unary_fanout_context,
+            include_layout_transpose=include_layout_transpose,
+            include_unary_passthrough=include_unary_passthrough,
         )
 
     def _run_late_dequant_unary_fanout_pass_cluster() -> None:
@@ -4678,6 +4656,11 @@ def lower_onnx_to_ir(
         )
     )
     late_dequant_unary_fanout_context = LateDequantUnaryFanoutContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    transpose_unary_fanout_context = TransposeUnaryFanoutContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

@@ -57,6 +57,10 @@ from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration impor
     LateDequantUnaryFanoutContext,
     run_late_dequant_unary_fanout,
 )
+from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
+    TransposeUnaryFanoutContext,
+    run_transpose_unary_fanout,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1307,18 +1311,13 @@ def test_unary_fanout_cluster_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_transpose_unary_passthrough_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-        run_transpose_unary_binary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_transpose_unary_fanout(
+        TransposeUnaryFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3
@@ -1350,18 +1349,15 @@ def test_post_qdq_layout_unary_fanout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_layout_transpose_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-        run_transpose_unary_binary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_transpose_unary_fanout(
+        TransposeUnaryFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_layout_transpose=True,
+        include_unary_passthrough=False,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3
