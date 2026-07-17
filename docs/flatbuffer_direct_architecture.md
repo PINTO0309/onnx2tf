@@ -10434,3 +10434,9 @@ tensor metadata, counts each applied plan, and performs neither pruning nor
 topology mutation. Strict characterization therefore selects that call for a
 future `_very_late_concat_global_pool_conv_axis_stats` assignment without a
 proxy or summary.
+
+The call now assigns its unchanged raw result to
+`_very_late_concat_global_pool_conv_axis_stats`. It remains observation-only
+between `_very_late_concat_transpose_conv_axis_stats` and the dynamic rank-one
+Unsqueeze/Reshape-shape rewrite. ModelIR/LayoutState forwarding and the single
+invocation are unchanged.

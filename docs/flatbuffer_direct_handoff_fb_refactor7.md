@@ -2322,3 +2322,25 @@ Validate indexed Concat/global-pool layout, legacy Conv layout, very-late
 orchestration, core, pass-efficiency, architecture, and TensorFlow import
 blocking sequentially. Commit and push only; do not create or update a pull
 request.
+
+## Very-late Concat/global-pool/Conv-axis implementation checkpoint
+
+The sole production call now assigns its unchanged result to
+`_very_late_concat_global_pool_conv_axis_stats`. Its single raw counter remains
+complete because the owner neither prunes tensors nor changes topology.
+
+The result is observation-only immediately after
+`_very_late_concat_transpose_conv_axis_stats` and before the dynamic rank-one
+Unsqueeze/Reshape-shape rewrite. ModelIR/LayoutState forwarding and pass count
+are unchanged.
+
+Focused indexed-owner, legacy Conv-layout, very-late, and architecture coverage
+is `69 passed, 254 deselected`. The expanded sequential gate, explicitly
+including indexed Concat/global-pool coverage, is `1333 passed in 31.23s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the immediately following
+`_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs()` owner. Confirm its
+result schema, occurrence forms, and cleanup behavior before selecting this
+very-late call for a distinct observation point. Commit and push only; do not
+create or update a pull request.

@@ -5039,6 +5039,18 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         concat_axis_stats.value.func.id
         == "_repair_nchw_concat_transpose_conv_axes"
     )
+    concat_pool_axis_stats = lowerer.body[invocation_index + 7]
+    assert isinstance(concat_pool_axis_stats, ast.Assign)
+    assert isinstance(concat_pool_axis_stats.targets[0], ast.Name)
+    assert concat_pool_axis_stats.targets[0].id == (
+        "_very_late_concat_global_pool_conv_axis_stats"
+    )
+    assert isinstance(concat_pool_axis_stats.value, ast.Call)
+    assert isinstance(concat_pool_axis_stats.value.func, ast.Name)
+    assert (
+        concat_pool_axis_stats.value.func.id
+        == "_repair_nchw_concat_global_pool_conv_axes"
+    )
 
 
 def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
