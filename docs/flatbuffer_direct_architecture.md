@@ -9117,3 +9117,12 @@ gated blocks. The efficiency fixture now drives the explicit runner and still
 observes one graph-index build. Focused, architecture, pass-efficiency, core,
 and TensorFlow-import-blocked suites pass. Characterize the neighboring late
 dequant/unary/fanout cluster and its shared scope next.
+
+That late dequant/unary/fanout cluster is now characterized without production
+changes. It contains three ordered cleanup runners and one shared
+`ModelIRPassStateScope`, with identical ModelIR, layout, and diagnostics
+routing. Its sole zero-argument call remains between the quantized HardSigmoid
+bridge and swish passthrough. Focused contracts freeze every argument and
+boundary, while the existing efficiency fixture proves one graph-index build.
+The eventual phase needs a frozen ModelIR/layout/diagnostics context, three
+stable IDs, and one fresh shared scope per invocation.

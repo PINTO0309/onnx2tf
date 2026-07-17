@@ -13790,3 +13790,46 @@ Freeze its three cleanup calls, shared per-invocation pass-state scope,
 ModelIR/layout/diagnostics arguments, sole outer invocation, and both
 neighbors. Validate sequentially, commit and push, and do not create a pull
 request.
+
+## Late dequant/unary/fanout orchestration characterization: completed state
+
+The 26-line `_run_late_dequant_unary_fanout_pass_cluster` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session, has no control flow, and is invoked exactly once. It creates one
+`ModelIRPassStateScope` from ModelIR and layout state, then routes the same
+scope, ModelIR, layout state, and diagnostics through dequant/concat/quantize
+cleanup, transpose-unary passthrough cleanup, and transpose-unary fanout bridge
+cleanup in that exact order.
+
+The focused
+`test_flatbuffer_direct_late_dequant_unary_fanout_orchestration.py` freezes the
+single scope construction, all three complete runner argument contracts, the
+shared `state_scope` name, the sole zero-argument invocation, and its exact
+placement between the quantized HardSigmoid bridge and swish passthrough. The
+existing pass-efficiency fixture continues to prove one graph-index build and
+two later scope reuses.
+
+Validation completed sequentially as follows:
+
+- focused late dequant/unary/fanout characterization: `4 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.65s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.84s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and three
+stable IDs with direct imports from `dequant_concat_quantize_layout` and
+`layout_transpose`. Construct exactly one fresh `ModelIRPassStateScope` per
+phase invocation and attach the identical object to all three immutable
+invocations. Preserve the historical helper, sole zero-argument call, both
+outer neighbors, and unary-fold rationale comment. Prove builder arguments,
+scope identity, and instrumented order before switching to a delegate,
+validate sequentially, commit and push, and do not create a pull request.
