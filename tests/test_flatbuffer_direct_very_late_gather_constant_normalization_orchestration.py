@@ -486,7 +486,10 @@ def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> No
     assert isinstance(prune_key, ast.Constant)
     assert prune_key.value == "pruned_unused_tensors"
 
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_very_late_stale_channel_shuffle_stats"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "run_stale_nchw_channel_shuffle_repair"
@@ -506,10 +509,6 @@ def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> No
     assert fallback.value.func.id == "_run_indexed_conv_input_adapter_repairs"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the very-late stale channel-shuffle result is discarded",
-)
 def test_very_late_stale_channel_shuffle_captures_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     conv_stats_index = next(

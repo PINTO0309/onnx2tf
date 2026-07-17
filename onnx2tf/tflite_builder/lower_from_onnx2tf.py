@@ -5314,10 +5314,12 @@ def lower_onnx_to_ir(
             int(very_late_conv_input_tensor_count - len(model_ir.tensors)),
         ),
     }
-    run_stale_nchw_channel_shuffle_repair(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _very_late_stale_channel_shuffle_stats = (
+        run_stale_nchw_channel_shuffle_repair(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _repair_nchw_concat_transpose_conv_axes(
         model_ir,

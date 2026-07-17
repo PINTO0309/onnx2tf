@@ -2235,3 +2235,25 @@ not add a tensor-count proxy, summary adapter, reconciliation consumer, or
 second pass invocation. Validate shuffle layout, very-late orchestration, core,
 pass-efficiency, architecture, and TensorFlow import blocking sequentially.
 Commit and push only; do not create or update a pull request.
+
+## Very-late stale channel-shuffle implementation checkpoint
+
+The sole production call now assigns its unchanged result to
+`_very_late_stale_channel_shuffle_stats`. Its single counter remains complete
+because the owner neither prunes tensors nor changes topology.
+
+The result is observation-only immediately after
+`_very_late_conv_input_stats`. The following NCHW
+Concat/Transpose/Conv-axis repair, argument forwarding, diagnostics, and pass
+count are unchanged.
+
+Focused shuffle-owner, very-late, and architecture coverage is `27 passed, 253
+deselected`. The expanded sequential gate, explicitly including the complete
+shuffle-layout suite, is `1270 passed in 30.20s`. Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At resume, inspect the immediately following
+`_repair_nchw_concat_transpose_conv_axes(model_ir)` owner. Confirm its result
+schema, occurrence count, and pruning behavior before selecting the very-late
+call for an observation point. Commit and push only; do not create or update a
+pull request.

@@ -10407,3 +10407,9 @@ metadata, counts each repair, and performs neither pruning nor topology
 mutation. Strict characterization therefore selects the direct call for a
 future `_very_late_stale_channel_shuffle_stats` assignment without a proxy or
 summary adapter.
+
+The call now assigns its unchanged raw result to
+`_very_late_stale_channel_shuffle_stats`. The result remains observation-only
+between `_very_late_conv_input_stats` and the NCHW
+Concat/Transpose/Conv-axis repair. ModelIR/LayoutState/diagnostics forwarding
+and the single invocation are unchanged.

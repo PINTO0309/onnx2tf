@@ -5015,6 +5015,18 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert isinstance(conv_input_stats.targets[0], ast.Name)
     assert conv_input_stats.targets[0].id == "_very_late_conv_input_stats"
     assert isinstance(conv_input_stats.value, ast.Dict)
+    channel_shuffle_stats = lowerer.body[invocation_index + 5]
+    assert isinstance(channel_shuffle_stats, ast.Assign)
+    assert isinstance(channel_shuffle_stats.targets[0], ast.Name)
+    assert channel_shuffle_stats.targets[0].id == (
+        "_very_late_stale_channel_shuffle_stats"
+    )
+    assert isinstance(channel_shuffle_stats.value, ast.Call)
+    assert isinstance(channel_shuffle_stats.value.func, ast.Name)
+    assert (
+        channel_shuffle_stats.value.func.id
+        == "run_stale_nchw_channel_shuffle_repair"
+    )
 
 
 def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
