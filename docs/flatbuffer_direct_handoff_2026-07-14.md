@@ -15543,3 +15543,56 @@ owner calls, three policy switches, two active caller forms, exact guards, and
 boundaries before extraction. Keep characterization and implementation as
 separate checkpoints, validate sequentially, minimize real-model conversion,
 commit and push only, and do not create or reopen a pull request.
+
+## Singleton-reshape orchestration characterization: completed state
+
+The earlier restart note's “three policy switches” referred only to optional-
+owner guards. The 76-line production helper actually exposes four keyword-only
+switches and remains unchanged: `include_layout_transpose=False`,
+`include_duplicate_fanout=False`, `include_multi_branch_gate=False`, and
+`include_spatial_concat_post_transpose=True`. The first three guard optional
+owners; the fourth is forwarded to an always-active owner's internal policy.
+
+The ten-owner union order is layout-transpose cleanup, singleton-channel
+transpose cleanup, reshape-only duplicate-fanout cleanup, singleton-reshape
+cleanup, singleton-maxpool cleanup, flatten/CONCAT/reshape cleanup, consecutive-
+reshape cleanup, squeeze/reshape identity cleanup, singleton-spatial reshape
+cleanup, and multi-branch-gate cleanup. The seven-owner unconditional base
+excludes only the three guarded owners. All active owners share one main-model/
+session-layout `ModelIRPassStateScope`, ModelIR, layout, and diagnostics. The
+duplicate owner always receives `include_transpose=False`; the spatial owner
+always runs and receives `include_concat_post_transpose` from the fourth switch.
+
+There are exactly two direct callers and no callback composition. The final
+statement of the layout-optimization block enables layout-transpose and multi-
+branch-gate cleanup, retains the default spatial policy, and runs nine owners
+between split/CONV/CONCAT bridge cleanup and terminal clamp/unary/ReLU recovery.
+The unconditional terminal caller enables duplicate fanout and disables the
+spatial CONCAT-post-transpose policy, running eight owners between SINet pre-add/
+resize recovery and indexed shape convergence cleanup.
+
+Sequential characterization validation completed as follows:
+
+- focused helper policy/caller/boundary contracts: `5 passed in 0.21s`;
+- focused singleton-reshape and ordered architecture: `253 passed in 19.86s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 11.97s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation-count tiers, both active caller policies,
+specialized owner arguments, caller multiplicity, boundaries, shared-scope
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed, and
+no pull request was created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and
+stable base, optional-owner, active-caller, and ten-owner union sequences in
+`singleton_reshape_orchestration.py`. Use one selector for all eight optional-
+owner combinations while forwarding both spatial-policy values independently;
+cover all sixteen boolean combinations. Preserve the helper's four keyword-
+only defaults and both caller forms as a delegate. Move the existing full-union
+efficiency fixture to the explicit runner and replace ten direct owner calls
+with ten stable IDs without changing the 120 effective-call total. Validate
+sequentially, commit and push only, and do not create or reopen a pull request.

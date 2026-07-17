@@ -9495,3 +9495,15 @@ unchanged, and both parent compositions still store the helper itself as an
 argument-free callback. Multiplicity-aware accounting replaces seven direct
 owner calls with seven stable IDs while preserving 120 effective ordered calls.
 The new explicit seven-owner efficiency fixture observes one graph-index build.
+
+The singleton-reshape cluster is now characterized without production changes.
+It has four keyword-only switches: three independently guard layout-transpose,
+reshape-only duplicate-fanout, and multi-branch-gate owners, while the fourth is
+forwarded to the always-active singleton-spatial owner's CONCAT-post-transpose
+policy. Seven owners form the unconditional base under one main-model scope.
+The layout-optimization caller selects layout plus multi-branch owners and the
+default spatial policy for a nine-owner sequence. The terminal caller selects
+duplicate fanout, disables the spatial post-transpose policy, and runs eight
+owners. Focused contracts freeze all ten owner contracts/order, exact guards,
+the two specialized owner keywords, defaults, both caller forms, and all four
+boundaries.

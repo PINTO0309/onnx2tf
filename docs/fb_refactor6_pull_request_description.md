@@ -2555,3 +2555,14 @@ efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked test
 pass. No public API, artifact, dependency, policy, runtime-order, callback,
 boundary, scope-sharing, or TensorFlow-isolation contract changed. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+The four-switch singleton-reshape cluster is now characterized without
+production changes. Five focused tests freeze its keyword-only `False`,
+`False`, `False`, `True` defaults; one shared main-model scope; ten-owner union;
+seven-owner unconditional base; exact layout, duplicate, and multi-branch
+guards; fixed reshape-only duplicate policy; forwarded spatial-CONCAT policy;
+nine-owner layout/multi caller; eight-owner duplicate/no-spatial-post caller;
+caller multiplicity; and all four boundaries. The 253-test focused/architecture
+set, 31 pass-efficiency tests, and all 11 TensorFlow-import-blocked tests pass.
+Runtime behavior and all public/dependency contracts remain unchanged. PR #952
+remains closed, and no pull request was created, reopened, or updated.
