@@ -9765,3 +9765,12 @@ The owner order, main Session LayoutState, fallback `None` LayoutState, shared
 diagnostics, and fallback/main separation remain unchanged. A lowerer fixture
 covers all three counters plus prune-only behavior on the main path, while the
 structural contract verifies identical fallback wiring.
+
+The next safe late boundary contains static shape-signature sanitization,
+exact rank-four binary adapter repair, singleton-broadcast adapter repair, and
+one unconditional reconciliation. The sanitizer's `sanitized` counter and both
+repair counters cover their graph/metadata mutations; the exact adapter owner
+also prunes unused tensors on a zero rewrite. A new fixture freezes that prune
+side effect. A strict structural expectation therefore requires all three
+counters plus tensor-count reduction before this specific reconciliation may
+be guarded. Production remains unchanged at this characterization checkpoint.

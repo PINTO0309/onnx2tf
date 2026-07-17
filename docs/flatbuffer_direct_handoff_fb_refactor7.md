@@ -430,3 +430,25 @@ reconciliations outside this absolute-final block. Prefer a boundary with a
 complete returned mutation contract; where a runner prunes on zero rewrite,
 preserve that behavior with explicit accounting. Characterize before changing
 production, then commit and push only. Do not create or update a pull request.
+
+## Late binary-repair reconciliation characterization checkpoint
+
+The late boundary after the first post-repair reconciliation consists of
+static shape-signature sanitization, exact rank-four binary adapter repair,
+singleton-broadcast adapter repair, and another unconditional reconciliation.
+Their exact mutation counters are respectively
+`sanitized_static_shape_signature_consistency`,
+`inserted_rank4_binary_layout_fix_transpose`, and
+`repaired_rank4_binary_singleton_broadcast_layout_mismatch`.
+
+The exact adapter owner also prunes unused tensors even when its rewrite count
+is zero. A new owner fixture freezes that behavior. A strict expected-failure
+architecture contract therefore requires a pre-boundary tensor count, all
+three assigned results, and an immediate guard covering every counter plus a
+tensor-count decrease. Production is unchanged.
+
+At implementation, change only this second late repair boundary. Add lowerer
+wiring coverage for unchanged, all three positive counters, and prune-only
+outcomes. Run the complete binary-adapter, static-signature, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked suites
+sequentially. Commit and push only; do not create or update a pull request.

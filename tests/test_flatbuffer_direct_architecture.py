@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -8550,6 +8552,94 @@ def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
         node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
     }
     assert "final_prelu_tensor_count" in guard_names
+    tensor_len_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "len"
+    ]
+    assert len(tensor_len_calls) == 1
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the late static-signature and binary-layout repair boundary still "
+        "reconciles when all mutation counters and prune accounting are zero"
+    ),
+)
+def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    sanitizer_name = "_sanitize_static_shape_signature_consistency"
+    repair_names = (
+        "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
+        "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
+    )
+    expected_counters = {
+        "sanitized_static_shape_signature_consistency",
+        "inserted_rank4_binary_layout_fix_transpose",
+        "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
+    }
+    sanitizer_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == sanitizer_name
+    )
+
+    count_assignment = lowerer.body[sanitizer_index - 1]
+    assert isinstance(count_assignment, ast.Assign)
+    assert len(count_assignment.targets) == 1
+    count_target = count_assignment.targets[0]
+    assert isinstance(count_target, ast.Name)
+    assert isinstance(count_assignment.value, ast.Call)
+    assert isinstance(count_assignment.value.func, ast.Name)
+    assert count_assignment.value.func.id == "len"
+
+    for offset, repair_name in enumerate(repair_names, start=1):
+        repair_assignment = lowerer.body[sanitizer_index + offset]
+        assert isinstance(repair_assignment, ast.Assign)
+        assert isinstance(repair_assignment.value, ast.Call)
+        assert isinstance(repair_assignment.value.func, ast.Name)
+        assert repair_assignment.value.func.id == repair_name
+
+    guard = lowerer.body[sanitizer_index + 3]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert {
+        str(call.args[0].value)
+        for call in get_calls
+        if len(call.args) >= 1 and isinstance(call.args[0], ast.Constant)
+    } == expected_counters
+    assert len(get_calls) == len(expected_counters)
+    guard_names = {
+        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
+    }
+    assert count_target.id in guard_names
     tensor_len_calls = [
         node
         for node in ast.walk(guard.test)

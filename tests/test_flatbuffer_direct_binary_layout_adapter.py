@@ -158,6 +158,26 @@ def test_non_exact_or_dynamic_shapes_are_noop(
     assert _snapshot(model_ir) == before
 
 
+def test_exact_adapter_zero_rewrite_still_prunes_unused_tensor() -> None:
+    model_ir = _model(
+        lhs_shape=(1, 4, 5, 3),
+        rhs_shape=(1, 4, 5, 3),
+    )
+    model_ir.tensors["unused_binary_adapter_probe"] = TensorIR(
+        name="unused_binary_adapter_probe",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    before_tensor_count = len(model_ir.tensors)
+
+    stats = repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
+
+    assert stats == {"inserted_rank4_binary_layout_fix_transpose": 0}
+    assert len(model_ir.tensors) == before_tensor_count - 1
+    assert "unused_binary_adapter_probe" not in model_ir.tensors
+
+
 def test_compatibility_wrapper_matches_module_owner() -> None:
     direct_model = _model()
     wrapper_model = copy.deepcopy(direct_model)
