@@ -332,7 +332,7 @@ from onnx2tf.tflite_builder.passes.concat_input_adapter_layout import (
     optimize_transpose_input_chains_pre_concat_to_single_post_adapter as _optimize_transpose_input_chains_pre_concat_to_single_post_adapter_pass,
 )
 from onnx2tf.tflite_builder.passes.pre_add_direct_unary_layout import (
-    optimize_transpose_pre_add_direct_unary_nhwc_chains as _optimize_transpose_pre_add_direct_unary_nhwc_chains_pass,
+    optimize_transpose_pre_add_direct_unary_nhwc_chains as _optimize_transpose_pre_add_direct_unary_nhwc_chains_pass,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.pre_add_layout import (
     optimize_transpose_pre_add_nhwc_chains as _optimize_transpose_pre_add_nhwc_chains_pass,
@@ -562,7 +562,7 @@ from onnx2tf.tflite_builder.passes.nhwc_concat_quantized_layout import (
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,  # noqa: F401 - compatibility re-export
-    _is_inverse_perm,
+    _is_inverse_perm,  # noqa: F401 - compatibility re-export
     _optimize_layout_transpose_chains as _optimize_layout_transpose_chains_pass,
     _optimize_trailing_output_transpose_passthrough_chains as _optimize_trailing_output_transpose_passthrough_chains_pass,
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains as _optimize_transpose_gather_transpose_axis_remap_nhwc_chains_pass,
