@@ -10185,3 +10185,10 @@ conditions differ, so strict characterization requires raw tuple propagation,
 exact eleven-result validation, fixed-key extraction, and one cluster-wide net
 prune counter. Only the second of two production recovery calls may stage
 count/results/summary; the first remains an expression.
+
+The runner and lowerer delegate now return the raw eleven-result tuple. The
+pure `summarize_terminal_affine_concat_split_mutations()` helper extracts only
+the twelve declared keys and adds clamped net pruning. Production stages
+starting count, `terminal_affine_results`, and `_terminal_affine_stats` only at
+the second call; its forward-string annotation preserves the delegate's
+context-only runtime load contract.

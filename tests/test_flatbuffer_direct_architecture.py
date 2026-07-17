@@ -1803,11 +1803,11 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     )
     assert TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS == expected_order
     helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
+        node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_affine_concat_split_recovery"
     ]
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_affine_concat_split_recovery"
@@ -1823,30 +1823,37 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper_name
+            for node in ast.walk(statement)
+        )
     ]
     assert len(invocation_indexes) == 2
     previous_call_names = []
     next_call_names = []
     for position, index in enumerate(invocation_indexes):
-        invocation = lowerer.body[index].value
+        invocation_statement = lowerer.body[index]
+        if position == 0:
+            assert isinstance(invocation_statement, ast.Expr)
+            previous = lowerer.body[index - 1]
+            following = lowerer.body[index + 1]
+        else:
+            assert isinstance(invocation_statement, ast.Assign)
+            assert len(invocation_statement.targets) == 1
+            assert isinstance(invocation_statement.targets[0], ast.Name)
+            assert invocation_statement.targets[0].id == "terminal_affine_results"
+            previous = lowerer.body[index - 2]
+            following = lowerer.body[index + 2]
+        invocation = invocation_statement.value
+        assert isinstance(invocation, ast.Call)
         assert invocation.args == []
         assert invocation.keywords == []
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
         assert isinstance(previous, ast.Expr)
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
-        if position == 0:
-            assert isinstance(following, ast.Expr)
-        else:
-            assert isinstance(following, ast.Assign)
-            assert len(following.targets) == 1
-            assert isinstance(following.targets[0], ast.Name)
-            assert following.targets[0].id == "_terminal_slice_pad_concat_stats"
+        assert isinstance(following, (ast.Expr, ast.Assign))
         assert isinstance(following.value, ast.Call)
         assert isinstance(following.value.func, ast.Name)
         previous_call_names.append(previous.value.func.id)

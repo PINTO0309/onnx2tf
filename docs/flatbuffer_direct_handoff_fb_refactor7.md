@@ -1484,3 +1484,32 @@ Validate malformed length, all twelve keys, net pruning, owner order, both
 production calls, complete recovery coverage, core, pass efficiency,
 architecture, and TensorFlow import blocking sequentially. Commit and push
 only; do not create or update a pull request.
+
+## Second terminal affine mutation evidence implementation checkpoint
+
+The terminal affine orchestration runner and lowerer's delegate now return the
+ordered eleven-result tuple. The pure
+`summarize_terminal_affine_concat_split_mutations()` helper validates the exact
+length, extracts only the twelve declared mutation keys, and appends clamped
+net `pruned_unused_tensors` evidence.
+
+The first production recovery remains an expression. The second records
+`terminal_affine_tensor_count`, captures `terminal_affine_results`, and derives
+`_terminal_affine_stats` in three adjacent assignments. A forward-string return
+annotation keeps the straight-line delegate's runtime loaded-data contract
+limited to its shared context. The first slice/pad/concat and staged second
+slice/pad/concat boundaries are unchanged, and no reconciliation consumes the
+summary yet.
+
+Focused recovery, second slice/pad/concat, and architecture coverage is `101
+passed in 0.87s`. The sequential bridge-owner, terminal-affine, complete SPP,
+concat-unary-conv, late-SPP, shape-extract, QKV, split/conv bridge,
+Hardswish-SE, late hard-activation, SINet terminal, Expand/Squeeze,
+late-layout, constant-fold/cast, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `696 passed in 28.11s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, move backward to the first strided-slice/pad/concat call immediately
+before this cluster. Its positive-only prune contract permits direct result
+capture, but keep the earlier terminal affine recovery unchanged. Commit and
+push only; do not create or update a pull request.

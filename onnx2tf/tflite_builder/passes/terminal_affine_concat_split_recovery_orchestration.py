@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.passes.affine_chain_fold import (
@@ -54,6 +54,42 @@ TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS = (
 
 
 TerminalAffineConcatSplitRecoveryContext = ModelIRPassContext
+_MUTATION_KEYS_BY_RESULT = (
+    ("optimized_fold_mul_add_mul_affine_chains",),
+    ("optimized_transpose_mul_add_const_prepost_nhwc_chains",),
+    ("optimized_concat_mul_add_transpose_nhwc_bridge_chains",),
+    ("optimized_concat_mul_add_transpose_add_nhwc_bridge_chains",),
+    ("optimized_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",),
+    ("optimized_concat_tree_mul_add_transpose_nhwc_bridge_chains",),
+    ("optimized_singleton_gate_conv_concat_nhwc_bridge_blocks",),
+    ("optimized_transpose_unary_split_concat_single_post_nchw",),
+    ("optimized_transpose_split_channelwise_tail_to_single_post_nchw",),
+    ("optimized_transpose_binary_split_channelwise_tail_to_single_post_nchw",),
+    (
+        "sanitized_probable_nhwc_axis_sensitive_ops",
+        "inserted_probable_nhwc_terminal_transposes",
+    ),
+)
+
+
+def summarize_terminal_affine_concat_split_mutations(
+    pass_results: Tuple[Dict[str, int], ...],
+    *,
+    pruned_unused_tensors: int,
+) -> Dict[str, int]:
+    """Normalize raw recovery results into declared mutation counters."""
+
+    expected_count = len(TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS)
+    if len(pass_results) != expected_count:
+        raise ValueError(
+            "terminal affine mutation summary expected "
+            f"{expected_count} pass results, got {len(pass_results)}"
+        )
+    summary: Dict[str, int] = {}
+    for keys, result in zip(_MUTATION_KEYS_BY_RESULT, pass_results):
+        summary.update({key: int(result.get(key, 0)) for key in keys})
+    summary["pruned_unused_tensors"] = max(0, int(pruned_unused_tensors))
+    return summary
 
 
 def _model_invocation(
@@ -144,8 +180,8 @@ def build_terminal_affine_concat_split_recovery_invocations(
 
 def run_terminal_affine_concat_split_recovery(
     context: TerminalAffineConcatSplitRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Dict[str, int], ...]:
+    return run_recovery_invocations(
         build_terminal_affine_concat_split_recovery_invocations(context),
         expected_pass_ids=TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
         phase_name="terminal affine/concat/split recovery",

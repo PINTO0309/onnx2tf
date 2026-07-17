@@ -198,6 +198,7 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
     run_terminal_affine_concat_split_recovery,
+    summarize_terminal_affine_concat_split_mutations,
 )
 from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
     run_sinet_preadd_resize_recovery,
@@ -4285,8 +4286,8 @@ def lower_onnx_to_ir(
             terminal_slice_concat_recovery_context
         )
 
-    def _run_terminal_affine_concat_split_recovery_sequence() -> None:
-        run_terminal_affine_concat_split_recovery(
+    def _run_terminal_affine_concat_split_recovery_sequence() -> "Tuple[Dict[str, int], ...]":
+        return run_terminal_affine_concat_split_recovery(
             terminal_affine_concat_split_recovery_context
         )
 
@@ -5140,7 +5141,15 @@ def lower_onnx_to_ir(
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
     # Keep this after pre_add/slice/pad strict rewrites: those passes can
     # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
-    _run_terminal_affine_concat_split_recovery_sequence()
+    terminal_affine_tensor_count = len(model_ir.tensors)
+    terminal_affine_results = _run_terminal_affine_concat_split_recovery_sequence()
+    _terminal_affine_stats = summarize_terminal_affine_concat_split_mutations(
+        terminal_affine_results,
+        pruned_unused_tensors=max(
+            0,
+            int(terminal_affine_tensor_count - len(model_ir.tensors)),
+        ),
+    )
     _terminal_slice_pad_concat_stats = (
         _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
             model_ir

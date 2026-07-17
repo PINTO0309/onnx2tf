@@ -1244,11 +1244,14 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
     assert invocation.value.keywords == []
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_terminal_affine_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
-        "_run_terminal_affine_concat_split_recovery_sequence"
+        "summarize_terminal_affine_concat_split_mutations"
     )
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)

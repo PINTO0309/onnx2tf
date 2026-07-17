@@ -194,27 +194,34 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+            for node in ast.walk(statement)
+        )
     ]
 
     assert len(invocation_indexes) == 2
     observed: list[tuple[str, str]] = []
     for position, index in enumerate(invocation_indexes):
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
+        if position == 0:
+            invocation = lowerer.body[index]
+            assert isinstance(invocation, ast.Expr)
+            previous = lowerer.body[index - 1]
+            following = lowerer.body[index + 1]
+        else:
+            invocation = lowerer.body[index]
+            assert isinstance(invocation, ast.Assign)
+            assert len(invocation.targets) == 1
+            assert isinstance(invocation.targets[0], ast.Name)
+            assert invocation.targets[0].id == "terminal_affine_results"
+            previous = lowerer.body[index - 2]
+            following = lowerer.body[index + 2]
         assert isinstance(previous, ast.Expr)
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
-        if position == 0:
-            assert isinstance(following, ast.Expr)
-        else:
-            assert isinstance(following, ast.Assign)
-            assert len(following.targets) == 1
-            assert isinstance(following.targets[0], ast.Name)
-            assert following.targets[0].id == "_terminal_slice_pad_concat_stats"
+        assert isinstance(following, (ast.Expr, ast.Assign))
         assert isinstance(following.value, ast.Call)
         assert isinstance(following.value.func, ast.Name)
         observed.append((previous.value.func.id, following.value.func.id))
@@ -235,7 +242,7 @@ def test_terminal_affine_concat_split_context_and_wrapper_are_explicit() -> None
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -291,10 +298,6 @@ def test_terminal_affine_concat_split_runner_preserves_instrumented_order(
     assert events == list(TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal affine runner still discards ordered results",
-)
 def test_terminal_affine_returns_and_summarizes_mutations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -365,10 +368,6 @@ def test_terminal_affine_returns_and_summarizes_mutations(
     assert isinstance(helper.body[0].value, ast.Call)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the second terminal affine call lacks mutation evidence capture",
-)
 def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     target_names = (
