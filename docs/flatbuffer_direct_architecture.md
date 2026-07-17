@@ -10447,3 +10447,9 @@ operator/tensor insertion and metadata-only rewrite and performs no pruning.
 Strict characterization selects only the first very-late direct call for a
 future `_very_late_dynamic_rank1_reshape_stats` assignment while preserving
 the fallback and absolute-final expressions.
+
+That selected call now assigns its unchanged raw result to
+`_very_late_dynamic_rank1_reshape_stats`. It remains observation-only before
+the existing static-shape reconciliation. The fallback and absolute-final calls
+remain expressions, and no proxy, summary, or reconciliation consumer is
+added.

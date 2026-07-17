@@ -5051,6 +5051,17 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         concat_pool_axis_stats.value.func.id
         == "_repair_nchw_concat_global_pool_conv_axes"
     )
+    dynamic_rank1_stats = lowerer.body[invocation_index + 8]
+    assert isinstance(dynamic_rank1_stats, ast.Assign)
+    assert isinstance(dynamic_rank1_stats.targets[0], ast.Name)
+    assert dynamic_rank1_stats.targets[0].id == (
+        "_very_late_dynamic_rank1_reshape_stats"
+    )
+    assert isinstance(dynamic_rank1_stats.value, ast.Call)
+    assert isinstance(dynamic_rank1_stats.value.func, ast.Name)
+    assert dynamic_rank1_stats.value.func.id == (
+        "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
 
 
 def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:

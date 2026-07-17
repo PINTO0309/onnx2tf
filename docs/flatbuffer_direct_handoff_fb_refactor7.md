@@ -2367,3 +2367,26 @@ owner invocation. Validate dynamic-Reshape, very-late orchestration, fallback
 and absolute-final occurrence contracts, core, pass-efficiency, architecture,
 and TensorFlow import blocking sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Very-late dynamic rank-one Reshape implementation checkpoint
+
+Only the first very-late dynamic rank-one Unsqueeze/Reshape-shape call now
+assigns its unchanged result to `_very_late_dynamic_rank1_reshape_stats`. The
+fallback and absolute-final calls remain expressions targeting `fallback_ir`
+and `model_ir`, respectively.
+
+The raw counter is complete because it covers both operator/tensor insertion
+and metadata-only rewrites and the owner performs no pruning. The result remains
+observation-only before the unchanged static-shape reconciliation. The
+occurrence contract compares the two remaining expression targets without
+depending on unspecified `ast.walk()` traversal order.
+
+Focused dynamic-Reshape, very-late, absolute-final, and architecture coverage
+is `51 passed, 250 deselected`. The expanded sequential gate is `1334 passed in
+30.38s`. Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the immediately following direct
+`_reconcile_static_tensor_shapes(model_ir)` occurrence. Distinguish it from the
+many conditional and convergence-owned reconciliations, confirm its result
+schema and mutation completeness, and characterize only this very-late
+boundary. Commit and push only; do not create or update a pull request.

@@ -5333,9 +5333,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_dynamic_rank1_reshape_stats = (
+        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _reconcile_static_tensor_shapes(model_ir)
     split_fallback_stats = _replace_unsupported_split_with_slice(
