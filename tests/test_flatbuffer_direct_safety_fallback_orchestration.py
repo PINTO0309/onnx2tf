@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -101,4 +102,43 @@ def test_safety_fallback_stages_complete_norm_mutation_evidence() -> None:
     assert ast.unparse(guard.test) == (
         "int(fallback_norm_stats.get("
         "'optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains', 0)) > 0"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the fallback dynamic rank-one rewrite result is discarded",
+)
+def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
+    body = _safety_fallback_body(_lowerer())
+    invocation_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, (ast.Assign, ast.Expr))
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id
+        == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
+
+    invocation = body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "fallback_dynamic_rank1_stats"
+    assert isinstance(invocation.value, ast.Call)
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "fallback_ir"
+    ]
+    assert invocation.value.keywords == []
+
+    topological_sort = body[invocation_index + 1]
+    assert isinstance(topological_sort, ast.Expr)
+    assert ast.unparse(topological_sort.value) == (
+        "_topologically_sort_operators(fallback_ir)"
+    )
+    layout_inference = body[invocation_index + 2]
+    assert isinstance(layout_inference, ast.Expr)
+    assert ast.unparse(layout_inference.value) == (
+        "infer_model_ir_logical_layouts(fallback_ir)"
     )

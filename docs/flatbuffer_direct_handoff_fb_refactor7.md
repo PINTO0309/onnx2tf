@@ -2558,3 +2558,30 @@ Unsqueeze/Reshape-shape call. Characterize its result and the unconditional
 topological/layout refresh separately; do not skip either refresh until the
 recursive return-state and all preceding fallback mutation evidence are proven
 complete. Commit and push only; do not create or update a pull request.
+
+## Safety-fallback dynamic rank-one characterization checkpoint
+
+`rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs()` returns one complete
+counter. It increments for both the folded higher-rank metadata repair and the
+indexed runtime SHAPE/CONCAT insertion path, synchronizes layout only after a
+positive rewrite, and performs no tensor or operator cleanup on zero.
+
+The fallback call still discards that result. A strict expected-failure AST
+contract requires `fallback_dynamic_rank1_stats` while preserving its sole
+`fallback_ir` argument and the immediately following unconditional
+`_topologically_sort_operators()` and `infer_model_ir_logical_layouts()` calls.
+No refresh is skipped in this unit because recursive relowering and earlier
+fallback repairs have not yet been proven to leave terminal layout metadata
+equivalent on every zero-owner path.
+
+Focused dynamic-rank-one characterization is `4 passed, 34 deselected, 1
+xfailed`. The broader sequential fallback-owner, reconciliation, convergence,
+core, pass-efficiency, architecture, and TensorFlow import-blocking gate is
+`446 passed, 1 xfailed in 26.72s`. Ruff and whitespace validation pass.
+
+At implementation, assign only this result and update the existing
+three-occurrence contract so the absolute-final `model_ir` call remains the
+sole expression. Validate dynamic Reshape, safety fallback, very-late
+orchestration, core, pass efficiency, architecture, and TensorFlow import
+blocking sequentially. Commit and push only; do not create or update a pull
+request.

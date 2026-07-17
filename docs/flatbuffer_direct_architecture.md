@@ -2240,6 +2240,13 @@ before/after tensor-count delta while retaining the existing norm-rewrite guard
 and recursive relowering order. The extra evidence remains observation-only;
 cleanup alone does not trigger shape reconciliation.
 
+The next fallback-only dynamic rank-one Unsqueeze/Reshape-shape owner exposes
+one complete rewrite counter and performs no cleanup when it is zero.
+Characterization requires its existing result to be assigned independently of
+the norm summary. The immediately following topological sort and logical-layout
+inference remain unconditional until the recursive return state and all prior
+fallback mutations have a stronger equivalence proof.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct
