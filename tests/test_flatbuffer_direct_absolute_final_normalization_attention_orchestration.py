@@ -199,7 +199,10 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
         previous.value.func.id
         == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_absolute_final_dynamic_rank1_stats"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert (
@@ -400,6 +403,82 @@ def test_absolute_final_normalization_attention_runner_preserves_order(
     run_absolute_final_normalization_attention(context)
 
     assert events == list(ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="absolute-final normalization/attention runner discards pass results",
+)
+def test_absolute_final_normalization_attention_runner_returns_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    expected_by_pass_id = {
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS[0]: {
+            "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 1,
+        },
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS[1]: {
+            "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains": 2,
+        },
+    }
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> dict[str, int]:
+            return dict(expected_by_pass_id[pass_id])
+
+        return record
+
+    for pass_id in ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS:
+        monkeypatch.setattr(
+            absolute_final_normalization_attention_orchestration,
+            pass_id,
+            recorder(pass_id),
+        )
+
+    assert run_absolute_final_normalization_attention(context) == tuple(
+        expected_by_pass_id[pass_id]
+        for pass_id in ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="lowerer discards absolute-final normalization/attention results",
+)
+def test_absolute_final_normalization_attention_lowerer_captures_results() -> None:
+    lowerer, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    helper_statement = helper.body[0]
+    assert isinstance(helper_statement, ast.Return)
+    assert isinstance(helper_statement.value, ast.Call)
+    assert isinstance(helper_statement.value.func, ast.Name)
+    assert helper_statement.value.func.id == "run_absolute_final_normalization_attention"
+
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_normalization_attention_results"
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+    assert invocation.value.args == []
+    assert invocation.value.keywords == []
+
+    previous = lowerer.body[invocation_index - 1]
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(previous, ast.Assign)
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_absolute_final_instancenorm_post_bias_stats"
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_absolute_final_dynamic_rank1_stats"
 
 
 def test_absolute_final_normalization_attention_module_does_not_import_lowerer() -> (

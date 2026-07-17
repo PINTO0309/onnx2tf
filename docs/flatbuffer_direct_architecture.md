@@ -10735,6 +10735,14 @@ The absolute-final call now assigns its unchanged raw dictionary to that target.
 The other two occurrences, all owner behavior, and the unconditional following
 operations are unchanged; no guard, reconciliation, or traversal is added.
 
+The immediately preceding absolute-final normalization/attention pair is a
+two-pass recovery orchestration over one shared pass-state scope. Both owners
+return stable mutation dictionaries and the common recovery runner returns
+them as an ordered tuple, but the orchestration runner, lowerer helper, and
+primary caller currently discard that tuple. Characterization fixes those
+three propagation boundaries and the adjacent post-bias/dynamic-rank-one order
+before any implementation change.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

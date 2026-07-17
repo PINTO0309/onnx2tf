@@ -4255,3 +4255,39 @@ returns per-pass results, while this boundary currently declares and discards
 `None`; characterize the exact caller and ordering contract before changing
 it. Keep the following absolute-final dynamic rank-one rewrite fixed. Commit
 and push only; do not create or update a pull request.
+
+## Absolute-final normalization/attention result characterization checkpoint
+
+The absolute-final pair invokes flattened-global-normalization Pad propagation
+followed by mixed reduction/MirrorPad attention cleanup through one shared
+`ModelIRPassStateScope`. Each owner returns a stable mutation dictionary, and
+`run_recovery_invocations()` already returns the two callback results in the
+declared pass-ID order. The pair-specific runner currently omits that return,
+its lowerer helper declares `None`, and the primary path invokes the helper as
+a discarded expression.
+
+Strict expected-failure contracts now require ordered result propagation
+through all three boundaries: the pair runner returns the two dictionaries,
+the helper returns that tuple, and the primary path assigns it to
+`_absolute_final_normalization_attention_results`. The adjacent
+`_absolute_final_instancenorm_post_bias_stats` and
+`_absolute_final_dynamic_rank1_stats` assignments, zero-argument helper call,
+pass IDs, callback options, shared state scope, execution order, and
+TensorFlow-free behavior remain fixed.
+
+At implementation, add only return/assignment plumbing and accurate tuple type
+annotations. Do not add a summarizer, guard, reconciliation, pass execution,
+graph traversal, dependency, or metadata write, and do not reorder either pass
+or either adjacent boundary. Validate the pair owner, pass-efficiency,
+architecture, terminal orchestration, and broad related gates sequentially,
+then commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- pair owner, pass-efficiency, architecture, and terminal orchestration:
+  `315 passed, 2 xfailed in 18.08s`
+- expanded broad related gate: `1266 passed, 2 xfailed in 30.29s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The two strict xfails are the deliberately unmet runner-return and lowerer-
+capture contracts; there are no unexpected failures.
