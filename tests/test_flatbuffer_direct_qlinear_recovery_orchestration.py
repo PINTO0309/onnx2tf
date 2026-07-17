@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import qlinear_recovery_orchestration
 from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
@@ -47,7 +48,12 @@ def _expression_path(node: ast.expr) -> Any:
 
 
 def _context() -> QLinearRecoveryContext:
-    return QLinearRecoveryContext(model_ir=ModelIR("qlinear_recovery_test"))
+    model_ir = ModelIR("qlinear_recovery_test")
+    return QLinearRecoveryContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
 
 
 def _normalize_new_contract(
@@ -192,13 +198,8 @@ def test_qlinear_recovery_context_and_wrapper_are_explicit() -> None:
             for target in statement.targets
         )
     )
-    assert isinstance(context_assignment.value, ast.Call)
-    assert isinstance(context_assignment.value.func, ast.Name)
-    assert context_assignment.value.func.id == "QLinearRecoveryContext"
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in context_assignment.value.keywords
-    } == {"model_ir": "model_ir"}
+    assert isinstance(context_assignment.value, ast.Name)
+    assert context_assignment.value.id == "shared_model_ir_pass_context"
 
 
 def test_qlinear_recovery_runner_preserves_instrumented_order(

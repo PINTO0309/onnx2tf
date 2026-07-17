@@ -2698,3 +2698,20 @@ production source, real-model conversion, or broad corpus suite changed or
 ran. No public API, CLI, artifact, dependency, pass order, callback,
 diagnostics, or TensorFlow boundary changed. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+The final orchestration context consolidation is implemented. QLinear is now
+the 25th internal `ModelIRPassContext` alias and its lowerer variable is the
+22nd main-model consumer of the Session-owned object. SINet terminal remains a
+dedicated frozen callback holder but composes `pass_context` instead of
+duplicating ModelIR/LayoutState. It joins the callback-bearing inventory as the
+fifth type and preserves the eleventh exact callback. No orchestration dataclass
+now repeats core identity fields. The production diff removes seven net lines.
+
+The 76-test focused context/parent set, 324-test related context/orchestration/
+architecture set, 31 pass-efficiency tests, all 11 TensorFlow-import-blocked
+tests, and 32 core smoke tests pass. Focused formatting, lint, Python
+compilation, and whitespace checks pass; the lowerer retains only its two pre-
+existing F401 findings. No real-model conversion or broad corpus suite ran. No
+public API, CLI, artifact, dependency, pass order, callback, diagnostics, or
+TensorFlow boundary changed. PR #952 remains closed, and no pull request was
+created, reopened, or updated.

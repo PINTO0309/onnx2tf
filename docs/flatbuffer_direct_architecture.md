@@ -9605,3 +9605,13 @@ separate boundaries without production changes. The model-only
 and one argument-free pre-add/resize callback across three ordered invocations.
 Both lowerer constructors, exact callback wiring, keyword policies, and module
 independence are frozen before either type changes.
+
+All orchestration context identity is now normalized. QLinear is the twenty-
+fifth internal `ModelIRPassContext` alias and the twenty-second main-model
+consumer. SINet terminal is the fifth callback-bearing dataclass and stores one
+common `pass_context` plus its callback, bringing that callback inventory to
+eleven. Every orchestration state holder is therefore either the common core
+context or an explicit callback composition around it; no orchestration
+dataclass independently repeats ModelIR, LayoutState, or diagnostics. QLinear's
+five argument contracts and SINet's three invocation/callback contracts remain
+unchanged.

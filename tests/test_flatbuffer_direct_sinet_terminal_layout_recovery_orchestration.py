@@ -7,6 +7,7 @@ from typing import Any, Callable
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import (
     sinet_terminal_layout_recovery_orchestration,
@@ -62,8 +63,11 @@ def _context(
     if preadd_resize_recovery is None:
         preadd_resize_recovery = _noop_recovery
     return SINetTerminalLayoutRecoveryContext(
-        model_ir=model_ir,
-        layout_state=LayoutState.from_model_ir(model_ir),
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
         preadd_resize_recovery=preadd_resize_recovery,
     )
 
@@ -73,9 +77,9 @@ def _normalize_new_contract(
     context: SINetTerminalLayoutRecoveryContext,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     def normalize(value: Any) -> Any:
-        if value is context.model_ir:
+        if value is context.pass_context.model_ir:
             return "model_ir"
-        if value is context.layout_state:
+        if value is context.pass_context.layout_state:
             return "session.layout_state"
         return value
 
@@ -232,8 +236,7 @@ def test_sinet_terminal_layout_context_and_wrapper_are_explicit() -> None:
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in context_assignment.value.keywords
     } == {
-        "model_ir": "model_ir",
-        "layout_state": "session.layout_state",
+        "pass_context": "session.model_ir_pass_context",
         "preadd_resize_recovery": SINET_PREADD_RESIZE,
     }
 

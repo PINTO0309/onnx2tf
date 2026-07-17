@@ -46,6 +46,7 @@ SHARED_CONTEXT_TYPES = (
     ("late_spp_concat_unary_conv_orchestration", "LateSPPConcatUnaryConvContext"),
     ("mean_attention_orchestration", "MeanAttentionContext"),
     ("qkv_attention_orchestration", "QKVAttentionContext"),
+    ("qlinear_recovery_orchestration", "QLinearRecoveryContext"),
     ("quantized_recovery_orchestration", "QuantizedRecoveryContext"),
     (
         "se_fc_gather_channel_fanout_orchestration",
@@ -95,6 +96,7 @@ MAIN_SHARED_CONTEXT_NAMES = (
     "late_spp_concat_unary_conv_context",
     "mean_attention_context",
     "qkv_attention_context",
+    "qlinear_recovery_context",
     "quantized_recovery_context",
     "sinet_preadd_resize_recovery_context",
     "singleton_reshape_context",

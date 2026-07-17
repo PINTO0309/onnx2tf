@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.passes.mean_hardsigmoid_muladd_layout import (
     optimize_transpose_mean_hardsigmoid_muladd_chains,
 )
@@ -34,9 +33,7 @@ QLINEAR_MEAN_CONCAT_PASS_IDS = (
 )
 
 
-@dataclass(frozen=True)
-class QLinearRecoveryContext:
-    model_ir: ModelIR
+QLinearRecoveryContext = ModelIRPassContext
 
 
 def _model_invocation(

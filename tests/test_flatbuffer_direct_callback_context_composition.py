@@ -24,6 +24,10 @@ from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     LayoutRecoveryContext,
     build_layout_recovery_invocations,
 )
+from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
+    SINetTerminalLayoutRecoveryContext,
+    build_sinet_terminal_layout_recovery_invocations,
+)
 from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
     TerminalSliceConcatRecoveryContext,
     build_terminal_slice_concat_recovery_invocations,
@@ -62,6 +66,11 @@ CALLBACK_CONTEXT_TYPES = (
         ),
     ),
     (
+        "sinet_terminal_layout_recovery_orchestration",
+        "SINetTerminalLayoutRecoveryContext",
+        ("preadd_resize_recovery",),
+    ),
+    (
         "terminal_slice_concat_recovery_orchestration",
         "TerminalSliceConcatRecoveryContext",
         ("channel_slice_pad_mul_cluster",),
@@ -90,6 +99,9 @@ LOWERER_CALLBACK_CONTRACTS = {
         "channel_shuffle_gather_cluster": (
             "_run_channel_shuffle_gather_layout_pass_cluster"
         ),
+    },
+    "SINetTerminalLayoutRecoveryContext": {
+        "preadd_resize_recovery": "_run_sinet_preadd_resize_recovery_sequence",
     },
     "TerminalSliceConcatRecoveryContext": {
         "channel_slice_pad_mul_cluster": (
@@ -173,7 +185,7 @@ def test_lowerer_callback_context_wiring_is_explicit() -> None:
         and node.func.id in context_names
     ]
 
-    assert len(calls) == 4
+    assert len(calls) == len(context_names)
     assert {call.func.id for call in calls} == context_names
     for call in calls:
         assert isinstance(call.func, ast.Name)
@@ -202,6 +214,7 @@ def test_callback_invocation_argument_contracts_are_preserved() -> None:
     pre_concat = _callback("pre_concat")
     channel_shuffle = _callback("channel_shuffle")
     channel_slice = _callback("channel_slice")
+    sinet_preadd = _callback("sinet_preadd")
 
     attention_context = AttentionRecoveryContext(
         pass_context=pass_context,
@@ -255,24 +268,21 @@ def test_callback_invocation_argument_contracts_are_preserved() -> None:
     )
     assert next(item for item in terminal if item.callback is channel_slice).args == ()
 
-
-def test_sinet_terminal_partial_context_remains_outside_the_shared_boundary() -> None:
-    module = import_module(
-        "onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration"
+    sinet_terminal = build_sinet_terminal_layout_recovery_invocations(
+        SINetTerminalLayoutRecoveryContext(
+            pass_context=pass_context,
+            preadd_resize_recovery=sinet_preadd,
+        )
     )
-    context_type = module.SINetTerminalLayoutRecoveryContext
-
-    assert tuple(field.name for field in fields(context_type)) == (
-        "model_ir",
-        "layout_state",
-        "preadd_resize_recovery",
+    sinet_callback = next(
+        item for item in sinet_terminal if item.callback is sinet_preadd
     )
-    assert "diagnostics" not in {field.name for field in fields(context_type)}
+    assert sinet_callback.args == ()
+    assert sinet_callback.keyword_args == ()
 
 
 def test_callback_context_modules_do_not_import_the_lowerer() -> None:
     module_names = [module_name for module_name, _, _ in CALLBACK_CONTEXT_TYPES]
-    module_names.append("sinet_terminal_layout_recovery_orchestration")
     for module_name in module_names:
         tree = ast.parse(
             (PASSES_ROOT / f"{module_name}.py").read_text(encoding="utf-8")

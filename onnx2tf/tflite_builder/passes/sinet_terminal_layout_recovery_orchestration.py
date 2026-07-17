@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
-from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.passes.recovery_orchestration import (
     RecoveryInvocation,
     run_recovery_invocations,
@@ -26,8 +25,7 @@ SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS = (
 
 @dataclass(frozen=True)
 class SINetTerminalLayoutRecoveryContext:
-    model_ir: ModelIR
-    layout_state: LayoutState | None
+    pass_context: ModelIRPassContext
     preadd_resize_recovery: Callable[[], Any]
 
 
@@ -38,8 +36,8 @@ def build_sinet_terminal_layout_recovery_invocations(
         RecoveryInvocation(
             pass_id=SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS[0],
             callback=optimize_sinet_shuffle_residual_transpose_chains,
-            args=(context.model_ir,),
-            keyword_args=(("layout_state", context.layout_state),),
+            args=(context.pass_context.model_ir,),
+            keyword_args=(("layout_state", context.pass_context.layout_state),),
         ),
         RecoveryInvocation(
             pass_id=SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS[1],
@@ -50,7 +48,7 @@ def build_sinet_terminal_layout_recovery_invocations(
             callback=(
                 optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains
             ),
-            args=(context.model_ir,),
+            args=(context.pass_context.model_ir,),
         ),
     )
 

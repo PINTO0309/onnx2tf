@@ -15993,3 +15993,117 @@ five QLinear argument contracts, the three SINet invocation contracts, and the
 exact argument-free callback. Update the earlier exclusion tests, validate
 sequentially including core smoke, commit and push only, and do not create or
 update a pull request.
+
+## Final orchestration context consolidation: implemented state
+
+The orchestration context inventory is fully normalized around the core
+`ModelIRPassContext`.
+
+`QLinearRecoveryContext` is now the twenty-fifth internal alias of the common
+type. The lowerer no longer imports or constructs it;
+`qlinear_recovery_context` is the twenty-second main-model consumer of
+`shared_model_ir_pass_context`. The five QLinear invocations still receive only
+the exact ModelIR and no keywords; the shared LayoutState and diagnostics remain
+inert.
+
+`SINetTerminalLayoutRecoveryContext` remains a dedicated frozen dataclass
+because it owns a callback, but its fields are now `pass_context` and
+`preadd_resize_recovery`. Its lowerer constructor receives the exact
+`session.model_ir_pass_context`. Both model invocations read through that object
+and the pre-add/resize callback remains argument-free and identical. It is now
+the fifth callback-bearing composition, with eleven callbacks across those five
+types.
+
+Consequently, every orchestration state holder is either a direct
+`ModelIRPassContext` alias or a callback-bearing dataclass that explicitly
+contains one. No orchestration dataclass independently repeats ModelIR,
+LayoutState, or diagnostics. This final unit removes seven net production
+lines.
+
+Sequential implementation validation completed as follows:
+
+- remaining-context, QLinear, SINet terminal/pre-add, callback composition,
+  model/layout composition, and shared-context suites:
+  `76 passed in 1.16s`;
+- the same related contracts plus ordered architecture:
+  `324 passed in 16.96s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.19s` (`31` plus `11`);
+- central lowerer core smoke: `32 passed in 0.59s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer retains exactly its two pre-existing F401 findings and no
+  new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, runtime
+order, callback identity, diagnostics behavior, and TensorFlow isolation remain
+unchanged. PR #952 remains closed, and no pull request was created, reopened,
+or updated.
+
+At restart, do not add more context-wrapper work: this boundary is complete.
+Inventory the remaining direct lowerer-to-pass calls and core contract
+boundaries, then select one coherent non-context duplication with measurable
+scan/allocation or ownership cost. Characterize its owners, arguments, order,
+scope, and GraphIndex behavior before production changes. Continue sequential
+validation, keep real-model conversion minimal, commit and push coherent units
+only, and do not create or update a pull request.
+
+### Pause checkpoint summary
+
+Current branch: `fb-refactor6`. This unit is intended to be committed as
+`Consolidate remaining pass contexts` and pushed to `origin/fb-refactor6` before
+pausing. No pull request is open or permitted.
+
+Completed in this checkpoint:
+
+- characterized the final two distinct context contracts in commit
+  `9242a67c`;
+- converted QLinear to the common context alias and Session-owned lowerer
+  identity;
+- composed SINet terminal state from the common context plus its callback;
+- expanded shared-context and callback-context inventories and removed the last
+  repeated orchestration identity fields;
+- preserved all pass IDs, invocation arguments, callback identity, runtime
+  order, diagnostics behavior, TensorFlow isolation, and public boundaries.
+
+Files changed by the implementation checkpoint:
+
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `onnx2tf/tflite_builder/passes/qlinear_recovery_orchestration.py`;
+- `onnx2tf/tflite_builder/passes/sinet_terminal_layout_recovery_orchestration.py`;
+- `tests/test_flatbuffer_direct_callback_context_composition.py`;
+- `tests/test_flatbuffer_direct_model_layout_context_composition.py`;
+- `tests/test_flatbuffer_direct_qlinear_recovery_orchestration.py`;
+- `tests/test_flatbuffer_direct_remaining_context_composition.py`;
+- `tests/test_flatbuffer_direct_shared_model_ir_pass_context.py`;
+- `tests/test_flatbuffer_direct_sinet_terminal_layout_recovery_orchestration.py`;
+- `docs/flatbuffer_direct_architecture.md`;
+- `docs/fb_refactor6_pull_request_description.md`;
+- this handoff document.
+
+Important design decisions:
+
+- core identity remains exclusively in `ModelIRPassContext`;
+- simple orchestration names are aliases, while callback owners remain small
+  frozen compositions around `pass_context`;
+- callbacks are not added to the core context;
+- a Session-owned object is reused for main-model phases, while existing
+  target-specific context construction remains unchanged.
+
+Tests completed for the implementation are the `76`, `324`, `42`, and `32`
+passing sets listed above, plus focused Ruff formatting/lint, Python compilation,
+and whitespace checks. Inference remained single-process; no real-model or
+broad corpus conversion was run for this structural unit.
+
+Known issues are limited to the central lowerer's two pre-existing F401 reports:
+the aliased pre-add/direct-unary pass import and `_is_inverse_perm`. They were
+not introduced by this unit. Because no real-model conversion ran, broad Tier
+accuracy/performance evidence is unchanged rather than newly established.
+
+The overall Goal remains incomplete. Quantization/split/exporter work, remaining
+direct lowerer/pass duplication, broader registry/layout modernization, and
+later tiered regression/efficiency gates still require work. On resume, first
+confirm a clean synchronized `fb-refactor6`, then inventory direct
+lowerer-to-pass calls and core ownership boundaries. Select and characterize one
+non-context duplication before editing production. Do not resume context-wrapper
+work, do not parallelize inference, and do not create a pull request.

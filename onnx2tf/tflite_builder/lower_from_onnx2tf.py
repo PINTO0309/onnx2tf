@@ -181,7 +181,6 @@ from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
     run_safe_binary_recovery,
 )
 from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
-    QLinearRecoveryContext,
     run_qlinear_mean_concat_recovery,
 )
 from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
@@ -4218,7 +4217,7 @@ def lower_onnx_to_ir(
         ),
     )
     quantized_recovery_context = shared_model_ir_pass_context
-    qlinear_recovery_context = QLinearRecoveryContext(model_ir=model_ir)
+    qlinear_recovery_context = shared_model_ir_pass_context
     terminal_slice_concat_recovery_context = TerminalSliceConcatRecoveryContext(
         pass_context=session.model_ir_pass_context,
         channel_slice_pad_mul_cluster=(
@@ -4296,8 +4295,7 @@ def lower_onnx_to_ir(
         )
 
     sinet_terminal_layout_recovery_context = SINetTerminalLayoutRecoveryContext(
-        model_ir=model_ir,
-        layout_state=session.layout_state,
+        pass_context=session.model_ir_pass_context,
         preadd_resize_recovery=_run_sinet_preadd_resize_recovery_sequence,
     )
 

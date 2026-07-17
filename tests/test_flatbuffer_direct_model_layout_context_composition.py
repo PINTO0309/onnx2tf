@@ -176,7 +176,7 @@ def test_model_ir_pass_context_is_a_diagnostics_inert_behavioral_substitute(
         assert all(value is not diagnostics for _, value in invocation.keyword_args)
 
 
-def test_partial_context_shapes_remain_outside_the_shared_boundary() -> None:
+def test_historical_partial_contexts_use_their_expected_common_shapes() -> None:
     qlinear_module = import_module(
         "onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration"
     )
@@ -184,13 +184,14 @@ def test_partial_context_shapes_remain_outside_the_shared_boundary() -> None:
         "onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration"
     )
 
+    assert qlinear_module.QLinearRecoveryContext is ModelIRPassContext
     assert tuple(
         field.name for field in fields(qlinear_module.QLinearRecoveryContext)
-    ) == ("model_ir",)
+    ) == ("model_ir", "layout_state", "diagnostics")
     assert tuple(
         field.name
         for field in fields(sinet_terminal_module.SINetTerminalLayoutRecoveryContext)
-    ) == ("model_ir", "layout_state", "preadd_resize_recovery")
+    ) == ("pass_context", "preadd_resize_recovery")
 
 
 @pytest.mark.parametrize(("module_name", "_"), MODEL_LAYOUT_CONTEXT_TYPES)

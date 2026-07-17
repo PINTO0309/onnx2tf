@@ -42,15 +42,26 @@ def _callback(name: str) -> Callable[..., Any]:
     return callback
 
 
-def test_qlinear_context_is_frozen_and_model_only() -> None:
+def test_qlinear_context_is_shared_and_frozen() -> None:
     model_ir = ModelIR("remaining_qlinear_context")
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict] = []
 
+    assert QLinearRecoveryContext is ModelIRPassContext
     assert is_dataclass(QLinearRecoveryContext)
     assert tuple(field.name for field in fields(QLinearRecoveryContext)) == (
         "model_ir",
+        "layout_state",
+        "diagnostics",
     )
-    context = QLinearRecoveryContext(model_ir=model_ir)
+    context = QLinearRecoveryContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
     assert context.model_ir is model_ir
+    assert context.layout_state is layout_state
+    assert context.diagnostics is diagnostics
     with pytest.raises(FrozenInstanceError):
         context.model_ir = ModelIR("replacement")
 
@@ -83,14 +94,13 @@ def test_sinet_terminal_context_and_callback_contract_are_frozen() -> None:
     assert is_dataclass(SINetTerminalLayoutRecoveryContext)
     assert tuple(
         field.name for field in fields(SINetTerminalLayoutRecoveryContext)
-    ) == ("model_ir", "layout_state", "preadd_resize_recovery")
+    ) == ("pass_context", "preadd_resize_recovery")
     context = SINetTerminalLayoutRecoveryContext(
-        model_ir=model_ir,
-        layout_state=layout_state,
+        pass_context=ModelIRPassContext(model_ir, layout_state, []),
         preadd_resize_recovery=callback,
     )
-    assert context.model_ir is model_ir
-    assert context.layout_state is layout_state
+    assert context.pass_context.model_ir is model_ir
+    assert context.pass_context.layout_state is layout_state
     assert context.preadd_resize_recovery is callback
 
     invocations = build_sinet_terminal_layout_recovery_invocations(context)
@@ -114,7 +124,7 @@ def test_lowerer_remaining_context_wiring_is_explicit() -> None:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    context_names = {"QLinearRecoveryContext", "SINetTerminalLayoutRecoveryContext"}
+    context_names = {"SINetTerminalLayoutRecoveryContext"}
     calls = [
         node
         for node in ast.walk(lowerer)
@@ -123,7 +133,7 @@ def test_lowerer_remaining_context_wiring_is_explicit() -> None:
         and node.func.id in context_names
     ]
 
-    assert len(calls) == 2
+    assert len(calls) == 1
     contracts = {
         call.func.id: {
             str(keyword.arg): _expression_path(keyword.value)
@@ -132,14 +142,28 @@ def test_lowerer_remaining_context_wiring_is_explicit() -> None:
         for call in calls
     }
     assert contracts == {
-        "QLinearRecoveryContext": {"model_ir": "model_ir"},
         "SINetTerminalLayoutRecoveryContext": {
-            "model_ir": "model_ir",
-            "layout_state": "session.layout_state",
+            "pass_context": "session.model_ir_pass_context",
             "preadd_resize_recovery": "_run_sinet_preadd_resize_recovery_sequence",
         },
     }
     assert all(call.args == [] for call in calls)
+
+    qlinear_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "qlinear_recovery_context"
+    )
+    assert _expression_path(qlinear_assignment.value) == "shared_model_ir_pass_context"
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "QLinearRecoveryContext"
+        for node in ast.walk(lowerer)
+    )
 
 
 @pytest.mark.parametrize(
