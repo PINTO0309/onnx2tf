@@ -2297,12 +2297,12 @@ result. The existing repair-only guard assigns the opt-in reconciliation
 result, while the following topological sort remains unchanged; cleanup alone
 does not require shape propagation.
 
-The recursive safety fallback currently computes layout-validation metadata
-before its high-rank BatchMatMul and indexed binary-convergence owners. The
-validator is pure, so characterization fixes the intended boundary at the
-terminal graph and requires an empty terminal result to remove validation
-errors inherited from the recursive lower. This changes diagnostics only; the
-mutation owners and their ordering remain fixed.
+The recursive safety fallback computes layout-validation metadata from its
+terminal graph, after high-rank BatchMatMul compression, indexed binary
+convergence, and the final topological sort. The validator is pure. A non-empty
+result keeps the established error-list schema, while an empty terminal result
+removes validation errors inherited from the recursive lower. This changes
+diagnostics only; the mutation owners and their ordering remain fixed.
 
 Gate-layout orchestration remains owned by
 `passes/gate_layout_orchestration.py`. The lowerer re-exports the elementwise

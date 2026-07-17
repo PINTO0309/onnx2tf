@@ -189,6 +189,12 @@ initializes a stable two-key reconciliation result, and captures the opt-in
 complete reconciliation result without changing the repair-only guard or the
 following topological sort.
 
+Terminal fallback layout validation extends the current gate, including the
+existing rank-6 BatchMatMul structure and numeric-parity tests, to `538 passed
+in 27.90s`. The pure validator now observes the graph after all fallback
+mutations and clears only validation errors inherited from recursive lowering
+when the terminal graph is valid. The error-list schema is unchanged.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -196,8 +202,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next
-characterized unit should audit the fallback layout-validation metadata
-boundary and then the high-rank BatchMatMul compression owner. Any new
-mutation evidence must preserve the recursive fallback boundary, current pass
-order, TensorFlow-free boundary, dependency set, and sequential validation
-policy.
+characterized unit should audit the fallback high-rank BatchMatMul compression
+owner and its guarded reconciliation result. Any new mutation evidence must
+preserve the recursive fallback boundary, current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

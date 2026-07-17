@@ -5603,9 +5603,6 @@ def lower_onnx_to_ir(
                 )
             )
         _topologically_sort_operators(fallback_ir)
-        fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
-        if len(fallback_layout_problems) > 0:
-            fallback_ir.metadata["logical_layout_validation_errors"] = list(fallback_layout_problems)
         fallback_ir.metadata["layout_optimize_fallback"] = {
             "reason": "dangling_dynamic_inputs_detected",
             "count": int(len(unbound_inputs)),
@@ -5624,6 +5621,18 @@ def lower_onnx_to_ir(
             _topologically_sort_operators(fallback_ir)
         _run_indexed_binary_layout_convergence(fallback_ir)
         _topologically_sort_operators(fallback_ir)
+        fallback_layout_problems = validate_model_ir_layout_annotations(
+            fallback_ir
+        )
+        if len(fallback_layout_problems) > 0:
+            fallback_ir.metadata["logical_layout_validation_errors"] = list(
+                fallback_layout_problems
+            )
+        else:
+            fallback_ir.metadata.pop(
+                "logical_layout_validation_errors",
+                None,
+            )
         return _finalize_model_ir(fallback_ir)
 
     _rewrite_constant_divisors_to_multiplicative_reciprocals(

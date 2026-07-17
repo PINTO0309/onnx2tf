@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -711,10 +710,6 @@ def test_layout_annotation_validator_is_pure() -> None:
     assert repr(model_ir.tensors["value"]) == tensor_before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback layout validation precedes terminal graph mutations",
-)
 def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> None:
     body = _safety_fallback_body(_lowerer())
     stats_index = next(

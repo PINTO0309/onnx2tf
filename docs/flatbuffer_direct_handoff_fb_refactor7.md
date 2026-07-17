@@ -3091,3 +3091,26 @@ Compatibility validation completed sequentially under `uv`:
 - gate orchestration, architecture, pass efficiency, optional TensorFlow
   boundary, and rank-6 tests: `312 passed in 26.08s`
 - Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+## Safety-fallback terminal layout-validation implementation checkpoint
+
+The pure fallback validation block now runs after high-rank BatchMatMul
+compression, its guarded reconciliation/sort, indexed binary convergence, and
+the terminal topological sort. A non-empty result writes the same
+`logical_layout_validation_errors` list. An empty result removes only that key
+when it was inherited from the recursive lower.
+
+The high-rank owner, convergence owner, guards, sorts,
+`layout_optimize_fallback` reason/count/samples, finalizer, dependency set, and
+TensorFlow-free boundary are unchanged. The strict characterization contract
+is now a normal passing test.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused layout/binary fallback selection: `4 passed, 10 deselected`
+- broad related gate plus rank-6 structure/numeric parity: `538 passed in 27.90s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit `fallback_high_rank_bmm_stats` for complete mutation evidence
+and retain its guard and following indexed binary convergence boundary. Commit
+and push only; do not create or update a pull request.
