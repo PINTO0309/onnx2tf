@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
@@ -6305,6 +6307,74 @@ def test_indexed_sinet_concat_resize_owner_is_bounded_and_transactional() -> Non
         )
         assert isinstance(layout_keyword.value, ast.Attribute)
         assert layout_keyword.value.attr == "layout_state"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="absolute-final SINet passes reconcile shapes even when their counters are zero",
+)
+def test_absolute_final_sinet_reconciles_only_after_changed_passes() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    expected_stats = {
+        "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains": (
+            "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains"
+        ),
+        "_optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains": (
+            "optimized_sinet_deep_skip_pre_add_concat_prelu_fanout_chains"
+        ),
+        "_optimize_sinet_deep_skip_dual_resize_affine_transpose_chains": (
+            "optimized_sinet_deep_skip_dual_resize_affine_transpose_chains"
+        ),
+        "_optimize_sinet_shared_post_prelu_transpose_fanout_chains": (
+            "optimized_sinet_shared_post_prelu_transpose_fanout_chains"
+        ),
+        "_optimize_sinet_deep_skip_concat_resize_affine_tail_chains": (
+            "optimized_sinet_deep_skip_concat_resize_affine_tail_chains"
+        ),
+        "_optimize_sinet_concat_resize_affine_transpose_chains": (
+            "optimized_sinet_concat_resize_affine_transpose_chains"
+        ),
+    }
+
+    for pass_name, stats_key in expected_stats.items():
+        assignment_index = next(
+            index
+            for index, statement in enumerate(lowerer.body)
+            if isinstance(statement, ast.Assign)
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and statement.value.func.id == pass_name
+        )
+        guard = lowerer.body[assignment_index + 1]
+        assert isinstance(guard, ast.If)
+        assert guard.orelse == []
+        get_calls = [
+            node
+            for node in ast.walk(guard.test)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+        ]
+        assert len(get_calls) == 1
+        assert isinstance(get_calls[0].args[0], ast.Constant)
+        assert get_calls[0].args[0].value == stats_key
+        assert len(guard.body) == 1
+        reconcile = guard.body[0]
+        assert isinstance(reconcile, ast.Expr)
+        assert isinstance(reconcile.value, ast.Call)
+        assert isinstance(reconcile.value.func, ast.Name)
+        assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+        assert len(reconcile.value.args) == 1
+        assert isinstance(reconcile.value.args[0], ast.Name)
+        assert reconcile.value.args[0].id == "model_ir"
 
 
 def test_indexed_sinet_tail_concat_owner_reuses_indexed_branch_contracts() -> None:

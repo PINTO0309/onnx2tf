@@ -144,3 +144,31 @@ direct lowerer-to-pass/core boundaries again. Select a non-context unit with a
 measurable graph scan, state allocation, or duplicated ownership contract;
 characterize it before changing production. Commit and push coherent units
 only, and do not create or update a pull request.
+
+## Absolute-final SINet reconciliation characterization checkpoint
+
+The next non-context graph-scan cost is the terminal sequence of six SINet
+owners:
+
+- late residual Add/Mul/Add/PReLU;
+- deep-skip pre-Add/Concat/PReLU fan-out;
+- deep-skip dual-Resize affine recovery;
+- shared-post PReLU fan-out;
+- deep-skip Concat/Resize affine tail;
+- final Concat/Resize affine bridge.
+
+Each owner is already bounded and transactional, returns one exact rewrite
+counter, and has positive/no-op/idempotence coverage. The lowerer nevertheless
+runs `_reconcile_static_tensor_shapes()` unconditionally after every owner.
+Thus the zero-owner path performs six unnecessary full reconciliation scans.
+
+A strict expected-failure architecture fixture freezes the exact owner order,
+counter key, immediate guard, and single reconciliation body for all six
+owners. Production is unchanged in this checkpoint. At implementation, assign
+each existing result and run its existing immediate reconciliation only when
+the corresponding counter is greater than zero. Do not merge, reorder, skip,
+or generalize any SINet pass, and do not alter LayoutState handling.
+
+Characterization validation is `514 passed` across the six complete owner
+suites, plus one strict architecture xfail for the currently unconditional
+reconciliations. Focused Ruff and whitespace checks pass.

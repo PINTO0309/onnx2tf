@@ -9660,3 +9660,13 @@ Session path performs no rebuild across repeated groups, while the destructive-
 mutation fixture performs exactly one. The internal type is not re-exported by
 the public core package, and diagnostics remain the same mutable list contract
 for existing consumers.
+
+The next graph-scan boundary is the absolute-final SINet cleanup. Six bounded,
+transactional SINet owners execute in a fixed terminal order, each followed by
+an unconditional static-shape reconciliation. Every owner already returns one
+complete mutation counter and has positive, no-op, rejection, and idempotence
+fixtures. A strict expected-failure architecture contract now maps each owner
+to its exact counter and requires its following reconciliation to be guarded by
+that counter. This preserves all six pass calls and their order while allowing
+the common zero-owner path to avoid six full operator/tensor reconciliation
+scans. Production remains unchanged at this characterization checkpoint.
