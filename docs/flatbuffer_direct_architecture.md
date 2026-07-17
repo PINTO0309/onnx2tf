@@ -10664,3 +10664,14 @@ The primary caller now initializes that symmetric stable result and replaces it
 with the opt-in complete reconciliation dictionary only after the unchanged
 counter-or-tensor-reduction guard succeeds. No child invocation, pruning,
 layout synchronization, scan, or fallback behavior changes.
+
+The preceding final placeholder-MatMul block performs one reconciliation after
+a positive restore and a conditional second reconciliation after exact or
+singleton binary repair, cleanup-only tensor deletion, or a legacy output-shape
+change from the first reconciliation. A complete first result cannot be passed
+directly to the existing generic positive-count guard because its new
+parameter-only key would broaden the second-scan condition. Strict
+characterization therefore requires two stable complete results while
+projecting only `reconciled_static_tensor_shapes` into the unchanged legacy
+guard input. Both existing reconciliation calls opt into complete evidence; no
+scan is added and the final SE/FC/Gather boundary stays adjacent.

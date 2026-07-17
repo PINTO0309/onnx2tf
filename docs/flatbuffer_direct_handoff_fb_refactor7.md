@@ -3902,3 +3902,40 @@ block, including its first shape result and nested exact/singleton binary
 repairs, before changing any retained evidence. Keep the following final
 SE/FC/Gather boundary fixed. Commit and push only; do not create or update a
 pull request.
+
+## Primary final placeholder-MatMul reconciliation characterization checkpoint
+
+The placeholder restore owner increments its exact counter for every MatMul
+input rewire and Reshape removal, and prunes only after a positive restore. The
+first static-shape reconciliation then runs unconditionally inside that
+positive outer guard. Exact binary repair preserves legacy unconditional
+pruning, while singleton-broadcast repair prunes only after a positive repair;
+the existing inner tensor-count sample captures cleanup-only deletion.
+
+The first reconciliation's legacy output-shape counter participates in the
+inner second-reconciliation guard. Passing its opt-in complete dictionary
+directly to `_stats_have_positive_count()` would also treat parameter-only
+mutations as a new reason for the second scan and would therefore change the
+current guard. A strict expected-failure contract instead requires stable
+`_final_placeholder_matmul_static_shape_stats` and
+`_final_placeholder_binary_static_shape_stats` results, while projecting only
+the legacy output-shape key into `final_placeholder_reconcile_stats`. The exact
+inner guard text and following final SE/FC/Gather boundary remain fixed.
+
+At implementation, add only these two result assignments and the in-memory
+legacy projection. Do not add a reconciliation, broaden the inner guard, or
+change restore/binary owners, matching, rewiring, pruning, sorting, tensor-count
+sampling, pass order, dependencies, fallback behavior, or TensorFlow behavior.
+Validate dynamic-Reshape restore, both binary owners, terminal orchestration,
+core runtime guards, and architecture sequentially, then commit and push only;
+do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- restore, binary adapters, terminal orchestration, core guard, and architecture:
+  `381 passed, 1 xfailed in 18.44s`
+- expanded broad related gate: `1180 passed, 1 xfailed in 29.75s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet two-result placeholder
+reconciliation contract; there are no unexpected failures.

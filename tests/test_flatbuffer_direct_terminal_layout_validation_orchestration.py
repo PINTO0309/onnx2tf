@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -628,6 +631,113 @@ def test_primary_path_stages_final_prelu_reconciliation() -> None:
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_consecutive_reshape_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="final placeholder-MatMul reconciliation results are incomplete",
+)
+def test_primary_path_stages_complete_final_placeholder_reconciliations() -> None:
+    body = _lowerer_body()
+    restore_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "final_placeholder_matmul_stats"
+    )
+
+    result_names = (
+        "_final_placeholder_matmul_static_shape_stats",
+        "_final_placeholder_binary_static_shape_stats",
+    )
+    for offset, result_name in enumerate(result_names, start=1):
+        default_stats = body[restore_index + offset]
+        assert isinstance(default_stats, ast.Assign)
+        assert isinstance(default_stats.targets[0], ast.Name)
+        assert default_stats.targets[0].id == result_name
+        assert isinstance(default_stats.value, ast.Dict)
+        assert {
+            key.value: value.value
+            for key, value in zip(
+                default_stats.value.keys,
+                default_stats.value.values,
+            )
+            if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+        } == {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
+
+    outer_guard = body[restore_index + 3]
+    assert isinstance(outer_guard, ast.If)
+    assert len(outer_guard.body) == 7
+
+    first_reconciliation = outer_guard.body[0]
+    assert isinstance(first_reconciliation, ast.Assign)
+    assert isinstance(first_reconciliation.targets[0], ast.Name)
+    assert first_reconciliation.targets[0].id == result_names[0]
+    assert isinstance(first_reconciliation.value, ast.Call)
+    assert isinstance(first_reconciliation.value.func, ast.Name)
+    assert first_reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in first_reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    legacy_projection = outer_guard.body[1]
+    assert isinstance(legacy_projection, ast.Assign)
+    assert isinstance(legacy_projection.targets[0], ast.Name)
+    assert legacy_projection.targets[0].id == "final_placeholder_reconcile_stats"
+    assert isinstance(legacy_projection.value, ast.Dict)
+    assert ast.unparse(legacy_projection.value) == (
+        "{'reconciled_static_tensor_shapes': "
+        "int(_final_placeholder_matmul_static_shape_stats.get("
+        "'reconciled_static_tensor_shapes', 0))}"
+    )
+
+    assert isinstance(outer_guard.body[2], ast.Assign)
+    assert isinstance(outer_guard.body[2].targets[0], ast.Name)
+    assert outer_guard.body[2].targets[0].id == (
+        "final_placeholder_binary_tensor_count"
+    )
+    assert isinstance(outer_guard.body[3], ast.Assign)
+    assert isinstance(outer_guard.body[3].targets[0], ast.Name)
+    assert outer_guard.body[3].targets[0].id == (
+        "final_placeholder_exact_binary_stats"
+    )
+    assert isinstance(outer_guard.body[4], ast.Assign)
+    assert isinstance(outer_guard.body[4].targets[0], ast.Name)
+    assert outer_guard.body[4].targets[0].id == (
+        "final_placeholder_singleton_binary_stats"
+    )
+
+    binary_guard = outer_guard.body[5]
+    assert isinstance(binary_guard, ast.If)
+    assert ast.unparse(binary_guard.test) == (
+        "_stats_have_positive_count(final_placeholder_reconcile_stats, "
+        "final_placeholder_exact_binary_stats, "
+        "final_placeholder_singleton_binary_stats) or "
+        "len(model_ir.tensors) < final_placeholder_binary_tensor_count"
+    )
+    assert len(binary_guard.body) == 1
+    second_reconciliation = binary_guard.body[0]
+    assert isinstance(second_reconciliation, ast.Assign)
+    assert isinstance(second_reconciliation.targets[0], ast.Name)
+    assert second_reconciliation.targets[0].id == result_names[1]
+    assert isinstance(second_reconciliation.value, ast.Call)
+    assert isinstance(second_reconciliation.value.func, ast.Name)
+    assert second_reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in second_reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    following = body[restore_index + 4]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "final_se_fc_gather_tensor_count"
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:
