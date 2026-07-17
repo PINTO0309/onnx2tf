@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import statistics
 import subprocess
 import sys
@@ -695,9 +696,41 @@ def _pytorch_accuracy_report_path(*, artifact_dir: str, model_path: str) -> str:
 
 
 def _write_json(path: str, payload: Dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    try:
+        existing_mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        existing_mode = None
+    temporary_path = os.path.join(
+        directory,
+        (
+            f".{os.path.basename(path)}.{os.getpid()}."
+            f"{threading.get_ident()}.{time.monotonic_ns()}.tmp"
+        ),
+    )
+    file_descriptor = os.open(
+        temporary_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o666,
+    )
+    try:
+        if existing_mode is not None:
+            os.fchmod(file_descriptor, existing_mode)
+        stream = os.fdopen(file_descriptor, "w", encoding="utf-8")
+        file_descriptor = -1
+        with stream as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+        os.replace(temporary_path, path)
+    except BaseException:
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
+        try:
+            os.remove(temporary_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _read_json(path: str) -> Optional[Dict[str, Any]]:

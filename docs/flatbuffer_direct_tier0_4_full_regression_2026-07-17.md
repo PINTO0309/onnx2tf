@@ -77,8 +77,10 @@ the command logs, pass metrics, accuracy JSON, correspondence/error JSON/CSV,
 and normalized state while deleting the staged ONNX, TFLite files, schema
 copies, and generated native package. It never touched the active model.
 Large ONNX Runtime memmaps were left in place while open and disappeared when
-their owning converter exited. The remaining run directory will be removed
-only after the condensed JSON and this report are verified.
+their owning converter exited. After the condensed JSON and this report were
+verified, the uniquely named run directory and the atomic-write stress-test
+directory were removed. No temporary directory owned by this run remains;
+approximately 60 GiB was available on the backing filesystem after cleanup.
 
 ## Execution results
 
@@ -285,6 +287,43 @@ used in another long run.
 No converter, lowerer, exporter, classification, profile, model, or accuracy
 policy was changed before this report and condensed result were created.
 
+## Correction applied after the evidence checkpoint
+
+The complete pre-correction evidence above was committed and pushed as
+`91a224c4` before the runner changed.
+
+`_write_json()` now creates a unique same-directory file with exclusive
+creation, preserves the existing destination mode when replacing a state,
+writes the unchanged indented JSON representation, flushes and closes it, and
+publishes it with `os.replace()`. Any serialization or replacement exception
+closes the outstanding descriptor, removes the unpublished temporary file,
+and re-raises while leaving the previous destination intact. A new file still
+uses mode `0666` subject to the process umask, matching ordinary `open(...,
+"w")` creation behavior.
+
+The implementation deliberately does not add a disk `fsync` to every state
+update. Complete close-before-replace is sufficient for concurrent readers,
+while repeatedly synchronizing a state that reached roughly 17 MiB would add
+avoidable I/O latency to a long corpus run. The correction addresses atomic
+visibility, not power-loss durability, and does not change model scheduling,
+inference concurrency, classification, resume schema, filenames, or JSON
+formatting.
+
+Focused verification after correction:
+
+- bulk-runner suite: **42 passed**;
+- runner, corpus-manifest, and architecture gate: **292 passed in 17.57s**;
+- Ruff on the runner and its test: passed;
+- `git diff --check`: passed;
+- a same-process, non-inference reader/writer stress check published forty
+  successive 8,000-entry states while a reader completed 1,742 JSON parses;
+  no partial read occurred, the final generation was 39, and no temporary
+  file remained.
+
+No real-model rerun was required for this metadata-only writer correction.
+The authoritative 379-model result remains tied to the pre-correction
+converter checkpoint recorded above.
+
 ## Verification performed before source correction
 
 - `uv run --no-sync pytest -q tests/test_flatbuffer_direct_bulk_runner.py`:
@@ -298,5 +337,5 @@ policy was changed before this report and condensed result were created.
 - Native-PyTorch aggregate and representative comparison: no category
   degradation and **zero confirmed `fb-refactor6` regression**.
 
-The next implementation step is limited to atomic state publication in the
-bulk runner. No model-conversion correction is justified by this run.
+Atomic state publication is now implemented and verified. No model-conversion
+correction is justified by this run.
