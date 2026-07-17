@@ -10303,3 +10303,10 @@ That third direct call now assigns its unchanged result to the staged target.
 The absolute-final fourth call and all earlier occurrences remain unchanged.
 The staged counter is observation-only, and no tensor-count proxy is required
 because pruning remains positive-only.
+
+The preceding late-binary recovery is already a complete evidence boundary.
+Its aggregate excludes non-mutating iteration metrics, exposes nine fixed
+mutation counters plus clamped net tensor reduction, and its production guard
+reconciles on any positive field. A structural contract connects that guarded
+branch directly to the staged terminal post-bias result, so no duplicate
+summary or counter is needed between them.

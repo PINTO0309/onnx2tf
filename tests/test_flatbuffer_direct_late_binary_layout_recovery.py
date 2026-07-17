@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import onnx2tf.tflite_builder.passes.late_binary_layout_recovery as recovery
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _zero_result(key: str) -> dict[str, int]:
@@ -190,3 +196,55 @@ def test_late_binary_layout_recovery_empty_model_is_stable() -> None:
 
     assert all(value == 0 for value in stats.values())
     assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_late_binary_recovery_connects_to_terminal_evidence_boundary() -> None:
+    lowerer_tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    branch_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test)
+        == (
+            "optimize_layout_transpose_chains or "
+            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+        )
+    )
+    branch = lowerer.body[branch_index]
+    assert isinstance(branch, ast.If)
+    assert len(branch.body) == 2
+    stats_assignment = branch.body[0]
+    assert isinstance(stats_assignment, ast.Assign)
+    assert len(stats_assignment.targets) == 1
+    assert isinstance(stats_assignment.targets[0], ast.Name)
+    assert stats_assignment.targets[0].id == "late_binary_layout_recovery_stats"
+    reconcile_guard = branch.body[1]
+    assert isinstance(reconcile_guard, ast.If)
+    assert ast.unparse(reconcile_guard.test) == (
+        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+    )
+
+    following = lowerer.body[branch_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_post_bias_stats"
+    )
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == (
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )

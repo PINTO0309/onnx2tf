@@ -1883,3 +1883,22 @@ Confirm that its existing mutation counter and conditional reconciliation form
 a complete boundary for this newly staged terminal chain. If it does, move to
 the absolute-final fourth post-bias call rather than duplicating already staged
 evidence. Commit and push only; do not create or update a pull request.
+
+## Late-binary to terminal evidence boundary audit checkpoint
+
+The existing late-binary runner already returns nine fixed mutation counters
+plus clamped `pruned_unused_tensors`, while excluding the layout owner's
+non-mutating `iterations`. Existing zero-counter pruning coverage confirms the
+net tensor delta is required and present.
+
+Production stores that aggregate in `late_binary_layout_recovery_stats` and
+reconciles whenever `_stats_have_positive_count()` sees any mutation. A new
+architecture contract freezes the direct transition from this guarded branch
+to `_pre_terminal_affine_instancenorm_post_bias_stats`. No additional summary
+or staging is needed at this boundary.
+
+Focused late-binary runner and boundary coverage passes. At resume, move to the
+absolute-final fourth InstanceNorm post-bias call after final signature
+sanitization. Characterize its distinct surrounding affine and normalization
+owners before capturing its result. Commit and push only; do not create or
+update a pull request.
