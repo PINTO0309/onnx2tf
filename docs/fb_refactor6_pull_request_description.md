@@ -1776,3 +1776,12 @@ normalized ModelIR state. Resume by inventorying and characterizing the next
 substantive raw source-order owner,
 `_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains` (190
 lines), before semantic or ownership changes. Do not create a pull request.
+That characterization is now complete without production changes. Twenty-one
+positive, binary-variant, numerical-equivalence, rejection, fixed-point, and
+call-boundary cases pass, while 27 strict xfails isolate zero-match pruning,
+unsafe shape-constant ownership and typing, rank-sensitive broadcast, ignored
+BatchMatMul flags, dynamic-signature/QDIM loss, nonpositive tail shapes,
+incomplete metadata, and invalid topology. Resume by building one indexed
+all-branch topology/metadata/constant/broadcast/quantization/removal plan before
+mutation and turning all 27 xfails green without changing valid behavior or
+either production call. Do not create a pull request.

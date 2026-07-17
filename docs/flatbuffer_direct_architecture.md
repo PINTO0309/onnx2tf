@@ -8687,6 +8687,49 @@ and complete normalized ModelIR state are identical in every case. The
 mechanical move does not alter public APIs, artifacts, dependencies, corpus
 policy, ordered runtime behavior, or TensorFlow isolation.
 
+## Raw attention pre-projection rank-lift characterization
+
+The next substantive raw source-order owner is the 190-line
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains`.
+Production code and both historical calls remain unchanged. It previously had
+only ordered architecture references; the focused
+`test_flatbuffer_direct_attention_preproj_ranklift_layout.py` now owns its
+synthetic ModelIR contract.
+
+Twenty-one green cases freeze one and two Q/K-style BatchMatMul branches, all
+four supported binary operators including reversed noncommutative inputs,
+NumPy-exact outputs, multiple matches and fixed point, twelve existing public-
+boundary/shape/fan-out/operator rejection guards, statistics, the raw owner's
+current one-loop structure, and both production calls.
+
+Twenty-seven concrete safety gaps are strict xfails:
+
+- a zero-match invocation prunes an unrelated tensor;
+- ten public-input, variable, wrong-TensorIR-dtype, wrong-buffer-dtype, or
+  quantized leading/tail Reshape-shape tensors are accepted as compile-time
+  constants;
+- dynamic signatures are concretized and retained per-axis QDIM is not shifted
+  for the inserted leading dimension;
+- a rank-three bias that broadcasts before the rewrite but not after it is
+  accepted, as are `adjX` and `adjY` BatchMatMul flags;
+- tail shapes with two negative dimensions are accepted by product alone;
+- short or missing tensor/bias metadata, dtype mismatch, duplicate producers,
+  reverse graph order, a public internal input alias, and reverse or duplicate
+  source producers are accepted.
+
+Correction must construct one `ModelIRGraphIndex` and a complete plan for the
+leading Reshape plus every BatchMatMul/binary/tail-Reshape branch before
+mutation. The plan must prove unique producers, strict order, exact consumers,
+complete compatible shape/signature/dtype/layout/quantization metadata,
+untransposed BatchMatMul flags, positive tail dimensions, and broadcast
+equivalence before and after rank lift. Leading and tail shape inputs need an
+explicit immutable unquantized INT32 TensorIR/buffer/ownership contract.
+Dynamic axes and per-axis QDIM must rank-lift by one. All branch input setters,
+metadata updates, the leading removal, pruning, and statistics must be known
+before commit, and a zero-match call must be a complete no-op. The 190-line
+count is descriptive only; 2,000 remains the ONNX operation-count tier
+threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

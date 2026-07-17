@@ -12424,3 +12424,52 @@ quantization, topology, public boundaries, pruning, fixed point, statistics,
 and both production-call boundaries. Record unsafe behavior as strict xfails
 before correction. Keep validation minimal and strictly sequential, commit and
 push coherent checkpoints, and do not create a pull request.
+
+## Attention pre-projection rank-lift characterization: completed state
+
+The 190-line raw
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains` owner and
+both production calls remain unchanged. It had no focused public fixture; the
+new `test_flatbuffer_direct_attention_preproj_ranklift_layout.py` now owns the
+synthetic ModelIR contract.
+
+Twenty-one green cases freeze one- and two-branch rank lift, ADD/SUB/MUL/DIV
+including reversed SUB/DIV inputs, exact NumPy equality, fixed point, twelve
+existing public-boundary/shape/fan-out/operator rejections, statistics, the
+current 190-line/one-While owner shape, and both production calls.
+
+Twenty-seven reproduced safety problems are strict xfails:
+
+- one zero-match case prunes an unrelated tensor;
+- ten unsafe public-input, variable, TensorIR/buffer dtype, or quantized
+  leading/tail shape-constant cases;
+- one dynamic-signature and one per-axis-QDIM case;
+- one rank-sensitive bias broadcast and two BatchMatMul flag cases;
+- one nonpositive tail-shape case;
+- five incomplete metadata/dtype cases and five invalid-topology cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `21 passed, 27 xfailed in 0.77s`;
+- focused characterization, attention Gather cleanup, six adjacent extracted
+  bridge/collapse contracts, and ordered architecture suite:
+  `768 passed, 27 xfailed in 18.92s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.66s`;
+- focused-test Ruff/format checks, Python compilation, and whitespace checks:
+  passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. PR #952 remains
+closed; no pull request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use one
+`ModelIRGraphIndex` to prove the complete leading-Reshape and all-branch
+topology, metadata, untransposed BatchMatMul flags, positive tail shape, and
+old/new binary broadcast equivalence. Give leading and tail shape inputs an
+immutable unquantized INT32 ownership/type contract. Preserve dynamic
+signatures, shift retained per-axis QDIM with the rank lift, precompute every
+branch setter/metadata action and the single removal, and leave zero-match
+execution untouched. Turn all 27 strict xfails green while preserving exact
+valid outputs, statistics, fixed point, and both production calls. Validate
+sequentially, commit and push, and do not create a pull request.
