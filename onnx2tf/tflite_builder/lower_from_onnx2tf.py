@@ -5132,9 +5132,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
     )
     _run_channel_slice_pad_mul_layout_pass_cluster()
-    _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _pre_terminal_affine_post_add_stats = (
+        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _pre_terminal_affine_slice_pad_concat_stats = (
         _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(

@@ -1314,7 +1314,10 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
     assert invocation.value.keywords == []
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_affine_post_add_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
@@ -1345,10 +1348,6 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
     assert second_target.id == "_terminal_slice_pad_concat_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the pre-terminal affine post-ADD result is still discarded",
-)
 def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> None:
     lowering_tree = ast.parse(
         (

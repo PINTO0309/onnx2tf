@@ -10214,3 +10214,10 @@ characterization selects only the first call, between the channel-slice cluster
 and `_pre_terminal_affine_slice_pad_concat_stats`, for a future
 `_pre_terminal_affine_post_add_stats` assignment. The other two direct calls
 and the orchestrated occurrence remain unchanged.
+
+That selected call now assigns its unchanged owner result to
+`_pre_terminal_affine_post_add_stats`. The channel-slice and first
+slice/pad/concat boundary contracts identify the exact assignment, while the
+two later direct calls remain expressions. No summary, tensor-count proxy, or
+reconciliation consumer is added because the positive-only owner counter
+already covers every mutation.

@@ -1579,3 +1579,29 @@ other direct and orchestrated occurrences. Validate the complete indexed owner,
 channel-slice, bridge-owner, terminal-affine, core, pass-efficiency,
 architecture, and TensorFlow-import-blocked suites sequentially. Commit and
 push only; do not create or update a pull request.
+
+## Pre-terminal affine post-ADD evidence implementation checkpoint
+
+Only the first direct indexed affine post-ADD invocation now assigns its
+unchanged result to `_pre_terminal_affine_post_add_stats`. It remains between
+the channel-slice cluster and
+`_pre_terminal_affine_slice_pad_concat_stats`, and continues to forward the
+same ModelIR and Session LayoutState.
+
+The two later direct calls and the terminal-slice orchestration occurrence are
+unchanged. No tensor-count proxy is needed because the owner prunes only after
+a positive rewrite, and no reconciliation branch consumes the staged result.
+
+Focused indexed-owner, channel-slice, bridge-owner, and terminal-affine
+coverage is `165 passed in 1.17s`. The sequential indexed-owner,
+channel-slice, bridge-owner, terminal-affine, complete SPP,
+concat-unary-conv, late-SPP, shape-extract, QKV, split/conv bridge,
+Hardswish-SE, late hard-activation, SINet terminal, Expand/Squeeze,
+late-layout, constant-fold/cast, shared-context, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked gate is `761 passed in 28.24s`.
+Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, inspect the preceding channel-slice/pad/Mul orchestration cluster.
+Determine whether its runner already propagates complete ordered results and
+whether any child can prune without a positive counter before adding mutation
+evidence. Commit and push only; do not create or update a pull request.
