@@ -9781,3 +9781,11 @@ or a tensor-count decrease from exact-adapter pruning, preserves the scan; the
 all-zero/no-prune path skips it. The surrounding first repair reconciliation
 and later final signature sanitization are unchanged. Lowerer wiring covers all
 three counters and prune-only behavior independently.
+
+The earlier shared boundary also depends on the three-runner
+singleton-channel/duplicate-fan-out/consecutive-Reshape cluster. Although the
+generic recovery utility now preserves callback results, this specific runner
+and the lowerer's private helper still discard them. A strict expected-failure
+contract requires the ordered three-dictionary tuple without changing owner
+order, shared state scope, arguments, diagnostics, or any call site. Production
+remains unchanged at this characterization checkpoint.

@@ -242,6 +242,37 @@ def test_singleton_consecutive_runner_preserves_both_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the singleton/consecutive-Reshape runner currently discards all "
+        "three ordered pass result dictionaries"
+    ),
+)
+def test_singleton_consecutive_runner_returns_three_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(use_layout_state=True)
+    expected_results = (
+        {"singleton_changes": 1},
+        {"duplicate_changes": 2},
+        {"reshape_changes": 3},
+    )
+
+    for pass_id, expected_result in zip(
+        SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
+        expected_results,
+        strict=True,
+    ):
+        monkeypatch.setattr(
+            singleton_consecutive_reshape_orchestration,
+            pass_id,
+            lambda *args, _result=expected_result, **kwargs: dict(_result),
+        )
+
+    assert run_singleton_consecutive_reshape(context) == expected_results
+
+
 def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [

@@ -473,3 +473,22 @@ two binary repairs, and the singleton-consecutive-Reshape cluster. It needs a
 combined aggregate result from that cluster before it can be guarded safely.
 Do not infer no-op status from only the two repair counters. Characterize first,
 then commit and push only; do not create or update a pull request.
+
+## Singleton/consecutive-Reshape result characterization checkpoint
+
+The earlier shared reconciliation boundary includes the three-runner
+singleton-channel transpose, duplicate-fan-out, and consecutive-Reshape
+cluster. The generic recovery utility already returns ordered callback values,
+but `run_singleton_consecutive_reshape()` and its private lowerer helper still
+discard all three dictionaries.
+
+A strict expected-failure contract now requires an ordered three-result tuple
+while preserving owner order, the shared `ModelIRPassStateScope`, all three
+target forms, arguments, diagnostics, and exception behavior. Production and
+the shared reconciliation remain unchanged.
+
+At implementation, forward a typed three-dictionary tuple from the runner and
+private helper. Existing call sites may continue ignoring it. Validate every
+orchestration suite and the core/architecture/TensorFlow boundary before
+changing the shared reconciliation. Commit and push only; do not create or
+update a pull request.
