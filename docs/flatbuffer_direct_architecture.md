@@ -10427,3 +10427,10 @@ That selected call now assigns its unchanged raw result to
 between the staged channel-shuffle result and the NCHW
 Concat/global-pool/Conv-axis owner. The fallback and final result assignments
 and their reconciliation guards remain unchanged.
+
+The following NCHW Concat/global-pool/Conv-axis owner has one production
+occurrence and one fixed repair counter. It changes only Concat options and
+tensor metadata, counts each applied plan, and performs neither pruning nor
+topology mutation. Strict characterization therefore selects that call for a
+future `_very_late_concat_global_pool_conv_axis_stats` assignment without a
+proxy or summary.

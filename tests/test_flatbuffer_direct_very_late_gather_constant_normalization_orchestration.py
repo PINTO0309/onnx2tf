@@ -622,6 +622,60 @@ def test_very_late_concat_transpose_conv_axis_captures_mutation_evidence() -> (
     }
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late Concat/global-pool/Conv-axis result is discarded",
+)
+def test_very_late_concat_global_pool_conv_axis_captures_mutation_evidence() -> (
+    None
+):
+    lowerer, _ = _lowerer_and_helper()
+    transpose_axis_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_very_late_concat_transpose_conv_axis_stats"
+    )
+    invocation = lowerer.body[transpose_axis_index + 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_very_late_concat_global_pool_conv_axis_stats"
+    )
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == "_repair_nchw_concat_global_pool_conv_axes"
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert _expression_path(layout_keyword.value) == "session.layout_state"
+
+    following = lowerer.body[transpose_axis_index + 2]
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == (
+        "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
+
+    occurrences = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_repair_nchw_concat_global_pool_conv_axes"
+    ]
+    assert len(occurrences) == 1
+    assert occurrences[0] is invocation.value
+
+
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = [

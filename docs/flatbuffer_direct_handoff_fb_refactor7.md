@@ -2301,3 +2301,24 @@ At resume, inspect the immediately following
 schema, production occurrence count, and pruning behavior before selecting the
 very-late direct call. Commit and push only; do not create or update a pull
 request.
+
+## Very-late Concat/global-pool/Conv-axis characterization checkpoint
+
+The NCHW Concat/global-pool/Conv-axis owner has one production occurrence. Its
+single `repaired_nchw_concat_global_pool_conv_axes` counter covers every
+applied plan. The owner changes only Concat options and tensor metadata and
+performs no pruning or topology mutation.
+
+Strict expected-failure coverage requires
+`_very_late_concat_global_pool_conv_axis_stats` immediately after
+`_very_late_concat_transpose_conv_axis_stats`, preserves Session LayoutState
+forwarding, and freezes the following dynamic rank-one
+Unsqueeze/Reshape-shape rewrite. Focused indexed owner, legacy Conv-layout, and
+very-late coverage is `64 passed, 1 xfailed`.
+
+At implementation, replace only the direct expression with the assignment. Do
+not add a proxy, summary, reconciliation consumer, or another owner invocation.
+Validate indexed Concat/global-pool layout, legacy Conv layout, very-late
+orchestration, core, pass-efficiency, architecture, and TensorFlow import
+blocking sequentially. Commit and push only; do not create or update a pull
+request.
