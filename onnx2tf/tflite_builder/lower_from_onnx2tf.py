@@ -1313,10 +1313,15 @@ def _run_indexed_final_shape_activation_convergence(
         model_ir,
         graph_index=graph_index,
     )
-    second_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    second_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if _stats_have_positive_count(
+        first_reconcile_stats,
+        reshape_stats,
+    ):
+        second_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
     fusion_stats = _optimize_fuse_conv_activation_chains(
         model_ir,
         graph_index=graph_index,

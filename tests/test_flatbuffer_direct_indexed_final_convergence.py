@@ -329,7 +329,6 @@ def test_indexed_final_convergence_skips_first_reconcile_when_stable(
         "convergence",
         "hardswish",
         "reshape",
-        "reconcile",
         "fusion",
         "reconcile",
     ]
@@ -359,7 +358,6 @@ def test_indexed_final_convergence_keeps_first_reconcile_after_mutation(
         "hardswish",
         "reconcile",
         "reshape",
-        "reconcile",
         "fusion",
         "reconcile",
     ]
@@ -373,13 +371,6 @@ def test_indexed_final_convergence_keeps_first_reconcile_after_mutation(
     assert all(index is graph_indexes[0] for index in graph_indexes)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the final convergence coordinator still reconciles after zero "
-        "first-reconcile and dynamic-Reshape mutation results"
-    ),
-)
 def test_indexed_final_convergence_skips_second_reconcile_when_stable(
     monkeypatch,
 ) -> None:

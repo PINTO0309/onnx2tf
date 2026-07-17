@@ -726,3 +726,29 @@ both guards in source order, then validate indexed final convergence, dynamic
 Reshape, shape reconciliation, core, architecture, pass-efficiency, and
 TensorFlow-import-blocked suites sequentially. Commit and push only; do not
 create or update a pull request.
+
+## Second final-convergence reconciliation implementation checkpoint
+
+`second_reconcile_stats` now initializes with the exact zero counter. The
+second additional static-shape scan runs only when `first_reconcile_stats` or
+`reshape_stats` reports a positive mutation count.
+
+The complete stable path and predecessor-only changes whose first scan is
+already stable now proceed directly to activation fusion. A changing first
+reconciliation or dynamic-Reshape rewrite retains the second scan in its
+original position. The structural contract verifies both reconciliation guards
+in source order and confirms every direct and guarded owner receives the same
+`ModelIRGraphIndex`. The final post-fusion scan is unchanged.
+
+Sequential validation across indexed final convergence, dynamic Reshape,
+shape reconciliation, graph cleanup, HardSwish/SE layout, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked suites is
+`394 passed in 26.57s`. Focused stable, mutation-source, ordered-guard, and
+legacy-equivalence coverage is `9 passed in 0.56s`.
+
+At resume, characterize the final post-fusion reconciliation. Its guard must
+cover both `second_reconcile_stats` and the complete activation-fusion result,
+so metadata changes from the second scan retain one convergence opportunity
+even when fusion is a no-op. Characterize fusion counter completeness and any
+zero-count prune behavior before changing production. Commit and push only; do
+not create or update a pull request.

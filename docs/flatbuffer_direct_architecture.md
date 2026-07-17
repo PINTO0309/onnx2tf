@@ -9877,3 +9877,11 @@ dynamic-Reshape resolution return zero. Separate passing paths retain it after
 a first-reconciliation metadata change or a Reshape rewrite. The already
 guarded first scan and the final post-fusion reconciliation remain unchanged in
 production at this checkpoint.
+
+`second_reconcile_stats` now starts with the exact zero counter and the second
+scan runs only when the optional first reconciliation or dynamic-Reshape
+resolver reports a positive mutation. Stable and predecessor-only paths proceed
+directly to fusion; first-reconciliation metadata changes and Reshape rewrites
+retain the scan. The final post-fusion reconciliation, aggregate return schema,
+one-index ownership, and LayoutState forwarding remain unchanged. The complete
+legacy fixture still produces identical ModelIR and aggregate statistics.
