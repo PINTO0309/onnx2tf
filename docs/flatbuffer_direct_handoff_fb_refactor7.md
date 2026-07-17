@@ -704,3 +704,25 @@ first reconciliation that changed metadata can still receive a convergence
 scan even when Reshape resolution is a no-op. Leave the final post-fusion scan
 unchanged until its own interval is characterized. Commit and push only; do
 not create or update a pull request.
+
+## Second final-convergence reconciliation characterization checkpoint
+
+The second additional scan in
+`_run_indexed_final_shape_activation_convergence()` follows the optional first
+reconciliation and dynamic-Reshape resolution. It still runs when both of
+those mutation dictionaries are zero.
+
+A strict expected-failure event-order fixture requires that stable path to
+proceed directly to activation fusion. Two passing paths preserve the scan
+after a first-reconciliation metadata mutation and after a dynamic-Reshape
+rewrite. The shared `ModelIRGraphIndex`, aggregate statistics, already-guarded
+first scan, and final post-fusion scan remain explicit in every fixture.
+
+At implementation, initialize only `second_reconcile_stats` with the exact
+zero counter and guard its call with `first_reconcile_stats` and
+`reshape_stats`. Do not broaden the guard to earlier aggregate results and do
+not change the final reconciliation. Update the structural contract to verify
+both guards in source order, then validate indexed final convergence, dynamic
+Reshape, shape reconciliation, core, architecture, pass-efficiency, and
+TensorFlow-import-blocked suites sequentially. Commit and push only; do not
+create or update a pull request.

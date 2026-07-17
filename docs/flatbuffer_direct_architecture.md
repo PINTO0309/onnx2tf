@@ -9869,3 +9869,11 @@ the complete stable path proceeds directly to dynamic-Reshape resolution. The
 later Reshape and fusion reconciliation boundaries, aggregate return schema,
 shared index, and LayoutState forwarding remain unchanged. The full legacy
 fixture retains identical ModelIR and statistics.
+
+The second extra final-convergence reconciliation is now characterized over
+its complete mutation interval. A strict expected-failure event-order fixture
+requires it to be skipped when both the optional first reconciliation and
+dynamic-Reshape resolution return zero. Separate passing paths retain it after
+a first-reconciliation metadata change or a Reshape rewrite. The already
+guarded first scan and the final post-fusion reconciliation remain unchanged in
+production at this checkpoint.
