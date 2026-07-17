@@ -3114,3 +3114,36 @@ Implementation validation completed sequentially under `uv`:
 At resume, audit `fallback_high_rank_bmm_stats` for complete mutation evidence
 and retain its guard and following indexed binary convergence boundary. Commit
 and push only; do not create or update a pull request.
+
+## Safety-fallback high-rank BatchMatMul characterization checkpoint
+
+`_compress_static_high_rank_batch_matmul()` rewrites only fully-static,
+same-batch-shape rank-greater-than-five `BATCH_MATMUL` operators. Its unused-
+tensor pruning and optional layout-state sync occur only when the exact
+`compressed_static_high_rank_batch_matmul` counter is positive. A focused
+zero-rewrite fixture retains an unrelated unused constant, proving that the raw
+counter is complete mutation evidence without a cleanup-only path. Existing
+rank-6 structure and numeric-parity tests cover the positive path.
+
+A strict expected-failure fallback contract requires a stable
+`_fallback_high_rank_bmm_static_shape_stats` zero dictionary and assigns the
+opt-in complete reconciliation result under the unchanged positive guard. The
+guarded topological sort and immediately following indexed binary convergence
+remain fixed.
+
+At implementation, add only this result plumbing. Do not change eligibility,
+reshape construction, graph-index mutation, pruning, raw result schema, guard,
+sort, convergence, terminal validation, dependencies, or TensorFlow boundary.
+Validate sequentially, then commit and push only; do not create or update a
+pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused high-rank/fallback plus rank-6 parity selection:
+  `4 passed, 13 deselected, 1 xfailed`
+- broad related gate plus rank-6 structure/numeric parity:
+  `539 passed, 1 xfailed in 28.13s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet result-staging contract; there
+are no unexpected failures.

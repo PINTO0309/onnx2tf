@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -11,6 +12,7 @@ from onnx2tf.tflite_builder.ir import (
     validate_model_ir_layout_annotations,
 )
 from onnx2tf.tflite_builder.passes import pad_layout
+from onnx2tf.tflite_builder.passes import high_rank_matmul
 from onnx2tf.tflite_builder.passes import stale_binary_adapter_repair
 
 
@@ -772,3 +774,95 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
     terminal = body[stats_index + 6]
     assert isinstance(terminal, ast.Return)
     assert ast.unparse(terminal.value) == "_finalize_model_ir(fallback_ir)"
+
+
+def test_fallback_high_rank_bmm_owner_does_not_prune_on_noop() -> None:
+    model_ir = ModelIR("fallback_high_rank_bmm_noop")
+    model_ir.tensors["unused"] = TensorIR(
+        name="unused",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+    )
+
+    stats = high_rank_matmul._compress_static_high_rank_batch_matmul(model_ir)
+
+    assert stats == {"compressed_static_high_rank_batch_matmul": 0}
+    assert "unused" in model_ir.tensors
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="fallback high-rank BMM reconciliation result is discarded",
+)
+def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
+    body = _safety_fallback_body(_lowerer())
+    stats_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_high_rank_bmm_stats"
+    )
+
+    stats = body[stats_index]
+    assert isinstance(stats, ast.Assign)
+    assert isinstance(stats.value, ast.Call)
+    assert isinstance(stats.value.func, ast.Name)
+    assert stats.value.func.id == "_compress_static_high_rank_batch_matmul"
+    assert [ast.unparse(argument) for argument in stats.value.args] == [
+        "fallback_ir"
+    ]
+    assert stats.value.keywords == []
+
+    default_stats = body[stats_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_fallback_high_rank_bmm_static_shape_stats"
+    )
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(default_stats.value.keys, default_stats.value.values)
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = body[stats_index + 2]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "int(fallback_high_rank_bmm_stats.get("
+        "'compressed_static_high_rank_batch_matmul', 0)) > 0"
+    )
+    assert len(guard.body) == 2
+    reconciliation = guard.body[0]
+    assert isinstance(reconciliation, ast.Assign)
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == (
+        "_fallback_high_rank_bmm_static_shape_stats"
+    )
+    assert isinstance(reconciliation.value, ast.Call)
+    assert isinstance(reconciliation.value.func, ast.Name)
+    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
+        "fallback_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
+    assert isinstance(guard.body[1], ast.Expr)
+    assert ast.unparse(guard.body[1].value) == (
+        "_topologically_sort_operators(fallback_ir)"
+    )
+
+    following = body[stats_index + 3]
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following.value) == (
+        "_run_indexed_binary_layout_convergence(fallback_ir)"
+    )
