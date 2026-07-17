@@ -189,6 +189,10 @@ from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
     QLinearRecoveryContext,
     run_qlinear_mean_concat_recovery,
 )
+from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
+    LayoutAttentionQuantizedSuffixContext,
+    run_layout_attention_quantized_suffix,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4706,47 +4710,29 @@ def lower_onnx_to_ir(
     def _run_qlinear_mean_concat_recovery_sequence() -> None:
         run_qlinear_mean_concat_recovery(qlinear_recovery_context)
 
+    layout_attention_quantized_suffix_context = (
+        LayoutAttentionQuantizedSuffixContext(
+            model_ir=model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            mean_attention_cluster=_run_mean_attention_layout_pass_cluster,
+            attention_gate_qdq_recovery=(
+                _run_attention_gate_qdq_recovery_sequence
+            ),
+            duplicate_quantized_prelu_cluster=(
+                _run_duplicate_quantized_prelu_pass_cluster
+            ),
+        )
+    )
+
     def _run_layout_attention_quantized_recovery_suffix(
         *,
         include_duplicate_transpose: bool,
     ) -> None:
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        run_layout_attention_quantized_suffix(
+            layout_attention_quantized_suffix_context,
+            include_duplicate_transpose=include_duplicate_transpose,
         )
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster()
-        _run_attention_gate_qdq_recovery_sequence()
-        _run_duplicate_quantized_prelu_pass_cluster(
-            include_transpose=include_duplicate_transpose,
-        )
-        _optimize_dequant_transposeconv_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_quantized_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_dequant_hardsigmoid_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_dequant_maxpool_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_dequant_softmax_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_dequant_logistic_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _canonicalize_softmax_transpose_chains(model_ir)
 
     def _run_terminal_slice_concat_layout_recovery_sequence() -> None:
         _run_channel_slice_pad_mul_layout_pass_cluster()

@@ -8984,3 +8984,16 @@ attention-gate/QDQ helper, and duplicate quantized-PReLU cluster must remain
 explicit injected callbacks in a future frozen context. Extraction must prove
 the same flattened order and per-invocation option value before changing the
 historical helper.
+
+That suffix now uses a frozen `LayoutAttentionQuantizedSuffixContext` and
+thirteen stable IDs in
+`passes/layout_attention_quantized_suffix_orchestration.py`. Ten owners are
+direct imports and the three nested boundaries are explicit callbacks. The
+duplicate-transpose value remains an invocation argument rather than context
+state and is forwarded unchanged to its single destination. The historical
+keyword-only lowerer helper and both outer calls remain as ordering boundaries
+but now delegate through the context. Multiplicity-aware architecture checks
+retain all former nested helper and registered-runner totals. Focused,
+adjacent-owner, core, and TensorFlow-import-blocked suites pass. Characterize
+the larger terminal slice/concat recovery sequence before attempting the next
+phase extraction.

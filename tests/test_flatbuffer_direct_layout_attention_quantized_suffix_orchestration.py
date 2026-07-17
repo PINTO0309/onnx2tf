@@ -4,6 +4,20 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    layout_attention_quantized_suffix_orchestration,
+)
+from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
+    LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
+    LayoutAttentionQuantizedSuffixContext,
+    build_layout_attention_quantized_suffix_invocations,
+    run_layout_attention_quantized_suffix,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -35,26 +49,42 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _ordered_call_contracts(
-    helper: ast.FunctionDef,
-) -> list[tuple[str, tuple[Any, ...], dict[str, Any]]]:
-    contracts: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-    for statement in helper.body:
-        assert isinstance(statement, ast.Expr)
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        contracts.append(
-            (
-                call.func.id,
-                tuple(_expression_path(argument) for argument in call.args),
-                {
-                    str(keyword.arg): _expression_path(keyword.value)
-                    for keyword in call.keywords
-                },
-            )
-        )
-    return contracts
+def _context() -> LayoutAttentionQuantizedSuffixContext:
+    model_ir = ModelIR("layout_attention_quantized_suffix_test")
+
+    def no_op(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    return LayoutAttentionQuantizedSuffixContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+        mean_attention_cluster=no_op,
+        attention_gate_qdq_recovery=no_op,
+        duplicate_quantized_prelu_cluster=no_op,
+    )
+
+
+def _normalize_new_contract(
+    invocation: layout_attention_quantized_suffix_orchestration.RecoveryInvocation,
+    context: LayoutAttentionQuantizedSuffixContext,
+    include_duplicate_transpose: Any,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "session.layout_state"
+        if value is context.diagnostics:
+            return "session.diagnostics"
+        if value is include_duplicate_transpose:
+            return "include_duplicate_transpose"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
 
 
 def test_layout_attention_quantized_suffix_is_a_straight_line_closure() -> None:
@@ -71,7 +101,7 @@ def test_layout_attention_quantized_suffix_is_a_straight_line_closure() -> None:
     )
 
     assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 41
+    assert helper.end_lineno - helper.lineno + 1 == 8
     assert helper.args.args == []
     assert helper.args.posonlyargs == []
     assert [argument.arg for argument in helper.args.kwonlyargs] == [
@@ -103,72 +133,81 @@ def test_layout_attention_quantized_suffix_is_a_straight_line_closure() -> None:
     }
     assert loaded_data_names == {
         "include_duplicate_transpose",
-        "model_ir",
-        "session",
+        "layout_attention_quantized_suffix_context",
     }
 
 
 def test_layout_attention_quantized_suffix_preserves_all_call_contracts() -> None:
-    _, helper = _lowerer_and_helper()
+    context = _context()
+    include_duplicate_transpose = object()
+    invocations = build_layout_attention_quantized_suffix_invocations(
+        context,
+        include_duplicate_transpose=include_duplicate_transpose,  # type: ignore[arg-type]
+    )
 
-    assert _ordered_call_contracts(helper) == [
-        (
-            "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
+    assert (
+        tuple(step.pass_id for step in invocations)
+        == LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS
+    )
+    contracts = {
+        step.pass_id: _normalize_new_contract(
+            step,
+            context,
+            include_duplicate_transpose,
+        )
+        for step in invocations
+    }
+    assert contracts == {
+        "_optimize_transpose_mul_add_const_prepost_nhwc_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        (
-            "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
+        "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains": (
             ("model_ir",),
             {},
         ),
-        ("_run_mean_attention_layout_pass_cluster", (), {}),
-        ("_run_attention_gate_qdq_recovery_sequence", (), {}),
-        (
-            "_run_duplicate_quantized_prelu_pass_cluster",
+        "_run_mean_attention_layout_pass_cluster": ((), {}),
+        "_run_attention_gate_qdq_recovery_sequence": ((), {}),
+        "_run_duplicate_quantized_prelu_pass_cluster": (
             (),
             {"include_transpose": "include_duplicate_transpose"},
         ),
-        (
-            "_optimize_dequant_transposeconv_quantize_chains",
+        "_optimize_dequant_transposeconv_quantize_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "run_quantized_reshape_cleanup",
+        "run_quantized_reshape_cleanup": (
             ("model_ir",),
             {
                 "layout_state": "session.layout_state",
                 "diagnostics": "session.diagnostics",
             },
         ),
-        (
-            "_optimize_dequant_hardsigmoid_quantize_chains",
+        "_optimize_dequant_hardsigmoid_quantize_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_dequant_maxpool_quantize_chains",
+        "_optimize_dequant_maxpool_quantize_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_dequant_softmax_quantize_chains",
+        "_optimize_dequant_softmax_quantize_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        (
-            "_optimize_dequant_logistic_quantize_chains",
+        "_optimize_dequant_logistic_quantize_chains": (
             ("model_ir",),
             {"layout_state": "session.layout_state"},
         ),
-        ("_canonicalize_softmax_transpose_chains", ("model_ir",), {}),
-    ]
+        "_canonicalize_softmax_transpose_chains": (("model_ir",), {}),
+    }
+    assert invocations[3].callback is context.mean_attention_cluster
+    assert invocations[4].callback is context.attention_gate_qdq_recovery
+    assert invocations[5].callback is context.duplicate_quantized_prelu_cluster
 
 
 def test_layout_attention_quantized_suffix_invocations_preserve_option() -> None:
@@ -225,3 +264,128 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
             "_run_transpose_unary_fanout_layout_pass_cluster",
         ),
     ]
+
+
+def test_layout_attention_quantized_suffix_context_and_wrapper_are_explicit() -> None:
+    lowerer, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "run_layout_attention_quantized_suffix"
+    assert len(call.args) == 1
+    assert isinstance(call.args[0], ast.Name)
+    assert call.args[0].id == "layout_attention_quantized_suffix_context"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value) for keyword in call.keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
+
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "layout_attention_quantized_suffix_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert context_assignment.value.func.id == "LayoutAttentionQuantizedSuffixContext"
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+        "mean_attention_cluster": "_run_mean_attention_layout_pass_cluster",
+        "attention_gate_qdq_recovery": ("_run_attention_gate_qdq_recovery_sequence"),
+        "duplicate_quantized_prelu_cluster": (
+            "_run_duplicate_quantized_prelu_pass_cluster"
+        ),
+    }
+
+
+def test_layout_attention_quantized_suffix_runner_preserves_instrumented_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append(pass_id)
+
+        return record
+
+    model_ir = ModelIR("layout_attention_quantized_suffix_order_test")
+    context = LayoutAttentionQuantizedSuffixContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+        mean_attention_cluster=recorder("_run_mean_attention_layout_pass_cluster"),
+        attention_gate_qdq_recovery=recorder(
+            "_run_attention_gate_qdq_recovery_sequence"
+        ),
+        duplicate_quantized_prelu_cluster=recorder(
+            "_run_duplicate_quantized_prelu_pass_cluster"
+        ),
+    )
+    probe_steps = build_layout_attention_quantized_suffix_invocations(
+        context,
+        include_duplicate_transpose=True,
+    )
+    injected_callbacks = {
+        context.mean_attention_cluster,
+        context.attention_gate_qdq_recovery,
+        context.duplicate_quantized_prelu_cluster,
+    }
+    for step in probe_steps:
+        if step.callback in injected_callbacks:
+            continue
+        module_name = next(
+            name
+            for name, value in vars(
+                layout_attention_quantized_suffix_orchestration
+            ).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            layout_attention_quantized_suffix_orchestration,
+            module_name,
+            recorder(step.pass_id),
+        )
+
+    run_layout_attention_quantized_suffix(
+        context,
+        include_duplicate_transpose=True,
+    )
+
+    assert events == list(LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS)
+
+
+def test_layout_attention_quantized_suffix_module_does_not_import_lowerer() -> None:
+    module_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "layout_attention_quantized_suffix_orchestration.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        for node in tree.body
+    )
+    assert not any(
+        isinstance(node, ast.Import)
+        and any(
+            alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+            for alias in node.names
+        )
+        for node in tree.body
+    )

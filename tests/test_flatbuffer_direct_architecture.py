@@ -21,6 +21,9 @@ from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
 from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
     QLINEAR_MEAN_CONCAT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
+    LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -31,6 +34,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *SAFE_BINARY_RECOVERY_PASS_IDS,
     *QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
     *QLINEAR_MEAN_CONCAT_PASS_IDS,
+    *LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -611,26 +615,13 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 3
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 3
 
-    outer_helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_layout_attention_quantized_recovery_suffix"
-    )
-    outer_index = next(
-        index
-        for index, statement in enumerate(outer_helper.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
-    )
-    assert outer_helper.body[outer_index - 1].value.func.id == (
+    outer_index = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.index(helper_name)
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[outer_index - 1] == (
         "_run_mean_attention_layout_pass_cluster"
     )
-    assert outer_helper.body[outer_index + 1].value.func.id == (
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[outer_index + 1] == (
         "_run_duplicate_quantized_prelu_pass_cluster"
     )
 
@@ -1266,7 +1257,7 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
         "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
         "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
@@ -1280,7 +1271,8 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         "_optimize_dequant_softmax_quantize_chains",
         "_optimize_dequant_logistic_quantize_chains",
         "_canonicalize_softmax_transpose_chains",
-    ]
+    )
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -1288,21 +1280,18 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-
-    calls_by_name = {call.func.id: call for call in helper_calls}
-    for registered_name in ("run_quantized_reshape_cleanup",):
-        assert all(
-            keyword.arg != "state_scope"
-            for keyword in calls_by_name[registered_name].keywords
-        )
-    duplicate_keyword = next(
-        keyword
-        for keyword in calls_by_name[
-            "_run_duplicate_quantized_prelu_pass_cluster"
-        ].keywords
-        if keyword.arg == "include_transpose"
+    assert [call.func.id for call in helper_calls] == [
+        "run_layout_attention_quantized_suffix"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "layout_attention_quantized_suffix_context"
     )
+    assert len(helper_calls[0].keywords) == 1
+    duplicate_keyword = helper_calls[0].keywords[0]
+    assert duplicate_keyword.arg == "include_duplicate_transpose"
     assert isinstance(duplicate_keyword.value, ast.Name)
     assert duplicate_keyword.value.id == "include_duplicate_transpose"
 
@@ -4527,7 +4516,8 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 1
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.count(helper_name) == 1
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 1
     for call in helper_invocations:
         include_transpose = next(
             keyword
@@ -11855,6 +11845,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert orchestrated_runner_names == {
         "run_hard_activation_passthrough_cleanup",
         "run_ndhwc_concat_layout_cleanup",
+        "run_quantized_reshape_cleanup",
         "run_spp_layout_cleanup",
         "run_squeeze_reshape_identity_cleanup",
         "run_trailing_output_transpose_cleanup",
@@ -11968,7 +11959,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_quantized_reshape_cleanup"
     ]
-    assert len(quantized_reshape_calls) == 2
+    assert (
+        len(quantized_reshape_calls)
+        + _orchestrated_pass_count("run_quantized_reshape_cleanup")
+        == 2
+    )
 
     singleton_maxpool_calls = [
         call

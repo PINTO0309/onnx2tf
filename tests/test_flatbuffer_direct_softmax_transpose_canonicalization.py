@@ -25,6 +25,9 @@ from onnx2tf.tflite_builder.passes.softmax_transpose_canonicalization import (
 from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
     QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
+    LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.terminal_softmax_layout import (
     _SOFTMAX_NHWC_PROPAGATED_MARKER,
 )
@@ -709,11 +712,6 @@ def test_softmax_transpose_canonicalization_keeps_ordered_boundaries() -> None:
     assert wrapper.body[0].value.args[0].id == "model_ir"
     assert wrapper.body[0].value.keywords == []
 
-    lowerer = next(
-        node
-        for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
-    )
     canonicalization_index = QUANTIZED_ACTIVATION_BINARY_PASS_IDS.index(
         "_canonicalize_softmax_transpose_chains"
     )
@@ -725,31 +723,15 @@ def test_softmax_transpose_canonicalization_keeps_ordered_boundaries() -> None:
         "_run_safe_binary_bridge_recovery_sequence",
     )
 
-    expected = {
-        "_run_layout_attention_quantized_recovery_suffix": (
-            "_optimize_dequant_logistic_quantize_chains",
-            None,
+    suffix_index = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.index(
+        "_canonicalize_softmax_transpose_chains"
+    )
+    assert (
+        LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[suffix_index - 1],
+        (
+            LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[suffix_index + 1]
+            if suffix_index + 1
+            < len(LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS)
+            else None
         ),
-    }
-    observed: dict[str, tuple[str, str | None]] = {}
-    for statement in lowerer.body:
-        if not isinstance(statement, ast.FunctionDef) or statement.name not in expected:
-            continue
-        calls = [
-            candidate.value
-            for candidate in statement.body
-            if isinstance(candidate, ast.Expr)
-            and isinstance(candidate.value, ast.Call)
-            and isinstance(candidate.value.func, ast.Name)
-        ]
-        call_names = [call.func.id for call in calls]
-        index = call_names.index("_canonicalize_softmax_transpose_chains")
-        observed[statement.name] = (
-            call_names[index - 1],
-            call_names[index + 1] if index + 1 < len(call_names) else None,
-        )
-        assert len(calls[index].args) == 1
-        assert isinstance(calls[index].args[0], ast.Name)
-        assert calls[index].args[0].id == "model_ir"
-        assert calls[index].keywords == []
-    assert observed == expected
+    ) == ("_optimize_dequant_logistic_quantize_chains", None)

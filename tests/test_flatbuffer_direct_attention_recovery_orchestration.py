@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.passes.recovery_orchestration import (
     RecoveryInvocation,
     run_recovery_invocations,
 )
+from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
+    LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -315,25 +318,21 @@ def test_attention_recovery_invocation_boundaries_remain_zero_argument() -> None
             and isinstance(node.func, ast.Name)
             and node.func.id == helper_name
         ]
-        assert len(invocations) == expected_count
+        orchestrated_count = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.count(
+            helper_name
+        )
+        assert len(invocations) + orchestrated_count == expected_count
         assert all(call.args == [] for call in invocations)
         assert all(call.keywords == [] for call in invocations)
 
-    quantized_suffix = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_layout_attention_quantized_recovery_suffix"
+    attention_index = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.index(
+        ATTENTION_GATE_QDQ
     )
-    suffix_calls = [
-        statement.value.func.id
-        for statement in quantized_suffix.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    attention_index = suffix_calls.index(ATTENTION_GATE_QDQ)
-    assert suffix_calls[attention_index - 1 : attention_index + 2] == [
+    assert list(
+        LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[
+            attention_index - 1 : attention_index + 2
+        ]
+    ) == [
         "_run_mean_attention_layout_pass_cluster",
         ATTENTION_GATE_QDQ,
         "_run_duplicate_quantized_prelu_pass_cluster",

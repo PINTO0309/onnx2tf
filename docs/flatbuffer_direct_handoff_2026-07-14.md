@@ -13180,3 +13180,61 @@ through the immutable invocation specification, and prove flattened
 instrumented order and exact argument equivalence before switching the
 historical helper. Validate sequentially, commit and push, and do not create a
 pull request.
+
+## Explicit layout/attention/quantized recovery suffix: completed state
+
+The characterized suffix now delegates to
+`passes/layout_attention_quantized_suffix_orchestration.py`. A frozen
+`LayoutAttentionQuantizedSuffixContext` carries ModelIR, layout state,
+diagnostics, and exactly three explicit lowerer-local callbacks: mean-
+attention, attention-gate/QDQ recovery, and duplicate quantized-PReLU. The
+other ten targets are imported directly from their existing pass modules, and
+the new phase module does not import the central lowerer.
+
+`LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS` declares the exact thirteen-step
+order. Immutable invocations preserve all positional and keyword arguments.
+The per-call `include_duplicate_transpose` value is forwarded without coercion
+only to the duplicate callback's `include_transpose` keyword. Shared execution
+validates the complete ID sequence before running any callback.
+
+The lowerer constructs the context after all three callback dependencies are
+defined. The historical keyword-only helper and both outer call sites remain;
+its body shrinks from 41 to eight lines and delegates through the explicit
+context. Both neighboring boundaries and the global option routing are
+unchanged. Ordered stable-ID accounting preserves three total attention-
+gate/QDQ helper calls, one duplicate quantized-PReLU cluster call, two total
+quantized-reshape cleanups, and the existing total of 118 registered runner
+calls.
+
+Focused tests prove all thirteen IDs and argument contracts, callback identity,
+option identity, context and wrapper wiring, outer invocation counts and
+boundaries, instrumented execution order, and lowerer-import isolation.
+Adjacent attention and softmax fixtures now follow the stable suffix IDs rather
+than assuming every nested call remains visible in the lowerer AST.
+
+Sequential validation completed as follows:
+
+- focused suffix orchestration: `7 passed in 0.58s`;
+- focused orchestration plus ordered architecture: `255 passed in 18.25s`;
+- adjacent attention/softmax/orchestration/architecture set:
+  `316 passed in 16.92s`;
+- related thirteen-slot owner and phase-family set:
+  `820 passed in 19.23s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.68s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_terminal_slice_concat_layout_recovery_sequence` before changing
+production code. It is substantially larger and mixes several lowerer-local
+clusters with direct owners and layout/diagnostic routing, so freeze its exact
+call slots, arguments, captures, repetition, and outer boundaries first. Keep
+verification sequential and minimal, commit and push coherent checkpoints,
+and do not create a pull request.

@@ -1955,3 +1955,16 @@ owners or extracted phase runners; three nested lowerer boundaries will require
 explicit callbacks in a future context. The focused plus architecture suite
 passed 252 tests and all 11 TensorFlow-import-blocked tests passed. No pull
 request was created, reopened, or updated.
+
+That suffix is now implemented in
+`passes/layout_attention_quantized_suffix_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context, thirteen stable IDs, ten direct owner
+imports, and three explicit lowerer-local callbacks. The per-invocation
+duplicate-transpose option is forwarded unchanged to its single destination.
+The historical helper, both outer calls, and both boundaries remain unchanged
+as an eight-line delegate. Focused and architecture contracts preserve all
+arguments, callback identities, order, and total invocation multiplicity. The
+820-test related family, 32 core smoke tests, and all 11 TensorFlow-import-
+blocked tests pass. No public API, artifact, dependency, runtime order, or
+TensorFlow boundary changed, and no pull request was created, reopened, or
+updated.
