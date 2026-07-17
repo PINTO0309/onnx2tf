@@ -14122,3 +14122,53 @@ Preserve the historical zero-argument helper as the same
 builder arguments, fresh/shared scope identity, instrumented order, and
 callback identity before switching to a delegate; validate sequentially,
 commit and push, and do not create a pull request.
+
+## Explicit boundary-batchmatmul/input-unary orchestration: completed state
+
+The characterized pair now delegates to
+`passes/boundary_batchmatmul_unary_orchestration.py`. A frozen
+`BoundaryBatchMatMulUnaryContext` contains only ModelIR, layout state, and
+diagnostics. Both cleanup owners are imported directly from
+`boundary_input_chains` and `input_passthrough_layout`; the phase module does
+not import the central lowerer.
+
+`BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS` declares the exact two-step order. Every
+builder call creates one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope, ModelIR, layout, and
+diagnostics values to both immutable invocations. The shared executor validates
+both IDs before execution.
+
+The historical helper is now a four-line zero-argument delegate and remains
+the same callback object supplied to `LayoutRecoveryContext`. Its stable slot
+between quant/dequant bridge recovery and elementwise roundtrip recovery is
+unchanged. The two direct runner imports were removed from the central lowerer,
+and architecture checks now require their ownership to reside in stable phase
+IDs. The efficiency fixture executes the explicit runner and still observes
+one graph-index build across the pair.
+
+Sequential validation completed as follows:
+
+- focused boundary-batchmatmul/input-unary orchestration:
+  `7 passed in 0.58s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 19.25s`;
+- pass-efficiency: `30 passed in 0.57s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.00s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, callback identity, runtime pass order, invocation multiplicity, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory and characterize the adjacent channel-slice/pad-mul
+shared-scope pair before changing production. Freeze its two potentially
+different keyword contracts, callback-only ownership in the terminal
+slice/concat phase, stable neighbors, and existing efficiency behavior.
+Validate sequentially, keep real-model conversion minimal, commit and push
+only, and do not create a pull request.

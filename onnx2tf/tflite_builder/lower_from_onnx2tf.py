@@ -229,6 +229,10 @@ from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration impo
     LateSPPConcatUnaryConvContext,
     run_late_spp_concat_unary_conv,
 )
+from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
+    BoundaryBatchMatMulUnaryContext,
+    run_boundary_batchmatmul_unary,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -692,7 +696,6 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_hardswish_transpose_passthrough_chains as _optimize_hardswish_transpose_passthrough_chains_pass,
     _optimize_leading_input_transpose_passthrough_chains as _optimize_leading_input_transpose_passthrough_chains_pass,
     run_hard_activation_passthrough_cleanup,
-    run_input_unary_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
     optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains as _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains_pass,
@@ -704,7 +707,6 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
     _optimize_boundary_input_transpose_batchmatmul_chains as _optimize_boundary_input_transpose_batchmatmul_chains_pass,
     _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains as _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains_pass,
-    run_boundary_input_batchmatmul_cleanup,
     run_boundary_input_normalization_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
@@ -4453,21 +4455,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_boundary_input_batchmatmul_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_input_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_boundary_batchmatmul_unary(
+            boundary_batchmatmul_unary_context
         )
 
     def _run_channel_slice_pad_mul_layout_pass_cluster() -> None:
@@ -4593,6 +4582,11 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    boundary_batchmatmul_unary_context = BoundaryBatchMatMulUnaryContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     layout_recovery_context = LayoutRecoveryContext(
         model_ir=model_ir,
         layout_state=session.layout_state,

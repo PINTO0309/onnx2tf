@@ -51,6 +51,9 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
     LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
+    BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -71,6 +74,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
     *TRANSPOSE_UNARY_FANOUT_PASS_IDS,
     *LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
+    *BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -7168,26 +7172,15 @@ def test_lowerer_boundary_batchmatmul_unary_pair_reuses_pass_state_scope() -> No
         "run_boundary_input_batchmatmul_cleanup",
         "run_input_unary_passthrough_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        and node.func.id == "run_boundary_batchmatmul_unary"
+    ]
+    assert len(helper_calls) == 1
 
     helper_invocations = [
         node
@@ -10421,7 +10414,8 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         if isinstance(node, ast.Name)
     }
     assert "run_boundary_input_layout_cleanup" in lowerer_names
-    assert "run_boundary_input_batchmatmul_cleanup" in lowerer_names
+    assert "run_boundary_input_batchmatmul_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_boundary_input_batchmatmul_cleanup") == 1
     assert "run_boundary_input_normalization_cleanup" in lowerer_names
 
     graph_helpers = {
@@ -10499,7 +10493,8 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Name)
     }
-    assert "run_input_unary_passthrough_cleanup" in lowerer_names
+    assert "run_input_unary_passthrough_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_input_unary_passthrough_cleanup") == 1
     assert "run_hard_activation_passthrough_cleanup" in lowerer_names
 
 
@@ -11936,6 +11931,8 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_transpose_unary_passthrough_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
         "run_transpose_unary_binary_fanout_bridge_cleanup",
+        "run_boundary_input_batchmatmul_cleanup",
+        "run_input_unary_passthrough_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12006,7 +12003,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_boundary_input_batchmatmul_cleanup"
     ]
-    assert len(boundary_batchmatmul_calls) == 1
+    assert (
+        len(boundary_batchmatmul_calls)
+        + _orchestrated_pass_count("run_boundary_input_batchmatmul_cleanup")
+        == 1
+    )
 
     pad_mul_calls = [
         call

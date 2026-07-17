@@ -9184,3 +9184,12 @@ diagnostics/scope routing, callback identity, and both stable-list neighbors.
 The eventual phase should use a frozen ModelIR/layout/diagnostics context, two
 direct owner imports, two stable IDs, and one fresh shared scope per build,
 while retaining the historical callback boundary.
+
+That pair now uses `BoundaryBatchMatMulUnaryContext` and two stable IDs in
+`passes/boundary_batchmatmul_unary_orchestration.py`. Both owners are direct
+imports, every builder creates one fresh scope shared by the immutable
+invocations, and the lowerer no longer imports either runner. The historical
+helper remains the same zero-argument `LayoutRecoveryContext` callback as a
+four-line delegate, with unchanged stable neighbors. The efficiency fixture
+now exercises the explicit runner and retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.

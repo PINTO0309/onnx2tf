@@ -21,7 +21,6 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
-    run_boundary_input_batchmatmul_cleanup,
     run_boundary_input_normalization_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
@@ -64,6 +63,10 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
     LateSPPConcatUnaryConvContext,
     run_late_spp_concat_unary_conv,
+)
+from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
+    BoundaryBatchMatMulUnaryContext,
+    run_boundary_batchmatmul_unary,
 )
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
@@ -1392,17 +1395,12 @@ def test_boundary_batchmatmul_unary_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_boundary_input_batchmatmul_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_input_unary_passthrough_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_boundary_batchmatmul_unary(
+        BoundaryBatchMatMulUnaryContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1

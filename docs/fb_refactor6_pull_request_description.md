@@ -2180,3 +2180,17 @@ tests, the 30 pass-efficiency tests and all 11 TensorFlow-import-blocked tests
 passed, and targeted static checks passed. Runtime behavior and all public/
 dependency contracts remain unchanged. PR #952 remains closed, and no pull
 request was created, reopened, or updated.
+
+That pair is now implemented in
+`passes/boundary_batchmatmul_unary_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context, two stable IDs, and direct owner imports.
+Every builder creates one fresh `ModelIRPassStateScope` shared by both
+immutable invocations. The historical helper remains the same zero-argument
+`LayoutRecoveryContext` callback as a four-line delegate, while its stable
+neighbors are unchanged. The central lowerer no longer imports either runner,
+and the efficiency fixture now executes the explicit phase while preserving
+one graph-index build. The 255-test focused/architecture set, 30 pass-
+efficiency tests, 32 core smoke tests, and all 11 TensorFlow-import-blocked
+tests pass. No public API, artifact, dependency, callback identity, runtime
+order, scope-sharing behavior, or TensorFlow boundary changed. PR #952 remains
+closed, and no pull request was created, reopened, or updated.
