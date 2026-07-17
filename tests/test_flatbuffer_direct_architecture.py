@@ -57,6 +57,9 @@ from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration impo
 from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
     CHANNEL_SLICE_PAD_MUL_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
+    LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -79,6 +82,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
     *BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
     *CHANNEL_SLICE_PAD_MUL_PASS_IDS,
+    *LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -5261,52 +5265,15 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         "run_hard_activation_passthrough_cleanup",
         "run_layout_transpose_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-
-    hard_activation_call = calls["run_hard_activation_passthrough_cleanup"]
-    expected_flags = {
-        "include_hardswish": False,
-        "include_hardsigmoid": True,
-        "include_hardsigmoid_mul": True,
-        "reverse_hardsigmoid_order": True,
-    }
-    for name, expected_value in expected_flags.items():
-        keyword = next(
-            candidate
-            for candidate in hard_activation_call.keywords
-            if candidate.arg == name
-        )
-        assert isinstance(keyword.value, ast.Constant)
-        assert keyword.value.value is expected_value
-
-    conditional = next(
-        statement
-        for statement in helper.body
-        if isinstance(statement, ast.If)
-    )
-    assert isinstance(conditional.test, ast.Name)
-    assert conditional.test.id == "include_layout_transpose"
-    assert calls["run_layout_transpose_cleanup"] in [
-        node for node in ast.walk(conditional)
+        and node.func.id == "run_late_hard_activation_layout"
     ]
+    assert len(helper_calls) == 1
 
     invocation_index = next(
         index
@@ -10489,7 +10456,8 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
     }
     assert "run_input_unary_passthrough_cleanup" not in lowerer_names
     assert _orchestrated_pass_count("run_input_unary_passthrough_cleanup") == 1
-    assert "run_hard_activation_passthrough_cleanup" in lowerer_names
+    assert "run_hard_activation_passthrough_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_hard_activation_passthrough_cleanup") == 2
 
 
 def test_graph_cleanup_rewrites_have_single_owner() -> None:
@@ -11961,23 +11929,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         + _orchestrated_pass_count("run_hard_activation_passthrough_cleanup")
         == 2
     )
-    reverse_calls = [
-        call
-        for call in hard_activation_calls
-        if any(
-            keyword.arg == "reverse_hardsigmoid_order"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is True
-            for keyword in call.keywords
-        )
-    ]
-    assert len(reverse_calls) == 1
-    assert any(
-        keyword.arg == "include_hardswish"
-        and isinstance(keyword.value, ast.Constant)
-        and keyword.value.value is False
-        for keyword in reverse_calls[0].keywords
-    )
+    assert hard_activation_calls == []
 
     reshape_only_duplicate_calls = [
         call

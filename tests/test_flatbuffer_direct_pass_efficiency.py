@@ -72,6 +72,10 @@ from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
     ChannelSlicePadMulContext,
     run_channel_slice_pad_mul,
 )
+from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
+    LateHardActivationLayoutContext,
+    run_late_hard_activation_layout,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1136,21 +1140,13 @@ def test_late_hard_activation_layout_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_hard_activation_passthrough_cleanup(
-        model_ir,
-        include_hardswish=False,
-        include_hardsigmoid=True,
-        include_hardsigmoid_mul=True,
-        reverse_hardsigmoid_order=True,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_layout_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_late_hard_activation_layout(
+        LateHardActivationLayoutContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
+        include_layout_transpose=True,
     )
 
     assert refresh_count == 1

@@ -237,6 +237,10 @@ from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
     ChannelSlicePadMulContext,
     run_channel_slice_pad_mul,
 )
+from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
+    LateHardActivationLayoutContext,
+    run_late_hard_activation_layout,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -698,7 +702,6 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_hardsigmoid_mul_transpose_passthrough_chains as _optimize_hardsigmoid_mul_transpose_passthrough_chains_pass,
     _optimize_hardswish_transpose_passthrough_chains as _optimize_hardswish_transpose_passthrough_chains_pass,
     _optimize_leading_input_transpose_passthrough_chains as _optimize_leading_input_transpose_passthrough_chains_pass,
-    run_hard_activation_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
     optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains as _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains_pass,
@@ -4412,27 +4415,10 @@ def lower_onnx_to_ir(
         *,
         include_layout_transpose: bool,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
+        run_late_hard_activation_layout(
+            late_hard_activation_layout_context,
+            include_layout_transpose=include_layout_transpose,
         )
-        run_hard_activation_passthrough_cleanup(
-            model_ir,
-            include_hardswish=False,
-            include_hardsigmoid=True,
-            include_hardsigmoid_mul=True,
-            reverse_hardsigmoid_order=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        if include_layout_transpose:
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-                state_scope=state_scope,
-            )
 
     def _run_absolute_final_normalization_attention_pass_pair() -> None:
         state_scope = ModelIRPassStateScope(
@@ -4577,6 +4563,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     channel_slice_pad_mul_context = ChannelSlicePadMulContext(
+        model_ir=model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
+    late_hard_activation_layout_context = LateHardActivationLayoutContext(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

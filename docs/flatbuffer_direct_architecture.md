@@ -9221,3 +9221,14 @@ sole caller forwards the global layout optimization choice, and focused
 contracts freeze its outer terminal boundaries. The eventual phase should keep
 the option outside a frozen ModelIR/layout/diagnostics context, derive active
 expected IDs, and construct one fresh shared scope per build.
+
+That pair now uses `LateHardActivationLayoutContext` and two canonical stable
+IDs in `passes/late_hard_activation_layout_orchestration.py`. The required
+Boolean remains a runner argument, active expected IDs distinguish the one-
+step and two-step forms, and every build creates one fresh shared scope. All
+four terminal hard-activation flags are retained. The historical helper and
+caller keep their required keyword-only contract and outer boundaries. The
+central lowerer no longer imports the hard-activation runner, and the
+efficiency fixture exercises the enabled explicit phase with one graph-index
+build. Focused, architecture, pass-efficiency, core, and TensorFlow-import-
+blocked suites pass.

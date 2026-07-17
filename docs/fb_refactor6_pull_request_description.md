@@ -2230,3 +2230,19 @@ efficiency tests and all 11 TensorFlow-import-blocked tests passed, and targeted
 static checks passed. Runtime behavior and all public/dependency contracts
 remain unchanged. PR #952 remains closed, and no pull request was created,
 reopened, or updated.
+
+That pair is now implemented in
+`passes/late_hard_activation_layout_orchestration.py` with a frozen
+ModelIR/layout/diagnostics context and two canonical stable IDs. The required
+layout option remains a per-invocation argument, variant-specific expected IDs
+preserve both active forms, and every builder creates one fresh shared
+`ModelIRPassStateScope`. All four terminal hard-activation policy flags remain
+unchanged. The historical helper keeps its required keyword-only contract,
+caller value, and terminal neighbors. The central lowerer no longer imports
+the hard-activation runner, and the efficiency fixture executes the enabled
+explicit phase while preserving one graph-index build. The 257-test focused/
+architecture set, 30 pass-efficiency tests, 32 core smoke tests, and all 11
+TensorFlow-import-blocked tests pass. No public API, artifact, dependency,
+option semantics, runtime order, scope-sharing behavior, or TensorFlow
+boundary changed. PR #952 remains closed, and no pull request was created,
+reopened, or updated.

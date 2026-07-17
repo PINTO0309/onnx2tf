@@ -14313,3 +14313,53 @@ required keyword-only helper, caller option value, and both outer boundaries.
 Prove both enabled and disabled builder forms, fresh/shared scope identity, and
 instrumented order before switching to a delegate; validate sequentially,
 commit and push, and do not create a pull request.
+
+## Explicit late hard-activation/layout orchestration: completed state
+
+The characterized pair now delegates to
+`passes/late_hard_activation_layout_orchestration.py`. A frozen
+`LateHardActivationLayoutContext` contains only ModelIR, layout state, and
+diagnostics. Both owners are imported directly from
+`input_passthrough_layout` and `layout_transpose`; the phase module does not
+import the central lowerer.
+
+`LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS` is the canonical two-owner sequence,
+while `active_late_hard_activation_layout_pass_ids` derives the one-step or
+two-step expected sequence from the required per-invocation option. The option
+is not stored in context state. Every builder creates one fresh
+`ModelIRPassStateScope`; the enabled form attaches the identical scope,
+ModelIR, layout, and diagnostics values to both immutable invocations. The
+hard-activation invocation retains all four characterized Boolean policy
+flags. The shared executor validates the active IDs before execution.
+
+The historical helper remains a required keyword-only delegate and its sole
+caller continues to forward `optimize_layout_transpose_chains`. Both terminal
+neighbors remain unchanged. The last central hard-activation runner import was
+removed; architecture accounting now requires its two source occurrences to
+reside in stable phase IDs. The efficiency fixture executes the enabled
+explicit runner and still proves one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused late hard-activation/layout orchestration: `9 passed in 0.61s`;
+- focused orchestration plus ordered architecture:
+  `257 passed in 19.36s`;
+- pass-efficiency: `30 passed in 0.57s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.05s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, option semantics, runtime pass order, invocation multiplicity, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory and characterize the absolute-final normalization/
+attention shared-scope pair before changing production. Freeze its fixed
+normalization flags, complete argument contracts, one direct boundary, and
+existing efficiency behavior. Validate sequentially, keep real-model
+conversion minimal, commit and push only, and do not create a pull request.
