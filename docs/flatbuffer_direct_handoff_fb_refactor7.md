@@ -2772,7 +2772,7 @@ reused.
 The fallback caller nevertheless checks the returned counter and immediately
 runs a second reconciliation, with no intervening graph or metadata mutation.
 A strict expected-failure AST contract requires
-`fallback_conv_input_stats` to follow `fallback_unbound_repair_stats` directly,
+`fallback_conv_input_stats` to follow `_fallback_unbound_repair_stats` directly,
 removing only this duplicate full-graph scan. The owner invocation, wrapper
 reconciliation, return schema, following Conv-input owner, and all guards after
 it remain unchanged.
@@ -2791,3 +2791,26 @@ reconciliation. Validate positive/no-op unbound repair, safety fallback,
 static reconciliation, core, pass efficiency, architecture, and TensorFlow
 import blocking sequentially. Commit and push only; do not create or update a
 pull request.
+
+## Safety-fallback unbound reconciliation implementation checkpoint
+
+The redundant fallback caller-side guard and reconciliation are removed. A
+positive unbound-input repair still performs exactly one static reconciliation
+inside `_repair_unbound_nonconstant_operator_inputs_with_layout_transpose()`,
+using the repair's live GraphIndex. The fallback then proceeds directly from
+`_fallback_unbound_repair_stats` to `fallback_conv_input_stats`.
+
+No indexed matcher, inserted transpose, wrapper result schema, GraphIndex,
+no-op behavior, or following Conv-input repair changed. This is a strict
+one-scan elimination with no intervening mutation to preserve.
+
+Focused indexed-unbound and safety-fallback validation is `12 passed`. The
+broader sequential fallback-owner, reconciliation, convergence, core,
+pass-efficiency, architecture, and TensorFlow import-blocking gate is `470
+passed in 27.49s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, audit `fallback_conv_input_stats`. Its two child owners can prune
+on zero rewrite, so do not treat the existing stale-transpose counter as
+complete without tensor-delta evidence. Commit and push only; do not create or
+update a pull request.

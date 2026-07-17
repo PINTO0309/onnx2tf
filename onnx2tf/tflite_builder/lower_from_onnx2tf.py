@@ -5505,18 +5505,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
-        fallback_unbound_repair_stats = (
+        _fallback_unbound_repair_stats = (
             _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
                 fallback_ir
             )
         )
-        if int(
-            fallback_unbound_repair_stats.get(
-                "repaired_unbound_nonconstant_inputs_with_layout_transpose",
-                0,
-            )
-        ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
         fallback_conv_input_stats = _run_indexed_conv_input_adapter_repairs(
             fallback_ir
         )

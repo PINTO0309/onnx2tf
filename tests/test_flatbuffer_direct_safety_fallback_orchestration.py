@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import pad_layout
@@ -348,10 +347,6 @@ def test_safety_fallback_stages_placeholder_matmul_reconciliation_evidence() -> 
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback repeats reconciliation already owned by the unbound-input wrapper",
-)
 def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
     body = _safety_fallback_body(_lowerer())
     owner_index = next(
@@ -360,7 +355,7 @@ def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "fallback_unbound_repair_stats"
+        and statement.targets[0].id == "_fallback_unbound_repair_stats"
     )
 
     owner = body[owner_index]
