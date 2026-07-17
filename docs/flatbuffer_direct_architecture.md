@@ -10084,3 +10084,14 @@ mutation-only summary with four zero-default layout keys, and net tensor-prune
 accounting. The lowerer must capture count/results/summary in three adjacent
 statements between the existing Hardswish-SE rewrite and pre-Concat cleanup.
 No phase reconciliation consumes this evidence yet.
+
+The late hard-activation/layout runner now returns the recovery utility's raw
+ordered result tuple. Its pure summary validates the policy-specific tuple
+length, preserves the required hard-activation counters, emits four stable
+layout mutation keys, excludes layout `iterations`, and records the cluster's
+clamped net tensor reduction.
+
+The lowerer stages the starting tensor count, raw results, and normalized
+`_late_hard_activation_stats` at the original terminal call site. This remains
+observation-only: pass selection and order, the adjacent Hardswish-SE and
+pre-Concat rewrites, and every downstream reconciliation are unchanged.

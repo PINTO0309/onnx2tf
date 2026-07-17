@@ -1157,3 +1157,29 @@ summary helper, and stage `_late_hard_activation_stats` at the existing call
 site. Validate both policies, malformed lengths, pruning, owner order, shared
 state, core, architecture, pass efficiency, and TensorFlow import blocking
 sequentially. Commit and push only; do not create or update a pull request.
+
+## Late hard-activation cluster evidence implementation checkpoint
+
+The orchestration runner and lowerer's private delegate now return the recovery
+utility's ordered one- or two-result tuple. The pure
+`summarize_late_hard_activation_layout_mutations()` helper validates the tuple
+length for the active policy, preserves both required hard-activation counters,
+emits four fixed zero-default layout mutation keys, excludes the non-mutating
+layout `iterations` metric, and adds a clamped `pruned_unused_tensors` count.
+
+At the original terminal call site, the lowerer records the starting tensor
+count, captures the raw results, and derives `_late_hard_activation_stats` from
+the exact net tensor reduction. The leading underscore marks staged evidence;
+the broad phase reconciliation remains unconditional. The existing pass order,
+optional-layout policy, shared LayoutState, Hardswish-SE/pre-Concat boundaries,
+public behavior, artifacts, and TensorFlow-free direct path are unchanged.
+
+Focused orchestration coverage is `12 passed in 0.64s`. The sequential late
+hard-activation, Expand/Squeeze, late-layout, constant-fold/cast, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked gate is `394 passed
+in 28.01s`. Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, continue moving backward through the same terminal interval and
+characterize another small owner or orchestration cluster before using any
+staged evidence to guard broad reconciliation. Commit and push only; do not
+create or update a pull request.

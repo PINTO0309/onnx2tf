@@ -5451,7 +5451,10 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_hard_activation_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -5465,7 +5468,7 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert isinstance(include_layout.value, ast.Name)
     assert include_layout.value.id == "optimize_layout_transpose_chains"
 
-    previous_boundary = lowerer.body[invocation_index - 1]
+    previous_boundary = lowerer.body[invocation_index - 2]
     assert isinstance(previous_boundary, ast.Expr)
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
@@ -5473,7 +5476,7 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         previous_boundary.value.func.id
         == "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 1]
+    next_boundary = lowerer.body[invocation_index + 2]
     assert isinstance(next_boundary, ast.Expr)
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)

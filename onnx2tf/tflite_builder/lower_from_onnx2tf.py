@@ -229,6 +229,7 @@ from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
     run_late_hard_activation_layout,
+    summarize_late_hard_activation_layout_mutations,
 )
 from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
     run_absolute_final_normalization_attention,
@@ -4132,8 +4133,8 @@ def lower_onnx_to_ir(
     def _run_late_hard_activation_layout_pass_pair(
         *,
         include_layout_transpose: bool,
-    ) -> None:
-        run_late_hard_activation_layout(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_late_hard_activation_layout(
             late_hard_activation_layout_context,
             include_layout_transpose=include_layout_transpose,
         )
@@ -5155,8 +5156,17 @@ def lower_onnx_to_ir(
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.
-    _run_late_hard_activation_layout_pass_pair(
+    late_hard_activation_tensor_count = len(model_ir.tensors)
+    late_hard_activation_results = _run_late_hard_activation_layout_pass_pair(
         include_layout_transpose=optimize_layout_transpose_chains,
+    )
+    _late_hard_activation_stats = summarize_late_hard_activation_layout_mutations(
+        late_hard_activation_results,
+        include_layout_transpose=optimize_layout_transpose_chains,
+        pruned_unused_tensors=max(
+            0,
+            int(late_hard_activation_tensor_count - len(model_ir.tensors)),
+        ),
     )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.

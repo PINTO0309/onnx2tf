@@ -114,7 +114,7 @@ def test_late_hard_activation_layout_signature_and_delegate_are_explicit() -> No
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -230,10 +230,6 @@ def test_late_hard_activation_layout_runner_preserves_both_instrumented_orders(
     assert events == list(expected_ids)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the late hard-activation runner still discards ordered results",
-)
 @pytest.mark.parametrize("include_layout_transpose", [False, True])
 def test_late_hard_activation_returns_and_summarizes_mutations(
     monkeypatch: pytest.MonkeyPatch,
@@ -322,10 +318,6 @@ def test_late_hard_activation_returns_and_summarizes_mutations(
     assert isinstance(helper.body[0].value, ast.Call)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the lowerer does not capture late hard-activation mutation evidence",
-)
 def test_lowerer_captures_late_hard_activation_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     target_names = (
@@ -388,14 +380,17 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_hard_activation_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == LATE_HARD_ACTIVATION_LAYOUT
     )
 
-    previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
+    previous = lowerer.body[invocation_index - 2]
+    following = lowerer.body[invocation_index + 2]
     for boundary in (previous, following):
         assert isinstance(boundary, ast.Expr)
         assert isinstance(boundary.value, ast.Call)
