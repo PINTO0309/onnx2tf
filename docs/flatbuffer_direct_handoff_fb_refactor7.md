@@ -4112,3 +4112,27 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final InstanceNorm
 reconciliation-result contract; there are no unexpected failures.
+
+## Primary final InstanceNorm reconciliation implementation checkpoint
+
+The primary path now initializes `_final_instancenorm_static_shape_stats` with
+the stable two-key schema and replaces it with the opt-in complete
+reconciliation dictionary under the unchanged exact repair-counter guard. The
+existing reconciliation remains the first guarded statement.
+
+The indexed owner, plan validation/application, raw counter, constant and tensor
+metadata writes, positive-only layout synchronization, guard, following sort
+and layout inference, broadcast boundary, dependencies, and TensorFlow-free
+behavior are unchanged. No reconciliation or graph traversal is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed InstanceNorm owner, terminal orchestration, and architecture:
+  `310 passed in 18.35s`
+- expanded broad related gate: `1252 passed in 30.10s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the preceding `final_convinteger_layout_stats` owner and its
+reconciliation/sort/layout-inference block before retaining complete evidence.
+Keep the following InstanceNorm boundary fixed. Commit and push only; do not
+create or update a pull request.

@@ -10715,3 +10715,8 @@ layout only after a positive count. Strict characterization preserves its
 single-counter guard and reconciliation→sort→layout-inference order while
 requiring stable two-key `_final_instancenorm_static_shape_stats` evidence. The
 following broadcast owner remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary as the unchanged first statement of
+the positive guard. The following sort and layout inference remain in place,
+and no scan is added.
