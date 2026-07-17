@@ -1300,10 +1300,15 @@ def _run_indexed_final_shape_activation_convergence(
         model_ir,
         graph_index=graph_index,
     )
-    first_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    first_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if _stats_have_positive_count(
+        convergence_stats,
+        hardswish_stats,
+    ):
+        first_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
     reshape_stats = _resolve_dynamic_reshape_shapes(
         model_ir,
         graph_index=graph_index,

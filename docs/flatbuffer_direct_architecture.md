@@ -9861,3 +9861,11 @@ both are completely zero, while passing fixtures retain it independently after
 either predecessor changes. The later Reshape and activation-fusion
 reconciliations remain explicitly present and ordered. Production is unchanged
 at this characterization checkpoint.
+
+`first_reconcile_stats` now starts with the exact zero counter and the first
+extra scan runs only when the preceding convergence aggregate or HardSwish
+sanitizer reports a positive mutation. Both changing paths preserve the scan;
+the complete stable path proceeds directly to dynamic-Reshape resolution. The
+later Reshape and fusion reconciliation boundaries, aggregate return schema,
+shared index, and LayoutState forwarding remain unchanged. The full legacy
+fixture retains identical ModelIR and statistics.

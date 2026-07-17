@@ -677,3 +677,30 @@ ModelIR equality. Validate indexed final convergence, dynamic Reshape, shape
 reconciliation, core, architecture, pass-efficiency, and
 TensorFlow-import-blocked suites sequentially. Commit and push only; do not
 create or update a pull request.
+
+## First final-convergence reconciliation implementation checkpoint
+
+The first extra reconciliation in
+`_run_indexed_final_shape_activation_convergence()` now initializes its result
+with the exact zero counter and runs only when the preceding indexed
+shape-convergence aggregate or HardSwish sanitizer contains a positive
+mutation count.
+
+The complete stable path skips that scan. Either predecessor mutation retains
+it in the same position with the same `ModelIRGraphIndex`. The later
+dynamic-Reshape reconciliation and final post-fusion reconciliation are
+unchanged. The architecture contract verifies the exact two-result guard,
+guarded-call position, and shared index.
+
+Sequential validation across indexed final convergence, dynamic Reshape,
+shape reconciliation, graph cleanup, HardSwish/SE layout, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked suites is
+`391 passed in 25.95s`. Focused stable, per-predecessor mutation, structure,
+and legacy-equivalence coverage is `6 passed in 2.08s`.
+
+At resume, characterize the dynamic-Reshape-to-second-reconciliation boundary.
+The guard must include both `first_reconcile_stats` and `reshape_stats` so a
+first reconciliation that changed metadata can still receive a convergence
+scan even when Reshape resolution is a no-op. Leave the final post-fusion scan
+unchanged until its own interval is characterized. Commit and push only; do
+not create or update a pull request.

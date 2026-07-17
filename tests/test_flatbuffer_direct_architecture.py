@@ -2812,24 +2812,48 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    calls = [
+    direct_calls = [
         statement.value
         for statement in helper.body
         if isinstance(statement, (ast.Assign, ast.AnnAssign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in calls] == [
+    assert [call.func.id for call in direct_calls] == [
         "ModelIRGraphIndex",
         "_run_indexed_shape_convergence_cleanup",
         "_sanitize_hardswish_tensor_shapes",
-        "_reconcile_static_tensor_shapes",
         "_resolve_dynamic_reshape_shapes",
         "_reconcile_static_tensor_shapes",
         "_optimize_fuse_conv_activation_chains",
         "_reconcile_static_tensor_shapes",
     ]
-    for call in calls[1:]:
+    guard = next(
+        statement for statement in helper.body if isinstance(statement, ast.If)
+    )
+    assert isinstance(guard.test, ast.Call)
+    assert isinstance(guard.test.func, ast.Name)
+    assert guard.test.func.id == "_stats_have_positive_count"
+    assert [
+        argument.id
+        for argument in guard.test.args
+        if isinstance(argument, ast.Name)
+    ] == ["convergence_stats", "hardswish_stats"]
+    assert len(guard.body) == 1
+    guarded_assignment = guard.body[0]
+    assert isinstance(guarded_assignment, ast.Assign)
+    guarded_call = guarded_assignment.value
+    assert isinstance(guarded_call, ast.Call)
+    assert isinstance(guarded_call.func, ast.Name)
+    assert guarded_call.func.id == "_reconcile_static_tensor_shapes"
+    reshape_call = next(
+        call
+        for call in direct_calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "_resolve_dynamic_reshape_shapes"
+    )
+    assert direct_calls[2].lineno < guard.lineno < reshape_call.lineno
+    for call in [*direct_calls[1:], guarded_call]:
         graph_index_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "graph_index"
         )
@@ -2837,7 +2861,7 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         assert graph_index_keyword.value.id == "graph_index"
     fusion_call = next(
         call
-        for call in calls
+        for call in direct_calls
         if isinstance(call.func, ast.Name)
         and call.func.id == "_optimize_fuse_conv_activation_chains"
     )

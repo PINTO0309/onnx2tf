@@ -306,13 +306,6 @@ def test_indexed_final_convergence_matches_legacy_sequence(monkeypatch) -> None:
     assert model_ir.operators[-1].options["fusedActivationFunction"] == "RELU"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "the final convergence coordinator still reconciles immediately "
-        "after stable shape convergence and zero HardSwish sanitation"
-    ),
-)
 def test_indexed_final_convergence_skips_first_reconcile_when_stable(
     monkeypatch,
 ) -> None:
