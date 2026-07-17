@@ -9426,3 +9426,13 @@ stable IDs, preserves 120 effective ordered calls, and retains the two
 reshape-only duplicate-fanout and singleton-channel occurrences. The explicit
 no-layout efficiency fixture retains one graph-index build. Focused,
 architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The gate-layout cluster is now characterized without production changes. Its
+keyword-only `include_mixed_attention=True` policy selects eight full-policy
+owners or seven required owners under one main-model scope. One direct caller
+explicitly selects the reduced policy; the attention-recovery context stores
+the same helper as an argument-free callback, thereby selecting the default
+full policy. Focused contracts freeze the exact optional guard, complete owner
+contracts and order, default, direct boundary, callback identity, and empty
+callback arguments. The eventual phase should expose required/full stable-ID
+sequences while retaining the historical helper as both delegate and callback.

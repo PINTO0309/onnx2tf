@@ -2478,3 +2478,13 @@ smoke tests, and all 11 TensorFlow-import-blocked tests pass. No public API,
 artifact, dependency, target-routing, policy, runtime-order, guard, boundary,
 scope-sharing, or TensorFlow-isolation contract changed. PR #952 remains
 closed, and no pull request was created, reopened, or updated.
+
+The one-boolean gate-layout cluster is now characterized without production
+changes. Five focused tests freeze its keyword-only `True` default, one shared
+main-model scope, eight-owner full sequence, seven-owner reduced sequence,
+single exact optional guard, explicit-False direct caller and boundaries, and
+the helper's identity as an argument-free attention-recovery callback. The
+262-test focused/attention-recovery/architecture set, 30 pass-efficiency tests,
+and all 11 TensorFlow-import-blocked tests pass. Runtime behavior and all
+public/dependency contracts remain unchanged. PR #952 remains closed, and no
+pull request was created, reopened, or updated.

@@ -15239,3 +15239,47 @@ callback-driven invocation), scope sharing, and all boundaries before
 extraction. Validate sequentially, keep real-model conversion minimal, make
 separate characterization and implementation checkpoints, commit and push
 only, and do not create or reopen a pull request.
+
+## Gate-layout orchestration characterization: completed state
+
+The 57-line `_run_gate_layout_pass_cluster` remains unchanged in production.
+It has one keyword-only `include_mixed_attention=True` default, creates one
+main-model/session-layout `ModelIRPassStateScope`, optionally runs mixed-
+attention cleanup, then always runs elementwise-gate, PAD, dual-postconv-gate,
+NDHWC-gate, cost-volume/scatter, add/CONCAT-suffix, and dual-MUL/CONCAT cleanup
+in that exact order. Every active owner receives the same ModelIR, layout
+state, session diagnostics, and scope.
+
+Both policy forms are production contracts. One direct caller inside the
+layout-optimization block explicitly passes `include_mixed_attention=False`;
+it remains between SA/PA mirror-PAD propagation and the two-iteration
+normalization loop. `AttentionRecoveryContext` also stores the same helper as
+an argument-free callback. Its attention-gate/QDQ invocation supplies no args
+or keywords, so the helper default selects the eight-owner full policy.
+
+Sequential characterization validation completed as follows:
+
+- focused gate policy/callback contracts: `5 passed in 0.59s`;
+- focused gate, attention-recovery, and ordered architecture:
+  `262 passed in 16.86s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.27s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, default/reduced policy, callback
+wiring, caller multiplicity, boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context, seven
+required IDs, and eight full-policy IDs in `gate_layout_orchestration.py`.
+Build the optional mixed-attention invocation followed by all seven required
+owners under one fresh scope. Preserve the helper's keyword-only `True`
+default as a delegate, its explicit-False caller, and its identity as the
+argument-free attention-recovery callback. Move the efficiency fixture to the
+full explicit runner, update multiplicity-aware accounting without changing
+the 120 effective-call total, validate sequentially, commit and push only, and
+do not create or reopen a pull request.
