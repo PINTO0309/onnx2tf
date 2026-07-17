@@ -10702,3 +10702,8 @@ single-counter guard and the existing reconciliation→topological-sort→layout
 inference order while requiring a stable two-key
 `_final_broadcast_static_shape_stats` result. The following mixed-singleton
 Concat owner remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary as the unchanged first statement of
+the positive guard. Topological sort and layout inference retain their exact
+positions, and no scan is added.

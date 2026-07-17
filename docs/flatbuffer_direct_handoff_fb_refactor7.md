@@ -4055,3 +4055,27 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final broadcast reconciliation-
 result contract; there are no unexpected failures.
+
+## Primary final broadcast reconciliation implementation checkpoint
+
+The primary path now initializes `_final_broadcast_static_shape_stats` with the
+stable two-key schema and replaces it with the opt-in complete reconciliation
+dictionary under the unchanged exact repair-counter guard. The existing
+reconciliation call remains the first statement in that guard.
+
+The indexed owner, raw counter, constant rotation and clone behavior, input
+rewiring, guard, following topological sort and layout inference, mixed-
+singleton boundary, dependencies, fallback path, and TensorFlow-free behavior
+are unchanged. No reconciliation or graph traversal is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- binary owner, convergence, terminal orchestration, and architecture:
+  `286 passed in 17.42s`
+- expanded broad related gate: `1214 passed in 30.53s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the preceding `final_instancenorm_repair_stats` owner and its
+reconciliation/sort/layout-inference block before retaining complete evidence.
+Keep the following broadcast repair boundary fixed. Commit and push only; do
+not create or update a pull request.

@@ -300,6 +300,15 @@ This checkpoint extends the expanded related gate to `1213 passed in 29.96s`;
 the focused indexed-owner, terminal, core-guard, and architecture gate is
 `357 passed in 19.46s`.
 
+The preceding final rank-four channelwise broadcast block now retains complete
+reconciliation evidence under its unchanged exact repair counter. The existing
+reconciliation→sort→layout-inference order and the following mixed-singleton
+Concat boundary are unchanged.
+
+This checkpoint extends the expanded related gate to `1214 passed in 30.53s`;
+the focused binary-owner, convergence, terminal, and architecture gate is
+`286 passed in 17.42s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -309,6 +318,6 @@ full model-corpus run for this observation and accounting unit.
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the remaining primary final-pass
 reconciliation inventory immediately before the completed final PReLU boundary,
-beginning with `final_broadcast_repair_stats`. Any new mutation evidence must
+beginning with `final_instancenorm_repair_stats`. Any new mutation evidence must
 preserve current pass order, TensorFlow-free boundary, dependency set, and
 sequential validation policy.

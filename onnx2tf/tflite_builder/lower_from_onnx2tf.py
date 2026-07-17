@@ -5722,8 +5722,15 @@ def lower_onnx_to_ir(
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
     final_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+    _final_broadcast_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(final_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_broadcast_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
     final_mixed_singleton_concat_stats = (
