@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -68,10 +67,6 @@ def test_reconcile_legacy_tensor_counter_excludes_parameter_only_mutation() -> N
     assert model_ir.operators[0].options["newShape"] == [2, 1]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="static reconciliation has no opt-in complete mutation counter",
-)
 def test_reconcile_can_report_parameter_only_mutation_without_changing_legacy_key() -> (
     None
 ):

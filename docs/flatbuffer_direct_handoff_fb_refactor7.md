@@ -2418,3 +2418,31 @@ very-late call. Validate parameter-only mutation, all static-shape
 reconciliation suites, dynamic-Reshape, very-late orchestration, core,
 pass-efficiency, architecture, and TensorFlow import blocking sequentially.
 Commit and push only; do not create or update a pull request.
+
+## Very-late static reconciliation implementation checkpoint
+
+`reconcile_static_tensor_shapes()` now accepts
+`include_mutation_count=False`. The default path preserves the exact legacy
+dictionary. Opt-in mode additionally returns
+`reconciled_static_shape_mutations`.
+
+Mutation accounting is embedded in the existing fixed-point walk. Small local
+setters count output shape updates, operator-option changes, constant
+shape-parameter writes, direct shape-signature updates, and constant-vector
+metadata changes. No ModelIR fingerprint, copy, pre/post graph scan, or new
+dependency is introduced.
+
+Only the direct reconciliation after
+`_very_late_dynamic_rank1_reshape_stats` enables the option and stages
+`_very_late_static_shape_stats`. Other callers, including indexed convergence
+and fallback/final paths, retain the legacy one-key schema. The focused
+reconciliation/very-late gate is `47 passed, 250 deselected`; the complete
+static reconciliation, convergence, core, architecture, and import-boundary
+gate is `428 passed in 27.50s`; and the expanded sequential gate is `1339
+passed in 30.54s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, audit the immediately following `split_fallback_stats` owner and its
+conditional reconciliation. Confirm whether its raw rewrite counter covers any
+cleanup and whether the existing positive guard is complete before changing
+that boundary. Commit and push only; do not create or update a pull request.

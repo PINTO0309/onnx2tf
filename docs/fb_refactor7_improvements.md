@@ -70,6 +70,22 @@ tensor reduction. Non-mutating iteration counters are excluded from mutation
 summaries. These rules make every stability guard conservative without adding
 ModelIR copies or additional graph passes.
 
+## Complete static-shape reconciliation evidence
+
+Static-shape reconciliation historically exposed only the number of output
+tensor shape updates. That legacy counter intentionally omitted valid
+parameter-only repairs, such as correcting a stale Reshape `newShape`, so it
+could not safely be used as complete graph-mutation evidence.
+
+The reconciler now offers an opt-in complete counter. Its existing fixed-point
+walk records operator-option changes, constant shape-parameter writes, direct
+tensor metadata updates, and ordinary output shape updates while performing
+the original work. The default return dictionary remains byte-for-byte
+compatible; only the selected very-late call requests the additional
+`reconciled_static_shape_mutations` key and stages the result as
+`_very_late_static_shape_stats`. No fingerprint, graph copy, pre/post scan, or
+new dependency is required.
+
 ## Smaller internal owners
 
 - Typed ONNX `Constant` lowering is isolated in its op-family module while
@@ -95,20 +111,21 @@ worker, or TensorFlow import.
 
 ## Validation
 
-The latest sequential gate covers the changed indexed owners, late/terminal
-orchestrators, absolute-final normalization boundary, shared ModelIR pass
-context, core contracts, pass efficiency, architecture constraints, and
-optional TensorFlow import boundary. Result: `1200 passed`.
+The latest expanded sequential regression gate covers the changed indexed
+owners, late/terminal orchestrators, static-shape reconciliation, shared
+ModelIR pass context, core contracts, pass efficiency, architecture
+constraints, and the optional TensorFlow import boundary. Result: `1339
+passed`. The dedicated reconciliation/convergence gate was repeated for the
+current checkpoint and produced `428 passed in 26.85s`.
 
-Focused validation for the final absolute-final post-bias unit produced `9
-passed`. Focused Ruff, Python bytecode compilation, and `git diff --check` also
-pass. These results are contract and orchestration tests; they do not claim a
-new full model-corpus run for this final observation-only unit.
+Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
+These results are contract and orchestration tests; they do not claim a new
+full model-corpus run for this observation and accounting unit.
 
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should inspect the direct static-shape reconciliation immediately after
-the newly staged dynamic rank-one result. Any new mutation evidence must
-preserve the current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the split-fallback result and conditional reconciliation
+immediately after the newly staged complete static-shape evidence. Any new
+mutation evidence must preserve the current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

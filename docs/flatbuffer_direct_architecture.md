@@ -10463,3 +10463,11 @@ preserves that key and requires an opt-in
 changes. Only the very-late call requests it and stages
 `_very_late_static_shape_stats`; existing callers retain their exact result
 schema.
+
+The reconciliation owner now counts all writes while performing its existing
+fixed-point walk. The opt-in total includes output shape updates, operator
+options, constant shape parameters, and direct tensor metadata. It adds no
+fingerprint or graph traversal. Default callers still receive only
+`reconciled_static_tensor_shapes`; the selected very-late call passes
+`include_mutation_count=True` and stages `_very_late_static_shape_stats` with
+both keys.

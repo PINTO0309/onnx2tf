@@ -5062,6 +5062,13 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert dynamic_rank1_stats.value.func.id == (
         "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
     )
+    static_shape_stats = lowerer.body[invocation_index + 9]
+    assert isinstance(static_shape_stats, ast.Assign)
+    assert isinstance(static_shape_stats.targets[0], ast.Name)
+    assert static_shape_stats.targets[0].id == "_very_late_static_shape_stats"
+    assert isinstance(static_shape_stats.value, ast.Call)
+    assert isinstance(static_shape_stats.value.func, ast.Name)
+    assert static_shape_stats.value.func.id == "_reconcile_static_tensor_shapes"
 
 
 def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:

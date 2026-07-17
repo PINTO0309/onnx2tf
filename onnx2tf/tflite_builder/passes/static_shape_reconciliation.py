@@ -355,6 +355,7 @@ def reconcile_static_tensor_shapes(
     model_ir: ModelIR,
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    include_mutation_count: bool = False,
 ) -> Dict[str, int]:
     """
     Recompute static tensor shapes after aggressive graph rewrites.
@@ -364,6 +365,7 @@ def reconcile_static_tensor_shapes(
     shape propagation and syncs `shape` / `shape_signature` for common TFLite ops.
     """
     updated_tensors = 0
+    mutation_count = 0
     active_index = (
         graph_index
         if graph_index is not None and graph_index.model_ir is model_ir
@@ -389,7 +391,7 @@ def reconcile_static_tensor_shapes(
         new_shape: Optional[List[int]],
         new_shape_signature: Optional[List[int]] = None,
     ) -> bool:
-        nonlocal updated_tensors
+        nonlocal mutation_count, updated_tensors
         if new_shape is None:
             return False
         if not _is_fully_known_positive_shape(new_shape):
@@ -420,6 +422,60 @@ def reconcile_static_tensor_shapes(
         tensor.shape = normalized
         tensor.shape_signature = signature
         updated_tensors += 1
+        mutation_count += 1
+        return True
+
+    def _set_operator_option(operator: Any, key: str, value: Any) -> bool:
+        nonlocal mutation_count
+        if key in operator.options and operator.options[key] == value:
+            return False
+        operator.options[key] = value
+        mutation_count += 1
+        return True
+
+    def _write_const_ints_tracked(tensor: Any, values: List[int]) -> bool:
+        nonlocal mutation_count
+        changed_tensor = _write_const_ints_to_tensor(tensor, values)
+        if changed_tensor:
+            mutation_count += 1
+        return bool(changed_tensor)
+
+    def _set_tensor_vector_metadata(tensor: Any, length: int) -> bool:
+        nonlocal mutation_count
+        normalized = [int(length)]
+        if tensor.shape == normalized and tensor.shape_signature == normalized:
+            return False
+        tensor.shape = list(normalized)
+        tensor.shape_signature = list(normalized)
+        mutation_count += 1
+        return True
+
+    def _set_tensor_shape_signature(tensor: Any, signature: List[int]) -> bool:
+        nonlocal mutation_count
+        normalized = [int(value) for value in signature]
+        if tensor.shape_signature == normalized:
+            return False
+        tensor.shape_signature = normalized
+        mutation_count += 1
+        return True
+
+    def _set_int32_const_tensor(tensor: Any, values: List[int]) -> bool:
+        nonlocal mutation_count
+        normalized = [int(value) for value in values]
+        current = _read_const_ints_from_tensor(tensor)
+        target_shape = [int(len(normalized))]
+        if (
+            current == normalized
+            and str(tensor.dtype).upper() == "INT32"
+            and tensor.shape == target_shape
+            and tensor.shape_signature == target_shape
+        ):
+            return False
+        tensor.data = np.asarray(normalized, dtype=np.int32)
+        tensor.dtype = "INT32"
+        tensor.shape = list(target_shape)
+        tensor.shape_signature = list(target_shape)
+        mutation_count += 1
         return True
 
     max_passes = 32
@@ -907,16 +963,22 @@ def reconcile_static_tensor_shapes(
                         out_signature = [int(v) for v in input_signature]
                         out_shape.insert(axis, 1)
                         out_signature.insert(axis, 1)
-                        op.options["newShape"] = [int(v) for v in out_shape]
+                        _set_operator_option(
+                            op,
+                            "newShape",
+                            [int(v) for v in out_shape],
+                        )
                         if len(inputs) >= 2:
                             shape_tensor = model_ir.tensors.get(inputs[1], None)
                             if shape_tensor is not None and shape_tensor.data is not None:
-                                changed |= _write_const_ints_to_tensor(
+                                changed |= _write_const_ints_tracked(
                                     shape_tensor,
                                     [int(v) for v in out_shape],
                                 )
-                                shape_tensor.shape = [int(len(out_shape))]
-                                shape_tensor.shape_signature = [int(len(out_shape))]
+                                _set_tensor_vector_metadata(
+                                    shape_tensor,
+                                    len(out_shape),
+                                )
                         changed |= _update_tensor_shape(
                             outputs[0],
                             out_shape,
@@ -963,20 +1025,33 @@ def reconcile_static_tensor_shapes(
                             )
                             safe_shape = [int(v) for v in existing_output_shape]
                             safe_shape[int(dynamic_axis)] = -1
-                            op.options["newShape"] = [int(v) for v in safe_shape]
-                            op.options["preserveDynamicShape"] = True
-                            op.options["speculativeBranchSafe"] = True
+                            _set_operator_option(
+                                op,
+                                "newShape",
+                                [int(v) for v in safe_shape],
+                            )
+                            _set_operator_option(
+                                op,
+                                "preserveDynamicShape",
+                                True,
+                            )
+                            _set_operator_option(
+                                op,
+                                "speculativeBranchSafe",
+                                True,
+                            )
                             if len(inputs) >= 2:
                                 shape_tensor = model_ir.tensors.get(inputs[1], None)
                                 if shape_tensor is not None and shape_tensor.data is not None:
-                                    changed |= _write_const_ints_to_tensor(
+                                    changed |= _write_const_ints_tracked(
                                         shape_tensor,
                                         [int(v) for v in safe_shape],
                                     )
                             if output_tensor is not None:
-                                output_tensor.shape_signature = [
-                                    int(v) for v in safe_shape
-                                ]
+                                _set_tensor_shape_signature(
+                                    output_tensor,
+                                    [int(v) for v in safe_shape],
+                                )
                             changed = True
                             continue
                     if out_shape is None:
@@ -985,21 +1060,25 @@ def reconcile_static_tensor_shapes(
                         out_shape is not None
                         and _is_fully_known_positive_shape(out_shape)
                     ):
-                        op.options["newShape"] = [
-                            int(v) for v in list(out_shape)
-                        ]
+                        _set_operator_option(
+                            op,
+                            "newShape",
+                            [int(v) for v in list(out_shape)],
+                        )
                         if len(inputs) >= 2:
                             shape_tensor = model_ir.tensors.get(inputs[1], None)
                             if (
                                 shape_tensor is not None
                                 and shape_tensor.data is not None
                             ):
-                                changed |= _write_const_ints_to_tensor(
+                                changed |= _write_const_ints_tracked(
                                     shape_tensor,
                                     [int(v) for v in list(out_shape)],
                                 )
-                                shape_tensor.shape = [int(len(out_shape))]
-                                shape_tensor.shape_signature = [int(len(out_shape))]
+                                _set_tensor_vector_metadata(
+                                    shape_tensor,
+                                    len(out_shape),
+                                )
                         changed |= _update_tensor_shape(
                             outputs[0],
                             out_shape,
@@ -1106,20 +1185,22 @@ def reconcile_static_tensor_shapes(
                             flatten_shape[1] = int(
                                 flatten_consumer_feature_dim
                             )
-                        op.options["newShape"] = (
-                            []
-                            if len(existing_flatten_new_shape) == 0
-                            else [int(v) for v in flatten_signature]
+                        _set_operator_option(
+                            op,
+                            "newShape",
+                            (
+                                []
+                                if len(existing_flatten_new_shape) == 0
+                                else [int(v) for v in flatten_signature]
+                            ),
                         )
                         if len(inputs) >= 2:
                             shape_tensor = model_ir.tensors.get(inputs[1], None)
                             if shape_tensor is not None and shape_tensor.data is not None:
-                                shape_tensor.data = np.asarray(
+                                _set_int32_const_tensor(
+                                    shape_tensor,
                                     flatten_signature,
-                                    dtype=np.int32,
                                 )
-                                shape_tensor.shape = [2]
-                                shape_tensor.shape_signature = [2]
                         changed |= _update_tensor_shape(
                             outputs[0],
                             flatten_shape,
@@ -1347,9 +1428,10 @@ def reconcile_static_tensor_shapes(
                     ]
                     output_tensor = model_ir.tensors.get(outputs[0], None)
                     if output_tensor is not None:
-                        output_tensor.shape_signature = [
-                            int(v) for v in out_signature
-                        ]
+                        _set_tensor_shape_signature(
+                            output_tensor,
+                            [int(v) for v in out_signature],
+                        )
                 shape_for_update = [int(v) for v in list(out_shape)]
                 if (
                     has_dynamic_input_dim
@@ -1382,8 +1464,8 @@ def reconcile_static_tensor_shapes(
                     and not has_dynamic_input_dim
                     and not bool(op.options.get("preserveDynamicShape", False))
                 ):
-                    changed |= _write_const_ints_to_tensor(begin_tensor, resolved_begin)
-                    changed |= _write_const_ints_to_tensor(size_tensor, resolved_size)
+                    changed |= _write_const_ints_tracked(begin_tensor, resolved_begin)
+                    changed |= _write_const_ints_tracked(size_tensor, resolved_size)
                 continue
 
             if op_type in {"PAD", "MIRROR_PAD"} and len(inputs) >= 2 and len(outputs) == 1:
@@ -1536,8 +1618,8 @@ def reconcile_static_tensor_shapes(
                     if int(filter_h) > int(in_shape[1]) or int(filter_w) > int(in_shape[2]):
                         filter_h = int(in_shape[1])
                         filter_w = int(in_shape[2])
-                        op.options["filterHeight"] = int(filter_h)
-                        op.options["filterWidth"] = int(filter_w)
+                        _set_operator_option(op, "filterHeight", int(filter_h))
+                        _set_operator_option(op, "filterWidth", int(filter_w))
                         out_h = _infer_conv_out_dim(in_shape[1], filter_h, stride_h, 1, padding)
                         out_w = _infer_conv_out_dim(in_shape[2], filter_w, stride_w, 1, padding)
 
@@ -1610,7 +1692,10 @@ def reconcile_static_tensor_shapes(
                 # Synchronize resize-size constants with ONNX-derived hints so downstream
                 # prepare-time shape inference follows the reconciled NHWC metadata.
                 if size_tensor_is_const and size_source in {"onnx_sizes", "onnx_scales"}:
-                    changed |= _write_const_ints_to_tensor(size_tensor, [int(out_h), int(out_w)])
+                    changed |= _write_const_ints_tracked(
+                        size_tensor,
+                        [int(out_h), int(out_w)],
+                    )
                 out_shape = [int(in_shape[0]), int(out_h), int(out_w), int(in_shape[3])]
                 input_signature = (
                     list(in_tensor.shape_signature)
@@ -1639,4 +1724,7 @@ def reconcile_static_tensor_shapes(
         if not changed:
             break
 
-    return {"reconciled_static_tensor_shapes": int(updated_tensors)}
+    details = {"reconciled_static_tensor_shapes": int(updated_tensors)}
+    if include_mutation_count:
+        details["reconciled_static_shape_mutations"] = int(mutation_count)
+    return details

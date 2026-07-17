@@ -710,7 +710,10 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
     assert _expression_path(layout_keyword.value) == "session.layout_state"
 
     following = lowerer.body[concat_pool_index + 2]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_very_late_static_shape_stats"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_reconcile_static_tensor_shapes"
@@ -734,10 +737,6 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
     assert sorted(remaining_inputs) == ["fallback_ir", "model_ir"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the very-late static reconciliation result is discarded",
-)
 def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -> (
     None
 ):

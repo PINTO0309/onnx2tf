@@ -1234,10 +1234,12 @@ def _reconcile_static_tensor_shapes(
     model_ir: ModelIR,
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    include_mutation_count: bool = False,
 ) -> Dict[str, int]:
     return _static_shape_reconciliation_pass.reconcile_static_tensor_shapes(
         model_ir,
         graph_index=graph_index,
+        include_mutation_count=include_mutation_count,
     )
 
 
@@ -5339,7 +5341,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _very_late_static_shape_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        include_mutation_count=True,
+    )
     split_fallback_stats = _replace_unsupported_split_with_slice(
         model_ir,
         layout_state=session.layout_state,
