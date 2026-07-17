@@ -10649,3 +10649,13 @@ The primary caller now initializes that stable result and replaces it with the
 opt-in complete reconciliation dictionary only after the unchanged rewrite-or-
 tensor-reduction guard succeeds. The unconditional owner prune, tensor-count
 sample, raw result, and consecutive-Reshape boundary are unchanged.
+
+The preceding final SiNet-shuffle plus SE/FC/Gather aggregate has three exact
+rewrite counters. SiNet-shuffle prunes only after a positive rewrite, while the
+SE/FC and Gather children can preserve legacy zero-rewrite pruning when their
+candidate callbacks run. The existing aggregate-level tensor-count sample
+captures those cleanup-only ModelIR changes. Strict characterization preserves
+the counter-or-net-reduction guard and requires a stable two-key
+`_final_se_fc_gather_static_shape_stats` value receiving the opt-in complete
+reconciliation result only inside that guard. This mirrors the already-complete
+recursive-fallback boundary and keeps final PReLU adjacent.

@@ -3840,3 +3840,37 @@ At resume, audit the preceding `final_sinet_shuffle_stats` plus
 guard for complete rewrite and cleanup evidence before retaining its guarded
 reconciliation result. Keep the following final PReLU boundary fixed. Commit
 and push only; do not create or update a pull request.
+
+## Primary final SE/FC/Gather reconciliation characterization checkpoint
+
+The absolute-final aggregate combines three exact rewrite counters. The
+indexed SiNet shuffle owner prunes and syncs layout only after a positive
+transactional rewrite. The SE/FC and Gather callbacks preserve legacy pruning
+on every candidate execution and can therefore reduce the tensor table with a
+zero rewrite counter. Their orchestration runner returns only the two ordered
+child dictionaries and performs no independent cleanup. The existing
+`final_se_fc_gather_tensor_count` sample plus the three-counter sum therefore
+covers every ModelIR rewrite and cleanup-only deletion.
+
+The recursive fallback already stages a stable complete reconciliation result
+under the same contract. A strict expected-failure main-path contract now
+requires the symmetric `_final_se_fc_gather_static_shape_stats` value and
+assigns the opt-in complete result under the unchanged aggregate guard. It also
+fixes the following `final_prelu_tensor_count` boundary.
+
+At implementation, add only main-path result plumbing. Do not change any
+owner, counter schema, orchestration order, matching/planning, rewiring,
+pruning, layout sync, tensor-count sample, guard, dependencies, fallback path,
+or TensorFlow behavior. Validate the three owners, orchestration, terminal
+contract, and architecture sequentially, then commit and push only; do not
+create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- SiNet shuffle, SE/FC, Gather, orchestration, core guard, and architecture:
+  `542 passed, 1 xfailed in 18.76s`
+- expanded broad related gate: `1135 passed, 1 xfailed in 30.04s`
+- Ruff and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet primary final aggregate
+reconciliation-result contract; there are no unexpected failures.
