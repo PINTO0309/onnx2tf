@@ -391,14 +391,20 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
 
     previous = lowerer.body[invocation_index - 2]
     following = lowerer.body[invocation_index + 2]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_terminal_hardswish_se_stats"
+    assert isinstance(previous.value, ast.Dict)
+    previous_call = previous.value.values[0]
+    assert isinstance(previous_call, ast.Call)
+    assert isinstance(previous_call.func, ast.Name)
+    assert previous_call.func.id == (
+        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
     )
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_optimize_transpose_pre_concat_nhwc_chains"
 
 

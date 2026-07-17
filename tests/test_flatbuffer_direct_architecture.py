@@ -5469,12 +5469,16 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert include_layout.value.id == "optimize_layout_transpose_chains"
 
     previous_boundary = lowerer.body[invocation_index - 2]
-    assert isinstance(previous_boundary, ast.Expr)
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_terminal_hardswish_se_stats"
+    assert isinstance(previous_boundary.value, ast.Dict)
+    previous_call = previous_boundary.value.values[0]
+    assert isinstance(previous_call, ast.Call)
+    assert isinstance(previous_call.func, ast.Name)
+    assert previous_call.func.id == (
+        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
     )
     next_boundary = lowerer.body[invocation_index + 2]
     assert isinstance(next_boundary, ast.Expr)

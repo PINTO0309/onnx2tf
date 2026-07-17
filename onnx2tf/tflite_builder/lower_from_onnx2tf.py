@@ -5152,7 +5152,16 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
+    terminal_hardswish_se_tensor_count = len(model_ir.tensors)
+    _terminal_hardswish_se_stats = {
+        **_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
+            model_ir
+        ),
+        "pruned_unused_tensors": max(
+            0,
+            int(terminal_hardswish_se_tensor_count - len(model_ir.tensors)),
+        ),
+    }
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.

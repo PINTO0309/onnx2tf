@@ -359,10 +359,6 @@ def test_hardswish_se_layout_prunes_unused_tensors_on_zero_rewrite() -> None:
     assert "unused" not in model_ir.tensors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal Hardswish-SE call does not capture prune evidence",
-)
 def test_terminal_hardswish_se_call_captures_complete_mutation_evidence() -> None:
     tree = ast.parse(
         (

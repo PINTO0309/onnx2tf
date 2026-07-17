@@ -10104,3 +10104,10 @@ counter while adding the exact net tensor reduction as
 `pruned_unused_tensors`. The neighboring split/conv bridge owner and late
 hard-activation cluster remain fixed boundaries; production is unchanged at
 this checkpoint.
+
+The production call now records the starting tensor count and builds
+`_terminal_hardswish_se_stats` from the owner's unchanged rewrite dictionary
+plus the clamped net tensor reduction. This captures zero-rewrite pruning
+without changing owner semantics. The staged dictionary is not yet consumed by
+a reconciliation guard, and both neighboring boundaries remain in their
+original order.

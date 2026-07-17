@@ -1204,3 +1204,28 @@ Validate the complete Hardswish-SE owner suite, late hard-activation
 orchestration, terminal recovery structure, core, architecture, pass
 efficiency, and TensorFlow import blocking sequentially. Commit and push only;
 do not create or update a pull request.
+
+## Terminal Hardswish-SE evidence implementation checkpoint
+
+The terminal call now records `terminal_hardswish_se_tensor_count` and stores
+the owner's unchanged rewrite dictionary in `_terminal_hardswish_se_stats`
+together with the exact, clamped net `pruned_unused_tensors` count. This makes
+the owner's unconditional zero-rewrite pruning observable without changing the
+owner, its compatibility wrapper, or its output counter.
+
+The staged dictionary is observation-only. The preceding split/conv bridge,
+following late hard-activation cluster, pass policy and order, shared
+LayoutState, broad phase reconciliation, public behavior, artifacts, and
+TensorFlow-free direct path are unchanged.
+
+Focused Hardswish-SE and late hard-activation coverage is `22 passed in 0.74s`.
+The sequential Hardswish-SE, late hard-activation, QKV, split/conv bridge,
+SINet terminal, Expand/Squeeze, late-layout, constant-fold/cast, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked gate is `469 passed
+in 28.37s`. Ruff, Python bytecode compilation, and whitespace validation pass.
+
+At resume, continue backward with the adjacent split/conv bridge owner or the
+late QKV cluster. Characterize raw results and zero-rewrite pruning before
+extending the staged terminal aggregate. Do not guard broad reconciliation
+until the full interval is accounted for. Commit and push only; do not create
+or update a pull request.
