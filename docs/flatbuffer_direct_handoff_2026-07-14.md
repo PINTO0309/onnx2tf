@@ -13335,3 +13335,41 @@ new stable terminal slice/concat phase; freeze its complete call/argument list,
 captures, repetition, and outer boundaries before choosing the next explicit
 context. Validate sequentially, commit and push, and do not create a pull
 request.
+
+## Terminal affine/concat/split recovery characterization: completed state
+
+The 30-line `_run_terminal_affine_concat_split_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, has no control flow or local pass-state scope, and contains
+eleven ordered calls. Every target already has an extracted module owner; no
+lowerer-local callback, diagnostics, or conversion option is required.
+
+The focused
+`test_flatbuffer_direct_terminal_affine_concat_split_recovery_orchestration.py`
+freezes all eleven positional/keyword argument contracts, distinguishing the
+six layout-aware slots from five model-only slots. It also proves both outer
+invocations remain zero-argument top-level boundaries and retains their two
+distinct predecessor/follower pairs at the absolute end of the optimization
+pipeline.
+
+Validation completed sequentially as follows:
+
+- focused terminal affine/concat/split characterization:
+  `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.63s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 10.21s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout context and eleven stable IDs
+with direct imports of every existing owner. Prove builder argument equality
+and instrumented order before switching the historical helper, preserve both
+top-level outer boundaries, validate sequentially, commit and push, and do not
+create a pull request.

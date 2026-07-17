@@ -1987,3 +1987,11 @@ arguments, callback identity, order, and invocation totals. The 867-test
 related family, 32 core smoke tests, and all 11 TensorFlow-import-blocked tests
 pass. No public API, artifact, dependency, runtime order, or TensorFlow
 boundary changed, and no pull request was created, reopened, or updated.
+
+The adjacent 11-step terminal affine/concat/split sequence is now
+characterized without production changes. Four focused tests freeze all
+ModelIR/layout arguments, both zero-argument top-level calls, and both distinct
+terminal neighbor pairs. All targets have direct module owners and no callback,
+diagnostics, or option is needed. The focused plus architecture suite passed
+252 tests and all 11 TensorFlow-import-blocked tests passed. No pull request was
+created, reopened, or updated.

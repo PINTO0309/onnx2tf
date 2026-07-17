@@ -9018,3 +9018,11 @@ combine stable phase multiplicity with remaining direct calls, preserving all
 former execution totals. Focused, related-owner, core, and TensorFlow-import-
 blocked suites pass. Characterize the neighboring terminal affine/concat/split
 sequence before the next extraction.
+
+The terminal affine/concat/split sequence is now characterized without
+production changes. It has eleven straight-line calls, two zero-argument outer
+invocations, six layout-aware argument contracts, and no callback,
+diagnostics, option, control-flow, or local-state dependency. Every target has
+an existing module owner. Focused tests freeze the complete order and both
+distinct terminal neighbors. The eventual phase should use a frozen ModelIR/
+layout context and eleven stable IDs with direct imports only.
