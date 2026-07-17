@@ -75,6 +75,9 @@ from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
 from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
     VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
+    SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -103,6 +106,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
     *CONSTANT_FOLD_CAST_PASS_IDS,
     *VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
+    *SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -4741,34 +4745,26 @@ def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_se_fc_layout_cleanup",
         "run_transpose_gather_channel_fanout_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    )
+    assert SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS == expected_order
     assert [argument.arg for argument in helper.args.args] == [
         "target_model_ir",
         "target_layout_state",
     ]
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_se_fc_gather_channel_fanout"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Call)
+    assert isinstance(statement.value.args[0].func, ast.Name)
+    assert statement.value.args[0].func.id == "SEFCGatherChannelFanoutContext"
+    assert statement.value.keywords == []
 
     helper_invocations = [
         node
@@ -11846,6 +11842,8 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_constant_input_fold_cleanup",
         "run_redundant_cast_cleanup",
         "run_transpose_gather_axis_cleanup",
+        "run_se_fc_layout_cleanup",
+        "run_transpose_gather_channel_fanout_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
@@ -12048,7 +12046,13 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_gather_channel_fanout_cleanup"
     ]
-    assert len(transpose_gather_channel_fanout_calls) == 3
+    assert (
+        len(transpose_gather_channel_fanout_calls)
+        + _orchestrated_pass_count(
+            "run_transpose_gather_channel_fanout_cleanup"
+        )
+        == 3
+    )
 
     transpose_unary_calls = [
         call
@@ -12178,7 +12182,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_se_fc_layout_cleanup"
     ]
-    assert len(se_fc_calls) == 3
+    assert (
+        len(se_fc_calls)
+        + _orchestrated_pass_count("run_se_fc_layout_cleanup")
+        == 3
+    )
 
     elementwise_gate_calls = [
         call

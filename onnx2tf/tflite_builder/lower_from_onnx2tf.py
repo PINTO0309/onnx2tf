@@ -261,6 +261,10 @@ from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orche
     VeryLateGatherConstantNormalizationContext,
     run_very_late_gather_constant_normalization,
 )
+from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
+    SEFCGatherChannelFanoutContext,
+    run_se_fc_gather_channel_fanout,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4127,21 +4131,12 @@ def lower_onnx_to_ir(
         target_model_ir: ModelIR,
         target_layout_state: LayoutState | None,
     ) -> None:
-        state_scope = ModelIRPassStateScope(
-            target_model_ir,
-            layout_state=target_layout_state,
-        )
-        run_se_fc_layout_cleanup(
-            target_model_ir,
-            layout_state=target_layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_transpose_gather_channel_fanout_cleanup(
-            target_model_ir,
-            layout_state=target_layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_se_fc_gather_channel_fanout(
+            SEFCGatherChannelFanoutContext(
+                model_ir=target_model_ir,
+                layout_state=target_layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
 
     def _run_terminal_boundary_layout_pass_cluster() -> None:

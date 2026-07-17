@@ -2386,3 +2386,19 @@ architecture suite passed 253 tests, the 30 pass-efficiency tests and all 11
 TensorFlow-import-blocked tests passed, and targeted static checks passed.
 Runtime behavior and all public/dependency contracts remain unchanged. PR #952
 remains closed, and no pull request was created, reopened, or updated.
+
+That pair is now implemented in
+`passes/se_fc_gather_channel_fanout_orchestration.py` with a frozen target
+ModelIR/layout/session-diagnostics context, two canonical stable IDs, and
+direct owner imports. The historical helper constructs a context per call,
+preserving both positional target forms without storing fallback state in a
+long-lived context. Each builder creates one fresh target-specific pass-state
+scope shared by both immutable invocations. Both production callers and all
+four surrounding boundaries remain unchanged, while unrelated direct owner
+calls are untouched. Architecture accounting preserves the ordered total and
+the efficiency fixture retains one graph-index build. The 257-test focused/
+architecture set, 30 pass-efficiency tests, 32 core smoke tests, and all 11
+TensorFlow-import-blocked tests pass. No public API, artifact, dependency,
+target routing, caller multiplicity, runtime order, boundary, scope-sharing
+behavior, or TensorFlow isolation changed. PR #952 remains closed, and no pull
+request was created, reopened, or updated.

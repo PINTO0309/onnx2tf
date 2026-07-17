@@ -14883,3 +14883,54 @@ diagnostics rather than storing fallback state in one long-lived context.
 Preserve both positional caller forms and every boundary as a delegate. Prove
 fresh/shared scope identity and instrumented order before switching production;
 validate sequentially, commit and push, and do not create a pull request.
+
+## Explicit SE-FC and gather-channel-fanout orchestration: completed state
+
+The characterized pair now delegates to
+`passes/se_fc_gather_channel_fanout_orchestration.py`. A frozen
+`SEFCGatherChannelFanoutContext` contains one target ModelIR, its optional
+layout state, and session diagnostics. The two canonical stable IDs preserve
+SE-FC layout cleanup followed by transpose-gather channel-fanout cleanup, and
+the phase module imports both owners directly without importing the lowerer.
+
+The historical helper keeps its two required positional arguments and creates
+the frozen context inside each call. It therefore does not retain fallback
+ModelIR or layout state in one long-lived session context. Each builder creates
+one fresh `ModelIRPassStateScope` for the supplied target and attaches that
+same scope, target, layout, and diagnostics to both immutable invocations. The
+shared executor validates the two IDs before execution.
+
+Both production callers remain syntactically unchanged: fallback still passes
+`(fallback_ir, None)` and main still passes
+`(model_ir, session.layout_state)`. Their SiNet-tail and reconciliation
+neighbors are unchanged. Other independent central calls to both cleanup
+runners remain untouched, so their existing imports are retained. Architecture
+accounting moves one syntactic occurrence of each owner to stable IDs while
+preserving the ordered total of 120. The efficiency fixture executes the
+explicit no-layout form and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused SE-FC/gather-fanout orchestration: `9 passed in 0.61s`;
+- focused orchestration plus ordered architecture:
+  `257 passed in 16.79s`;
+- pass-efficiency: `30 passed in 0.57s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.37s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, target routing, caller multiplicity, boundaries, runtime order,
+shared-scope efficiency, and TensorFlow isolation are unchanged. PR #952
+remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the remaining shared-scope helpers and select the next
+bounded phase. Prefer a fixed-target zero-argument cluster over the larger
+option-dependent channel-shuffle or singleton clusters. Freeze all owner
+contracts, caller multiplicity, and boundaries first; validate sequentially,
+keep real-model conversion minimal, commit and push only, and do not create a
+pull request.

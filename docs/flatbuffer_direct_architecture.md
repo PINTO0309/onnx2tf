@@ -9346,3 +9346,13 @@ contracts freeze both forms and their identical SiNet-tail/reconciliation
 boundaries. The eventual phase should use a frozen target context and two
 stable IDs, with the historical helper constructing a context per call rather
 than capturing one long-lived target.
+
+That pair now uses `SEFCGatherChannelFanoutContext` and two stable IDs in
+`passes/se_fc_gather_channel_fanout_orchestration.py`. The historical helper
+constructs a frozen context per positional call, so fallback and main targets
+cannot leak into each other. Every builder creates one fresh target-specific
+scope shared by both immutable invocations. Both production caller forms and
+their identical surrounding boundaries remain unchanged; unrelated direct
+runner calls remain in the lowerer. The efficiency fixture now exercises the
+explicit no-layout phase and retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.

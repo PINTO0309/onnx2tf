@@ -96,6 +96,10 @@ from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orche
     VeryLateGatherConstantNormalizationContext,
     run_very_late_gather_constant_normalization,
 )
+from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
+    SEFCGatherChannelFanoutContext,
+    run_se_fc_gather_channel_fanout,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -661,17 +665,12 @@ def test_se_fc_gather_channel_fanout_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_se_fc_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_transpose_gather_channel_fanout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_se_fc_gather_channel_fanout(
+        SEFCGatherChannelFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
