@@ -1558,3 +1558,24 @@ first direct call, or the preceding channel-slice cluster if that owner cannot
 provide complete mutation evidence. Characterize its return and prune contract
 before changing production. Commit and push only; do not create or update a
 pull request.
+
+## Pre-terminal affine post-ADD evidence characterization checkpoint
+
+The indexed affine post-ADD owner returns one fixed rewrite counter and calls
+unused-tensor pruning only after at least one accepted rewrite. Its existing
+transactional and idempotence contracts, plus an explicit prune-hook test, show
+that the raw result is complete mutation evidence without a tensor-count proxy.
+
+There are three direct lowerer calls and one orchestrated occurrence. A strict
+expected-failure contract selects only the first direct call, immediately after
+the channel-slice cluster and before
+`_pre_terminal_affine_slice_pad_concat_stats`, and requires it to assign
+`_pre_terminal_affine_post_add_stats`. The two later direct calls must remain
+expressions, and owner arguments and LayoutState forwarding are frozen.
+
+At implementation, replace only that exact direct expression, update the
+channel-slice and first slice/pad/concat boundary contracts, and preserve the
+other direct and orchestrated occurrences. Validate the complete indexed owner,
+channel-slice, bridge-owner, terminal-affine, core, pass-efficiency,
+architecture, and TensorFlow-import-blocked suites sequentially. Commit and
+push only; do not create or update a pull request.

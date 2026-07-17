@@ -1343,3 +1343,77 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
     second_target = direct_statements[1].targets[0]
     assert isinstance(second_target, ast.Name)
     assert second_target.id == "_terminal_slice_pad_concat_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the pre-terminal affine post-ADD result is still discarded",
+)
+def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> None:
+    lowering_tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    slice_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_pre_terminal_affine_slice_pad_concat_stats"
+    )
+    invocation = lowerer.body[slice_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[slice_index - 2]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == "_run_channel_slice_pad_mul_layout_pass_cluster"
+    following = lowerer.body[slice_index]
+    assert isinstance(following, ast.Assign)
+    assert following.targets[0].id == "_pre_terminal_affine_slice_pad_concat_stats"
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 3
+    assert direct_statements[0] is invocation
+    assert all(isinstance(statement, ast.Expr) for statement in direct_statements[1:])

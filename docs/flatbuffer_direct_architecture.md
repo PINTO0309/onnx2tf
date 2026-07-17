@@ -10206,3 +10206,11 @@ to assign `_terminal_slice_pad_concat_stats`, so the two observation points are
 unambiguous while both still invoke the same owner with only ModelIR. Neither
 counter is consumed by reconciliation, and execution order, rewrite guards,
 pruning behavior, and generated artifacts remain unchanged.
+
+Immediately before the first staged slice/pad/concat result, the indexed
+affine post-ADD owner reports one fixed rewrite counter and prunes only after a
+positive rewrite. Three direct production calls use this owner. Strict
+characterization selects only the first call, between the channel-slice cluster
+and `_pre_terminal_affine_slice_pad_concat_stats`, for a future
+`_pre_terminal_affine_post_add_stats` assignment. The other two direct calls
+and the orchestrated occurrence remain unchanged.
