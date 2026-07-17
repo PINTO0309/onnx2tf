@@ -3530,3 +3530,25 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final mixed-Concat
 reconciliation contract; there are no unexpected failures.
+
+## Primary final mixed-Concat reconciliation implementation checkpoint
+
+The primary path now initializes `_final_mixed_concat_static_shape_stats` with
+both stable zero keys and stores the opt-in complete reconciliation result
+under the unchanged positive mixed-Concat guard. The guarded sort and following
+Concat-axis owner retain their positions.
+
+Matching, adapter insertion, rewiring, output metadata, raw result schema,
+dependencies, and the TensorFlow-free boundary are unchanged. The strict
+characterization contract is now a normal passing test.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal orchestration and mixed-Concat owner: `16 passed`
+- expanded broad related gate: `573 passed in 28.97s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, stage complete reconciliation evidence for
+`final_concat_axis_stats`, retaining its guard, sort, and following stale-
+binary owner boundary. Commit and push only; do not create or update a pull
+request.

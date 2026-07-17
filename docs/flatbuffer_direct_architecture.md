@@ -2352,9 +2352,9 @@ does not broaden the existing rewrite-only guard, and the following mixed-
 Concat boundary remains fixed.
 
 The final mixed-NHWC-input repair for NCHW Concat is the same counter-complete
-owner used by the safety fallback. Characterization requires the primary guard
-to retain its stable complete shape result without changing the guarded sort or
-following Concat-axis owner boundary.
+owner used by the safety fallback. The primary guard retains its stable
+complete shape result without changing the guarded sort or following Concat-
+axis owner boundary.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to

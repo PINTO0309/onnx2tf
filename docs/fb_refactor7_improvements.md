@@ -232,6 +232,11 @@ Complete primary final Conv-input evidence extends the gate to `572 passed in
 complete guarded shape result without broadening the rewrite-only guard or
 changing the following mixed-Concat owner.
 
+Primary final mixed-Concat reconciliation staging extends the gate to `573
+passed in 28.97s`. The complete counter and unchanged guard now retain the
+opt-in shape result without changing adapter insertion, rewiring, output
+metadata, sorting, or the following Concat-axis owner.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -240,7 +245,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next
 characterized unit should continue the primary final-pass reconciliation
-inventory with `final_concat_layout_stats`. Its cleanup behavior must be
-audited before deciding whether the raw counter alone is complete. Any new
-mutation evidence must preserve current pass order, TensorFlow-free boundary,
-dependency set, and sequential validation policy.
+inventory with `final_concat_axis_stats`. The fallback checkpoint already
+proves its raw counter is complete, but the primary guarded result still needs
+characterization. Any new mutation evidence must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.
