@@ -655,3 +655,25 @@ Do not guard any of its three remaining reconciliation boundaries until the
 preceding sanitizer, Reshape resolver, or fusion result completely accounts for
 the relevant mutation interval. Characterize each candidate independently,
 then commit and push only. Do not create or update a pull request.
+
+## First final-convergence reconciliation characterization checkpoint
+
+The indexed final shape/activation coordinator currently runs an additional
+static-shape reconciliation immediately after
+`_run_indexed_shape_convergence_cleanup()` and HardSwish shape sanitation, even
+when both returned mutation dictionaries are entirely zero.
+
+A strict expected-failure event-order fixture requires that one scan to be
+absent on the complete stable path. Two passing cases preserve it after either
+the convergence aggregate or HardSwish sanitizer reports a mutation. Every
+stage receives the same `ModelIRGraphIndex`; the later Reshape reconciliation
+and final post-fusion reconciliation remain in their original order.
+
+At implementation, initialize only `first_reconcile_stats` with the exact zero
+counter and guard that call with both predecessor dictionaries. Do not change
+the second or final reconciliation in this checkpoint. Preserve aggregate
+statistics, one-index ownership, LayoutState forwarding, and full legacy
+ModelIR equality. Validate indexed final convergence, dynamic Reshape, shape
+reconciliation, core, architecture, pass-efficiency, and
+TensorFlow-import-blocked suites sequentially. Commit and push only; do not
+create or update a pull request.

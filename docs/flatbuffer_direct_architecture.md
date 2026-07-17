@@ -9852,3 +9852,12 @@ second scan and its aggregate statistic. Both production call boundaries,
 LayoutState forwarding, and the one-index contract are unchanged. The original
 dynamic-Reshape graph remains fully equivalent to the former four-call
 sequence.
+
+The first extra reconciliation in the indexed final shape/activation
+coordinator is the next isolated scan. The preceding indexed shape-convergence
+aggregate and HardSwish sanitizer both return pure mutation dictionaries. A
+strict expected-failure fixture requires this reconciliation to be skipped when
+both are completely zero, while passing fixtures retain it independently after
+either predecessor changes. The later Reshape and activation-fusion
+reconciliations remain explicitly present and ordered. Production is unchanged
+at this characterization checkpoint.
