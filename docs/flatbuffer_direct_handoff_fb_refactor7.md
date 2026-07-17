@@ -1770,3 +1770,28 @@ forwarding. Validate the complete indexed dual-statistics owner,
 terminal-affine, pre-ADD, channel-slice, core, pass-efficiency, architecture,
 and TensorFlow import blocking sequentially. Commit and push only; do not create
 or update a pull request.
+
+## Pre-terminal affine InstanceNorm dual-statistics implementation checkpoint
+
+Only the last direct dual-statistics InstanceNorm residual/add/resize call now
+assigns its unchanged result to
+`_pre_terminal_affine_instancenorm_dualstats_stats`. The other two direct calls
+and the nested indexed-convergence occurrence retain their previous forms.
+
+The staged counter is complete because pruning remains positive-only. It is
+not consumed by reconciliation, and ModelIR/LayoutState forwarding, owner
+guards, and first terminal-affine ordering are unchanged.
+
+Focused complete indexed-owner, terminal-affine, and architecture coverage is
+`218 passed in 1.34s`. The sequential dual-statistics, indexed/compatibility
+pre-ADD, channel-slice, pad, terminal-slice, callback, affine, bridge, SPP,
+QKV, hard-activation, SINet, late-layout, shared-context, core,
+pass-efficiency, architecture, and TensorFlow-import-blocked gate is `1014
+passed in 29.74s`. Ruff, Python bytecode compilation, and whitespace validation
+pass.
+
+At resume, inspect the immediately preceding
+`_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains` owner.
+Confirm all occurrence forms and its pruning contract before selecting only the
+last direct call for evidence. Commit and push only; do not create or update a
+pull request.

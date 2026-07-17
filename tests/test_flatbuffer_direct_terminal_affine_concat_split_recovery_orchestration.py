@@ -529,7 +529,12 @@ def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
     }
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
@@ -559,10 +564,6 @@ def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
     assert recovery_statements[1].targets[0].id == "terminal_affine_results"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal dual-statistics InstanceNorm result is still discarded",
-)
 def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     affine_count_index = next(

@@ -10273,3 +10273,9 @@ so its raw result is complete mutation evidence. Strict characterization
 selects only that last direct call for a future
 `_pre_terminal_affine_instancenorm_dualstats_stats` assignment; the earlier
 direct and nested occurrences remain unchanged.
+
+That selected call now assigns its unchanged raw result to
+`_pre_terminal_affine_instancenorm_dualstats_stats`. The first terminal affine
+count follows immediately, and the other three production occurrences retain
+their existing forms. No tensor-count proxy or reconciliation consumer is
+added because the counter already covers every owner mutation.
