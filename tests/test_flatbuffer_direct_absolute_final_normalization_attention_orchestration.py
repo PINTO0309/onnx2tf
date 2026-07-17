@@ -4,6 +4,21 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    absolute_final_normalization_attention_orchestration,
+)
+from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
+    ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
+    AbsoluteFinalNormalizationAttentionContext,
+    build_absolute_final_normalization_attention_invocations,
+    run_absolute_final_normalization_attention,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -33,23 +48,50 @@ def _expression_path(node: ast.expr) -> Any:
         return node.id
     if isinstance(node, ast.Attribute):
         return f"{_expression_path(node.value)}.{node.attr}"
-    if isinstance(node, ast.Constant):
-        return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def test_absolute_final_normalization_attention_is_a_straight_line_scoped_pair() -> (
-    None
-):
+def _context() -> AbsoluteFinalNormalizationAttentionContext:
+    model_ir = ModelIR("absolute_final_normalization_attention_test")
+    return AbsoluteFinalNormalizationAttentionContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+
+
+def _normalize_new_contract(
+    invocation: absolute_final_normalization_attention_orchestration.RecoveryInvocation,
+    context: AbsoluteFinalNormalizationAttentionContext,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    def normalize(value: Any) -> Any:
+        if value is context.model_ir:
+            return "model_ir"
+        if value is context.layout_state:
+            return "session.layout_state"
+        if value is context.diagnostics:
+            return "session.diagnostics"
+        if isinstance(value, ModelIRPassStateScope):
+            return "state_scope"
+        return value
+
+    return (
+        tuple(normalize(value) for value in invocation.args),
+        {key: normalize(value) for key, value in invocation.keyword_args},
+    )
+
+
+def test_absolute_final_normalization_attention_is_a_straight_line_delegate() -> None:
     _, helper = _lowerer_and_helper()
 
     assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 21
+    assert helper.end_lineno - helper.lineno + 1 == 4
     assert helper.args.args == []
     assert helper.args.posonlyargs == []
     assert helper.args.kwonlyargs == []
     assert helper.args.vararg is None
     assert helper.args.kwarg is None
+    assert len(helper.body) == 1
     assert not any(
         isinstance(
             node,
@@ -66,63 +108,57 @@ def test_absolute_final_normalization_attention_is_a_straight_line_scoped_pair()
         )
         for node in ast.walk(helper)
     )
-
-    scope_calls = [
-        node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "ModelIRPassStateScope"
-    ]
-    assert len(scope_calls) == 1
-    assert tuple(_expression_path(arg) for arg in scope_calls[0].args) == ("model_ir",)
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in scope_calls[0].keywords
-    } == {"layout_state": "session.layout_state"}
+        for node in ast.walk(helper)
+    )
 
 
 def test_absolute_final_normalization_attention_preserves_cleanup_contracts() -> None:
-    _, helper = _lowerer_and_helper()
-    cleanup_names = [
-        "run_normalization_pad_layout_cleanup",
-        "run_mixed_attention_layout_cleanup",
-    ]
-    cleanup_calls = sorted(
-        [
-            node
-            for node in ast.walk(helper)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in cleanup_names
-        ],
-        key=lambda call: call.lineno,
-    )
-    assert [call.func.id for call in cleanup_calls] == cleanup_names
+    context = _context()
+    invocations = build_absolute_final_normalization_attention_invocations(context)
 
-    normalization_call, attention_call = cleanup_calls
-    assert tuple(_expression_path(arg) for arg in normalization_call.args) == (
-        "model_ir",
+    assert (
+        tuple(step.pass_id for step in invocations)
+        == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS
     )
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in normalization_call.keywords
-    } == {
-        "include_instance": False,
-        "include_flatten": True,
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-        "state_scope": "state_scope",
+    expected_contracts = {
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS[0]: (
+            ("model_ir",),
+            {
+                "include_instance": False,
+                "include_flatten": True,
+                "layout_state": "session.layout_state",
+                "diagnostics": "session.diagnostics",
+                "state_scope": "state_scope",
+            },
+        ),
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS[1]: (
+            ("model_ir",),
+            {
+                "layout_state": "session.layout_state",
+                "diagnostics": "session.diagnostics",
+                "state_scope": "state_scope",
+            },
+        ),
     }
-    assert tuple(_expression_path(arg) for arg in attention_call.args) == ("model_ir",)
     assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in attention_call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-        "state_scope": "state_scope",
-    }
+        step.pass_id: _normalize_new_contract(step, context) for step in invocations
+    } == expected_contracts
+
+    scopes = [dict(step.keyword_args)["state_scope"] for step in invocations]
+    assert all(scope is scopes[0] for scope in scopes)
+    assert isinstance(scopes[0], ModelIRPassStateScope)
+    assert scopes[0].model_ir is context.model_ir
+    assert scopes[0].layout_state is context.layout_state
+    rebuilt_scope = dict(
+        build_absolute_final_normalization_attention_invocations(context)[
+            0
+        ].keyword_args
+    )["state_scope"]
+    assert rebuilt_scope is not scopes[0]
 
 
 def test_absolute_final_normalization_attention_invocation_is_zero_argument() -> None:
@@ -164,4 +200,94 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
     assert (
         following.value.func.id
         == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
+
+
+def test_absolute_final_normalization_attention_context_and_wrapper_are_explicit() -> (
+    None
+):
+    lowerer, helper = _lowerer_and_helper()
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "run_absolute_final_normalization_attention"
+    assert tuple(_expression_path(arg) for arg in call.args) == (
+        "absolute_final_normalization_attention_context",
+    )
+    assert call.keywords == []
+
+    context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "absolute_final_normalization_attention_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(context_assignment.value, ast.Call)
+    assert isinstance(context_assignment.value.func, ast.Name)
+    assert (
+        context_assignment.value.func.id == "AbsoluteFinalNormalizationAttentionContext"
+    )
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in context_assignment.value.keywords
+    } == {
+        "model_ir": "model_ir",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+
+def test_absolute_final_normalization_attention_runner_preserves_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    events: list[str] = []
+
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> None:
+            events.append(pass_id)
+
+        return record
+
+    for pass_id in ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS:
+        monkeypatch.setattr(
+            absolute_final_normalization_attention_orchestration,
+            pass_id,
+            recorder(pass_id),
+        )
+
+    run_absolute_final_normalization_attention(context)
+
+    assert events == list(ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS)
+
+
+def test_absolute_final_normalization_attention_module_does_not_import_lowerer() -> (
+    None
+):
+    module_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "absolute_final_normalization_attention_orchestration.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+        for node in tree.body
+    )
+    assert not any(
+        isinstance(node, ast.Import)
+        and any(
+            alias.name == "onnx2tf.tflite_builder.lower_from_onnx2tf"
+            for alias in node.names
+        )
+        for node in tree.body
     )

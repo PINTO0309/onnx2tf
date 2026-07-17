@@ -76,6 +76,10 @@ from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration imp
     LateHardActivationLayoutContext,
     run_late_hard_activation_layout,
 )
+from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
+    AbsoluteFinalNormalizationAttentionContext,
+    run_absolute_final_normalization_attention,
+)
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
 )
@@ -1183,19 +1187,12 @@ def test_absolute_final_normalization_attention_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_normalization_pad_layout_cleanup(
-        model_ir,
-        include_instance=False,
-        include_flatten=True,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_mixed_attention_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_absolute_final_normalization_attention(
+        AbsoluteFinalNormalizationAttentionContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1

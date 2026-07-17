@@ -241,6 +241,10 @@ from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration imp
     LateHardActivationLayoutContext,
     run_late_hard_activation_layout,
 )
+from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
+    AbsoluteFinalNormalizationAttentionContext,
+    run_absolute_final_normalization_attention,
+)
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges as _optimize_transpose_binary_bridges_pass,
     optimize_transpose_binary_asymmetric_fanout_bridges as _optimize_transpose_binary_asymmetric_fanout_bridges_pass,
@@ -4421,25 +4425,8 @@ def lower_onnx_to_ir(
         )
 
     def _run_absolute_final_normalization_attention_pass_pair() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_normalization_pad_layout_cleanup(
-            model_ir,
-            include_instance=False,
-            include_flatten=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        # Some late boundary/layout repairs can still recreate the DEA/SiNet
-        # mixed NHWC/NCHW SA branch around REDUCE_MAX->CONCAT->MIRROR_PAD.
-        run_mixed_attention_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
+        run_absolute_final_normalization_attention(
+            absolute_final_normalization_attention_context
         )
 
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
@@ -4571,6 +4558,13 @@ def lower_onnx_to_ir(
         model_ir=model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+    )
+    absolute_final_normalization_attention_context = (
+        AbsoluteFinalNormalizationAttentionContext(
+            model_ir=model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     layout_recovery_context = LayoutRecoveryContext(
         model_ir=model_ir,

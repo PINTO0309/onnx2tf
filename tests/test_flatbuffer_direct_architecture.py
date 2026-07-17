@@ -60,6 +60,9 @@ from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
 from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
     LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
+    ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATED_PASS_ID_SEQUENCE = (
@@ -83,6 +86,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
     *CHANNEL_SLICE_PAD_MUL_PASS_IDS,
     *LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
+    *ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
 )
 ORCHESTRATED_PASS_IDS = frozenset(
     ORCHESTRATED_PASS_ID_SEQUENCE
@@ -5330,41 +5334,15 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
         "run_normalization_pad_layout_cleanup",
         "run_mixed_attention_layout_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-    normalization_call = calls["run_normalization_pad_layout_cleanup"]
-    include_instance = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_instance"
-    )
-    include_flatten = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_flatten"
-    )
-    assert isinstance(include_instance.value, ast.Constant)
-    assert include_instance.value.value is False
-    assert isinstance(include_flatten.value, ast.Constant)
-    assert include_flatten.value.value is True
+        and node.func.id == "run_absolute_final_normalization_attention"
+    ]
+    assert len(helper_calls) == 1
 
     invocation_index = next(
         index
@@ -11897,6 +11875,8 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_input_unary_passthrough_cleanup",
         "run_channel_slice_merge_layout_cleanup",
         "run_pad_mul_layout_cleanup",
+        "run_normalization_pad_layout_cleanup",
+        "run_mixed_attention_layout_cleanup",
     }
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)

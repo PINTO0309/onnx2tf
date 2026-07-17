@@ -14411,3 +14411,52 @@ the attention rationale comment, historical zero-argument helper, sole call,
 and both outer boundaries. Prove builder arguments, fresh/shared scope
 identity, and instrumented order before switching to a delegate; validate
 sequentially, commit and push, and do not create a pull request.
+
+## Explicit absolute-final normalization/attention orchestration: completed state
+
+The characterized pair now delegates to
+`passes/absolute_final_normalization_attention_orchestration.py`. A frozen
+`AbsoluteFinalNormalizationAttentionContext` contains only ModelIR, layout
+state, and diagnostics. Both owners are imported directly from `pad_layout`
+and `attention_layout`; the phase module does not import the central lowerer.
+
+`ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS` declares the exact two-step
+order. Every builder creates one fresh `ModelIRPassStateScope` from the
+context's ModelIR/layout pair and attaches the identical scope, ModelIR,
+layout, and diagnostics values to both immutable invocations. The fixed
+`include_instance=False` and `include_flatten=True` policy remains attached to
+normalization cleanup, and the mixed-attention rationale comment moved with
+the second invocation. The shared executor validates both IDs before running
+an owner.
+
+The historical helper is now a four-line zero-argument delegate at the same
+sole terminal boundary. Architecture accounting moves one syntactic occurrence
+of both owners to stable IDs while retaining all other direct calls. The
+efficiency fixture now executes the explicit phase and still observes one
+graph-index build with reuse by mixed-attention cleanup.
+
+Sequential validation completed as follows:
+
+- focused absolute-final normalization/attention orchestration:
+  `7 passed in 0.59s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 18.52s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.16s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, fixed policy, runtime pass order, invocation multiplicity, shared-scope
+efficiency, and TensorFlow isolation are unchanged. PR #952 remains closed, no
+branch PR is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory the remaining option-dependent shared-scope helpers
+before choosing the next extraction. The QKV attention cluster is a likely
+candidate but has two independent Boolean choices and multiple runtime forms;
+freeze every active sequence and boundary before production changes. Validate
+sequentially, keep real-model conversion minimal, commit and push only, and do
+not create a pull request.

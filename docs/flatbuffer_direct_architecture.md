@@ -9241,3 +9241,13 @@ freeze all ModelIR/layout/diagnostics/scope arguments and the mixed-attention
 rationale. The eventual phase should use a frozen ModelIR/layout/diagnostics
 context, two direct owner imports, two stable IDs, and one fresh shared scope
 per build.
+
+That pair now uses `AbsoluteFinalNormalizationAttentionContext` and two stable
+IDs in `passes/absolute_final_normalization_attention_orchestration.py`. Both
+owners are direct imports, every builder creates one fresh scope shared by both
+immutable invocations, and the fixed normalization policy plus attention
+rationale stay with their owners. The historical helper is a four-line zero-
+argument delegate at the same sole terminal boundary. The efficiency fixture
+now exercises the explicit runner while retaining one graph-index build.
+Focused, architecture, pass-efficiency, core, and TensorFlow-import-blocked
+suites pass.
