@@ -11,6 +11,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.pass_diagnostics import ModelIRPassDiagnostics
 from onnx2tf.tflite_builder.core.passes import (
     OrderedPassManager,
     PassInvariantError,
@@ -399,7 +400,13 @@ def run_model_ir_pass_group(
     diagnostic_sequence = 0
     diagnostic_invocations: Dict[str, int] = {}
     maximum_group_sequence: Optional[int] = None
-    if diagnostics is not None:
+    if isinstance(diagnostics, ModelIRPassDiagnostics):
+        (
+            diagnostic_sequence,
+            maximum_group_sequence,
+            diagnostic_invocations,
+        ) = diagnostics.model_ir_numbering_snapshot()
+    elif diagnostics is not None:
         for event in diagnostics:
             if str(event.get("stage", "")) != "model_ir_pass":
                 continue

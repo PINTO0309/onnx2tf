@@ -26,6 +26,7 @@ from onnx2tf.tflite_builder.core import (
     summarize_model_ir_pass_diagnostics,
     validate_model_ir_invariants,
 )
+from onnx2tf.tflite_builder.core.pass_diagnostics import ModelIRPassDiagnostics
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
@@ -1143,10 +1144,6 @@ def test_model_ir_pass_diagnostic_numbering_scans_existing_history_once() -> Non
     assert diagnostics.iteration_count == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="ConversionSession diagnostics do not retain numbering state across groups",
-)
 def test_conversion_session_reuses_pass_diagnostic_ledger_across_groups(
     monkeypatch,
 ) -> None:
@@ -1192,6 +1189,117 @@ def test_conversion_session_reuses_pass_diagnostic_ledger_across_groups(
     assert [event["sequence"] for event in diagnostics[1:]] == [2, 3]
     assert [event["invocation"] for event in diagnostics[1:]] == [2, 3]
     assert [event["group_sequence"] for event in diagnostics[1:]] == [5, 6]
+
+
+def test_conversion_session_append_only_diagnostics_need_no_ledger_rebuild(
+    monkeypatch,
+) -> None:
+    session = ConversionSession(
+        onnx_model=_add_onnx_model(),
+        model_ir=_add_model_ir(),
+        shape_map={},
+        dtype_map={},
+        constants={},
+    )
+    rebuild_count = 0
+    original_rebuild = ModelIRPassDiagnostics._rebuild_model_ir_numbering
+
+    def counted_rebuild(ledger) -> None:
+        nonlocal rebuild_count
+        rebuild_count += 1
+        original_rebuild(ledger)
+
+    monkeypatch.setattr(
+        ModelIRPassDiagnostics,
+        "_rebuild_model_ir_numbering",
+        counted_rebuild,
+    )
+    session.record_diagnostic(stage="lowering", code="note", message="kept")
+    spec = PassSpec(
+        pass_id="cleanup.repeated",
+        phase=PassPhase.POST_LOWERING_CLEANUP,
+        callback=lambda state: {"changed": False},
+    )
+
+    run_model_ir_pass_group(
+        session.model_ir,
+        specs=[spec],
+        diagnostics=session.diagnostics,
+    )
+    run_model_ir_pass_group(
+        session.model_ir,
+        specs=[spec],
+        diagnostics=session.diagnostics,
+    )
+
+    assert rebuild_count == 0
+    assert [event["sequence"] for event in session.diagnostics[1:]] == [1, 2]
+    assert [event["invocation"] for event in session.diagnostics[1:]] == [1, 2]
+    assert [event["group_sequence"] for event in session.diagnostics[1:]] == [1, 2]
+
+
+def test_pass_diagnostic_ledger_tracks_append_only_list_mutations() -> None:
+    diagnostics = ModelIRPassDiagnostics()
+    diagnostics.append({"stage": "lowering", "code": "ignored"})
+    diagnostics.extend(
+        [
+            {
+                "stage": "model_ir_pass",
+                "code": "cleanup.first",
+                "group_sequence": -2,
+            },
+            {
+                "stage": "model_ir_pass",
+                "code": "cleanup.first",
+                "group_sequence": 3,
+            },
+        ]
+    )
+    diagnostics.insert(
+        0,
+        {
+            "stage": "model_ir_pass",
+            "code": "cleanup.second",
+            "group_sequence": 2,
+        },
+    )
+
+    assert diagnostics.model_ir_numbering_snapshot() == (
+        3,
+        3,
+        {"cleanup.first": 2, "cleanup.second": 1},
+    )
+
+
+def test_pass_diagnostic_ledger_rebuilds_after_destructive_list_mutations() -> None:
+    diagnostics = ModelIRPassDiagnostics(
+        [
+            {
+                "stage": "model_ir_pass",
+                "code": "cleanup.first",
+                "group_sequence": 8,
+            },
+            {
+                "stage": "model_ir_pass",
+                "code": "cleanup.second",
+                "group_sequence": 5,
+            },
+        ]
+    )
+    diagnostics.pop(0)
+    diagnostics[0] = {
+        "stage": "model_ir_pass",
+        "code": "cleanup.replaced",
+        "group_sequence": -4,
+    }
+
+    assert diagnostics.model_ir_numbering_snapshot() == (
+        1,
+        -4,
+        {"cleanup.replaced": 1},
+    )
+    diagnostics.clear()
+    assert diagnostics.model_ir_numbering_snapshot() == (0, None, {})
 
 
 def test_dispatcher_records_onnx_provenance() -> None:

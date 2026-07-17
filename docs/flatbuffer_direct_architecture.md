@@ -9649,3 +9649,14 @@ that state once after an arbitrary list mutation, and keep subsequent group
 numbering at constant bookkeeping cost. It also freezes list compatibility and
 the same sequence, invocation, and group values across two repeated pass
 groups. Production remains unchanged at this characterization checkpoint.
+
+The Session-owned cross-group ledger is now implemented as a private
+list-compatible core type. Append, extend, and insert update a valid numbering
+snapshot incrementally; replacement, deletion, multiplication, pop, and remove
+invalidate it; clear restores an empty valid snapshot. The next pass group
+rebuilds invalid state once and subsequent groups reuse it. Ordinary external
+lists continue through the prior one-scan fallback. The production append-only
+Session path performs no rebuild across repeated groups, while the destructive-
+mutation fixture performs exactly one. The internal type is not re-exported by
+the public core package, and diagnostics remain the same mutable list contract
+for existing consumers.

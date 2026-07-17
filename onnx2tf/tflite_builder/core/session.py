@@ -8,6 +8,7 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import GraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.core.pass_diagnostics import ModelIRPassDiagnostics
 from onnx2tf.tflite_builder.ir import ModelIR
 
 
@@ -23,7 +24,9 @@ class ConversionSession:
     graph_index: GraphIndex = field(init=False)
     layout_state: LayoutState = field(init=False)
     model_ir_pass_context: ModelIRPassContext = field(init=False)
-    diagnostics: List[Dict[str, Any]] = field(default_factory=list)
+    diagnostics: List[Dict[str, Any]] = field(
+        default_factory=ModelIRPassDiagnostics
+    )
 
     def __post_init__(self) -> None:
         self.graph_index = GraphIndex(self.onnx_model)

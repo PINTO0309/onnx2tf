@@ -109,3 +109,38 @@ append/extend/insert operations may update valid counters incrementally;
 replacement or removal operations must invalidate them. Arbitrary external
 lists passed to `run_model_ir_pass_group()` must retain the existing one-scan
 fallback. Do not expose the internal type through the public core API.
+
+## Cross-group diagnostic-ledger implementation checkpoint
+
+`ConversionSession.diagnostics` now defaults to the private list-compatible
+`ModelIRPassDiagnostics` type. It maintains the ModelIR-pass event count,
+maximum group sequence, and pass-ID invocation counts incrementally for append-
+only production use. `run_model_ir_pass_group()` reads a copied numbering
+snapshot from this ledger in constant time; arbitrary external lists continue
+to use the characterized one-scan fallback.
+
+List compatibility is explicit. Append, extend, and insert update valid state.
+Slice/item replacement, deletion, multiplication, pop, and remove invalidate
+state without changing the list operation; the next group lazily rebuilds it
+once. Clear resets an empty valid ledger. Malformed externally appended entries
+invalidate rather than raising early, preserving error timing until the next
+numbering read. The type is deliberately absent from `core.__all__`.
+
+Sequential validation completed as follows:
+
+- focused diagnostic/pass-group contracts, including zero rebuilds for the
+  ordinary Session append path and one rebuild after slice replacement: pass;
+- complete core, pass-efficiency, architecture, and TensorFlow-import-blocked
+  gate: `328 passed in 26.75s`;
+- focused Ruff, Python compilation, and whitespace checks: passed.
+
+No model conversion ran because pass execution and ModelIR are unaffected. No
+public API, CLI behavior, artifact, dependency, pass ID/order, GraphIndex,
+LayoutState, corpus policy, inference concurrency, or TensorFlow boundary
+changed.
+
+At resume, move beyond diagnostic bookkeeping and inventory the remaining
+direct lowerer-to-pass/core boundaries again. Select a non-context unit with a
+measurable graph scan, state allocation, or duplicated ownership contract;
+characterize it before changing production. Commit and push coherent units
+only, and do not create or update a pull request.
