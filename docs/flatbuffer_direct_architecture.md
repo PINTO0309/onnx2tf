@@ -8899,3 +8899,12 @@ instrumented flattened execution order. Architecture and individual pass
 fixtures count a stable orchestrated ID together with any remaining direct
 lowerer call, retaining the former total execution-count guarantee without
 depending on every call being visible in the lowerer AST.
+
+The next characterized boundary consists of the seven-step
+preadd/mean/attention recovery sequence and the ten-step attention/gate/QDQ
+sequence. Both are currently lowerer-local straight-line closures over only
+ModelIR and the conversion session. Three steps are lowerer-local composite
+clusters; the other call slots are candidates for direct module ownership.
+Focused contracts now fix all argument routing, the two and three outer
+invocation counts, and the attention sequence's nested quantized-suffix
+boundary before an explicit runner is introduced.

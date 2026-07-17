@@ -1866,3 +1866,14 @@ dependencies, corpus policy, exclusion policy, operation tier, pass order, or
 TensorFlow isolation. It does not add a real-model conversion or broad direct
 suite run. PR #952 remains closed, and this branch summary is documentation
 only; no pull request was created, reopened, or updated.
+
+The next attention orchestration boundary is now characterized without
+production changes. A focused fixture freezes all seven preadd/mean/attention
+steps and all ten attention/gate/QDQ steps, including exact ModelIR, layout,
+and diagnostics routing. It proves both helpers are parameterless straight-line
+closures over only `model_ir` and `session`, fixes their two and three
+zero-argument invocation counts, and retains the attention helper's precise
+position inside the quantized suffix. The focused suite passed 4 tests, the two
+orchestration fixtures plus architecture suite passed 258 tests, and all 11
+TensorFlow-import-blocked optional-boundary tests passed. No pull request was
+created, reopened, or updated.

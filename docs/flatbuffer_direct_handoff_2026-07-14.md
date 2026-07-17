@@ -12825,3 +12825,48 @@ retain lowerer-local composites as explicitly injected callbacks, and prove
 old/new order and argument equality before changing production wiring. Keep
 real-model conversions minimal and sequential, commit and push coherent
 checkpoints, and do not create a pull request.
+
+## Attention-recovery orchestration characterization: completed state
+
+The next extraction boundary is the adjacent 14-line
+`_run_preadd_mean_attention_recovery_sequence` and 27-line
+`_run_attention_gate_qdq_recovery_sequence`. They remain unchanged in
+production. The first has seven ordered steps and two zero-argument production
+invocations. The second has ten ordered steps and three zero-argument
+invocations, one of which is nested between mean-attention and duplicate
+quantized-PReLU clusters in the layout/attention/quantized suffix.
+
+The new focused
+`test_flatbuffer_direct_attention_recovery_orchestration.py` fixture freezes
+all seventeen call slots and every positional and keyword argument. It proves
+which calls receive only `model_ir`, which also receive
+`session.layout_state`, and that trailing-output cleanup alone additionally
+receives `session.diagnostics`. Both helpers have no parameters, local
+`ModelIRPassStateScope`, or branch/loop/try/context-manager control flow; after
+excluding call targets, their only captured data is `model_ir` and `session`.
+The fixture also fixes all zero-argument outer invocations and the nested
+quantized-suffix boundary.
+
+Validation completed sequentially as follows:
+
+- focused attention-recovery characterization: `4 passed in 0.19s`;
+- both orchestration fixtures plus ordered architecture suite:
+  `258 passed in 17.08s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.38s`;
+- focused-test Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, pass order, real-model conversion, or broad direct suite
+changed or ran. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, map the seventeen call slots to their extracted module owners.
+Preserve the three lowerer-local composite dependencies
+(`_run_mean_attention_layout_pass_cluster`, `_run_gate_layout_pass_cluster`,
+and `_run_transpose_unary_fanout_layout_pass_cluster`) as explicit callbacks.
+Give the remaining owners an immutable explicit ModelIR/layout/diagnostics
+context, declare stable IDs for both ordered sequences, and prove old/new
+flattened order and argument equality before switching the two historical
+helpers. Keep validation sequential, commit and push coherent checkpoints, and
+do not create a pull request.
