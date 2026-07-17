@@ -2322,12 +2322,12 @@ stops after a stable round. Its fallback caller requires no additional
 reconciliation and retains that complete result before the unchanged terminal
 sort and layout validation.
 
-The primary path currently validates layout annotations before indexed binary
+The primary path validates layout annotations after indexed binary
 convergence, high-rank binary coalescing, dynamic-boundary signature
-realignment, and its final sort. Because the validator is pure,
-characterization fixes the intended boundary after these terminal mutations
-and requires an empty result to remove a stale validation-error key. Progress
-reporting and all mutation owners remain outside this diagnostic-only change.
+realignment, and its final sort. The pure validator preserves the established
+error-list schema and removes a stale validation-error key when the terminal
+graph is valid. Progress reporting and all mutation owners remain outside this
+diagnostic-only change.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to

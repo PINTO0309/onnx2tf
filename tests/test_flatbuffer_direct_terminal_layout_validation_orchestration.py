@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -35,18 +32,19 @@ def _call_name(call: ast.Call | None) -> str | None:
     return call.func.id
 
 
-def _call_index(body: list[ast.stmt], function_name: str) -> int:
+def _call_index(
+    body: list[ast.stmt],
+    function_name: str,
+    *,
+    start: int = 0,
+) -> int:
     return next(
         index
-        for index, statement in enumerate(body)
+        for index, statement in enumerate(body[start:], start=start)
         if _call_name(_statement_call(statement)) == function_name
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="primary layout validation precedes terminal graph mutations",
-)
 def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> None:
     body = _lowerer_body()
     convergence_index = _call_index(
@@ -56,10 +54,12 @@ def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> Non
     coalesce_index = _call_index(
         body,
         "coalesce_static_high_rank_binary_operators",
+        start=convergence_index + 1,
     )
     realign_index = _call_index(
         body,
         "_realign_dynamic_boundary_shape_signature_map",
+        start=coalesce_index + 1,
     )
     terminal_sort_index = next(
         index

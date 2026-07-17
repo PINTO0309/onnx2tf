@@ -206,6 +206,12 @@ dictionary, extending the gate to `541 passed in 27.89s`. No extra
 reconciliation or scan is added: the owner already aggregates every broadcast,
 stale-Transpose, and shape mutation across its bounded rounds.
 
+Primary-path terminal layout validation extends the expanded gate to `544
+passed in 27.95s`. Validation now observes indexed binary convergence,
+high-rank binary coalescing, boundary-signature realignment, and the final
+topological sort. Valid terminal graphs clear only a stale validation-error
+key; progress reporting and artifact behavior are unchanged.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -213,7 +219,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next
-characterized unit should audit the corresponding primary-path terminal layout
-validation and indexed binary-convergence boundary. Any new mutation evidence
-must preserve current pass order, TensorFlow-free boundary, dependency set,
-and sequential validation policy.
+characterized unit should audit result capture for the primary terminal
+indexed convergence, high-rank binary coalescing, and boundary-signature
+realignment owners. Any new mutation evidence must preserve current pass
+order, TensorFlow-free boundary, dependency set, and sequential validation
+policy.

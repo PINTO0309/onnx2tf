@@ -6003,20 +6003,16 @@ def lower_onnx_to_ir(
             "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
             0,
         )
-    ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
-        _topologically_sort_operators(model_ir)
-    layout_problems = validate_model_ir_layout_annotations(model_ir)
-    if len(layout_problems) > 0:
-        model_ir.metadata["logical_layout_validation_errors"] = list(layout_problems)
+        ) > 0:
+            _reconcile_static_tensor_shapes(model_ir)
+            _topologically_sort_operators(model_ir)
     _advance_post_progress()
     if post_progress_bar is not None:
         post_progress_spinner.stop()
         post_progress_bar.close()
 
-    # Layout validation infers annotations from the terminal graph and can
-    # expose stale direct-NCHW fallback bridges that were not identifiable
-    # before the final annotations were available.
+    # Terminal layout cleanup can expose stale direct-NCHW fallback bridges
+    # that were not identifiable before the final annotations were available.
     _run_indexed_binary_layout_convergence(model_ir)
     coalesce_static_high_rank_binary_operators(
         model_ir,
@@ -6024,4 +6020,14 @@ def lower_onnx_to_ir(
     )
     _realign_dynamic_boundary_shape_signature_map(model_ir)
     _topologically_sort_operators(model_ir)
+    layout_problems = validate_model_ir_layout_annotations(model_ir)
+    if len(layout_problems) > 0:
+        model_ir.metadata["logical_layout_validation_errors"] = list(
+            layout_problems
+        )
+    else:
+        model_ir.metadata.pop(
+            "logical_layout_validation_errors",
+            None,
+        )
     return _finalize_model_ir(model_ir)

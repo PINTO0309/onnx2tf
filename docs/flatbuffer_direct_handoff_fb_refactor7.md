@@ -3258,3 +3258,28 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet primary terminal-validation
 contract; there are no unexpected failures.
+
+## Primary terminal layout-validation implementation checkpoint
+
+The pure primary validation block now runs after indexed binary convergence,
+high-rank binary coalescing, dynamic-boundary signature realignment, and the
+final topological sort. A non-empty result writes the same
+`logical_layout_validation_errors` list; an empty terminal result removes only
+that stale key. Finalization remains immediately after validation.
+
+Progress advancement/spinner closure, all four terminal mutation owners,
+sorting, dependencies, and the TensorFlow-free boundary are unchanged. The
+misleading pre-convergence validation comment now describes terminal layout
+cleanup rather than claiming that the earlier graph was terminal.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal validation, indexed convergence, and high-rank binary owners:
+  `14 passed`
+- broad related gate plus rank-6 structure/numeric parity:
+  `544 passed in 27.95s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit result capture for the primary terminal indexed convergence,
+high-rank binary coalescing, and boundary-signature realignment calls. Commit
+and push only; do not create or update a pull request.
