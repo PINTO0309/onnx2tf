@@ -108,7 +108,7 @@ new full model-corpus run for this final observation-only unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should inspect the very-late dynamic-Reshape resolution immediately after
-the newly staged normalization summary. Any new mutation evidence must preserve
-the current pass order, TensorFlow-free boundary, dependency set, and
+unit should inspect the indexed Conv-input adapter repair immediately after the
+newly staged very-late dynamic-Reshape result. Any new mutation evidence must
+preserve the current pass order, TensorFlow-free boundary, dependency set, and
 sequential validation policy.

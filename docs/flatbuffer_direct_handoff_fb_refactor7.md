@@ -2137,3 +2137,30 @@ proxy, summary adapter, or reconciliation consumer. Validate dynamic-Reshape,
 very-late normalization, indexed convergence, core, pass-efficiency,
 architecture, and TensorFlow import blocking sequentially. Commit and push
 only; do not create or update a pull request.
+
+## Very-late dynamic-Reshape implementation checkpoint
+
+Only the direct dynamic-Reshape call with
+`prefer_runtime_inferable_from_onnx_raw=True` now assigns its unchanged result
+to `_very_late_dynamic_reshape_stats`. The earlier direct core-cleanup call
+remains an expression, and the two indexed convergence helpers continue to
+consume their local `reshape_stats` results.
+
+The staged single counter is complete because the owner performs no pruning or
+topology removal. It remains observation-only immediately after
+`_very_late_normalization_stats` and immediately before the indexed Conv-input
+adapter repair. No summary, tensor-count proxy, or reconciliation branch was
+added.
+
+Focused very-late, dynamic-Reshape, indexed-convergence, and architecture
+coverage is `44 passed, 256 deselected`. The expanded sequential gate,
+explicitly including complete dynamic-Reshape and indexed-final-convergence
+coverage, is `1243 passed in 30.55s`. Ruff, Python bytecode compilation, and
+whitespace validation pass.
+
+At resume, inspect the immediately following
+`_run_indexed_conv_input_adapter_repairs(model_ir)` call. Compare it with the
+fallback-path `fallback_conv_input_stats` occurrence, confirm its result schema
+and pruning behavior, and characterize only the direct very-late call if its
+raw result is complete. Commit and push only; do not create or update a pull
+request.

@@ -353,7 +353,7 @@ def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     resolve_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, (ast.Expr, ast.Assign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == "_resolve_dynamic_reshape_shapes"
@@ -388,10 +388,6 @@ def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the very-late dynamic-Reshape result is discarded",
-)
 def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_index = next(
@@ -496,7 +492,10 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     assert isinstance(affine.targets[0], ast.Name)
     assert affine.targets[0].id == "_very_late_affine_post_add_stats"
     resolve = lowerer.body[invocation_index + 2]
-    assert isinstance(resolve, ast.Expr)
+    assert isinstance(resolve, ast.Assign)
+    assert len(resolve.targets) == 1
+    assert isinstance(resolve.targets[0], ast.Name)
+    assert resolve.targets[0].id == "_very_late_dynamic_reshape_stats"
     assert isinstance(resolve.value, ast.Call)
     assert isinstance(resolve.value.func, ast.Name)
     assert resolve.value.func.id == "_resolve_dynamic_reshape_shapes"

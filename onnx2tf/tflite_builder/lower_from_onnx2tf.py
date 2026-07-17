@@ -5302,7 +5302,7 @@ def lower_onnx_to_ir(
     )
     # Very late terminal bridge/transpose rewrites above can still stale out
     # RESHAPE constant inputs. Re-resolve once immediately before final sort.
-    _resolve_dynamic_reshape_shapes(
+    _very_late_dynamic_reshape_stats = _resolve_dynamic_reshape_shapes(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
     )

@@ -4999,7 +4999,10 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert isinstance(affine_boundary.targets[0], ast.Name)
     assert affine_boundary.targets[0].id == "_very_late_affine_post_add_stats"
     resolve_boundary = lowerer.body[invocation_index + 2]
-    assert isinstance(resolve_boundary, ast.Expr)
+    assert isinstance(resolve_boundary, ast.Assign)
+    assert len(resolve_boundary.targets) == 1
+    assert isinstance(resolve_boundary.targets[0], ast.Name)
+    assert resolve_boundary.targets[0].id == "_very_late_dynamic_reshape_stats"
     assert isinstance(resolve_boundary.value, ast.Call)
     assert isinstance(resolve_boundary.value.func, ast.Name)
     assert resolve_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"

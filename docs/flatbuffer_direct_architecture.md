@@ -10381,3 +10381,9 @@ direct lowerer calls, strict characterization selects only the very-late call
 with `prefer_runtime_inferable_from_onnx_raw=True` for a future
 `_very_late_dynamic_reshape_stats` assignment. The earlier core-cleanup call
 remains unchanged, as do the two already consumed convergence-helper calls.
+
+That selected call now assigns its unchanged raw result to
+`_very_late_dynamic_reshape_stats`. It remains observation-only between
+`_very_late_normalization_stats` and the indexed Conv-input adapter repair.
+The earlier direct expression and both convergence-helper uses are unchanged;
+no summary, tensor-count proxy, or reconciliation consumer is added.
