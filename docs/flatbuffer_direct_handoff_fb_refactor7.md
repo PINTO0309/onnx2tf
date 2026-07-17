@@ -2710,3 +2710,30 @@ At resume, audit the placeholder-MatMul restore owner and its guarded
 reconciliation. Confirm its positive-only pruning contract and characterize
 the discarded reconciliation result without changing the guard. Commit and
 push only; do not create or update a pull request.
+
+## Safety-fallback placeholder-MatMul characterization checkpoint
+
+`restore_placeholder_matmul_flattened_inputs()` rewires a proven
+placeholder-Reshape consumer and removes that Reshape through the differential
+GraphIndex. Its unused-tensor pruning runs only after `restored > 0`, so
+`restored_placeholder_matmul_flattened_inputs` is complete mutation evidence.
+
+The fallback lowerer currently invokes the owner inline in its guard and
+discards both its result and the guarded reconciliation result. A strict
+expected-failure AST contract requires one
+`fallback_placeholder_matmul_stats` assignment, a stable two-key
+`_fallback_placeholder_matmul_static_shape_stats` default, and an opt-in
+complete reconciliation assignment under the unchanged positive predicate.
+The immediately following topological sort remains fixed.
+
+Focused fallback placeholder-MatMul characterization is `7 passed, 11
+deselected, 1 xfailed`. The broader sequential fallback-owner, reconciliation,
+convergence, core, pass-efficiency, architecture, and TensorFlow
+import-blocking gate is `463 passed, 1 xfailed in 27.32s`. Ruff and whitespace
+validation pass.
+
+At implementation, preserve a single owner invocation and change no matcher,
+GraphIndex, pruning, guard, or sort behavior. Validate dynamic Reshape,
+safety fallback, static reconciliation, core, pass efficiency, architecture,
+and TensorFlow import blocking sequentially. Commit and push only; do not
+create or update a pull request.
