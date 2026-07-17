@@ -8997,3 +8997,12 @@ retain all former nested helper and registered-runner totals. Focused,
 adjacent-owner, core, and TensorFlow-import-blocked suites pass. Characterize
 the larger terminal slice/concat recovery sequence before attempting the next
 phase extraction.
+
+That terminal slice/concat sequence is now characterized without production
+changes. It has fourteen straight-line call slots, two zero-argument outer
+invocations, and ModelIR/layout/diagnostics routing with no local state scope or
+control flow. Thirteen slots have existing module owners; the channel-slice/
+pad/mul cluster is the only lowerer-local callback dependency. Focused tests
+freeze all arguments and the two distinct outer neighbors. The eventual phase
+should therefore use one frozen explicit context, one injected callback, and
+fourteen stable IDs while preserving both top-level boundaries.

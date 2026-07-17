@@ -13238,3 +13238,43 @@ clusters with direct owners and layout/diagnostic routing, so freeze its exact
 call slots, arguments, captures, repetition, and outer boundaries first. Keep
 verification sequential and minimal, commit and push coherent checkpoints,
 and do not create a pull request.
+
+## Terminal slice/concat recovery orchestration characterization: completed state
+
+The 37-line `_run_terminal_slice_concat_layout_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, contains no control flow or local pass-state scope, and
+has fourteen ordered call slots. Thirteen slots resolve to existing module
+owners; only `_run_channel_slice_pad_mul_layout_pass_cluster` remains a
+lowerer-local composite dependency.
+
+The focused
+`test_flatbuffer_direct_terminal_slice_concat_recovery_orchestration.py`
+freezes every call and positional/keyword argument, including six layout-aware
+owners and the final layout/diagnostics cleanup. It also proves both outer
+invocations remain zero-argument top-level boundaries. Both share the same
+preceding channel-slice/MulAdd call, but only the earlier predecessor receives
+layout state, and their following calls remain the boundary QDQ/concat and
+slice-pre/post owners respectively.
+
+Validation completed sequentially as follows:
+
+- focused terminal slice/concat characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.20s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.72s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, map the thirteen direct slots to their current module callables and
+introduce a frozen ModelIR/layout/diagnostics context with the single channel-
+slice/pad/mul callback plus fourteen stable IDs. Prove every builder argument
+and instrumented order before switching the historical helper, preserve both
+outer boundaries, validate sequentially, commit and push, and do not create a
+pull request.

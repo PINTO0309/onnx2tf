@@ -1968,3 +1968,11 @@ arguments, callback identities, order, and total invocation multiplicity. The
 blocked tests pass. No public API, artifact, dependency, runtime order, or
 TensorFlow boundary changed, and no pull request was created, reopened, or
 updated.
+
+The next 14-step terminal slice/concat recovery sequence is now characterized
+without production changes. Four focused tests freeze its ModelIR/layout/
+diagnostics arguments, both zero-argument outer calls, and their distinct
+neighbors. Thirteen slots have direct module owners and only one lowerer-local
+cluster requires an explicit callback. The focused plus architecture suite
+passed 252 tests and all 11 TensorFlow-import-blocked tests passed. No pull
+request was created, reopened, or updated.
