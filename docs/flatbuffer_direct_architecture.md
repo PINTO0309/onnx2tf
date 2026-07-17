@@ -10341,3 +10341,10 @@ followed directly by `_absolute_final_instancenorm_post_bias_stats`. The first
 call retains `_pre_terminal_affine_post_add_stats`, and the second very-late
 call remains an expression. No tensor-count proxy, reconciliation consumer,
 pass invocation, or graph traversal is added.
+
+The remaining second affine post-ADD call is a separate very-late occurrence
+immediately after unbound-input layout-transpose repair and immediately before
+the Gather/Constant normalization cluster. The same positive-only pruning
+contract makes its raw counter complete. Strict characterization selects only
+that second call for a future `_very_late_affine_post_add_stats` assignment,
+while preserving the already staged first and third calls.

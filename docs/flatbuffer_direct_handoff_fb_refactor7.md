@@ -2002,3 +2002,26 @@ unbound-input repair and immediately before the very-late Gather/Constant
 normalization cluster. Characterize its exact boundaries independently before
 considering a `_very_late_affine_post_add_stats` target. Commit and push only;
 do not create or update a pull request.
+
+## Very-late affine post-ADD characterization checkpoint
+
+The remaining second direct affine post-ADD call is isolated between
+`_repair_unbound_nonconstant_operator_inputs_with_layout_transpose` and the
+very-late Gather/Constant normalization cluster. It handles strict affine
+fragments recreated specifically by the unbound-input repair.
+
+The same indexed owner returns one fixed counter and prunes only after a
+positive rewrite, so its raw result is complete without a tensor-count proxy.
+Strict expected-failure coverage requires
+`_very_late_affine_post_add_stats`, preserves the first
+`_pre_terminal_affine_post_add_stats` target and the third
+`_absolute_final_affine_post_add_stats` target, and freezes both adjacent
+owners. Focused coverage is `72 passed, 92 deselected, 1 xfailed`.
+
+At implementation, replace only the second direct expression and update the
+very-late orchestration and architecture boundary contracts. Preserve both
+other staged targets, ModelIR/LayoutState forwarding, and pass order. Validate
+the indexed owner, all three occurrence contracts, very-late and absolute-final
+orchestration, core, pass-efficiency, architecture, and TensorFlow import
+blocking sequentially. Commit and push only; do not create or update a pull
+request.

@@ -4,6 +4,8 @@ import ast
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
@@ -250,6 +252,79 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
         == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
     )
     assert following.value.func.id == "_resolve_dynamic_reshape_shapes"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late affine post-ADD result is discarded",
+)
+def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == VERY_LATE
+    )
+    invocation = lowerer.body[invocation_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_very_late_affine_post_add_stats"
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[invocation_index - 2]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert (
+        previous.value.func.id
+        == "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    )
+    following = lowerer.body[invocation_index]
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert following.value.func.id == VERY_LATE
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 3
+    assert isinstance(direct_statements[0], ast.Assign)
+    first_target = direct_statements[0].targets[0]
+    assert isinstance(first_target, ast.Name)
+    assert first_target.id == "_pre_terminal_affine_post_add_stats"
+    assert direct_statements[1] is invocation
+    assert isinstance(direct_statements[2], ast.Assign)
+    third_target = direct_statements[2].targets[0]
+    assert isinstance(third_target, ast.Name)
+    assert third_target.id == "_absolute_final_affine_post_add_stats"
 
 
 def test_very_late_context_is_explicit() -> None:
