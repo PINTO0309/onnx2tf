@@ -903,3 +903,27 @@ production. Prefer a bounded sequence whose complete mutation interval is
 represented by returned counters or explicit prune accounting; characterize
 that boundary first. Commit and push coherent units only. Do not create or
 update a pull request.
+
+## Typed Constant lowering characterization checkpoint
+
+The next unconditional reconciliation after terminal layout cleanup spans a
+large phase whose owners do not yet expose complete mutation and pruning
+evidence, so it was deliberately rejected as the next optimization boundary.
+The selected bounded unit is the inline ONNX `Constant` special case in the
+node-lowering loop. This also addresses the outstanding Pylance diagnostic on
+protobuf `attribute.name` access.
+
+Characterization fixes tensor data, dtype, shape/signature, graph output,
+provenance, no-operator behavior, and the exact missing tensor-`value` error. A
+strict expected-failure architecture contract requires one
+TensorFlow-independent `op_families.constant` owner, a two-argument typed call
+from the lowerer, and an explicit `onnx.AttributeProto` cast inside the owner.
+The existing tensor-`value` feature scope, collision handling, and placeholder
+replacement behavior must remain unchanged.
+
+At implementation, move only the current Constant branch into the typed owner;
+do not route it through general registry dispatch or add support for additional
+Constant attribute encodings in this mechanical extraction. Validate focused
+Constant/core/architecture tests, then the sequential core, architecture,
+pass-efficiency, and TensorFlow-import-blocked suites. Commit and push only;
+do not create or update a pull request.

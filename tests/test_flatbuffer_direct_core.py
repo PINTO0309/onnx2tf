@@ -46,6 +46,31 @@ def _add_onnx_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
 
 
+def _constant_onnx_model(*, include_value: bool = True) -> onnx.ModelProto:
+    output = helper.make_tensor_value_info(
+        "constant_output",
+        TensorProto.FLOAT,
+        [1, 2],
+    )
+    attributes = {}
+    if include_value:
+        attributes["value"] = numpy_helper.from_array(
+            np.asarray([[1.0, 2.0]], dtype=np.float32)
+        )
+    node = helper.make_node(
+        "Constant",
+        [],
+        ["constant_output"],
+        name="constant_node",
+        **attributes,
+    )
+    graph = helper.make_graph([node], "constant_graph", [], [output])
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 13)],
+    )
+
+
 def _add_model_ir() -> ModelIR:
     return ModelIR(
         name="add",
@@ -87,6 +112,39 @@ def _rank3_resize_onnx_model() -> onnx.ModelProto:
         graph,
         opset_imports=[helper.make_opsetid("", 13)],
     )
+
+
+def test_lowerer_preserves_constant_tensor_contract() -> None:
+    model_ir = lower_onnx_to_ir(
+        _constant_onnx_model(),
+        "constant_tensor_contract",
+    )
+
+    assert model_ir.operators == []
+    assert model_ir.outputs == ["constant_output"]
+    tensor = model_ir.tensors["constant_output"]
+    assert tensor.dtype == "FLOAT32"
+    assert tensor.shape == [1, 2]
+    assert tensor.shape_signature == [1, 2]
+    assert tensor.onnx_tensor_name is None
+    np.testing.assert_array_equal(
+        tensor.data,
+        np.asarray([[1.0, 2.0]], dtype=np.float32),
+    )
+
+
+def test_lowerer_rejects_constant_without_tensor_value() -> None:
+    with pytest.raises(
+        NotImplementedError,
+        match=(
+            r"^Constant node without value is not supported\. "
+            r"op=constant_node$"
+        ),
+    ):
+        lower_onnx_to_ir(
+            _constant_onnx_model(include_value=False),
+            "constant_without_value",
+        )
 
 
 def test_conversion_request_normalizes_artifact_dependencies() -> None:

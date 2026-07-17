@@ -9946,3 +9946,19 @@ or zero-rewrite pruning. Dedicated runner tests fix owner order, optional-owner
 behavior, context forwarding, normalized counters, pruning, and the empty-model
 stable path. Architecture tests count calls at the new ownership boundary
 rather than assuming every owner is invoked directly from the lowerer.
+
+The next unconditional post-lowering reconciliation is not yet a safe local
+optimization boundary: it follows a broad terminal phase whose owners do not
+all return complete mutation or prune evidence. The next bounded extraction is
+therefore the inline ONNX `Constant` lowering special case. Its current tensor
+value, dtype, shape/signature, output, provenance, no-operator, and missing
+`value` error behavior are fixed by characterization tests.
+
+A strict expected-failure architecture contract requires one typed
+`op_families.constant` owner called with only the ONNX node and
+`LoweringContext`. The owner must preserve the existing collision and
+placeholder replacement behavior, use an explicit `onnx.AttributeProto` cast
+for protobuf attributes, and remain TensorFlow-independent. This removes the
+protobuf stub's ambiguous `type[In]` inference from the central lowerer without
+changing supported Constant attribute forms. Production remains unchanged at
+this characterization checkpoint.
