@@ -9175,3 +9175,12 @@ invocations. The historical helper is a zero-argument delegate at the same
 terminal boundary. The efficiency fixture now exercises the explicit runner
 and retains one graph-index build. Focused, architecture, pass-efficiency,
 core, and TensorFlow-import-blocked suites pass.
+
+The boundary-batchmatmul/input-unary pair is now characterized without
+production changes. It has two ordered cleanup owners, one fresh shared pass-
+state scope, and no option or direct invocation. It is an explicit callback in
+`LayoutRecoveryContext`; focused contracts freeze its complete ModelIR/layout/
+diagnostics/scope routing, callback identity, and both stable-list neighbors.
+The eventual phase should use a frozen ModelIR/layout/diagnostics context, two
+direct owner imports, two stable IDs, and one fresh shared scope per build,
+while retaining the historical callback boundary.

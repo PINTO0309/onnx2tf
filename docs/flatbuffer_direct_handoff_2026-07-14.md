@@ -14073,3 +14073,52 @@ scope cluster before changing production. The 17-line boundary-batchmatmul/
 input-unary pair is a likely candidate, but first freeze all of its actual
 callback and outer phase boundaries. Validate sequentially, keep real-model
 conversion minimal, commit and push only, and do not create a pull request.
+
+## Boundary-batchmatmul/input-unary orchestration characterization: completed state
+
+The 17-line `_run_boundary_batchmatmul_unary_layout_pass_cluster` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session with no option or control-flow dependency. It creates one
+`ModelIRPassStateScope` from ModelIR and layout state, then passes the identical
+scope, ModelIR, layout state, and diagnostics first to boundary-input
+batch-matmul cleanup and then to input-unary passthrough cleanup.
+
+This helper has no direct invocation. It remains the exact
+`boundary_batchmatmul_unary_cluster` callback stored in
+`LayoutRecoveryContext`, and its stable execution slot remains between
+transpose quant/dequant bridge recovery and the NCHW/NHWC elementwise
+roundtrip owner in `LAYOUT_RECOVERY_PASS_IDS`.
+
+The focused
+`test_flatbuffer_direct_boundary_batchmatmul_unary_orchestration.py` freezes
+the scope construction, both complete cleanup argument contracts, their exact
+order, callback-only ownership, callback identity, and both stable phase
+neighbors. The existing efficiency fixture continues to prove one graph-index
+build across both runners.
+
+Sequential validation completed as follows:
+
+- focused boundary-batchmatmul/input-unary characterization:
+  `4 passed in 0.57s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.92s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 11.03s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `boundary_input_chains` and
+`input_passthrough_layout`. Build one fresh `ModelIRPassStateScope` per phase
+invocation and attach the identical object to both immutable invocations.
+Preserve the historical zero-argument helper as the same
+`LayoutRecoveryContext` callback and retain both stable-list neighbors. Prove
+builder arguments, fresh/shared scope identity, instrumented order, and
+callback identity before switching to a delegate; validate sequentially,
+commit and push, and do not create a pull request.
