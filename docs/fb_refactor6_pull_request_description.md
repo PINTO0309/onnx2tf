@@ -2032,3 +2032,14 @@ at parent checkpoint `71d1814e`; it is documented rather than attributed to
 this extraction. No public API, artifact, dependency, runtime order, or
 TensorFlow boundary changed. PR #952 remains closed, and no pull request was
 created, reopened, or updated.
+
+The adjacent three-step SINet terminal-layout sequence is now characterized
+without production changes. Four focused tests freeze its ModelIR/layout,
+zero-argument nested helper, and ModelIR-only argument contracts, both top-
+level invocations, and their distinct neighbors. The two outer targets have
+direct module owners; the middle SINet pre-add/resize helper must remain one
+explicit callback to preserve its historical nested boundary. The focused
+plus architecture suite passed 252 tests, all 11 TensorFlow-import-blocked
+tests passed, and targeted static checks passed. Runtime behavior and all
+public/dependency contracts remain unchanged. PR #952 remains closed, and no
+pull request was created, reopened, or updated.

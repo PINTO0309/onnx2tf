@@ -13519,3 +13519,45 @@ code. Freeze its three-slot order, nested pre-add/resize phase boundary,
 ModelIR/layout routing, top-level repetitions, and outer neighbors before
 choosing its explicit context. Validate sequentially, commit and push, and do
 not create a pull request.
+
+## SINet terminal-layout recovery orchestration characterization: completed state
+
+The seven-line `_run_sinet_terminal_layout_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, has no control flow or local pass-state scope, and contains
+three ordered calls. The first call routes ModelIR and layout state to the
+shuffle-residual owner, the second invokes the existing zero-argument SINet
+pre-add/resize helper, and the third routes ModelIR alone to the terminal
+affine/PReLU owner.
+
+The focused
+`test_flatbuffer_direct_sinet_terminal_layout_recovery_orchestration.py`
+freezes all three positional/keyword argument contracts and their exact order.
+It proves both outer invocations remain zero-argument top-level boundaries and
+records their two distinct predecessor/follower pairs. Since the middle slot
+must retain the historical nested helper boundary, a future extracted phase
+requires one explicit callback in addition to ModelIR and layout state; its two
+outer owners can be imported directly.
+
+Validation completed sequentially as follows:
+
+- focused SINet terminal-layout characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.36s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.47s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout context, one explicit pre-add/
+resize callback, three stable IDs, and direct imports of the two outer owners.
+Preserve the historical helper, both zero-argument top-level invocations, the
+nested pre-add/resize helper call, and both neighboring boundary pairs. Prove
+builder argument equality and instrumented order before switching the helper
+to a delegate, validate sequentially, commit and push, and do not create a pull
+request.

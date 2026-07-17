@@ -9060,3 +9060,13 @@ remain explicit. Focused, related-owner, core, and TensorFlow-import-blocked
 suites pass apart from one stale direct fixture that fails identically at the
 parent checkpoint. Characterize the adjacent three-step SINet terminal-layout
 sequence before the next extraction.
+
+That adjacent terminal-layout sequence is now characterized without production
+changes. It is a seven-line parameterless straight-line closure with three
+ordered slots: a ModelIR/layout shuffle-residual owner, the zero-argument SINet
+pre-add/resize helper, and a ModelIR-only terminal affine/PReLU owner. Focused
+contracts freeze all arguments, both top-level invocations, and both distinct
+outer boundaries. The eventual phase needs a frozen ModelIR/layout context,
+direct imports for the outer owners, and one explicit callback to retain the
+historical nested helper boundary. The focused plus architecture suite passed
+252 tests, and all 11 TensorFlow-import-blocked tests passed.
