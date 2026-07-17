@@ -1801,3 +1801,13 @@ families produce identical statistics and complete normalized ModelIR state.
 Resume by inventorying the existing focused coverage for the next unextracted
 raw owner, `_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` (209
 lines), before semantic or ownership changes. Do not create a pull request.
+That characterization is now complete without production changes. Thirty-two
+structural, all-op-family, numerical-equivalence, multiple-match, dynamic-
+signature, rejection, fixed-point, owner-shape, and call-boundary cases pass,
+while 28 strict xfails isolate zero-match pruning, unsafe permutation ownership
+and typing, local/shared NHWC constant remapping, stale layout/QDIM metadata,
+and incomplete candidate topology or tensor metadata. Resume by building one
+indexed topology/metadata/permutation/broadcast/constant/quantization/removal
+plan before mutation and turning all 28 xfails green without changing valid
+behavior, statistics, fixed point, or the ordered production call. Do not
+create a pull request.

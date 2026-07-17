@@ -8774,6 +8774,33 @@ normalized ModelIR state are identical in every case. The mechanical move does
 not alter public APIs, artifacts, dependencies, corpus policy, ordered runtime
 behavior, or TensorFlow isolation.
 
+## Raw NCHW-to-NHWC elementwise roundtrip characterization
+
+The next substantive unextracted raw source-order owner is the 209-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`. Production code
+and its one ordered call remain unchanged. The focused fixture now expands its
+former three cases into thirty-two green structural, numerical, all-op-family,
+multiple-match, fixed-point, dynamic-signature, provenance, rejection,
+statistics, owner-shape, and call-boundary contracts.
+
+Twenty-eight concrete safety gaps are strict xfails: zero-match pruning;
+public, variable, mistyped, quantized, or runtime-produced transpose
+permutations; unremapped local and shared NHWC broadcast constants; stale
+logical/physical layout and per-axis QDIM; and missing metadata, incompatible
+shape/dtype/signature, public internal aliases, reverse topology, or malformed
+multi-output candidates that are not rejected transactionally.
+
+Correction must construct one `ModelIRGraphIndex` and the complete candidate
+plan before mutation. The plan must prove unique ordered topology, exact
+operator arity and boundaries, complete rank-four tensor compatibility,
+immutable unquantized INT32 permutation ownership/type, valid old/new
+broadcast semantics, and output availability. It must rotate local constants,
+clone constants with nonlocal users, preserve dynamic axes, and remap layout
+metadata and per-axis QDIM from NHWC to NCHW. All indexed rewires, output
+rename, removals, pruning, and statistics must be known before commit; a
+zero-match call must be a complete no-op. The 209-line count is descriptive
+only; 2,000 remains the ONNX operation-count tier threshold.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

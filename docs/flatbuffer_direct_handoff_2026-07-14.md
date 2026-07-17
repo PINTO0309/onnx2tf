@@ -12569,3 +12569,61 @@ fixed-point and production-call coverage, move or extend only missing focused
 contracts, and record unsafe behavior as strict xfails before correction. Keep
 validation minimal and strictly sequential, commit and push coherent
 checkpoints, and do not create a pull request.
+
+## NCHW-to-NHWC elementwise roundtrip characterization: completed state
+
+The 209-line raw
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` owner and its one
+ordered production call remain unchanged. Its existing focused fixture had
+only one valid rewrite and two boundary rejections. The expanded fixture now
+owns the complete synthetic ModelIR characterization.
+
+Thirty-two green cases freeze structural and NumPy-exact rewrites, all fifteen
+allowed unary/binary op types, two independent matches and fixed point,
+dynamic signatures, provenance/options/version retention, nine existing
+permutation/operator/public-boundary/fan-out/runtime-input rejections, the
+existing duplicate-producer rejection, statistics, the current 209-line/two-
+While owner shape, and the single production call.
+
+Twenty-eight reproduced safety problems are strict xfails:
+
+- one zero-match invocation prunes an unrelated tensor;
+- twelve public-input, variable, TensorIR/buffer dtype, quantized, or
+  runtime-produced pre/post permutation tensors are accepted as compile-time
+  constants;
+- three local channel/full-rank NHWC constants and one shared NHWC constant
+  are not remapped or cloned for the rewritten NCHW subgraph;
+- one layout-metadata and one per-axis-QDIM case retain NHWC coordinates after
+  the shape has changed to NCHW;
+- nine incomplete tensor/dtype/shape/signature/public-boundary/topology/output
+  candidates mutate instead of being rejected transactionally.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `32 passed, 28 xfailed in 0.90s`;
+- focused characterization, the two preceding attention contracts, six
+  adjacent extracted bridge/collapse contracts, and ordered architecture
+  suite: `845 passed, 28 xfailed in 19.54s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.48s`;
+- focused-test Ruff formatting/lint checks: passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, the
+ordered runtime call, and TensorFlow isolation are unchanged. The 209-line
+count is descriptive only; 2,000 remains the ONNX operation-count tier
+threshold. PR #952 remains closed; no pull request was created, reopened, or
+updated.
+
+At restart, correct the raw owner transactionally before extracting it. Build
+one `ModelIRGraphIndex` and a complete candidate plan before mutation. Prove
+unique ordered producers/consumers, exact arity, private boundaries, complete
+rank-four shape/signature/dtype/layout metadata, transpose equivalence, and
+elementwise broadcast compatibility. Give both transpose permutations an
+immutable unquantized INT32 ownership/type contract. Plan local constant
+rotation and shared/public constant cloning without changing nonlocal users;
+remap dynamic metadata, logical/physical layout, and per-axis QDIM from NHWC
+to NCHW. Apply indexed setters/removals only after the full preflight and leave
+zero-match execution untouched. Turn all 28 strict xfails green while
+preserving NumPy-exact valid outputs, all allowed ops, statistics, fixed point,
+and the production call. Validate sequentially, commit and push, and do not
+create a pull request.
