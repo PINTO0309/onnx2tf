@@ -5556,13 +5556,22 @@ def lower_onnx_to_ir(
         fallback_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(
             fallback_ir
         )
+        _fallback_concat_axis_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_concat_axis_stats.get(
                 "repaired_nchw_concat_transpose_conv_axes",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_concat_axis_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         fallback_binary_layout_stats = (
             _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                 fallback_ir

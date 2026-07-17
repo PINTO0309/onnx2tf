@@ -2391,33 +2391,6 @@ many conditional and convergence-owned reconciliations, confirm its result
 schema and mutation completeness, and characterize only this very-late
 boundary. Commit and push only; do not create or update a pull request.
 
-## Safety-fallback Concat-axis reconciliation characterization checkpoint
-
-`_repair_nchw_concat_transpose_conv_axes()` updates a proven Concat axis and
-related tensor metadata only when
-`repaired_nchw_concat_transpose_conv_axes` increments. The indexed owner has no
-pruning or zero-rewrite cleanup, and existing positive/no-op/multi-rewrite
-coverage makes the raw counter complete.
-
-The fallback positive guard is unchanged, but its reconciliation result is
-discarded. A strict expected-failure contract requires a stable
-`_fallback_concat_axis_static_shape_stats` zero dictionary and an opt-in
-complete result inside the same guard. The following stale binary-layout owner
-remains fixed.
-
-Focused indexed Concat-axis and safety-fallback characterization is `37 passed,
-1 xfailed`. The broader sequential indexed-owner, fallback-owner,
-reconciliation, convergence, core, pass-efficiency, architecture, and
-TensorFlow import-blocking gate is `519 passed, 1 xfailed in 27.75s`. Ruff and
-whitespace validation pass.
-
-At implementation, add only this result plumbing. Do not change any of the
-three production occurrences, indexed matching, axis/metadata writes, result
-schema, guard, or following owner. Validate indexed Concat-axis repair, safety
-fallback, static reconciliation, core, pass efficiency, architecture, and
-TensorFlow import blocking sequentially. Commit and push only; do not create or
-update a pull request.
-
 ## Very-late static reconciliation characterization checkpoint
 
 The legacy `reconciled_static_tensor_shapes` key counts updates applied through
@@ -2942,3 +2915,51 @@ pass.
 At resume, audit `fallback_concat_axis_stats` and its guarded reconciliation.
 Confirm its complete counter and cleanup behavior before changing that
 boundary. Commit and push only; do not create or update a pull request.
+
+## Safety-fallback Concat-axis reconciliation characterization checkpoint
+
+`_repair_nchw_concat_transpose_conv_axes()` updates a proven Concat axis and
+related tensor metadata only when
+`repaired_nchw_concat_transpose_conv_axes` increments. The indexed owner has no
+pruning or zero-rewrite cleanup, and existing positive/no-op/multi-rewrite
+coverage makes the raw counter complete.
+
+The fallback positive guard is unchanged, but its reconciliation result is
+discarded. A strict expected-failure contract requires a stable
+`_fallback_concat_axis_static_shape_stats` zero dictionary and an opt-in
+complete result inside the same guard. The following stale binary-layout owner
+remains fixed.
+
+Focused indexed Concat-axis and safety-fallback characterization is `37 passed,
+1 xfailed`. The broader sequential indexed-owner, fallback-owner,
+reconciliation, convergence, core, pass-efficiency, architecture, and
+TensorFlow import-blocking gate is `519 passed, 1 xfailed in 27.75s`. Ruff and
+whitespace validation pass.
+
+At implementation, add only this result plumbing. Do not change any of the
+three production occurrences, indexed matching, axis/metadata writes, result
+schema, guard, or following owner. Validate indexed Concat-axis repair, safety
+fallback, static reconciliation, core, pass efficiency, architecture, and
+TensorFlow import blocking sequentially. Commit and push only; do not create or
+update a pull request.
+
+## Safety-fallback Concat-axis reconciliation implementation checkpoint
+
+Only the fallback occurrence now initializes
+`_fallback_concat_axis_static_shape_stats` with both zero keys and assigns the
+opt-in complete reconciliation result on a positive repair. Its exact owner
+counter and guard are unchanged.
+
+The very-late and final occurrences, indexed matching, axis/metadata writes,
+and following stale binary-layout owner remain unchanged. No scan, dependency,
+or unconditional work is added.
+
+Focused indexed Concat-axis and safety-fallback validation is `38 passed`. The
+broader sequential indexed-owner, fallback-owner, reconciliation, convergence,
+core, pass-efficiency, architecture, and TensorFlow import-blocking gate is
+`520 passed in 27.79s`. Ruff, Python bytecode compilation, and whitespace
+validation pass.
+
+At resume, audit `fallback_binary_layout_stats` and its guarded reconciliation.
+Confirm the owner's cleanup behavior and counter completeness before changing
+that boundary. Commit and push only; do not create or update a pull request.

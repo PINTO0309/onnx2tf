@@ -45,6 +45,11 @@ tensor-count deltas, and reconciliation is skipped only when all declared
 mutation evidence is zero. Pass order and mutation-positive behavior remain
 unchanged.
 
+The fallback NCHW Concat/Transpose/Conv-axis repair now retains complete
+reconciliation evidence under its unchanged positive guard. Its indexed
+matching, axis/metadata writes, other production occurrences, and following
+binary-layout owner remain unchanged.
+
 ## Explicit mutation evidence and result propagation
 
 Late and terminal orchestration now returns or stages ordered, fixed-schema
@@ -175,6 +180,9 @@ extends it to `470 passed in 27.49s`; and complete fallback Conv-input evidence
 extends it to `480 passed in 27.81s`. Mixed-Concat reconciliation staging
 extends the current focused branch gate to `491 passed in 29.82s`.
 
+Fallback Concat-axis reconciliation staging extends that gate to `520 passed
+in 27.79s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -183,6 +191,6 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should audit the fallback Concat-axis repair and its guarded
-reconciliation. Any new mutation evidence must preserve the recursive fallback
-boundary, current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+reconciliation, followed by the stale binary-layout repair. Any new mutation
+evidence must preserve the recursive fallback boundary, current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

@@ -2286,9 +2286,9 @@ unchanged positive guard, while the following Concat-axis repair boundary
 remains fixed.
 
 The fallback NCHW Concat/Transpose/Conv-axis repair also has one complete
-counter and no cleanup-only path. Characterization requires the same stable
-zero and opt-in complete reconciliation result under its unchanged guard, with
-the following stale binary-layout repair fixed as the outer boundary.
+counter and no cleanup-only path. The same stable zero and opt-in complete
+reconciliation result replace the discarded return under its unchanged guard,
+with the following stale binary-layout repair fixed as the outer boundary.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
