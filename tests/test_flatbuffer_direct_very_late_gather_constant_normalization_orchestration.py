@@ -10,6 +10,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes import constant_fold_cast_orchestration
+from onnx2tf.tflite_builder.passes import pad_layout
 from onnx2tf.tflite_builder.passes import (
     very_late_gather_constant_normalization_orchestration,
 )
@@ -220,6 +221,163 @@ def test_very_late_runner_preserves_instrumented_effective_order(
         VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS
     )
     assert all(scope is events[0][1] for _, scope in events)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late runner discards its ordered pass results",
+)
+def test_very_late_runner_returns_ordered_mutation_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    expected = (
+        {"optimized_transpose_gather_transpose_axis_remap_nhwc_chains": 1},
+        {
+            "optimized_constant_input_pad_chains": 2,
+            "optimized_constant_input_pool_chains": 3,
+            "optimized_constant_input_cast_chains": 4,
+        },
+        {
+            "optimized_redundant_int32_to_int64_passthrough_cast_chains": 5,
+            "optimized_redundant_int64_to_int32_cast_chains": 6,
+        },
+        {
+            "optimized_transpose_instancenorm_pad_prepost_nhwc_chains": 0,
+            "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 7,
+        },
+    )
+
+    monkeypatch.setattr(
+        very_late_gather_constant_normalization_orchestration,
+        "run_transpose_gather_axis_cleanup",
+        lambda *args, **kwargs: expected[0],
+    )
+    monkeypatch.setattr(
+        constant_fold_cast_orchestration,
+        "run_constant_input_fold_cleanup",
+        lambda *args, **kwargs: expected[1],
+    )
+    monkeypatch.setattr(
+        constant_fold_cast_orchestration,
+        "run_redundant_cast_cleanup",
+        lambda *args, **kwargs: expected[2],
+    )
+    monkeypatch.setattr(
+        very_late_gather_constant_normalization_orchestration,
+        "run_normalization_pad_layout_cleanup",
+        lambda *args, **kwargs: expected[3],
+    )
+
+    assert run_very_late_gather_constant_normalization(context) == expected
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the very-late mutation summary is not implemented",
+)
+def test_very_late_mutation_summary_has_fixed_schema_and_net_pruning() -> None:
+    summarize = getattr(
+        very_late_gather_constant_normalization_orchestration,
+        "summarize_very_late_gather_constant_normalization_mutations",
+    )
+    results = (
+        {"optimized_transpose_gather_transpose_axis_remap_nhwc_chains": 1},
+        {
+            "optimized_constant_input_pad_chains": 2,
+            "optimized_constant_input_pool_chains": 3,
+            "optimized_constant_input_cast_chains": 4,
+        },
+        {
+            "optimized_redundant_int32_to_int64_passthrough_cast_chains": 5,
+            "optimized_redundant_int64_to_int32_cast_chains": 6,
+        },
+        {
+            "optimized_transpose_instancenorm_pad_prepost_nhwc_chains": 0,
+            "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 7,
+        },
+    )
+
+    assert summarize(results, pruned_unused_tensors=8) == {
+        "optimized_transpose_gather_transpose_axis_remap_nhwc_chains": 1,
+        "optimized_constant_input_pad_chains": 2,
+        "optimized_constant_input_pool_chains": 3,
+        "optimized_constant_input_cast_chains": 4,
+        "optimized_redundant_int32_to_int64_passthrough_cast_chains": 5,
+        "optimized_redundant_int64_to_int32_cast_chains": 6,
+        "optimized_transpose_instancenorm_pad_prepost_nhwc_chains": 0,
+        "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 7,
+        "pruned_unused_tensors": 8,
+    }
+
+
+def test_very_late_flatten_owner_can_prune_without_a_rewrite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("very_late_flatten_zero_rewrite_prune")
+    prune_calls: list[tuple[ModelIR, LayoutState | None]] = []
+
+    def record_prune(
+        active_model_ir: ModelIR,
+        *,
+        layout_state: LayoutState | None = None,
+    ) -> None:
+        prune_calls.append((active_model_ir, layout_state))
+
+    monkeypatch.setattr(pad_layout, "_prune_unused_tensors", record_prune)
+
+    stats = pad_layout._optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(
+        model_ir
+    )
+
+    assert stats == {
+        "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 0
+    }
+    assert prune_calls == [(model_ir, None)]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the lowerer discards very-late cluster mutation evidence",
+)
+def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    resolve_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "_resolve_dynamic_reshape_shapes"
+        and any(
+            keyword.arg == "prefer_runtime_inferable_from_onnx_raw"
+            for keyword in statement.value.keywords
+        )
+    )
+
+    tensor_count = lowerer.body[resolve_index - 3]
+    results = lowerer.body[resolve_index - 2]
+    summary = lowerer.body[resolve_index - 1]
+    assert isinstance(tensor_count, ast.Assign)
+    assert isinstance(tensor_count.targets[0], ast.Name)
+    assert tensor_count.targets[0].id == "very_late_normalization_tensor_count"
+    assert isinstance(results, ast.Assign)
+    assert isinstance(results.targets[0], ast.Name)
+    assert results.targets[0].id == "very_late_normalization_results"
+    assert isinstance(results.value, ast.Call)
+    assert isinstance(results.value.func, ast.Name)
+    assert (
+        results.value.func.id
+        == "_run_very_late_gather_constant_normalization_pass_cluster"
+    )
+    assert isinstance(summary, ast.Assign)
+    assert isinstance(summary.targets[0], ast.Name)
+    assert summary.targets[0].id == "_very_late_normalization_stats"
+    assert isinstance(summary.value, ast.Call)
+    assert isinstance(summary.value.func, ast.Name)
+    assert summary.value.func.id == (
+        "summarize_very_late_gather_constant_normalization_mutations"
+    )
 
 
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:

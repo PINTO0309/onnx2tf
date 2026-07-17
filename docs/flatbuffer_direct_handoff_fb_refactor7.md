@@ -2050,3 +2050,33 @@ Gather/Constant normalization cluster. Determine whether its child owners
 already expose complete mutation evidence and whether any cleanup-only path
 requires net tensor-count accounting before adding a new observation point.
 Commit and push only; do not create or update a pull request.
+
+## Very-late normalization mutation characterization checkpoint
+
+The very-late Gather/Constant normalization runner builds four ordered
+invocations but currently discards the tuple returned by
+`run_recovery_invocations()`. The child schemas comprise one Gather-axis key,
+three constant-input fold keys, two redundant-Cast keys, and two
+normalization-Pad keys.
+
+The flatten global-normalization Pad owner unconditionally prunes unused
+tensors even when its rewrite count is zero. A prune-hook contract now freezes
+that cleanup-only path. Therefore a complete cluster summary requires all eight
+fixed mutation keys plus a clamped net tensor reduction measured around the
+whole cluster.
+
+Three strict expected-failure contracts require the runner's ordered tuple, a
+fixed-schema
+`summarize_very_late_gather_constant_normalization_mutations()` helper, and
+lowerer assignments for `very_late_normalization_tensor_count`,
+`very_late_normalization_results`, and `_very_late_normalization_stats` before
+the final dynamic-Reshape resolution. Focused characterization is `9 passed, 3
+xfailed`.
+
+At implementation, return the existing ordered tuple without another pass,
+validate exactly four results in the pure summary, and measure only the
+cluster-wide tensor delta in the lowerer. Keep the summary observation-only;
+do not add reconciliation or alter the shared pass-state scope. Validate
+very-late orchestration, constant-fold/Cast, normalization-Pad, shared-context,
+core, pass-efficiency, architecture, and TensorFlow import blocking
+sequentially. Commit and push only; do not create or update a pull request.

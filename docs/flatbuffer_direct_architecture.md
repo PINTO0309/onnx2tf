@@ -10354,3 +10354,12 @@ That second call now assigns its unchanged result to
 distinct pre-terminal, very-late, and absolute-final targets. All remain
 observation-only, and no reconciliation guard, tensor-count proxy, graph scan,
 or pass invocation is added.
+
+The following very-late Gather/Constant normalization runner has four ordered
+child results: Gather-axis cleanup, three constant-input fold counters, two
+redundant-Cast counters, and two normalization-Pad counters. The flatten
+normalization owner prunes unused tensors even when its rewrite counter is
+zero, so the raw tuple alone is incomplete. Strict characterization requires
+tuple propagation, a fixed eight-key mutation summary plus clamped net tensor
+reduction, and distinct lowerer tensor-count/result/summary assignments before
+the final dynamic-Reshape resolution.
