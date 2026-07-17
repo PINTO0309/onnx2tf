@@ -3071,3 +3071,23 @@ that collection issue:
 
 The sole strict xfail is the deliberately unmet terminal-validation contract;
 the broad gate has no unexpected failure.
+
+## Elementwise gate compatibility re-export checkpoint
+
+The lowerer again exposes `run_elementwise_gate_layout_cleanup`, importing it
+from the extracted gate-layout orchestration module and marking it as a
+compatibility re-export. This restores the established Python/test import
+contract removed by `5c4f72ae` without adding a direct lowerer call, a second
+owner, a new scan, or a dependency.
+
+Validate collection of `tests/test_tflite_builder_direct.py`, the two rank-6
+BatchMatMul tests, gate orchestration/architecture, pass efficiency, and the
+TensorFlow import boundary sequentially. Commit and push this repair
+independently; do not create or update a pull request.
+
+Compatibility validation completed sequentially under `uv`:
+
+- previously blocked rank-6 structure/numeric tests: `2 passed`
+- gate orchestration, architecture, pass efficiency, optional TensorFlow
+  boundary, and rank-6 tests: `312 passed in 26.08s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed

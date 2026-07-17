@@ -2304,6 +2304,11 @@ terminal graph and requires an empty terminal result to remove validation
 errors inherited from the recursive lower. This changes diagnostics only; the
 mutation owners and their ordering remain fixed.
 
+Gate-layout orchestration remains owned by
+`passes/gate_layout_orchestration.py`. The lowerer re-exports the elementwise
+gate runner from that module solely for the established Python/test import
+contract; it does not call the runner directly or create another pass owner.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct

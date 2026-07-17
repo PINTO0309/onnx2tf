@@ -262,6 +262,7 @@ from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration i
     run_singleton_consecutive_reshape,
 )
 from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    run_elementwise_gate_layout_cleanup,  # noqa: F401 - compatibility re-export
     run_gate_layout,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
