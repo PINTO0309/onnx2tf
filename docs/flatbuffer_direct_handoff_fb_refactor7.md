@@ -1183,3 +1183,24 @@ At resume, continue moving backward through the same terminal interval and
 characterize another small owner or orchestration cluster before using any
 staged evidence to guard broad reconciliation. Commit and push only; do not
 create or update a pull request.
+
+## Terminal Hardswish-SE evidence characterization checkpoint
+
+The terminal Hardswish-SE owner immediately before the late hard-activation
+cluster returns a complete rewrite counter, but it also invokes unused-tensor
+pruning unconditionally. A dedicated zero-rewrite fixture confirms that the
+owner can remove a tensor while returning zero, so its raw dictionary alone
+cannot prove ModelIR stability.
+
+A strict expected-failure structural contract requires two adjacent production
+assignments: capture the starting tensor count, then merge the unchanged owner
+result with an exact, clamped `pruned_unused_tensors` count. The preceding
+split/conv bridge call and following late hard-activation count remain the
+fixed boundaries. No pass call, ordering, policy, or reconciliation changes.
+
+At implementation, replace only the discarded terminal call with this
+prune-aware staged evidence and update the two affected boundary contracts.
+Validate the complete Hardswish-SE owner suite, late hard-activation
+orchestration, terminal recovery structure, core, architecture, pass
+efficiency, and TensorFlow import blocking sequentially. Commit and push only;
+do not create or update a pull request.

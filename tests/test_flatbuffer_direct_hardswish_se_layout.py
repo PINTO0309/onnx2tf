@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import copy
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -11,6 +13,12 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 )
 from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
     optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains,
+)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TERMINAL_HARDSWISH_SE_OWNER = (
+    "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
 
 
@@ -330,3 +338,95 @@ def test_hardswish_se_layout_owner_matches_lowerer_compatibility_wrapper() -> No
 
     assert direct_stats == wrapper_stats
     assert _normalize(direct_model_ir) == _normalize(wrapper_model_ir)
+
+
+def test_hardswish_se_layout_prunes_unused_tensors_on_zero_rewrite() -> None:
+    model_ir = ModelIR("hardswish_se_zero_rewrite_prune")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["x"]
+    model_ir.tensors["x"] = _tensor("x", [1, 2, 3, 4])
+    model_ir.tensors["unused"] = _tensor("unused", [1])
+
+    stats = (
+        _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {
+        "optimized_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains": 0,
+    }
+    assert "unused" not in model_ir.tensors
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the terminal Hardswish-SE call does not capture prune evidence",
+)
+def test_terminal_hardswish_se_call_captures_complete_mutation_evidence() -> None:
+    tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    target_names = (
+        "terminal_hardswish_se_tensor_count",
+        "_terminal_hardswish_se_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+    }
+    tensor_count = assignments[target_names[0]]
+    assert isinstance(tensor_count, ast.Call)
+    assert isinstance(tensor_count.func, ast.Name)
+    assert tensor_count.func.id == "len"
+
+    summary = assignments[target_names[1]]
+    assert isinstance(summary, ast.Dict)
+    assert len(summary.keys) == 2
+    assert summary.keys[0] is None
+    prune_key = summary.keys[1]
+    assert isinstance(prune_key, ast.Constant)
+    assert prune_key.value == "pruned_unused_tensors"
+    owner_call = summary.values[0]
+    assert isinstance(owner_call, ast.Call)
+    assert isinstance(owner_call.func, ast.Name)
+    assert owner_call.func.id == TERMINAL_HARDSWISH_SE_OWNER
+    prune_call = summary.values[1]
+    assert isinstance(prune_call, ast.Call)
+    assert isinstance(prune_call.func, ast.Name)
+    assert prune_call.func.id == "max"
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert (
+        previous.value.func.id
+        == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+    )
+    following = lowerer.body[first_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "late_hard_activation_tensor_count"

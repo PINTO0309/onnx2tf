@@ -10095,3 +10095,12 @@ The lowerer stages the starting tensor count, raw results, and normalized
 `_late_hard_activation_stats` at the original terminal call site. This remains
 observation-only: pass selection and order, the adjacent Hardswish-SE and
 pre-Concat rewrites, and every downstream reconciliation are unchanged.
+
+Immediately before that cluster, the terminal Hardswish-SE owner returns one
+rewrite counter but unconditionally prunes unused tensors. A zero counter is
+therefore not sufficient evidence that the owner left ModelIR unchanged.
+Strict characterization requires the production call to preserve its raw
+counter while adding the exact net tensor reduction as
+`pruned_unused_tensors`. The neighboring split/conv bridge owner and late
+hard-activation cluster remain fixed boundaries; production is unchanged at
+this checkpoint.
