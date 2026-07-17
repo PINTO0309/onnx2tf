@@ -195,6 +195,12 @@ in 27.90s`. The pure validator now observes the graph after all fallback
 mutations and clears only validation errors inherited from recursive lowering
 when the terminal graph is valid. The error-list schema is unchanged.
 
+Fallback high-rank BatchMatMul result staging extends that gate to `540 passed
+in 27.98s`. The owner counter is proven complete, including a true no-op path,
+and the fallback now retains a stable complete reconciliation result without
+changing compression eligibility, reshape construction, pruning, sorting, or
+the following convergence owner.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -202,7 +208,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next
-characterized unit should audit the fallback high-rank BatchMatMul compression
-owner and its guarded reconciliation result. Any new mutation evidence must
-preserve the recursive fallback boundary, current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+characterized unit should audit the fallback indexed binary-layout convergence
+result and its terminal sort/validation boundary. Any new mutation evidence
+must preserve the recursive fallback boundary, current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

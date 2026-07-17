@@ -2311,10 +2311,10 @@ contract; it does not call the runner directly or create another pass owner.
 
 The static high-rank BatchMatMul owner prunes and synchronizes layout state
 only after a successful rewrite, so its exact rewrite counter is complete
-mutation evidence and a zero result is a true no-op. Characterization of the
-fallback caller therefore requires only a stable complete reconciliation
-result under the existing positive guard; its sort and following indexed
-binary-convergence boundary remain fixed.
+mutation evidence and a zero result is a true no-op. The fallback caller keeps
+a stable complete reconciliation result and assigns the opt-in result under
+the existing positive guard; its sort and following indexed binary-convergence
+boundary remain fixed.
 
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to

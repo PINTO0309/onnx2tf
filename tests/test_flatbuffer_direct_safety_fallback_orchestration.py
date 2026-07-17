@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -729,26 +728,26 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
         "fallback_ir.metadata['layout_optimize_fallback']"
     )
 
-    guard = body[stats_index + 1]
+    guard = body[stats_index + 2]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_high_rank_bmm_stats.get("
         "'compressed_static_high_rank_batch_matmul', 0)) > 0"
     )
 
-    convergence = body[stats_index + 2]
+    convergence = body[stats_index + 3]
     assert isinstance(convergence, ast.Expr)
     assert ast.unparse(convergence.value) == (
         "_run_indexed_binary_layout_convergence(fallback_ir)"
     )
 
-    final_sort = body[stats_index + 3]
+    final_sort = body[stats_index + 4]
     assert isinstance(final_sort, ast.Expr)
     assert ast.unparse(final_sort.value) == (
         "_topologically_sort_operators(fallback_ir)"
     )
 
-    validation = body[stats_index + 4]
+    validation = body[stats_index + 5]
     assert isinstance(validation, ast.Assign)
     assert isinstance(validation.targets[0], ast.Name)
     assert validation.targets[0].id == "fallback_layout_problems"
@@ -756,7 +755,7 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
         "validate_model_ir_layout_annotations(fallback_ir)"
     )
 
-    validation_guard = body[stats_index + 5]
+    validation_guard = body[stats_index + 6]
     assert isinstance(validation_guard, ast.If)
     assert ast.unparse(validation_guard.test) == (
         "len(fallback_layout_problems) > 0"
@@ -771,7 +770,7 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
         "fallback_ir.metadata.pop('logical_layout_validation_errors', None)"
     )
 
-    terminal = body[stats_index + 6]
+    terminal = body[stats_index + 7]
     assert isinstance(terminal, ast.Return)
     assert ast.unparse(terminal.value) == "_finalize_model_ir(fallback_ir)"
 
@@ -792,10 +791,6 @@ def test_fallback_high_rank_bmm_owner_does_not_prune_on_noop() -> None:
     assert "unused" in model_ir.tensors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback high-rank BMM reconciliation result is discarded",
-)
 def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
     stats_index = next(

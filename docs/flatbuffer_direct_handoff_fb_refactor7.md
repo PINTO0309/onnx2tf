@@ -3147,3 +3147,28 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet result-staging contract; there
 are no unexpected failures.
+
+## Safety-fallback high-rank BatchMatMul implementation checkpoint
+
+Only the recursive fallback occurrence now initializes
+`_fallback_high_rank_bmm_static_shape_stats` with the two stable zero keys and
+stores the opt-in complete reconciliation result under the existing positive
+compression guard. The owner call, raw result schema, guard, and guarded
+topological sort are unchanged.
+
+Compression eligibility, reshape construction, graph-index mutation, pruning,
+the final indexed binary convergence, terminal validation, dependency set, and
+TensorFlow-free boundary are unchanged. The preceding terminal-validation
+contract was updated only for the new result statement at the next owner's
+boundary.
+
+Implementation validation completed sequentially under `uv`:
+
+- safety fallback plus rank-6 structure/numeric parity: `18 passed`
+- broad related gate plus rank-6 structure/numeric parity: `540 passed in 27.98s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the result returned by
+`_run_indexed_binary_layout_convergence(fallback_ir)` and retain its following
+terminal sort/validation boundary. Commit and push only; do not create or
+update a pull request.

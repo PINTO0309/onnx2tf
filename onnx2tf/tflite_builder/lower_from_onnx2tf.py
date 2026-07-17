@@ -5611,13 +5611,22 @@ def lower_onnx_to_ir(
         fallback_high_rank_bmm_stats = _compress_static_high_rank_batch_matmul(
             fallback_ir
         )
+        _fallback_high_rank_bmm_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_high_rank_bmm_stats.get(
                 "compressed_static_high_rank_batch_matmul",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_high_rank_bmm_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
             _topologically_sort_operators(fallback_ir)
         _run_indexed_binary_layout_convergence(fallback_ir)
         _topologically_sort_operators(fallback_ir)
