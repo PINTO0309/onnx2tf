@@ -15737,3 +15737,55 @@ contracts; characterize that boundary first. Do not merge callbacks into the
 common core context, do not widen any `ModelIRPassStateScope`, keep validation
 sequential and real-model conversion minimal, commit and push coherent units,
 and do not create or update a pull request.
+
+## Callback-bearing context composition characterization: completed state
+
+Four remaining frozen recovery contexts contain the complete
+`model_ir`/`layout_state`/`diagnostics` identity triple followed only by
+callbacks:
+
+- `AttentionRecoveryContext`: mean/attention, gate-layout, and transpose/unary-
+  fanout cluster callbacks;
+- `LayoutRecoveryContext`: boundary-BatchMatMul/unary, pre-Concat, and channel-
+  shuffle/gather callbacks;
+- `LayoutAttentionQuantizedSuffixContext`: mean/attention, attention-gate/QDQ,
+  and duplicate/quantized-PReLU callbacks;
+- `TerminalSliceConcatRecoveryContext`: channel-slice/Pad-Mul callback.
+
+Each type is frozen, each lowerer constructor passes the same main ModelIR,
+Session LayoutState, and Session diagnostics identities, and the ten callbacks
+retain their exact helper identities. Runtime invocation characterization
+freezes three distinct contracts: cluster callbacks receive no arguments;
+pre-Concat receives the ModelIR positional argument plus layout and diagnostics
+keywords; duplicate/quantized-PReLU receives only its forwarded
+`include_transpose` Boolean keyword. The callback-bearing
+`SINetTerminalLayoutRecoveryContext` has no diagnostics field and remains
+outside the consolidation boundary. None of the five modules imports the
+lowerer.
+
+Sequential characterization validation completed as follows:
+
+- focused callback base/callback/invocation/import contracts:
+  `8 passed in 0.51s`;
+- focused callback parents, shared context, and ordered architecture:
+  `317 passed in 17.57s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.26s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, callback identity and arguments, runtime pass order,
+scope lifetime, diagnostics, and TensorFlow isolation remain unchanged. PR
+#952 remains closed, and no pull request was created, reopened, or updated.
+
+At restart, replace the repeated base fields of only those four contexts with
+one explicit `pass_context: ModelIRPassContext` field. Pass
+`session.model_ir_pass_context` from all four lowerer constructors and read
+ModelIR/LayoutState/diagnostics through that field in their builders. Preserve
+all ten callbacks, their exact invocation arguments, stable pass IDs, caller
+boundaries, and every builder's existing scope behavior. Leave the
+diagnostics-free SINet terminal context unchanged. Validate the four complete
+parent suites sequentially, commit and push only, and do not create or update a
+pull request.

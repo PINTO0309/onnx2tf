@@ -9554,3 +9554,14 @@ reuse pass state: every invocation builder still creates one fresh
 `ModelIRPassStateScope`, and only the owners selected within that build share
 its lazy graph index. Pass IDs, policy arguments, runtime order, diagnostics
 identity, and all caller boundaries remain unchanged.
+
+The callback-bearing context composition boundary is now characterized without
+production changes. `AttentionRecoveryContext`, `LayoutRecoveryContext`,
+`LayoutAttentionQuantizedSuffixContext`, and
+`TerminalSliceConcatRecoveryContext` each prepend the same ModelIR/LayoutState/
+diagnostics identity triple to one or three callback fields. Their four lowerer
+constructors use the main Session identities and ten exact callback objects.
+Focused contracts preserve the three callback invocation forms: argument-free
+cluster callbacks, the pre-Concat callback receiving ModelIR plus layout and
+diagnostics, and duplicate/PReLU receiving its Boolean keyword policy. The
+diagnostics-free SINet terminal context remains outside this boundary.

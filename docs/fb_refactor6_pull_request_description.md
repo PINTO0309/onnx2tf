@@ -2615,3 +2615,15 @@ import-blocked tests pass. No real-model conversion or broad corpus suite ran.
 No public API, artifact, dependency, pass ID/order, policy, target-routing,
 scope, diagnostics, or TensorFlow boundary changed. PR #952 remains closed,
 and no pull request was created, reopened, or updated.
+
+The next callback-context composition boundary is characterized without
+production changes. Four frozen recovery contexts repeat the common ModelIR/
+LayoutState/diagnostics identity before ten callback fields. Tests freeze all
+four lowerer constructors, exact callback identities, and argument-free,
+ModelIR-plus-layout/diagnostics, and Boolean-keyword callback contracts. The
+diagnostics-free SINet terminal context is explicitly excluded. The 8 focused
+tests, 317-test related orchestration/shared-context/architecture set, 31 pass-
+efficiency tests, and all 11 TensorFlow-import-blocked tests pass. No runtime,
+API, artifact, dependency, pass-order, scope, callback, or TensorFlow boundary
+changed. PR #952 remains closed, and no pull request was created, reopened, or
+updated.
