@@ -8,6 +8,10 @@ import pytest
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_concat_nhwc_chains,
+    _optimize_transpose_pre_concat_nhwc_chains_legacy,
+)
+from onnx2tf.tflite_builder.passes.nhwc_concat_legacy_layout import (
+    optimize_transpose_pre_concat_nhwc_chains_legacy,
 )
 
 
@@ -400,3 +404,26 @@ def test_nhwc_pseudo_leaky_pad_companion_remains_in_legacy() -> None:
         and event["status"] == "changed"
         for event in diagnostics
     )
+
+
+def test_nhwc_legacy_owner_matches_lowerer_compatibility_wrapper() -> None:
+    direct_model_ir = _leaky_model(boundary="pad_companion")
+    wrapper_model_ir = deepcopy(direct_model_ir)
+
+    direct_stats = optimize_transpose_pre_concat_nhwc_chains_legacy(
+        direct_model_ir
+    )
+    wrapper_stats = _optimize_transpose_pre_concat_nhwc_chains_legacy(
+        wrapper_model_ir
+    )
+
+    assert direct_stats == {
+        "optimized_transpose_pre_concat_nhwc_chains": 1,
+    }
+    assert wrapper_stats == direct_stats
+    _assert_model_equal(wrapper_model_ir, direct_model_ir)
+    assert optimize_transpose_pre_concat_nhwc_chains_legacy(
+        direct_model_ir
+    ) == {
+        "optimized_transpose_pre_concat_nhwc_chains": 0,
+    }

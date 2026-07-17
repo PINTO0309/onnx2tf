@@ -36,6 +36,76 @@ def _write_accuracy_report(
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def test_write_json_publishes_complete_payload_by_atomic_replace(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "bulk_status.json"
+    old_payload = {"entries": [{"index": 1}], "generation": "old"}
+    new_payload = {
+        "entries": [{"index": index} for index in range(1, 257)],
+        "generation": "new",
+    }
+    bulk_runner._write_json(str(path), old_payload)
+    path.chmod(0o640)
+    old_text = path.read_text(encoding="utf-8")
+    real_replace = bulk_runner.os.replace
+    replacements = []
+
+    def _recording_replace(source, destination):
+        source_path = Path(source)
+        destination_path = Path(destination)
+        assert source_path.parent == path.parent
+        assert destination_path == path
+        assert path.read_text(encoding="utf-8") == old_text
+        assert json.loads(source_path.read_text(encoding="utf-8")) == new_payload
+        replacements.append((source_path, destination_path))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(bulk_runner.os, "replace", _recording_replace)
+
+    bulk_runner._write_json(str(path), new_payload)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == new_payload
+    assert path.read_text(encoding="utf-8") == json.dumps(
+        new_payload,
+        ensure_ascii=False,
+        indent=2,
+    )
+    assert len(replacements) == 1
+    assert not replacements[0][0].exists()
+    assert path.stat().st_mode & 0o777 == 0o640
+
+
+def test_write_json_preserves_old_file_and_removes_temporary_on_replace_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "bulk_status.json"
+    old_payload = {"generation": "old"}
+    bulk_runner._write_json(str(path), old_payload)
+    old_text = path.read_text(encoding="utf-8")
+    temporary_paths = []
+
+    def _failing_replace(source, destination):
+        temporary_paths.append(Path(source))
+        assert Path(destination) == path
+        assert json.loads(Path(source).read_text(encoding="utf-8")) == {
+            "generation": "new"
+        }
+        raise OSError("replacement failed")
+
+    monkeypatch.setattr(bulk_runner.os, "replace", _failing_replace)
+
+    with pytest.raises(OSError, match="replacement failed"):
+        bulk_runner._write_json(str(path), {"generation": "new"})
+
+    assert path.read_text(encoding="utf-8") == old_text
+    assert len(temporary_paths) == 1
+    assert not temporary_paths[0].exists()
+    assert list(tmp_path.glob(".bulk_status.json.*.tmp")) == []
+
+
 def test_flatbuffer_direct_bulk_runner_preserves_sorted_discovery_order(
     tmp_path,
     monkeypatch,

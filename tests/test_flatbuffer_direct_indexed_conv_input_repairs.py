@@ -15,6 +15,11 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_stale_nchw_to_nhwc_conv_input_transposes,
     _run_indexed_conv_input_adapter_repairs,
 )
+from onnx2tf.tflite_builder.passes.conv_input_adapter_repair import (
+    _repair_singleton_nhwc_conv_input_reshapes as _repair_singleton_nhwc_conv_input_reshapes_owner,
+    _repair_stale_nchw_to_nhwc_conv_input_transposes as _repair_stale_nchw_to_nhwc_conv_input_transposes_owner,
+    _run_indexed_conv_input_adapter_repairs as _run_indexed_conv_input_adapter_repairs_owner,
+)
 
 
 def _normalize(value: Any) -> Any:
@@ -205,6 +210,38 @@ def test_indexed_conv_input_adapter_repairs_match_legacy_pair(
     assert _normalize(model_ir) == _normalize(legacy_model_ir)
 
 
+@pytest.mark.parametrize(
+    ("owner", "wrapper"),
+    [
+        (
+            _repair_singleton_nhwc_conv_input_reshapes_owner,
+            _repair_singleton_nhwc_conv_input_reshapes,
+        ),
+        (
+            _repair_stale_nchw_to_nhwc_conv_input_transposes_owner,
+            _repair_stale_nchw_to_nhwc_conv_input_transposes,
+        ),
+        (
+            _run_indexed_conv_input_adapter_repairs_owner,
+            _run_indexed_conv_input_adapter_repairs,
+        ),
+    ],
+    ids=["singleton_reshape", "stale_transpose", "shared_index_runner"],
+)
+def test_conv_input_adapter_repair_owner_matches_compatibility_wrapper(
+    owner,
+    wrapper,
+) -> None:
+    owner_model_ir = _make_conv_input_adapter_model_ir()
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = owner(owner_model_ir)
+    wrapper_stats = wrapper(wrapper_model_ir)
+
+    assert owner_stats == wrapper_stats
+    assert _normalize(owner_model_ir) == _normalize(wrapper_model_ir)
+
+
 @pytest.mark.parametrize("protection", ["fanout", "graph_output"])
 def test_indexed_conv_transpose_repair_preserves_protected_adapter(
     protection: str,
@@ -244,3 +281,36 @@ def test_indexed_conv_transpose_repair_preserves_protected_adapter(
     assert graph_index.duplicate_producers == refreshed.duplicate_producers
     assert graph_index._operator_indices_by_id == refreshed._operator_indices_by_id
     assert graph_index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
+@pytest.mark.parametrize(
+    ("repair", "source_name", "expected_stats"),
+    [
+        (
+            _repair_singleton_nhwc_conv_input_reshapes,
+            "singleton_source",
+            {"repaired_singleton_nhwc_conv_input_reshapes": 0},
+        ),
+        (
+            _repair_stale_nchw_to_nhwc_conv_input_transposes,
+            "transpose_source0",
+            {"repaired_stale_nchw_to_nhwc_conv_input_transposes": 0},
+        ),
+    ],
+    ids=["singleton_reshape", "stale_transpose"],
+)
+def test_conv_input_adapter_repair_rejects_invalid_source_signature_atomically(
+    repair,
+    source_name: str,
+    expected_stats: dict[str, int],
+) -> None:
+    model_ir = _make_conv_input_adapter_model_ir()
+    if source_name == "transpose_source0":
+        model_ir.outputs.append("transpose_adapter1")
+    model_ir.tensors[source_name].shape_signature = [1, 1]
+    before = _normalize(copy.deepcopy(model_ir))
+
+    stats = repair(model_ir)
+
+    assert stats == expected_stats
+    assert _normalize(model_ir) == before

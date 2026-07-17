@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_shape_signatures,
     _broadcast_static_shapes,
     _permute_tensor_metadata_if_rank_matches,
+    _prune_unused_tensors,
     _read_transpose_perm,
     _replace_tensor_inputs,
     _set_operator_inputs,
 )
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
+from onnx2tf.tflite_builder.passes.conv_input_layout import (
+    sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv,
+)
 
 
 _NHWC_TO_NCHW = [0, 3, 1, 2]
@@ -1230,3 +1234,91 @@ def run_swish_qdq_late_concat_and_post_cleanup(
         ),
         rewritten_tensors=concat_result.rewritten_tensors,
     )
+
+
+def optimize_transpose_swish_qdq_nhwc_islands(
+    model_ir: ModelIR,
+    *,
+    min_spatial_stage: int = 160,
+    require_concat_closure: bool = False,
+) -> Dict[str, int]:
+    """Rewrite transpose-wrapped quantized Swish islands from NCHW to NHWC.
+
+    The orchestration preserves the historical phase order: primary branch
+    rewrite and metadata propagation, inverse post-Transpose cleanup, late
+    Concat normalization and cleanup, the independent Conv-input safety valve,
+    then unused-tensor pruning.
+    """
+
+    removed_post = 0
+    rewritten_tensors: set[str] = set()
+
+    primary_result = run_swish_qdq_nhwc_primary_phases(
+        model_ir,
+        min_spatial_stage=int(min_spatial_stage),
+        require_concat_closure=bool(require_concat_closure),
+    )
+    rewritten_branches = int(primary_result.rewritten_branches)
+    removed_pre = int(primary_result.removed_pre_transposes)
+    rewritten_concat_axis = int(primary_result.rewritten_concat_axes)
+    rewritten_tensors.update(primary_result.rewritten_tensors)
+
+    post_cleanup = remove_inverse_post_transposes_for_swish_qdq(
+        model_ir,
+        rewritten_tensors,
+    )
+    removed_post += int(post_cleanup.removed_post_transposes)
+
+    late_result = run_swish_qdq_late_concat_and_post_cleanup(
+        model_ir,
+        rewritten_tensors,
+    )
+    rewritten_concat_axis += int(late_result.rewritten_concat_axes)
+    removed_post += int(late_result.removed_transposes)
+    rewritten_tensors.update(late_result.rewritten_tensors)
+
+    wrong_way_stats = sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
+        model_ir
+    )
+    removed_post += int(
+        wrong_way_stats.get(
+            "sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv",
+            0,
+        )
+    )
+
+    propagated_tensors = int(len(rewritten_tensors))
+    _prune_unused_tensors(model_ir)
+    return {
+        "rewritten_transpose_swish_branches_to_nhwc": int(rewritten_branches),
+        "removed_transpose_swish_pre": int(removed_pre),
+        "propagated_nhwc_tensor_metadata": int(propagated_tensors),
+        "rewritten_concat_axis_to_nhwc": int(rewritten_concat_axis),
+        "removed_transpose_swish_post": int(removed_post),
+    }
+
+
+def optimize_transpose_swish_residual_concat_closure_nhwc_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Rewrite spatial-agnostic Swish residual-Concat closure islands."""
+
+    stats = optimize_transpose_swish_qdq_nhwc_islands(
+        model_ir,
+        min_spatial_stage=0,
+        require_concat_closure=True,
+    )
+    return {
+        "optimized_transpose_swish_residual_concat_closure_nhwc_chains": int(
+            stats.get("rewritten_transpose_swish_branches_to_nhwc", 0)
+        ),
+        "removed_transpose_swish_residual_concat_closure_pre": int(
+            stats.get("removed_transpose_swish_pre", 0)
+        ),
+        "rewritten_transpose_swish_residual_concat_closure_axis_to_nhwc": int(
+            stats.get("rewritten_concat_axis_to_nhwc", 0)
+        ),
+        "removed_transpose_swish_residual_concat_closure_post": int(
+            stats.get("removed_transpose_swish_post", 0)
+        ),
+    }

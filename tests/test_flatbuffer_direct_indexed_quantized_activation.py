@@ -5,7 +5,7 @@ from dataclasses import fields, is_dataclass
 from typing import Any
 
 import numpy as np
-import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import onnx2tf.tflite_builder.core.model_ir_utils as lowering_module
 import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex

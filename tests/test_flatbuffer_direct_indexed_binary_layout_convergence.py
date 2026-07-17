@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -14,6 +15,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
     _repair_stale_nchw_to_nhwc_channelwise_binary_transposes,
     _run_indexed_binary_layout_convergence,
+)
+from onnx2tf.tflite_builder.passes.stale_binary_adapter_repair import (
+    _repair_stale_nchw_to_nhwc_channelwise_binary_transposes as _repair_stale_nchw_to_nhwc_channelwise_binary_transposes_owner,
 )
 
 
@@ -157,6 +161,21 @@ def _run_legacy_binary_layout_convergence(
     }
 
 
+def test_stale_binary_transpose_repair_owner_matches_lowerer_wrapper() -> None:
+    owner_model_ir = _make_binary_layout_convergence_model_ir()
+    wrapper_model_ir = copy.deepcopy(owner_model_ir)
+
+    owner_stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes_owner(
+        owner_model_ir
+    )
+    wrapper_stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+        wrapper_model_ir
+    )
+
+    assert owner_stats == wrapper_stats
+    assert _normalize(owner_model_ir) == _normalize(wrapper_model_ir)
+
+
 def test_indexed_stale_binary_transpose_repair_handles_multiple_matches(
     monkeypatch,
 ) -> None:
@@ -248,6 +267,56 @@ def test_indexed_stale_binary_transpose_repair_preserves_fanout_adapter() -> Non
     assert graph_index.consumers == refreshed.consumers
     assert graph_index._operator_indices_by_id == refreshed._operator_indices_by_id
     assert graph_index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
+@pytest.mark.parametrize(
+    "invalid_metadata",
+    ["short_shape", "short_signature"],
+)
+def test_stale_binary_transpose_repair_rejects_invalid_metadata_atomically(
+    invalid_metadata: str,
+) -> None:
+    model_ir = _make_binary_layout_convergence_model_ir()
+    model_ir.outputs.append("adapter1")
+    source_tensor = model_ir.tensors["source0"]
+    if invalid_metadata == "short_shape":
+        source_tensor.shape = [1, 4, 2]
+        source_tensor.shape_signature = [1, 4, 2]
+    else:
+        source_tensor.shape_signature = [1, 4]
+    before = _normalize(copy.deepcopy(model_ir))
+
+    stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+    }
+    assert _normalize(model_ir) == before
+
+
+@pytest.mark.parametrize("tensor_name", ["source0", "adapter0"])
+def test_stale_binary_transpose_repair_prevalidates_channelwise_ranks(
+    tensor_name: str,
+) -> None:
+    model_ir = _make_binary_layout_convergence_model_ir()
+    model_ir.outputs.append("adapter1")
+    model_ir.tensors["channelwise_bias"] = _tensor(
+        "channelwise_bias",
+        [1, 1, 1, 3],
+        data=np.zeros((1, 1, 1, 3), dtype=np.float32),
+    )
+    add_op = next(op for op in model_ir.operators if op.outputs == ["add0"])
+    add_op.inputs[1] = "channelwise_bias"
+    model_ir.tensors[tensor_name].shape = [1, 4, 2]
+    model_ir.tensors[tensor_name].shape_signature = [1, 4, 2]
+    before = _normalize(copy.deepcopy(model_ir))
+
+    stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+    }
+    assert _normalize(model_ir) == before
 
 
 def test_indexed_binary_layout_convergence_matches_legacy_sequence(

@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import copy
+
+import numpy as np
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _replace_expand_dims_and_squeeze_with_reshape,
+)
+from onnx2tf.tflite_builder.passes.expand_squeeze_reshape import (
+    replace_expand_dims_and_squeeze_with_reshape,
+)
+from onnx2tf.tflite_builder.passes.split_all_outputs_layout import _freeze
+
+
+def _dynamic_squeeze_model() -> ModelIR:
+    model_ir = ModelIR("dynamic_squeeze_to_reshape")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR(
+            name="x",
+            dtype="FLOAT32",
+            shape=[1, 8, 1],
+            shape_signature=[-1, 8, 1],
+        ),
+        "y": TensorIR(
+            name="y",
+            dtype="FLOAT32",
+            shape=[1, 8],
+            shape_signature=[-1, 8],
+        ),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="SQUEEZE",
+            inputs=["x"],
+            outputs=["y"],
+            options={"squeezeDims": [2]},
+        )
+    ]
+    return model_ir
+
+
+def _snapshot(model_ir: ModelIR) -> tuple:
+    return (
+        tuple(model_ir.inputs),
+        tuple(model_ir.outputs),
+        tuple(
+            (
+                name,
+                tensor.dtype,
+                tuple(tensor.shape),
+                (
+                    None
+                    if tensor.shape_signature is None
+                    else tuple(tensor.shape_signature)
+                ),
+                _freeze(tensor.data),
+                tensor.logical_layout,
+                tensor.physical_layout,
+            )
+            for name, tensor in sorted(model_ir.tensors.items())
+        ),
+        tuple(
+            (
+                operator.op_type,
+                tuple(operator.inputs),
+                tuple(operator.outputs),
+                _freeze(operator.options),
+            )
+            for operator in model_ir.operators
+        ),
+    )
+
+
+def test_dynamic_squeeze_inserts_runtime_shape_ops_in_order() -> None:
+    model_ir = _dynamic_squeeze_model()
+    layout_state = LayoutState.from_model_ir(model_ir)
+
+    stats = replace_expand_dims_and_squeeze_with_reshape(
+        model_ir,
+        layout_state=layout_state,
+    )
+
+    assert stats == {
+        "replaced_expand_dims_and_squeeze_with_reshape": 1,
+        "expand_dims_squeeze_rewrite_shape_tensors": 1,
+    }
+    assert [operator.op_type for operator in model_ir.operators] == [
+        "SHAPE",
+        "GATHER",
+        "RESHAPE",
+    ]
+    reshape = model_ir.operators[-1]
+    assert reshape.inputs[0] == "x"
+    assert reshape.outputs == ["y"]
+    assert reshape.options == {
+        "newShape": [],
+        "onnxSqueezeDims": [2],
+        "preserveSemanticRank": True,
+    }
+    gather = model_ir.operators[1]
+    kept_axes = model_ir.tensors[gather.inputs[1]]
+    np.testing.assert_array_equal(
+        kept_axes.data,
+        np.asarray([0, 1], dtype=np.int32),
+    )
+    assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_compatibility_wrapper_matches_owner_and_result_is_idempotent() -> None:
+    direct_model = _dynamic_squeeze_model()
+    wrapper_model = copy.deepcopy(direct_model)
+    direct_layout = LayoutState.from_model_ir(direct_model)
+    wrapper_layout = LayoutState.from_model_ir(wrapper_model)
+
+    direct_stats = replace_expand_dims_and_squeeze_with_reshape(
+        direct_model,
+        layout_state=direct_layout,
+    )
+    wrapper_stats = _replace_expand_dims_and_squeeze_with_reshape(
+        wrapper_model,
+        layout_state=wrapper_layout,
+    )
+
+    assert wrapper_stats == direct_stats
+    assert _snapshot(wrapper_model) == _snapshot(direct_model)
+    before = _snapshot(direct_model)
+    assert replace_expand_dims_and_squeeze_with_reshape(direct_model) == {
+        "replaced_expand_dims_and_squeeze_with_reshape": 0,
+        "expand_dims_squeeze_rewrite_shape_tensors": 0,
+    }
+    assert _snapshot(direct_model) == before

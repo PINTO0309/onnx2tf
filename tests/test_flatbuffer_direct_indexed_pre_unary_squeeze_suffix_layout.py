@@ -10,6 +10,9 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes.pre_unary_squeeze_suffix_compat_layout import (
+    optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains_compat,
+)
 from onnx2tf.tflite_builder.passes.pre_unary_squeeze_suffix_layout import (
     _apply_plan,
     _plan_signature,
@@ -18,9 +21,7 @@ from onnx2tf.tflite_builder.passes.pre_unary_squeeze_suffix_layout import (
 )
 
 
-_STATS_KEY = (
-    "optimized_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains"
-)
+_STATS_KEY = "optimized_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains"
 
 
 def _tensor(
@@ -281,32 +282,65 @@ def test_indexed_swish_squeeze_suffix_is_deterministic() -> None:
 
 def test_indexed_swish_squeeze_wrapper_prunes_one_layout_boundary() -> None:
     model_ir = _make_swish_suffix_ir()
+    wrapped_model_ir = deepcopy(model_ir)
     layout_state = LayoutState.from_model_ir(model_ir)
+    wrapped_layout_state = LayoutState.from_model_ir(wrapped_model_ir)
 
-    assert _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+    stats = optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains_compat(
         model_ir,
         layout_state=layout_state,
-    ) == {_STATS_KEY: 1}
+    )
+    wrapped_stats = _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+        wrapped_model_ir,
+        layout_state=wrapped_layout_state,
+    )
+
+    assert stats == {_STATS_KEY: 1}
+    assert wrapped_stats == stats
+    assert _fingerprint(wrapped_model_ir) == _fingerprint(model_ir)
     assert set(model_ir.tensors) == {"x", "sigmoid", "swish", "z"}
     assert layout_state.validate_against_model_ir(model_ir) == []
+    assert wrapped_layout_state.validate_against_model_ir(wrapped_model_ir) == []
 
 
 def test_plain_unary_and_axis3_stay_on_compatibility_fallback() -> None:
     plain = _make_plain_unary_suffix_ir()
+    wrapped_plain = deepcopy(plain)
     axis3 = _make_swish_suffix_ir(axis=3)
+    wrapped_axis3 = deepcopy(axis3)
 
     assert optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains(
         plain,
     ) == {_STATS_KEY: 0}
-    assert _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
-        plain,
-    ) == {_STATS_KEY: 1}
+    plain_stats = (
+        optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains_compat(
+            plain,
+        )
+    )
+    wrapped_plain_stats = (
+        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+            wrapped_plain,
+        )
+    )
+    assert plain_stats == {_STATS_KEY: 1}
+    assert wrapped_plain_stats == plain_stats
+    assert _fingerprint(wrapped_plain) == _fingerprint(plain)
     assert optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains(
         axis3,
     ) == {_STATS_KEY: 0}
-    assert _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
-        axis3,
-    ) == {_STATS_KEY: 1}
+    axis3_stats = (
+        optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains_compat(
+            axis3,
+        )
+    )
+    wrapped_axis3_stats = (
+        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+            wrapped_axis3,
+        )
+    )
+    assert axis3_stats == {_STATS_KEY: 1}
+    assert wrapped_axis3_stats == axis3_stats
+    assert _fingerprint(wrapped_axis3) == _fingerprint(axis3)
 
 
 def test_dynamic_signature_stays_on_compatibility_fallback() -> None:
@@ -315,10 +349,17 @@ def test_dynamic_signature_stays_on_compatibility_fallback() -> None:
         model_ir.tensors[name].shape_signature[0] = -1
     for name in ("squeezed", "z"):
         model_ir.tensors[name].shape_signature[0] = -1
+    wrapped_model_ir = deepcopy(model_ir)
 
     assert optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains(
         model_ir,
     ) == {_STATS_KEY: 0}
-    assert _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+    stats = optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains_compat(
         model_ir,
-    ) == {_STATS_KEY: 1}
+    )
+    wrapped_stats = _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(
+        wrapped_model_ir,
+    )
+    assert stats == {_STATS_KEY: 1}
+    assert wrapped_stats == stats
+    assert _fingerprint(wrapped_model_ir) == _fingerprint(model_ir)

@@ -230,6 +230,22 @@ inside this helper because raw ModelIR mutators separate them. Consolidation
 reduces the lowerer's registered-runner AST characterization from 134 to 125
 without crossing an index-validity boundary or changing runtime pass count.
 
+The first Q/DQ transpose-bridge step in that prefix is owned by
+`passes/transpose_qdq_bridge_layout.py`. It remains separate from terminal
+exact-grid, Concat-input, Mean, activation, PReLU, Reshape, and TransposeConv
+quantization cleanup owners. Its one lowerer compatibility wrapper is called
+once by the ordered prefix, which expands at four unchanged runtime positions.
+The owner keeps one fixed-point loop and the historical A→B→C→D priority:
+complete Transpose/Q/DQ round trips, single Q-or-DQ bridges with fan-out,
+two-branch QDQ/Add residual closure, and mixed float/QDQ Add residual closure.
+All branch/public-output/per-tensor-grid/permutation/fan-out guards, metadata
+and quantization cloning, direct mutation order, prune boundary, and three
+stats keys remain unchanged. Direct tests cover A and B rewrites, guard no-ops,
+idempotence, and wrapper equality; existing end-to-end fixtures retain positive
+A/B/C/D and legacy-fan-out coverage. The extraction is mechanical and does not
+claim differential-index performance; indexed mutation requires a later
+family-by-family equivalence checkpoint.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs
@@ -839,6 +855,69 @@ The public compatibility wrapper also aggregates its eleven float and thirteen
 quantized family counters through explicit key tuples and two sums, then adds
 the legacy counter. This preserves the single historical return key while
 removing another net 110 repeated lowerer lines.
+
+The remaining generic NHWC pre-Concat compatibility matcher is now isolated in
+`passes/nhwc_concat_legacy_layout.py`. Its complete 2,452-line implementation
+moved as one semantic unit; this is not a source-line limit or a claim that the
+fallback is modernized. Function-name-normalized AST comparison with the prior
+lowerer owner is exact. The nested direct, unary, expanded-Swish,
+pseudo-LeakyRelu, Pad, Dequantize, PReLU, Softmax, Slice, Split, and recursive
+Add analysis/application helpers therefore retain their shared fixed-point
+loop, action precedence, indexed-family exclusion contracts, constant
+copy-on-write behavior, metadata propagation, mutation order, pruning, and
+single historical statistic. The central lowerer keeps the private legacy
+symbol as a one-call compatibility wrapper, while the indexed float,
+quantized-indexed, and legacy dispatch order and all four composite production
+positions remain unchanged.
+
+The exact pseudo-LeakyRelu plus Pad-companion fixture establishes positive
+legacy ownership, idempotence, and direct-owner/private-wrapper equality. The
+complete float and quantized Concat family corpus continues to cover every
+indexed/fallback ownership boundary. FastestDet and OSNet supplied fourteen
+measured zero-owner runtime invocations before extraction; no production
+legacy rewrite is claimed. FastestDet is the artifact control and retains its
+accuracy, zero process-tree SWAP, and byte-identical float32, float16,
+correspondence, schema, and generated-schema outputs across the move.
+
+The adjacent strict rank-four Transpose→Slice→inverse-Transpose compatibility
+rule is isolated in `passes/slice_prepost_layout.py`. Its complete matcher moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+still requires constant exclusive begin/size tensors, exclusive pre/Slice
+links, non-public intermediates, exact inverse permutations, and rank-four
+input/output metadata. The existing static-shape owner supplies both as-is and
+NCHW→NHWC-remapped parameter validation; only the parameter set reproducing the
+known public output shape is committed. Input/output rewrites, two-Transpose
+removal, conditional pruning, fixed-point restart, and the historical statistic
+are unchanged. The lowerer retains one private compatibility wrapper at its
+single production position.
+
+A compact synthetic corpus fixes both already-NHWC and remap-required
+parameter forms, idempotence, public pre/Slice outputs, shared begin constants,
+pre-Transpose fan-out, output-shape mismatch, wrong permutation, and direct-
+owner/private-wrapper equality. Tier 0 UM Best Model and Tier 2 ALike supplied
+two measured zero-owner production calls, so no non-zero real-model ownership
+is claimed. UM Best Model remains accurate with zero process-tree SWAP and
+byte-identical direct artifacts across the mechanical move.
+
+The following NHWC-to-NCHW Shape-extraction compatibility rule is isolated in
+`passes/shape_extract_layout.py`. Its complete 285-line implementation moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+remaps Gather indices from logical NCHW axes to the physical NHWC Shape vector,
+remaps contiguous Slice selections, and converts non-contiguous Slice
+selections to Gather. Shared constants use clone-on-write while retaining dtype
+and quantization metadata. All Shape consumers must belong to the supported
+families, public boundary and fan-out guards remain strict, and fixed-point
+restart, conditional pruning, and the historical statistic are unchanged.
+The lowerer retains one one-call private compatibility wrapper at all three
+unchanged production positions.
+
+Focused fixtures cover exclusive and shared Gather indices, contiguous Slice
+remapping, non-contiguous Slice-to-Gather conversion, idempotence, every public,
+fan-out, axis, constant, index, and empty-selection guard, and direct-owner/
+private-wrapper equality. RetinaFace Dynamic establishes non-zero production
+ownership with counts `1, 0, 0`; its accuracy, zero process-tree SWAP, and all
+five core artifacts are unchanged across extraction. ALike supplies the
+`0, 0, 0` zero-owner control and remains accurate with zero SWAP.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
@@ -4026,6 +4105,106 @@ identical to the pre-extraction lowerer. Together the helpers remove 6 net
 lowerer lines without changing runtime invocation count, order, conditions, or
 the registered-runner call-site count of 118.
 
+The raw 419-line `_optimize_nhwc_prefix_qlinear_silu_chains` compatibility
+owner remains in the lowerer while its mutation contract is stabilized.
+Synthetic characterization covers the direct LOGISTIC and decomposed
+HardSigmoid paths, multiple fixed-point matches, post-Transpose removal,
+legacy-consumer adapter insertion, and eight guard families. The production
+QLinear recovery sequence and its two call boundaries are unchanged. Existing
+sequential corpus instrumentation remains authoritative: all measured owners
+returned zero rewrites with zero process-tree SWAP, so this checkpoint adds no
+duplicate conversion.
+
+Four strict xfails define its current unsafe boundary. The helper eagerly
+creates the fixed-name NHWC-to-NCHW permutation tensor even when no legacy
+adapter is committed; pruning then changes lineage metadata on rejected and
+second no-rewrite calls. It also reuses a colliding tensor without validating
+the payload and accepts a malformed Mul output signature before rewiring and
+rank-four adapter insertion. The correction must prevalidate rank-four output
+shape/signature and construct an immutable adapter plan before any edge or
+metadata mutation. A permutation constant is allocated only when that plan
+needs one, and an occupied name is reused only when its type, shape, and
+payload are exact; otherwise a collision-safe name is required.
+
+The corrected 509-line raw owner now resolves every rank-four metadata target
+and effective signature before mutation, plans all adapter tensors/operators
+and cumulative input updates, and commits only a valid plan. The internal
+permutation is allocated lazily and an existing reserved name is reused only
+for an exact immutable INT32 `[0,3,1,2]` constant. Pruning is conditional on a
+non-zero rewrite, so rejected and repeated zero-rewrite calls preserve both
+the graph and lineage metadata. The four characterization xfails are green.
+Architecture checks keep metadata/signature/adapter planning before the first
+tensor or edge mutation and keep the prune guard tied to the rewrite count.
+
+One strict xfail now isolates a different legacy-consumer duplication. The
+consumer map emits one operator index per matching input slot; iterating that
+list and then enumerating all matching slots plans the same slots twice. A
+two-slot ADD therefore receives four Transpose adapters. The next correction
+must deduplicate consumer operator indices in first-observed order without
+changing distinct-consumer order, adapter naming, or single-slot behavior.
+
+The corrected owner now deduplicates final-Mul consumer operator indices with
+an insertion-ordered set before classifying Transpose and legacy consumers.
+Each distinct operator is visited once, then all matching slots in that
+operator are planned once. Same-consumer two-slot and two-distinct-consumer
+fixtures prove exactly two adapters, stable first-observed naming, and stable
+consumer order. The former strict xfail is green; the corrected raw owner is
+513 lines and has no remaining expected failure. Architecture coverage keeps
+the ordered deduplication assignment before the legacy-consumer loop.
+
+The corrected implementation is now owned by
+`passes/qlinear_silu_prefix_layout.py`. Its 513-line function AST is identical
+to the corrected lowerer predecessor at checkpoint `0cf699fd`; the lowerer
+keeps a one-return private compatibility wrapper. The ordered
+`_run_qlinear_mean_concat_recovery_sequence` continues to call that private
+name in the same position, and its two production boundaries are unchanged.
+Direct owner/wrapper characterization compares statistics, complete ModelIR
+fingerprints, layout state, and metadata for LOGISTIC, decomposed HardSigmoid,
+legacy-adapter, and reserved-name collision cases. The module cannot import the
+lowerer, while architecture checks keep all transactional and deduplication
+invariants on the module owner.
+
+The adjacent raw 310-line
+`_optimize_transpose_mean_maxpool_concat_conv_chains` owner remains in the
+lowerer while its mutation contract is characterized. Positive fixtures cover
+static and dynamic signatures, Mean-axis remapping, per-axis QDIM remapping,
+multiple post adapters, multiple fixed-point matches, pruning, and idempotence;
+ten rejection families preserve the established topology and boundary guards.
+The ordered QLinear recovery sequence and both production boundaries remain
+unchanged, and earlier sequential instrumentation remains authoritative with
+zero rewrites and zero process-tree SWAP.
+
+Nine strict xfails define the unsafe planning boundary. The owner rewires the
+mean branch, writes the axes constant, changes Mean metadata, and rewires
+Concat before validating every rank-four signature and every additional Concat
+input. It also mutates axes owned by another consumer, graph input/output, or a
+variable tensor. A correction must require a local immutable axes tensor and
+resolve every source/target tensor, effective signature, planned Concat input,
+output shape/signature, axis option, and QDIM update before the first ModelIR
+mutation. Rejection must preserve graph and diagnostic metadata completely.
+
+The corrected raw owner is 382 lines and now performs that complete planning.
+It accepts only a local immutable INT32 axes tensor with exact INT32 backing
+data, resolves rank-four effective metadata for every involved and planned
+tensor, computes Mean/Concat/QDIM/alias/removal changes, and then enters a
+mutation-only commit block with no later rejection. Pruning is guarded by the
+non-zero rewrite count. All nine former xfails plus axes TensorIR dtype, buffer
+dtype, and quantization guards are green. The unused producer-map construction
+was removed, leaving one consumer map per fixed-point round and reducing the
+central lowerer's existing Ruff findings to seven. Architecture tests keep
+axes ownership and all plan objects before the first setter/constant/alias
+mutation and keep conditional pruning after convergence.
+
+The corrected owner is now in `passes/mean_maxpool_concat_layout.py`. Its
+382-line function AST is identical to the corrected lowerer predecessor at
+checkpoint `7b0f08a9`; the lowerer keeps a one-return private wrapper. The
+ordered QLinear recovery sequence and its two production boundaries remain
+unchanged. Direct owner/wrapper tests compare the complete ModelIR and
+statistics for static, dynamic, multiple-post, multiple-chain, and rejection
+contracts. The module cannot import the lowerer, and architecture checks apply
+all ownership/planning/prune invariants to the module owner. Removing the
+extracted owner's unused lowerer import leaves seven central Ruff findings.
+
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
 blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
 invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner
@@ -4054,6 +4233,86 @@ dead pruning, dynamic metadata, HARD_SWISH repair, and Conv/RELU fusion, proves
 one index build, and compares the complete final ModelIR with the former
 ten-call sequence.
 
+The final static SQUEEZE-axis guard is owned by
+`passes/squeeze_shape_sanitization.py`. The lowerer retains only the historical
+private wrapper and its one terminal production call. The owner normalizes
+negative, duplicate, and out-of-range axes, repairs a non-constant static input
+dimension only when a constant payload does not disprove singleton extent,
+and reconciles the SQUEEZE output shape and signature through the shared static
+shape inference helpers. It intentionally performs one operator-list traversal
+instead of constructing a fresh graph index for its single terminal call; it
+does not query producers or consumers and does not change topology. Dedicated
+tests preserve wrapper equivalence, constant-payload authority, metadata
+repair, counters, idempotence, and the no-import-cycle boundary.
+
+Final static runtime-shape/signature consistency is owned by
+`passes/static_shape_signature_sanitization.py`. The lowerer retains the
+historical private wrapper at both late production positions. The owner builds
+one producer map, establishes dynamic-lineage roots from ONNX boundary
+metadata and runtime-dependent WHERE, RANGE, RESHAPE, and TOPK_V2 outputs, and
+uses a memoized cycle-safe ancestry walk to distinguish dynamic contracts from
+stale internal signatures. Fully static internal tensors are completed or
+repaired; boundary-map signatures, leading dynamic graph-output axes, and
+dynamic descendants remain dynamic. Constant payloads terminate lineage. The
+pass changes metadata only and deliberately does not mutate topology or
+LayoutState. Focused tests cover each root family, boundary normalization,
+recursive and cyclic lineage, constant termination, scalar/missing/rank/stale
+repairs, idempotence, and compatibility-wrapper equality. Architecture tests
+fix one module owner, one producer-map build, four stats keys, and two
+production calls.
+
+The companion dynamic-boundary map realigner is owned by the same module. It
+keeps `_align_boundary_signature_to_current_shape` in `core/onnx_analysis.py`,
+where the primitive is also used while constructing boundary metadata, and
+moves only the ModelIR map traversal/update policy out of the lowerer. All
+three late production positions call a thin compatibility wrapper. The owner
+skips malformed maps, non-list entries, missing tensors, missing shapes, empty
+signatures, and rank mismatches; unchanged aligned signatures are idempotent.
+Repeated static extents retain the core helper's deterministic first-axis
+assignment. Focused tests fix same-axis and layout-moved signatures, repeated
+and insufficient static extents, malformed inputs, idempotence, and wrapper
+equality. The rule changes metadata only and never visits operators.
+
+The terminal LiteRT.js compatibility rewrite for ExpandDims and Squeeze is
+owned by `passes/expand_squeeze_reshape.py`; the lowerer retains one private
+compatibility wrapper at the unchanged production boundary. The owner keeps
+static target construction, speculative inactive-If Squeeze handling, dynamic
+SHAPE/GATHER target construction, semantic-axis metadata, pruning, and
+LayoutState synchronization together. Dynamic pre-operators are collected by
+original operator index and inserted in reverse index/reverse local order
+through `ModelIRGraphIndex.insert_operator()`, preserving the intended runtime
+SHAPE then GATHER then RESHAPE order without replacing the operator list. A
+graph index is constructed only when dynamic pre-operators exist. Direct owner
+tests fix wrapper equality, exact operator order, kept-axis data, LayoutState
+validity, and idempotence; existing shape tests preserve all static, dynamic,
+speculative-branch, and no-op guards.
+
+Exact rank-four binary layout mismatch adaptation is owned by
+`passes/binary_layout_adapter.py`. It remains distinct from indexed stale-
+adapter removal and transpose-bridge reduction: this compatibility guard
+inserts a missing input-1 Transpose only when the two full static shapes are
+exact NHWC/NCHW permutations. Its four historical production positions call
+one lowerer wrapper. The owner retains the bounded binary-op set, permutation
+precedence, quantization cloning, fixed-point restart, and terminal prune.
+Synthetic tests cover both directions for every supported binary operator,
+dynamic/equal/non-permutation no-ops, idempotence, and wrapper equality. The
+current corpus measurements are zero-owner evidence; differential indexing or
+broader inference is not combined with the mechanical ownership move.
+
+The same op-family module separately owns singleton-channel rank-four binary
+adaptation. This rule is intentionally not folded into the exact full-rank
+adapter: it uses the declared output shape to select one of four branches.
+For an NCHW output it transposes the NHWC operand to NCHW; for an NHWC output
+it reshapes the singleton NCHW operand to `[N,H,W,1]`. Either input position is
+supported for ADD/MUL/SUB/DIV/MAXIMUM/MINIMUM. A NumPy broadcast check rejects
+pairs that already produce the declared output without an adapter. The owner
+preserves quantization cloning, fixed-point restart, and conditional pruning,
+while the lowerer keeps only the historical wrapper at all four production
+positions. Focused tests cover all four branches for every supported operator,
+the broadcast no-op, idempotence, and wrapper equality. Architecture tests
+keep the two binary policies as distinct public module owners and prevent
+implementation from returning to the central lowerer.
+
 Rank-four channelwise broadcast-constant repair now builds one
 `ModelIRGraphIndex` instead of independently scanning the graph for producers,
 consumers, and binary candidates. Exact ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW
@@ -4078,6 +4337,29 @@ rebuilt between matches. Fan-out adapters remain unchanged, and both data-
 input positions plus channelwise-constant and Conv-peer match families retain
 their former behavior.
 
+Its focused extraction audit confirms that a short source shape in the Conv-
+peer evidence branch is a complete no-op. The source `shape_signature` is now
+materialized and required to be rank four before the indexed setter. A
+malformed signature therefore retains a complete ModelIR fingerprint and zero
+statistic instead of being assigned to a rank-four output after input rewiring.
+Architecture tests keep signature materialization before the first mutation.
+
+The channelwise-constant evidence branch now requires rank-four source and
+adapter shapes before its `[1,1,1,C]` channel checks or either `[3]` read. Short
+source or adapter metadata therefore returns a complete zero-statistic no-op.
+Architecture tests keep the shared rank guard before both channelwise-constant
+and Conv-peer evidence assignments. No strict xfail remains.
+
+The corrected 132-line implementation is owned by
+`passes/stale_binary_adapter_repair.py`; its AST is identical to the corrected
+lowerer predecessor at checkpoint `c869c410`. The lowerer keeps only its
+private compatibility wrapper and forwards an optional caller-owned index to
+the module owner. Both standalone fallback/final production calls are
+unchanged. A direct owner-versus-wrapper characterization compares return
+statistics and the complete resulting ModelIR fingerprint on a multi-adapter
+graph. The owner module cannot import the lowerer, and architecture checks
+keep its rank/signature validation before mutation.
+
 The two terminal fixed three-round broadcast/Transpose/shape convergence loops
 are owned by `_run_indexed_binary_layout_convergence`. One index is built per
 complete loop and supplied to all three operations in all three rounds.
@@ -4090,19 +4372,52 @@ sequence while a separate multi-match case compares the maintained index with
 a fresh rebuild.
 
 The adjacent singleton-Reshape and stale NCHW-to-NHWC Transpose repairs in
-front of NHWC Conv inputs accept one shared `ModelIRGraphIndex`. Both enumerate
-only indexed `CONV_2D` candidates, obtain the adapter producer and exact
-consumer list from the index, rewrite the Conv data input through the indexed
-setter, and remove an accepted adapter through differential compaction. The
-primary and fallback pairs run through
-`_run_indexed_conv_input_adapter_repairs`, which builds one index for both
-repairs. The later standalone stale-Transpose cleanup remains outside that
-ownership boundary and builds its own compatibility index. Exact singleton
-shape, Transpose permutation, filter input-channel, single-consumer, and graph-
-output guards remain unchanged. Characterization compares the complete
+front of NHWC Conv inputs are now owned by
+`passes/conv_input_adapter_repair.py`. Their shared runner builds one
+`ModelIRGraphIndex`. Both enumerate only indexed `CONV_2D` candidates, obtain
+the adapter producer and exact consumer list from the index, rewrite the Conv
+data input through the indexed setter, and remove an accepted adapter through
+differential compaction. The lowerer keeps private compatibility wrappers for
+both repairs and the runner. Primary and fallback execute the runner; the later
+standalone stale-Transpose cleanup remains outside that ownership boundary and
+builds its own compatibility index. Exact singleton shape, Transpose
+permutation, filter input-channel, single-consumer, and graph-output guards
+remain unchanged. The 104-, 122-, and 23-line owner bodies are AST-identical to
+the corrected lowerer predecessors. Characterization compares the complete
 resulting ModelIR with the former explicit pair, proves one index build without
-legacy producer/consumer maps, exercises multiple matches, and preserves
-fan-out and graph-output adapters.
+legacy producer/consumer maps, exercises multiple matches, preserves fan-out
+and graph-output adapters, and proves direct owner/wrapper fingerprint and
+statistic equality for all three APIs.
+
+The extraction audit added two atomicity characterizations for malformed source
+`shape_signature` metadata. Both raw repairs now materialize and require a
+rank-four signature before the indexed setter changes the Conv input. A short
+signature therefore returns a zero statistic with a complete unchanged ModelIR
+instead of raising `IndexError` after a partial edge mutation. Architecture
+tests keep the source-signature assignment before the first setter in both
+repairs. No strict xfail remains.
+
+The corrected 223-line `_repair_mixed_nhwc_inputs_for_nchw_concat` is now owned
+by `passes/mixed_concat_input_repair.py`, with a two-line private lowerer
+wrapper and two production calls on fallback and final ModelIR. Its body is
+AST-identical to the corrected lowerer predecessor. The focused contract covers
+canonical spatial selection from two agreeing inputs, the two-input output-
+shape fallback, local NHWC-to-NCHW adapter insertion, output channel/shape
+reconciliation, idempotence, wrong axis, missing input, invalid rank, and an
+already-NCHW no-op. Architecture tests fix module ownership, quantization
+cloning/remap, direct operator insertion, the compatibility input setter,
+wrapper dispatch, and both production positions. Direct owner and wrapper
+execution produce identical complete ModelIR fingerprints and statistics.
+
+The owner now resolves the required Concat output tensor and builds all
+prospective adapters into a complete plan before the first tensor or operator
+insertion. Every source signature is rank-validated, tensor names are reserved
+across the plan, final input/output shapes are computed up front, and cloned
+per-axis quantization remaps NHWC dimension `3` to NCHW dimension `1`. A
+malformed later signature or missing output is therefore a zero-statistic,
+complete ModelIR no-op. The commit phase retains historical tensor and operator
+insertion order. Architecture tests keep output/signature resolution and plan
+construction before the first mutation. No strict xfail remains.
 
 Wrong-way NCHW-to-NHWC Transpose-before-Conv sanitation is owned by the Torch/
 TensorFlow-free `passes/conv_input_layout.py` module. A graph containing a
@@ -4345,8 +4660,44 @@ the runner, preserving ordered behavior and cumulative statistics while
 avoiding another full index build. An extraction-time check compiles the exact
 prior committed late-loop AST and confirms complete ModelIR, rewritten-state,
 axis-count, and two-input-adapter-removal equality on the mixed direct/DQ
-fixture. The Swish compatibility orchestrator is now 69 lines with no raw
-top-level mutation loop.
+fixture.
+
+The complete Swish-QDQ orchestration is now owned by
+`optimize_transpose_swish_qdq_nhwc_islands` in that same module. It preserves
+the ordered primary, first inverse-post, late Concat/post, independent
+Conv-input safety-valve, and final pruning boundaries. The propagated-tensor,
+Concat-axis, and removed-post statistics are aggregated only after each
+phase's explicit result is returned. The spatial-agnostic residual-Concat
+closure is a second module owner that fixes `min_spatial_stage=0` and
+`require_concat_closure=True` before remapping the established statistics.
+Both historical lowerer names are thin compatibility wrappers and the two
+production positions remain one call each. After normalizing only the public
+function and safety-owner names, both moved orchestration ASTs are identical
+to their prior committed lowerer implementations. Focused tests additionally
+fix phase order, option forwarding, statistics aggregation, closure remapping,
+wrapper equality, direct safety-owner dispatch, final pruning, and the absence
+of a lowerer import cycle.
+
+HardSwish/SE/HardSigmoid gating-block layout recovery is isolated in
+`passes/hardswish_se_layout.py`. The complete compatibility implementation
+moves as one unit because its direct or decomposed activation root, keepdims
+Mean, two Conv stages, expanded or fused HardSigmoid gate, residual Mul, and
+four boundary Transposes are validated and committed as one ordered contract.
+The lowerer retains the historical private wrapper at both production
+positions. Function-name-normalized AST comparison is exact, so consumer-map
+rebuilds, graph-order restart, constant-axis remapping, input/output rewrites,
+metadata and quantization propagation, removal order, pruning, and the existing
+statistic are unchanged.
+
+Four positive synthetic combinations fix direct HARD_SWISH versus decomposed
+ADD/MUL/MUL roots against expanded MUL/ADD/RELU_0_TO_1 versus fused
+ADD(RELU6)/MUL gates. Public pre-Transpose output, invalid reduction axes, and
+activation fan-out remain complete no-ops; a direct-owner/private-wrapper
+comparison fixes the compatibility boundary. SSDLite MobileNetV3,
+`inference_ops15`, and MobileNetV3 PyTorch provide six measured zero-owner
+production invocations. SSDLite is the artifact control: it remains accurate
+with zero process-tree SWAP and byte-identical direct artifacts across the
+mechanical move.
 
 Concat-input exact-grid Q/DQ bypass is owned by
 `passes/quantization_cleanup.py`. The owner recognizes only
@@ -6792,6 +7143,311 @@ their exact recorded maximum errors. All float32 and float16 TFLite files are
 byte-identical to the prior checkpoint; final conversion-only checks also
 restore the fixed correspondence-report hashes.
 
+The complete indexed-first compatibility composite is now isolated in
+`passes/pre_add_layout.py`. Its 1,593-line implementation moved as one semantic
+unit with a function-name-normalized AST identical to the prior lowerer owner;
+this is not a source-line limit or a semantic split. The indexed direct/unary
+owner still runs first. Its fallback still owns Swish, unary, Mul-constant,
+Mul/Sub-constant, Gather, constant-Add, nested-Add, PReLU, direct-NCHW bridge,
+post aliases, and legacy-consumer handling in the same fixed-point order. All
+producer/consumer rebuilds, copy-on-write decisions, metadata and quantization
+updates, mutation order, marker behavior, pruning, and the single historical
+statistic are unchanged. The lowerer retains a one-call private compatibility
+wrapper at all four production positions and in the safe-transpose bundle.
+
+The focused fallback-equivalence fixture disables the indexed sub-owner and
+proves the module owner and lowerer wrapper produce identical ModelIR. The
+existing Gather/shared-constant, shared-Concat/unary, LeakyReLU, nested affine,
+QLinear, and indexed transactional fixtures remain active. FastestDet
+establishes non-zero fallback ownership: its eight composite calls remain
+`1,0,0,0,0,0,0,0`, while all eight indexed counts remain zero. Its sequential
+`-cotof` accuracy, zero process-tree SWAP, and five core artifacts are
+byte-identical across extraction.
+
+The adjacent late dual-pre-Add/single-post adapter rule is isolated in
+`passes/dual_pre_add_layout.py`. Its complete 166-line implementation moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+still accepts only two exclusive rank-four NHWC-to-NCHW Transpose results
+feeding one non-public Add with no existing NCHW-to-NHWC post consumer, moves
+the Add to NHWC, and inserts one NHWC-to-NCHW compatibility adapter after it.
+Tensor metadata and quantization cloning, unique-name selection, operator
+order, fixed-point restart, unconditional prune boundary, statistic, and the
+single late production position remain unchanged. The lowerer retains a
+one-call private wrapper.
+
+Nine focused tests fix the positive rewrite, quantization cloning,
+idempotence, public Add and adapter outputs, wrong permutation, rank mismatch,
+input fan-out, existing inverse post adapter, and direct-owner/private-wrapper
+equality. FastestDet, OSNet, and HumanSeg supplied three sequential zero-owner
+controls with process-tree SWAP zero; FastestDet's five core artifacts are
+byte-identical across extraction. The historical helper reuses an existing
+`__nhwc_to_nchw_perm_rank4__` tensor without validating its dtype, payload,
+producer, or visibility. This latent name-collision risk is recorded rather
+than changed in the mechanical checkpoint; hardening requires an independent
+compatibility fixture and artifact gate.
+
+The following terminal Transpose/Mul/Add/Reshape/FullyConnected rule is
+isolated in `passes/terminal_affine_fc_layout.py`. Its complete 293-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves exact chain exclusivity and public-boundary
+guards, NCHW-to-NHWC channel-constant rotation, shared constant copy-on-write,
+both FullyConnected weight orientations, flatten-order permutation, metadata
+and quantization cloning, fixed-point restart, pruning, statistic, and the
+single late production position. The lowerer retains a one-call private
+wrapper.
+
+Thirteen focused tests cover both weight orientations, shared affine and
+weight constants, independent quantization clones, idempotence, every public
+intermediate, wrong permutation, dynamic shape, weight-width mismatch, input
+fan-out, and direct-owner/private-wrapper equality. OSNet supplies a measured
+zero-owner artifact control with zero process-tree SWAP and five byte-identical
+core artifacts. A read-only scan of root ONNX files up to 50 MiB found no raw
+Transpose/Mul/Add/Reshape/Gemm-or-MatMul chain, so non-zero production ownership
+is not claimed. The historical helper can rotate an exclusive Mul constant
+before discovering that the Add constant is invalid, leaving a partial change
+on a zero-stat result. This transactional defect is recorded without changing
+compatibility in the mechanical ownership checkpoint.
+
+The adjacent terminal Transpose/PReLU/Reshape/BatchMatMul rule is isolated in
+`passes/terminal_prelu_bmm_layout.py`. Its complete 263-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves scalar, rank-three CHW, rank-four NCHW, and already-NHWC alpha
+handling, shared alpha/RHS copy-on-write, NHWC flatten-order RHS permutation,
+adjoint rejection, metadata and quantization cloning, fixed-point restart,
+pruning, statistic, and its single conditional late production position. The
+lowerer retains a one-call private wrapper.
+
+Seventeen focused and existing positive cases cover all supported alpha forms,
+shared constants, independent quantization clones, idempotence, public
+intermediates, wrong permutation, dynamic shape, RHS width, adjX/adjY, input
+fan-out, one-dimensional alpha rejection, and owner/wrapper equality.
+`inference_ops15` supplies the zero-owner artifact control with zero
+process-tree SWAP and five byte-identical core artifacts. A read-only scan of
+root ONNX files up to 50 MiB found no complete raw source chain, so non-zero
+production ownership is not claimed. Alpha and RHS tensors still lack complete
+producer, variable-state, and graph-visibility ownership validation; that
+semantic hardening remains separate from the exact ownership move.
+
+The terminal Transpose/Mul/Add/PReLU/post-Transpose compatibility rule is now
+isolated in `passes/terminal_affine_prelu_layout.py`. Its complete 295-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves commutative affine inputs, NCHW-to-NHWC
+channel-constant rotation, shared-constant copy-on-write, multiple post-
+Transpose aliases, retained legacy NCHW consumers through one reverse adapter,
+metadata and quantization propagation, fixed-point restart, pruning,
+statistics, and the single ordered production statement reached through four
+runtime recovery invocations. The lowerer retains a one-call private wrapper.
+
+The former giant direct-builder fixture is now a focused module and runs the
+pass owner and private wrapper on deep copies, comparing the complete ModelIR.
+It fixes the positive terminal rewrite together with the legacy-consumer
+adapter. SiNet supplies four measured zero-owner invocations before and after
+the move, records zero process-tree SWAP, and reproduces all five core artifacts
+byte for byte. Positive production ownership is therefore not claimed. The raw
+owner still builds complete maps in an unbounded fixed-point loop, and its
+sequential constant rotation can leave a partial mutation when a later
+constant rejects; transactional hardening remains separate from this exact
+ownership checkpoint.
+
+The Transpose/Mean/Mul/Add/post-Transpose compatibility rule is now isolated in
+`passes/mean_affine_prepost_layout.py`. Its complete 359-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves NCHW-to-NHWC reduction-axis remapping, commutative affine inputs,
+static broadcast validation, channel-constant rotation and copy-on-write,
+post-Transpose alias collapse, tensor metadata and quantization propagation,
+fixed-point restart, pruning, statistics, and all three ordered source call
+positions reached through five runtime invocations. The lowerer retains a one-
+call private wrapper.
+
+The former giant direct-builder axis-remap fixture is now a focused module and
+runs the pass owner and private wrapper on deep copies, comparing the complete
+ModelIR. LINEA supplies five measured zero-owner invocations before and after
+the move, records zero process-tree SWAP, and reproduces all five core artifacts
+byte for byte. Positive production ownership is therefore not claimed. The raw
+owner retains an unbounded complete-map scan and in-place axes/constant updates
+without an immutable all-or-nothing plan; transactional hardening remains
+separate from this exact ownership checkpoint.
+
+The dual affine-input BatchMatMul compatibility rule is now isolated in
+`passes/batchmatmul_affine_input_layout.py`. Its complete 317-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves commutative Mul/Add inputs, exact exclusive
+branch matching, NCHW-to-NHWC channel-constant rotation, rank-three Reshape
+shape reversal, left post-Transpose removal, `adjY=True` conversion, metadata
+propagation, fixed-point restart, pruning, statistics, and both ordered
+production positions. The lowerer retains a one-call private wrapper.
+
+The former giant direct-builder dual-branch fixture is now a focused module and
+runs the pass owner and private wrapper on deep copies, comparing the complete
+ModelIR. LINEA supplies two measured zero-owner invocations before and after the
+move, records zero process-tree SWAP, and reproduces all five core artifacts
+byte for byte. Positive production ownership is therefore not claimed. The raw
+owner still mutates both branches sequentially before all shape constants are
+known valid, so a late rejection can leave partial input, metadata, and constant
+changes; transactional hardening remains separate from this exact ownership
+checkpoint.
+
+The BatchMatMul-to-SE layout compatibility rule is now isolated in
+`passes/batchmatmul_se_layout.py`. Its complete 363-line implementation moved
+with a function-name-normalized AST identical to the prior lowerer owner. It
+preserves the BatchMatMul/Reshape source, NCHW Mean and axis remap, NHWC Conv
+gate branch, reverse gate adapter, Logistic and residual Mul merge, constant
+updates, alias rewiring, metadata and quantization propagation, fixed-point
+restart, pruning, statistics, and both ordered production positions. The
+lowerer retains a one-call private wrapper.
+
+The former giant direct-builder SE fixture is now a focused module and runs the
+pass owner and private wrapper on deep copies, comparing the complete ModelIR.
+LINEA supplies two measured zero-owner invocations before and after the move,
+records zero process-tree SWAP, and reproduces all five core artifacts byte for
+byte. Positive production ownership is therefore not claimed. The raw owner
+still performs a long sequence of constant, option, edge, metadata, and alias
+mutations without an immutable all-or-nothing plan; transactional hardening
+remains separate from this exact ownership checkpoint.
+
+The rank-three BatchMatMul input-adapter compatibility rule is now isolated in
+`passes/batchmatmul_adjoint_layout.py`. Its complete 145-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves exclusive Transpose-output ownership, graph-output protection,
+fully known positive shape checks, exact permutation/shape validation,
+`[0,2,1]` Transpose removal with `adjX`/`adjY` toggling, singleton-preserving
+Transpose-to-Reshape conversion with a new INT32 shape tensor, fixed-point
+restart, conditional pruning, statistics, and both ordered production
+positions. The lowerer retains a one-call private wrapper.
+
+The focused owner fixture runs the module owner and private wrapper on deep
+copies, compares the complete ModelIR, covers both input positions and both
+rewrite forms, and fixes idempotence. Tier 0
+`speech_command_classifier_trained.onnx` establishes positive production
+ownership with runtime counts `1,0`; its sequential pre/post conversion-only
+runs record zero process-tree SWAP and reproduce all five core artifacts byte
+for byte. The one-sample pre-move accuracy checkpoint passes with
+`max_abs=2.86102294921875e-06`. The mechanical owner still rebuilds complete
+producer/consumer maps after every accepted adapter and directly mutates or
+deletes operators without a transaction; indexed transactional migration
+remains separate from this exact ownership checkpoint.
+
+The probable-NHWC axis-sensitive sanitizer is now isolated in
+`passes/probable_nhwc_axis_sanitizer.py`. Its complete 245-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves the historical probable-NHWC shape heuristic, SPLIT axis copy-on-
+write, CONCATENATION and SLICE axis/constant repair, unary and binary metadata
+propagation, public-layout and explicit-NCHW guards, conditional terminal
+NHWC-to-NCHW output adapters, fixed-point restart, both statistics, and both
+ordered production positions. The lowerer retains a one-call private wrapper.
+
+The dedicated four-case fixture runs the module owner and private wrapper on
+deep copies and compares the complete ModelIR for every positive and no-op
+contract. FastestDet supplies four measured zero-owner invocations before and
+after the move, records zero process-tree SWAP, and reproduces all five core
+artifacts byte for byte. Positive production ownership is therefore not
+claimed. The raw owner still rebuilds complete maps, mutates shared SLICE
+constants without copy-on-write, and inserts terminal operators directly
+without an invariant transaction; semantic hardening and indexed migration
+remain separate from this exact ownership checkpoint.
+
+The adjacent raw NCHW→NHWC elementwise roundtrip compatibility owner now has a
+focused closed-subgraph and rejection contract. Characterization exposed that
+the root output metadata was permuted once with the intermediate tensors and a
+second time after copying it to the canonical post-Transpose output. The owner
+now excludes the private root tensor from the intermediate metadata loop, so
+the canonical tensor receives exactly one NHWC-to-NCHW permutation. Multi-
+input rewiring, embedded constants, fan-out rejection, public-output rejection,
+pruning, and idempotence are fixed by the focused tests. The implementation
+remains in the lowerer pending positive production ownership evidence; this
+semantic correction is not combined with an ownership extraction.
+
+The opposite-direction NHWC→NCHW elementwise fan-out compatibility rule is
+now isolated in `passes/elementwise_fanout_layout.py`. Its complete 555-line
+implementation moved with a function-name-normalized AST identical to the
+prior lowerer owner. It preserves forward elementwise-DAG discovery, external-
+runtime-input rejection, local/shared per-channel constant rotation, inverse
+boundary-Transpose collapse, legacy NCHW adapters, canonical aliases, metadata
+and quantization propagation, candidate snapshots, unbound-input rollback,
+fixed-point restart, pruning, statistics, and all three ordered production
+positions. The lowerer retains a one-call private wrapper and the independent
+unbound-input pass is imported through a compatibility alias without a reverse
+lowerer dependency.
+
+The former giant direct-builder fan-out fixture is now focused and runs the
+module owner and private wrapper on deep copies, comparing the complete
+ModelIR. Tier 0 `shadowformer_istd_160x240_split.onnx` supplies six measured
+zero-owner invocations before and after the move, records zero process-tree
+SWAP, and reproduces all five core artifacts byte for byte. Positive production
+ownership is therefore not claimed. The raw owner still rebuilds complete maps
+and deep-copies the whole ModelIR for each accepted candidate while retaining a
+dormant external-input adapter branch behind a conservative rejection guard;
+indexed transactional redesign remains separate from this exact ownership
+checkpoint.
+
+The broader residual Add/Mul/Add/PReLU compatibility rule is isolated in
+`passes/residual_affine_prelu_layout.py`. Its complete 415-line implementation
+moved with a function-name-normalized AST identical to the prior lowerer owner.
+It preserves dual pre-Add input planning, affine and alpha constant
+prevalidation and copy-on-write, broadcast-aware rotations, PReLU post aliases,
+legacy NCHW consumer adapter retention, metadata and quantization propagation,
+operator removal order, fixed-point restart, pruning, statistic, and all three
+source call positions. The lowerer retains a one-call private wrapper; the
+separate indexed SiNet late-residual owner and its ordering are unchanged.
+
+The existing direct fixture now runs the module owner and private wrapper on
+deep copies and compares every operator and tensor payload. The full indexed
+SiNet residual suite remains green. SiNet establishes real production
+ownership across fourteen runtime invocations with counts
+`0,0,0,1,1,0,0,0,0,0,0,0,0,0`; its zero process-tree SWAP and five core
+artifacts are unchanged across extraction. Constant producers, variable state,
+and graph visibility remain less strict than the newer indexed planning
+contracts and are recorded as future semantic-hardening boundaries.
+
+The adjacent residual Add/Mul/Add/post-Transpose fan-out compatibility rule is
+isolated in `passes/residual_affine_fanout_layout.py`. Its former 477-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. The fixed-point matcher still accepts two NHWC-to-NCHW
+Transpose inputs feeding one residual Add, one or more
+Mul-constant→Add-constant→NCHW-to-NHWC branches, and optional legacy NCHW
+consumers. It preserves the exact profitability guard, per-branch constant
+prevalidation and rotation, shared-constant copy-on-write, one retained legacy
+adapter, tensor metadata and quantization propagation, removal order, pruning,
+statistic, and all three production positions. The lowerer retains a one-call
+private wrapper.
+
+The focused positive fixture fixes a two-branch graph with a legacy consumer
+and a Mul constant shared outside the candidate. It runs the module owner and
+private wrapper on deep copies, compares the complete ModelIR, proves that the
+shared NCHW constant is retained while an NHWC clone is created, and verifies
+idempotence. A public post-Transpose output supplies the no-op boundary case.
+SiNet reaches the owner fourteen times with zero rewrites before and after the
+move; its two strictly sequential conversions report zero process-tree SWAP
+and produce byte-identical float32, float16, correspondence, schema, and
+generated-schema artifacts. Positive production ownership is therefore not
+claimed. Constant producer, variable-state, and graph-visibility validation
+remain looser than newer immutable indexed contracts and require a separate
+semantic-hardening checkpoint.
+
+The following pre-unary Mul/Add/post-Transpose fan-out compatibility rule is
+isolated in `passes/pre_unary_affine_fanout_layout.py`. Its former 401-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. It preserves the strict private NHWC-to-NCHW Transpose,
+single RELU/RELU6/LOGISTIC/TANH/HARD_SWISH/LEAKY_RELU/GELU producer, complete
+Mul-constant→Add-constant→NCHW-to-NHWC fan-out, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, tensor metadata and
+quantization propagation, exact removal order, fixed-point restart, pruning,
+statistic, and all three production positions. The lowerer retains a one-call
+private wrapper.
+
+Ten focused cases cover every accepted unary, a two-branch graph, an externally
+shared constant, full module-owner/private-wrapper ModelIR equality,
+idempotence, unsupported unary rejection, and a public post-output boundary.
+SiNet reaches the compatibility owner five times with zero rewrites before and
+after extraction; its strictly sequential conversions report zero process-tree
+SWAP and reproduce all five core artifacts byte for byte. This agrees with the
+earlier fourteen-model, five-boundary characterization and 381-model active
+Tier 0-4 ONNX topology scan, which also found no real owner. Positive production
+ownership is not claimed. The raw compatibility contract still lacks a shared
+GraphIndex/LayoutState transaction and complete producer, variable-state, and
+graph-visibility validation for constants; hardening remains separate from the
+mechanical ownership checkpoint.
+
 The pre-Add rank-four to rank-three reshape suffix recovery now has an indexed
 semantic owner in `pre_add_mulconst_reshape_suffix_layout.py`. The owner keeps
 the historical position inside `_run_layout_reshape_attention_recovery_prefix`
@@ -6820,6 +7476,27 @@ rewrites, including seven direct/direct and six direct/Mul-constant chains.
 Its float32, float16, and correspondence artifacts remain byte-identical to
 the pre-extraction baseline, and the sequential accuracy gate passes with
 maximum absolute error `4.470348358154297e-07` and zero process SWAP.
+
+The indexed-first composite and its raw compatibility fallback are now isolated
+in `pre_add_mulconst_reshape_suffix_compat_layout.py`. The former 509-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. It still constructs one `ModelIRGraphIndex` for the indexed
+dispatch, forwards the caller's `LayoutState`, starts the combined statistic
+from the indexed result, runs the unchanged direct/direct and
+direct/Mul-constant fallback to fixed point, and performs the sole historical
+prune/report boundary. The lowerer retains one private wrapper at the unchanged
+production position and forwards Session layout state without exposing the new
+owner publicly.
+
+The complete thirteen-case family suite now runs the compatibility module owner
+and lowerer wrapper on deep copies, fixes their complete ModelIR equality and
+single-prune behavior, and forces the indexed dispatch to zero to prove the raw
+fallback still owns both accepted input forms. IAT-LLIE retains combined and
+indexed counts `5,4,4` with fallback counts `0,0,0`; its two strictly sequential
+conversions report zero process-tree SWAP and reproduce the five core artifacts
+byte for byte. The indexed immutable plan is unchanged. The raw fallback still
+has its historical producer/consumer rebuilds and looser constant ownership;
+semantic hardening remains separate from this exact ownership move.
 
 The formerly adjacent raw direct/direct-only helper has been removed. It was
 not a second semantic owner: the compatibility helper above has always
@@ -6858,6 +7535,25 @@ source label restored all artifacts byte-for-byte. The sequential accuracy
 gate passes with maximum absolute error `0.002297189086675644` and zero
 process-tree SWAP.
 
+The indexed-first Swish/plain-unary composite and its raw fallback are now
+isolated in `pre_unary_reshape_suffix_compat_layout.py`. The former 302-line
+lowerer implementation moved with a function-name-normalized AST identical to
+the module owner. It still builds one `ModelIRGraphIndex` for the indexed Swish
+dispatch, forwards caller `LayoutState`, accumulates the combined statistic,
+then runs the unchanged thirteen-operation unary and relaxed Swish fallback to
+fixed point. The sole prune/report boundary and LayoutState removal of pruned
+tensor names remain in the compatibility owner. The lowerer retains one private
+wrapper at the unchanged production position.
+
+The focused family now includes complete compatibility-owner/lowerer-wrapper
+equality for both the indexed Swish path and a plain LEAKY_RELU fallback, while
+the existing direct fixture retains the raw unary graph contract. LINEA keeps
+combined and indexed counts `1,0,0` with fallback counts `0,0,0`; its two
+strictly sequential conversions report zero process-tree SWAP and reproduce all
+five core artifacts byte for byte. The indexed immutable plan is unchanged.
+Raw fallback whole-graph scans, relaxed constant mutation, and lack of a shared
+differential index remain explicit future semantic work.
+
 The factorized rank-four to rank-five detection-head reshape now has a strict
 indexed Case B owner in `expanddims_reshape_layout.py`. The owner dispatches
 each indexed Transpose candidate once and accepts only
@@ -6878,6 +7574,25 @@ post edge; the problem was recorded before adding the bounded length-aware
 reader. Both models then retained byte-identical float32, float16, and
 correspondence artifacts. The sequential yolo_test accuracy gate passes with
 maximum absolute error `2.4437904357910156e-06` and zero process-tree SWAP.
+
+The indexed-first factorized/singleton compatibility composite is now isolated
+in `expanddims_reshape_compat_layout.py`. The former 271-line lowerer
+implementation moved with a function-name-normalized AST identical to the
+module owner. It still builds one `ModelIRGraphIndex` per invocation, dispatches
+the strict factorized Case B owner first, forwards caller `LayoutState`, then
+runs the unchanged singleton Case A and relaxed compatibility fallback to fixed
+point. Reshape and permutation constant updates, the combined statistic, the
+sole prune/report boundary, and removal of pruned tensor names from LayoutState
+remain in the compatibility owner. The lowerer retains one private adapter at
+both unchanged production call positions.
+
+The focused corpus compares the compatibility owner and lowerer adapter for
+indexed Case B, singleton Case A, shared-constant rejection, and LayoutState
+cleanup while retaining the two historical direct Case A fixtures. A strictly
+sequential pre/post `yolo_test.onnx` conversion records zero process-tree SWAP
+and reproduces all five core artifacts byte for byte. The indexed immutable
+plan is unchanged. Whole-graph fallback scans and relaxed in-place constant
+mutation remain explicit future semantic work.
 
 The static rank-four to rank-three flatten-HW suffix now has a bounded indexed
 owner in `flatten_hw_reshape_layout.py`. It accepts only the exact semantic
@@ -6902,6 +7617,25 @@ all invocations. LINEA's float32, float16, and correspondence artifacts remain
 byte-identical, and its sequential `-cotof` gate passes at maximum absolute
 error `0.002297189086675644` with zero process-tree SWAP.
 
+The indexed-first static/dynamic flatten-HW compatibility composite is now
+isolated in `flatten_hw_reshape_compat_layout.py`. The former 175-line lowerer
+implementation moved with a function-name-normalized AST identical to the
+module owner. It still creates one `ModelIRGraphIndex` per invocation,
+dispatches the strict static owner first, forwards caller `LayoutState`, then
+runs the unchanged dynamic-signature and relaxed fallback to fixed point.
+Reshape constant/option updates, the combined statistic, the sole prune/report
+boundary, and removal of pruned tensor names from LayoutState remain in the
+compatibility owner. The lowerer retains one private adapter at both unchanged
+production call positions.
+
+The focused corpus compares compatibility-owner and lowerer-adapter results for
+the indexed static path, dynamic-signature fallback, shared/boundary/produced/
+variable shape-constant rejection, and LayoutState cleanup. A strictly
+sequential pre/post LINEA conversion records zero process-tree SWAP and
+reproduces all five core artifacts byte for byte. The indexed immutable plan is
+unchanged. Whole-graph fallback scans and relaxed in-place constant mutation
+remain explicit future semantic work.
+
 The static QKV rank adapter now has a bounded indexed owner in
 `attention_qkv_reshape_layout.py`. It accepts only the production-proven
 `[A,1,C] -> [A,H,D] -> [H,A,D] -> [1,H,A,D]` family with rank-three
@@ -6924,6 +7658,26 @@ invocation counts `5, 0, 0, 0`; the raw fallback has zero residual rewrites.
 Its float32, float16, and correspondence outputs remain byte-identical to the
 pre-extraction baseline. The sequential `-cotof` gate passes with maximum
 absolute error `0.000102996826171875` and zero process-tree SWAP.
+
+The indexed-first static/relaxed QKV compatibility composite is now isolated
+in `attention_qkv_reshape_compat_layout.py`. The former 245-line lowerer
+implementation moved with a function-name-normalized AST identical to the
+module owner. It still creates one `ModelIRGraphIndex` per invocation,
+dispatches the strict static `[1,0,2]` owner first, forwards caller
+`LayoutState`, then runs the unchanged `[1,2,0]`, shared-constant copy-on-write,
+dynamic-signature, and relaxed fallback to fixed point. Shape/permutation
+constant cloning and updates, the combined statistic, the sole prune/report
+boundary, and removal of pruned tensor names from LayoutState remain in the
+compatibility owner. The lowerer retains one private adapter at both unchanged
+production call positions.
+
+The focused corpus compares compatibility-owner and lowerer-adapter results for
+the indexed static path, HDA fallback, shared-constant copy-on-write, dynamic
+fallback, and LayoutState cleanup. A strictly sequential pre/post RF-DETR Nano
+conversion records zero process-tree SWAP and reproduces all five core
+artifacts byte for byte. The indexed immutable plan is unchanged. Whole-graph
+fallback scans and relaxed clone-on-write mutation remain explicit future
+semantic work.
 
 The static Swish-to-Squeeze rank adapter now has a bounded indexed owner in
 `pre_unary_squeeze_suffix_layout.py`. It accepts only the production-proven
@@ -6950,6 +7704,26 @@ byte-identical to the pre-extraction baseline. Sequential `-cotof` passes with
 maximum absolute error `1.9073486328125e-06`, and both conversion checks record
 zero process-tree SWAP.
 
+The indexed-first static-Swish/plain-unary Squeeze composite and raw fallback
+are now isolated in `pre_unary_squeeze_suffix_compat_layout.py`. The former
+297-line lowerer implementation moved with a function-name-normalized AST
+identical to the module owner. It still creates one `ModelIRGraphIndex` for the
+indexed dispatch, forwards caller `LayoutState`, accumulates the combined
+statistic, then runs the unchanged plain-unary, axis-3, dynamic-signature, and
+relaxed Swish fallback to fixed point. Squeeze axis option remapping, tensor
+metadata propagation, the sole prune/report boundary, and removal of pruned
+names from LayoutState remain in the compatibility owner. The lowerer retains
+one private wrapper at the unchanged production position.
+
+All eight focused cases now compare compatibility-owner and lowerer-wrapper
+results for indexed Swish, plain unary, axis-3 Swish, and dynamic-signature
+fallbacks, in addition to indexed atomicity, determinism, and bounded dispatch.
+`inference_ops15` keeps combined and indexed counts `1,0,0` with fallback counts
+`0,0,0`; its two strictly sequential conversions report zero process-tree SWAP
+and reproduce all five core artifacts byte for byte. The indexed immutable plan
+is unchanged. The raw fallback's whole-graph scans and relaxed in-place axis
+updates remain future semantic work.
+
 The production-proven static Conv/Mul affine fold now has a bounded indexed
 owner in `conv_mul_affine_fold.py`. It accepts only
 `CONV_2D(fused=NONE) -> MUL(fused=NONE)` with an exclusive FLOAT32
@@ -6963,11 +7737,14 @@ rewrite changes the Conv output and removes Mul through differential
 deterministic candidate/rewrite bound without internal pruning or complete
 producer/consumer-map reconstruction.
 
-The existing wrapper remains the single compatibility and cleanup boundary.
-Add-only, Mul/Add, fused-ReLU, missing-bias, scalar or relaxed coefficients,
-dynamic signatures, quantized/shared/public constants, and all other strict
-rejects therefore continue through the historical implementation. The
-indexed bias calculation deliberately retains the legacy float32
+`conv_mul_affine_fold_compat.py` now owns the single indexed-first
+compatibility and cleanup boundary; the lowerer retains only a thin private
+wrapper at all three production positions. The complete 381-line orchestration
+moved with an AST identical after function-name normalization. Add-only,
+Mul/Add, fused-ReLU, missing-bias, scalar or relaxed coefficients, dynamic
+signatures, quantized/shared/public constants, and all other strict rejects
+therefore continue through the historical raw fallback after indexed dispatch.
+The indexed bias calculation deliberately retains the legacy float32
 `bias * scale + positive_zero` operation order. That apparently redundant
 addition canonicalizes an IEEE-754 negative-zero product to positive zero and
 is required for byte-identical serialized buffers.
@@ -6975,9 +7752,9 @@ is required for byte-identical serialized buffers.
 Tier 2 `iat_llie_180x320.onnx` establishes the real owner with indexed counts
 `12, 0, 0`; all twelve are Mul-only folds and the fallback has no residual
 rewrite. Its float32, float16, and correspondence artifacts remain
-byte-identical to the pre-extraction baseline. The sequential `-cotof` gate
-passes with maximum absolute error `4.470348358154297e-07` and zero
-process-tree SWAP.
+byte-identical across compatibility extraction. The sequential `-cotof` gate
+passes with maximum absolute error `4.470348358154297e-07`; both extraction
+control runs record zero process-tree SWAP.
 
 Producer/activation fusion is isolated in `activation_fusion.py`. The public
 compatibility surface remains the private lowerer wrapper
@@ -7070,6 +7847,104 @@ artifacts are byte-identical across extraction. This mechanical boundary must
 not be broadened into semantic inference without first recording a real owner
 and an independent regression contract.
 
+Rank-four channelwise broadcast-constant repair is now owned by
+`binary_layout_adapter.py` alongside the two related binary compatibility
+policies. The complete former lowerer implementation moved with an AST that is
+identical after normalizing only the function name. The lowerer retains the
+historical private wrapper, three direct `lower_onnx_to_ir` calls, and the one
+call inside three-round binary-layout convergence, so scheduling and statistics
+aggregation are unchanged.
+
+The owner reuses a caller-supplied `ModelIRGraphIndex` when it belongs to the
+same ModelIR and otherwise builds exactly one index. Candidate traversal is
+limited to indexed binary operators. Producer/layout hints still resolve
+ambiguous rank-three and rank-four constants; exclusive constants mutate in
+place, while shared constants use snapshot-based copy-on-write and update the
+index through `_set_operator_inputs`. Standard NCHW-to-NHWC rotation, exact
+inverse recovery for stale NHWC constants, dtype and quantization preservation,
+unique clone naming, and the historical counter are unchanged.
+
+The positive, no-op, shared-constant, GraphIndex-differential, and convergence
+contracts pass, including module-owner versus lowerer-wrapper full ModelIR
+fingerprint equality. FastestDet supplies the strictly sequential zero-owner
+artifact control: all five invocations remain zero, process-tree SWAP is zero,
+and float32, float16, tensor-correspondence, schema, and generated-schema
+artifacts are byte-identical across extraction. Positive production ownership
+is not claimed; the synthetic cases remain the semantic authority.
+
+Conv/Pool output passthrough compatibility is now owned by
+`convpool_output_passthrough_compat.py`. The complete corrected 556-line helper
+moved with a function-name-normalized AST identical to its prior lowerer
+implementation. The lowerer retains one private wrapper at the unchanged
+single production position. Its former sole giant direct-builder fixture moved
+to
+`test_flatbuffer_direct_convpool_output_passthrough_layout.py`, where a compact
+contract now covers the elementwise region, retained legacy NCHW adapter,
+rank-four external-runtime adapter, keepdims Mean-axis absorption, and seven
+unsafe-boundary no-ops. Every case compares the module owner and lowerer wrapper
+on complete ModelIR fingerprints. The architecture gate explicitly records the
+current whole-graph maps, direct append/delete mutation, cleanup boundary, one
+wrapper dispatch, and one production call.
+
+Characterization exposed and the following checkpoint corrected one unsafe
+rejection path. Every external runtime tensor and its projected NHWC shape are
+now validated into an immutable local plan before channel-last hints, rewiring,
+adapter creation, metadata mutation, or topology mutation. A candidate with a
+valid first external input and invalid later rank-three input is therefore a
+complete ModelIR no-op, and the former strict xfail is an ordinary passing
+atomicity contract. Successful rewrite order and artifacts are unchanged.
+FastestDet, HumanSeg, OSNet, and inference_ops15 each produce one zero result in
+strictly sequential, zero-SWAP traces; positive production ownership is not
+claimed.
+
+The adjacent quantized Mean/HardSigmoid/MulAdd recovery is now owned by
+`mean_hardsigmoid_muladd_layout.py`. Its 496-line function body is AST-identical
+to the corrected lowerer predecessor after function-name normalization. The
+lowerer retains a two-line private wrapper and one syntactic call inside the
+recovery sequence, executed at two ordered production boundaries. Its dedicated
+ModelIR contract fixes the full two-branch graph, Mean axis remap, decomposed
+HardSigmoid clamp, residual Mul/Add rewiring, three bridge removals, legacy-
+output adapter, idempotence, and eight complete no-op guards. Architecture
+tests record module ownership, wrapper dispatch, current full-map scans,
+constant writes, direct insertion/deletion, prune, and the single production
+call.
+
+The Mean-axis rejection path is now atomic: rank normalization and the constant
+update occur after all candidate guards but before the first graph rewiring or
+dependent metadata mutation. Out-of-range axes and a rejected no-change
+constant update both retain a complete ModelIR fingerprint and zero statistic.
+A public residual `add0_out` is now rejected before the axes write, so its
+declared NCHW output contract and full ModelIR fingerprint remain unchanged.
+The focused contract has no remaining strict xfail. YuNet INT8, PPHumanSeg
+INT8, and SSD MobileNet INT8 each produce two zero results in current strictly
+sequential, zero-SWAP traces, matching the earlier broader zero-owner survey.
+The completed ownership move retains those boundaries and adds a direct owner/
+wrapper ModelIR fingerprint comparison.
+
+The following QLinear Concat/Conv propagation is now owned by
+`qlinear_concat_conv_compat.py`. Its corrected 612-line function body is
+AST-identical to the lowerer predecessor after normalizing only the function
+name. The lowerer retains a two-line private wrapper, one syntactic call in the
+same recovery sequence, and two ordered runtime boundaries. Its dedicated
+contract covers Pattern 1 quantized pre-Transposes, Pattern 2 float pre-
+Transpose before Quantize, Pattern 3 singleton Reshape before Quantize, Pattern
+4 singleton-spatial metadata reinterpretation, multiple output adapters, a
+direct Concat adapter, dynamic batch signatures, per-axis qdim remap,
+idempotence, and nine rejection guards. The former 119-line giant ModelIR
+fixture is now in the focused qlinear module with an identical AST. Direct
+owner and compatibility-wrapper calls produce identical complete ModelIR
+fingerprints and statistics.
+
+Required `concat_out` and `q_out` tensors are now prevalidated after all
+prospective input shapes and before the first input or metadata mutation. Both
+missing-tensor cases retain a complete ModelIR fingerprint and zero statistic.
+A pending tensor-shape update whose tensor is public is now rejected before
+axis validation or mutation, preserving public Dequantize outputs that would
+change from NCHW to NHWC. An already-NHWC public Dequantize output with no
+pending update remains eligible, retaining the safe feature. No strict xfail
+remains. The established eight-model QLinear recovery survey recorded zero
+rewrites for this helper, so positive production ownership is not claimed.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
@@ -7097,6 +7972,889 @@ reliably short is retained as excluded history with a normalized reason such
 as `repeated_quick_ceiling_timeout`. Do not increase the quick ceiling or
 change converter source merely to keep that model in the short-runtime set.
 
+## Raw Softmax/Transpose canonicalizer characterization
+
+The remaining raw `_canonicalize_softmax_transpose_chains` owner is frozen at
+its two existing ordered production boundaries before any implementation
+change. Its positive contract matches the private chain
+`NHWC-to-NCHW Transpose -> NCHW-to-NWHC Transpose -> last-axis Softmax ->
+NCHW-to-NWHC Transpose`. The existing rewrite changes the two inner
+permutations to NCHW-to-NHWC and NHWC-to-NCHW, adds the shared terminal-
+cleanup marker, preserves all other Softmax options/provenance, accepts a
+terminal public output only when it has no internal consumer, clones a shared
+permutation buffer, processes independent branches in graph order, reaches a
+fixed point, and retains historical unused-tensor pruning on a zero-match
+graph.
+
+The characterization records 24 concrete unsafe cases as strict xfails. One
+case exposes incomplete metadata planning: the Softmax input is changed to
+NHWC, but the Softmax output keeps its former NWHC metadata and the post-
+Transpose is consequently assigned an H/W-swapped shape. Six cases prove that
+the rewrite accepts non-last, out-of-range, and malformed Softmax axes even
+though only normalized axis three preserves the chain's meaning. Seven cases
+show that missing or non-rank-four source/intermediate/destination metadata is
+accepted. Five cases show in-place mutation of a public-input, variable,
+wrong-TensorIR-dtype, wrong-buffer-dtype, or quantized permutation tensor. A
+public constant output is also mutated instead of being preserved through a
+private clone. The final four cases cover duplicate Softmax/post producers,
+reverse Softmax/post order, and an internally produced tensor also declared as
+a public input. Every rejection contract requires a zero statistic and an
+unchanged complete ModelIR state.
+
+Production source is intentionally unchanged at this checkpoint. Correction
+must resolve every required rank-four shape/signature, normalized last-axis
+Softmax semantics, unique and topologically ordered producers, private
+intermediates, and a complete immutable permutation update/clone plan before
+the first tensor, operator, option, lineage, or metadata mutation. Valid
+graph-order statistics, fixed-point behavior, marker sharing, pruning,
+terminal-output behavior, and both ordered runtime boundaries must remain
+unchanged.
+
+The correction is now implemented in the raw owner. A single
+`ModelIRGraphIndex` replaces consumer/producer-map reconstruction on every
+fixed-point round. The matcher rejects duplicate producers, reverse producer/
+consumer order, produced public inputs, non-last or malformed Softmax axes,
+per-axis activation quantization, and any missing or non-rank-four required
+shape/signature before planning mutations. Softmax input and output metadata
+are both replanned as NHWC, and the post-Transpose metadata is derived from
+that new output rather than from the stale NWHC shape.
+
+Both permutation actions are planned together. A candidate may update only an
+immutable local unquantized INT32 tensor with an INT32 backing buffer. Shared
+or public-output constants receive deterministic private clones; public
+inputs and variable constants reject. Candidate-local name reservations are
+published only when the complete plan commits, so a rejected candidate cannot
+change a later clone name. After both plans, all metadata, and marker options
+exist, the commit phase has no rejection branch. All 24 former strict xfails
+are green, including a post-permutation failure that proves the pre-
+permutation remains unchanged. Normalized axis `-1`, existing axis `3`, shared
+buffer cloning, public-output cloning, graph-order statistics, fixed-point
+behavior, terminal outputs, pruning, and both production boundaries remain
+covered.
+
+Ownership now resides in
+`passes/softmax_transpose_canonicalization.py`. The extracted function and the
+corrected raw owner at checkpoint `9a9898e3` are each 343 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical function name as a one-return compatibility
+wrapper. Both nested recovery-sequence positions remain unchanged, and the
+module imports the shared terminal marker from its existing owner without a
+lowerer import cycle. Direct owner/wrapper comparison covers static shapes with
+dynamic signatures, multiple branches, shared and public-output permutation
+clones, negative last axis, terminal output, pruning, incomplete metadata,
+unsafe axis, and a post-plan atomic rejection. Statistics and complete
+normalized ModelIR state are identical in every case.
+
+## Raw Concat/Mul/Transpose/Add bridge characterization
+
+The next raw source-order owner is the 394-line
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains`. It remains unchanged
+at the third position of both terminal Concat recovery sequences. Its former
+ordinary and legacy-consumer fixtures have been moved out of the giant direct
+test module into a focused contract, reducing that central file by 211 lines.
+The focused contract freezes ordinary static and dynamic-signature rewrites,
+legacy-consumer and public-Concat-output adapters, graph-order multiple
+matches, fixed-point behavior, scalar and rotated Mul constants, shared-
+constant collision-safe cloning, zero-match no-prune behavior, operator
+options/provenance, nine existing rejection guards, statistics, and both
+ordered production boundaries.
+
+Sixteen reproduced safety gaps are strict xfails. A legacy adapter is appended
+after its consumer and therefore leaves the ModelIR non-topological. Five
+missing, rank-three, or short-signature retained tensors are accepted. A
+public-input or variable Mul constant is rotated in place, while a public
+constant output is not preserved through a private clone. Ordinary and legacy
+per-axis cases retain NCHW quantized dimension one after their tensors move to
+NHWC instead of remapping it to three. The reserved adapter-permutation name
+can overwrite a public input, and malformed legacy metadata raises after the
+Mul constant has already changed. Duplicate post producers, reverse post/Add
+order, and a produced pre-adapter tensor also declared as a public input are
+also rewritten. Every rejection or atomicity contract compares the complete
+normalized ModelIR state.
+
+Production source is intentionally unchanged. Correction must build a unique,
+topologically ordered chain plan; validate complete rank-four effective
+metadata; plan every constant update or clone, QDIM remap, canonical tensor,
+adapter constant/name, operator setter, removal, and adapter insertion before
+the first mutation; and insert any compatibility adapter before its earliest
+consumer. Public inputs and variables must reject, public outputs must remain
+stable, and rejected candidates must not reserve names or emit lineage. Valid
+candidate order, statistics, scalar handling, collision behavior, fixed point,
+pruning, public Concat outputs, and both ordered runtime boundaries must remain
+unchanged.
+
+The correction is now implemented in the 652-line raw owner. One
+`ModelIRGraphIndex` replaces full producer/consumer-map reconstruction in each
+fixed-point round and is updated differentially through every setter, removal,
+and adapter insertion. The complete candidate plan requires unique producers,
+strict pre-Transpose/Concat/Mul/post-Transpose/Add order, private internal
+edges, rank-four source/Concat/Mul metadata, valid broadcast constants, and a
+complete immutable name set before mutation.
+
+Mul constants are classified as unchanged scalar/broadcast values, private
+in-place rotations, or collision-safe clones for shared and public-output
+ownership. Public inputs and variables reject. NCHW-to-NHWC QDIM is cloned and
+remapped for the Concat tensor, Mul output, and rotated Mul constant, including
+the legacy canonical tensor. Adapter-permutation constants are reused only
+when immutable and safe; otherwise a private collision-safe INT32 constant is
+planned without overwriting the reserved name. Canonical Concat metadata,
+options, all setters, the removal set, and adapter placement are also planned
+before commit. Compatibility adapters are inserted directly after their
+Concat producer and therefore precede every legacy consumer.
+
+All 16 former strict xfails are green. Additional coverage proves one graph-
+index construction for two matches and validates complete ModelIR invariants
+for legacy/public-output adapters plus ordinary/legacy per-axis quantization.
+The nine former rejections, scalar and shared constants, dynamic signatures,
+multiple-match count, fixed point, no-match no-prune behavior, options/
+provenance, and both ordered production boundaries remain green. Removing the
+obsolete local `add_out_name` assignment reduces pre-existing lowerer Ruff
+findings from seven to six.
+
+Ownership now resides in
+`passes/concat_mul_add_bridge_layout.py`. The extracted function and the
+corrected raw owner at checkpoint `5193fc11` are each 652 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical function name as a one-return compatibility
+wrapper. Both terminal recovery-sequence positions and their immediate
+predecessor/successor calls remain unchanged, and the focused module has no
+lowerer import.
+
+Direct owner/wrapper comparison covers ordinary static and dynamic metadata,
+multiple matches, scalar constants, shared and public-output constant clones,
+legacy and public-Concat adapters, ordinary and legacy per-axis quantization,
+adapter-name collision, unmatched pruning behavior, missing metadata, reverse
+topology, and a public internal boundary. Statistics and the complete
+normalized ModelIR—including buffers, quantization, options, provenance,
+topology, and diagnostics—are identical in every case. The extraction adds no
+semantic change and does not alter public APIs, artifacts, dependencies,
+corpus policy, or TensorFlow isolation.
+
+## Raw Concat/Mul/Add/Transpose/Add bridge characterization
+
+The next raw source-order owner is the 452-line
+`_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains`. It remains
+unchanged at the fourth position of both terminal Concat recovery sequences.
+Its existing legacy-consumer fixture has moved from the giant direct test into
+`test_flatbuffer_direct_concat_mul_add_transpose_add_bridge_layout.py`,
+reducing the central test by 102 lines while preserving the same observable
+contract.
+
+The focused positive contract covers ordinary static and dynamic-batch
+signatures, legacy compatibility output, two independent graph-order matches,
+second-call fixed point, scalar Mul/Add constants, collision-safe cloning of
+each shared affine constant, zero-match no-prune behavior, Concat options,
+axis semantics, version and ONNX provenance, nine existing rejection guards,
+statistics, and both ordered production boundaries.
+
+Twenty-seven concrete safety gaps are strict xfails:
+
+- the legacy adapter is appended after its existing consumer;
+- seven missing, rank-three, or short-signature source/Concat/Mul/Add metadata
+  cases still rewrite;
+- public-input, variable, and public-output ownership is ignored for each of
+  the Mul and pre-Transpose Add constants;
+- ordinary and legacy per-axis tensors keep NCHW QDIM 1 after moving to NHWC;
+- a public, variable, wrong-dtype, quantized, or wrong-value reserved adapter
+  constant is reused or overwritten instead of preserving it and allocating a
+  private INT32 permutation;
+- invalid Add-constant or legacy-signature evidence discovered after Mul-
+  constant rotation leaves partial mutation;
+- a malformed Concat axis raises instead of producing a transactional no-op;
+- duplicate post output producers, reverse post/tail-Add order, and a produced
+  pre-Transpose tensor declared as a public input are accepted.
+
+Production source is intentionally unchanged at this checkpoint. Correction
+must build one indexed graph-order candidate plan that validates unique
+producers, strict operator order, private internal edges, complete rank-four
+shape/signature metadata, both affine-constant ownership and broadcasts,
+per-axis QDIM remaps, adapter ownership/naming, and every setter, removal, and
+insertion before the first mutation. Compatibility adapters must be inserted
+before their earliest legacy consumer. Existing match order, statistics,
+fixed point, scalar/shared constants, pruning, options/provenance, and both
+runtime boundaries must remain unchanged.
+
+The correction is now implemented in the 866-line raw owner. One
+`ModelIRGraphIndex` replaces producer/consumer-map reconstruction on every
+fixed-point round and is updated differentially through input/output setters,
+batched removals, and adapter insertion. Two independent matches construct
+the index once.
+
+Each candidate now proves the strict pre-Transpose/Concat/Mul/Add/post-
+Transpose/tail-Add order, unique retained producers, exact single-consumer
+internal edges, private intermediate boundaries, complete rank-four source/
+Concat/Mul/Add shapes and effective signatures, a valid Concat axis/options
+mapping, and a broadcast-compatible NHWC tail constant before mutation.
+Missing tensors, short signatures, malformed axes, duplicate producers,
+reverse order, and public internal aliases return zero with complete ModelIR
+equality.
+
+Both affine constants are planned from the unchanged graph. Scalars and
+already NHWC-broadcastable values remain untouched. Rotated constants require
+immutable non-public-input ownership and valid target broadcasting; shared or
+public-output values receive deterministic private clones, while variables and
+public inputs reject. Per-axis quantization is cloned and remapped with the
+same NCHW-to-NHWC permutation for both constants and the canonical Concat,
+Mul-output, and Add-output tensors. Candidate-local names are published only
+after every constant, metadata, quantization, adapter, setter, removal, and
+insertion decision succeeds.
+
+The reserved adapter tensor is reusable only as a private, immutable,
+unquantized INT32 `[4]` constant with an INT32 buffer and the exact
+permutation. Every unsafe collision is preserved and receives a private
+collision-safe replacement. Legacy adapters are inserted immediately after
+their Concat producer, before the main affine chain and every legacy consumer.
+All 27 former strict xfails are green; public-output affine constants are
+explicitly verified as successful private-clone rewrites. The original 18
+characterization cases, plus clone and one-index coverage, now form 46 green
+focused tests.
+
+Ownership now resides in
+`passes/concat_mul_add_transpose_add_bridge_layout.py`. The extracted function
+and the corrected raw owner at checkpoint `4a5f0394` are each 866 lines and
+have identical ASTs. The lowerer imports the module owner under a private pass
+alias and retains the historical function name as a one-return compatibility
+wrapper. Both terminal recovery-sequence positions and their immediate
+neighbors remain unchanged, and the focused module has no lowerer import.
+
+Nineteen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, multiple matches, scalar constants, separate shared Mul/Add
+constant collisions, separate public-output clones, legacy adapters, ordinary
+and legacy per-axis quantization, adapter collision, unmatched pruning,
+missing and malformed metadata, late constant evidence, malformed axis,
+reverse topology, and a public internal boundary. Statistics and complete
+normalized ModelIR state are identical in every case. The mechanical move
+does not alter public APIs, artifacts, dependencies, corpus policy, ordered
+runtime behavior, or TensorFlow isolation.
+
+## Raw Concat/Mul/Add/Add/Mean/Reshape characterization
+
+The next raw source-order owner is the 461-line
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains`. It remains
+unchanged at the fifth position of both terminal Concat recovery sequences.
+Its existing positive fixture moved from the giant direct test into
+`test_flatbuffer_direct_concat_mul_add_add_mean_reshape_layout.py`, reducing
+the central test by 94 lines while preserving the public behavior.
+
+The focused positive contract covers ordinary static and dynamic-batch
+signatures, two independent graph-order matches, fixed point, scalar affine
+constants, collision-safe shared cloning for all three affine constants,
+shared Mean-axes cloning, exact old-Mean-shape rewriting, zero-match no-prune
+behavior, Concat and Mean options/version/provenance, ten existing rejection
+guards, statistics, and both ordered production boundaries.
+
+Forty-two concrete safety gaps are strict xfails:
+
+- eleven missing, rank-three, or short-signature source/Concat/Mul/Add/Mean
+  metadata cases still rewrite;
+- six public-input or variable affine constants rotate in place and three
+  public affine outputs are not preserved through private clones;
+- per-axis QDIM is not remapped for the three constants or five NHWC tensors;
+- five unsafe Mean-axes ownership/dtype/buffer/quantization cases are accepted,
+  and a public axes output is mutated rather than cloned;
+- four unsafe Reshape-shape ownership/type cases are accepted, and shared or
+  public-output shapes are mutated rather than cloned;
+- invalid second/third affine constants, invalid axes, and malformed Mean
+  metadata are discovered only after earlier constants have changed;
+- a malformed Concat axis raises instead of producing a no-op;
+- duplicate Mean producers, reverse Mean/Reshape order, and a produced public
+  input alias are accepted;
+- an identity Mean-axis mapping is treated as rewrite failure after affine
+  constants have already changed.
+
+Production source is intentionally unchanged. Correction must build one
+indexed, strictly ordered candidate plan with complete rank-four effective
+metadata and immutable plans for all three affine constants, Mean axes, and
+the conditionally rewritten Reshape shape. Shared and public-output constants
+must clone, public inputs and variables must reject when mutation is required,
+INT32 shape/axes contracts must be explicit, QDIM must follow each permutation,
+and an unchanged axes mapping must count as a valid plan. Every name, tensor,
+setter, metadata update, removal, and pruning decision must be known before the
+first mutation. Existing match order, statistics, fixed point, scalar/shared
+handling, exact shape rewrite, provenance, and both runtime boundaries must
+remain unchanged.
+
+The correction is now implemented in the 869-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated complete producer/consumer scans and
+is maintained through indexed setters and batched pre-Transpose removal. Two
+independent matches construct it once.
+
+Each candidate proves strict pre-Transpose/Concat/Mul/Add/Add/Mean/Reshape
+order, unique retained producers, exact single-consumer internal edges,
+private intermediates, complete rank-four source and retained tensor shapes/
+effective signatures, valid Concat and Mean options, and Concat fan-out safety
+before mutation. Missing or short metadata, malformed axes, duplicate
+producers, reverse order, and public aliases return zero with complete ModelIR
+equality.
+
+All three affine constants use the same immutable plan: scalar and existing
+NHWC broadcasts remain unchanged; NCHW rank-three/four values rotate only
+after target-broadcast and ownership validation; shared and public-output
+values clone; public inputs and variables reject. Constant QDIM follows the
+rank-specific permutation, while Concat, Mul, both Add outputs, and Mean output
+receive the rank-four QDIM remap.
+
+Mean axes are normalized and remapped into a validated immutable unquantized
+INT32 plan. Identity mappings are valid no-change actions. Changed shared or
+public-output axes clone, while public inputs, variables, wrong TensorIR or
+buffer dtype, and quantized tensors reject. Reshape shape is planned only when
+its four values exactly equal the old Mean shape; that plan has the same INT32
+and ownership contract and clones shared/public outputs. Every constant,
+quantization, name, tensor, setter, metadata result, and removal is complete
+before the first mutation. All 42 former strict xfails are green, and an
+explicit Concat fan-out guard plus one-index test bring the focused contract to
+65 green cases.
+
+Ownership now resides in
+`passes/concat_mul_add_add_mean_reshape_layout.py`. The extracted function and
+the corrected raw owner at checkpoint `3c3579fd` are each 869 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical function name as a one-return compatibility
+wrapper. Both terminal recovery-sequence positions and their immediate
+neighbors remain unchanged, and the focused module has no lowerer import.
+
+Twenty-three direct owner/wrapper comparisons cover static and dynamic
+metadata, multiple matches, scalar constants, separate shared and public-
+output actions for all three affine constants, shared/public Mean axes, exact
+and public Reshape shapes, QDIM, identity axes, unmatched pruning, missing and
+late metadata, late affine evidence, malformed axis, reverse topology, and a
+public internal boundary. Statistics and complete normalized ModelIR state are
+identical in every case. The move adds no semantic change and does not alter
+public APIs, artifacts, dependencies, corpus policy, ordered behavior, or
+TensorFlow isolation.
+
+## Raw nested-Concat/Mul/Transpose characterization
+
+The next raw source-order owner is the 356-line
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains`. Production code
+remains unchanged at its historical position immediately after the extracted
+Concat/Mul/Add/Add/Mean/Reshape recovery and before singleton-gate recovery in
+both terminal Concat sequences. The original public mixed-axis fixture moved
+from the giant direct test into
+`test_flatbuffer_direct_concat_tree_mul_add_bridge_layout.py`; the move removes
+the associated private lowerer import from the giant test without changing
+runtime behavior.
+
+Twenty green characterization cases freeze static and dynamic-batch mixed-axis
+Concat trees, graph-order multiple matches, fixed point, scalar and shared Mul
+constants, normalized negative axes, zero-match no-prune behavior, twelve
+existing rejection guards, the raw owner's current three-loop structure, and
+both ordered production boundaries.
+
+Nineteen concrete safety gaps are strict xfails:
+
+- eight missing, rank-three, or short-signature source/Concat/Mul metadata
+  cases are not rejected through a complete rank-four preflight;
+- public-input and variable Mul constants rotate in place, and a public Mul
+  constant output is changed rather than receiving a private clone;
+- per-axis QDIM does not follow the NCHW-to-NHWC permutation;
+- malformed inner or root Concat axes raise instead of producing an atomic
+  no-op;
+- late inner metadata failure occurs after the Mul constant has changed;
+- duplicate post-Transpose producers, reverse post-Transpose/Add order,
+  reverse inner/root Concat order, and a public pre-Transpose alias are
+  accepted.
+
+Correction must use one `ModelIRGraphIndex` to build the complete recursive
+tree, topology, metadata, constant-ownership, quantization, setter, and removal
+plan before the first mutation. Candidate enumeration and recursive tree order,
+valid statistics, scalar/shared handling, fixed point, pruning behavior, and
+both production boundaries must remain unchanged. The 356-line count records
+the current owner size only; the 2,000 threshold in this project applies to
+ONNX operation-count tiers, not source-file or function length.
+
+That correction is now implemented in the 675-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated producer/consumer reconstruction and
+is maintained by indexed input setters plus one batched adapter removal. Two
+independent matches construct and refresh the index exactly once.
+
+Candidate planning proves unique producers, strict pre-Transpose/nested-
+Concat/Mul/post-Transpose/Add order, exact internal consumers, private bridge
+tensors, valid normalized axes, and complete rank-four source, every Concat
+output, and Mul-output shape/signature metadata. Every nested Concat input and
+axis update, output metadata permutation, QDIM result, Add rewire, and removal
+is immutable before commit. Missing tensors, rank-three sources, short or
+malformed signatures, malformed axes, duplicate producers, reverse topology,
+and public aliases now return zero with complete ModelIR equality.
+
+The Mul constant has a separate immutable ownership plan. Scalars and values
+already broadcastable in NHWC remain unchanged. A required NCHW-to-NHWC
+rotation rejects public inputs and variables, updates a private single-use
+constant, or creates a deterministic collision-safe clone for unrelated users
+and public outputs. Per-axis QDIM follows the same permutation for the constant,
+every nested Concat output, and the Mul output. The Add-side NHWC channel
+broadcast is also checked against the planned Mul shape. All nineteen former
+strict xfails are green. Explicit one-index, reverse source/adapter order, and
+duplicate source-producer contracts bring the focused suite to forty-two cases
+without changing valid statistics, fixed point, pruning, or either production
+boundary.
+
+Ownership now resides in
+`passes/concat_tree_mul_add_bridge_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `4111187c` are each 675 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and keeps the historical private name as a one-return compatibility wrapper.
+Both terminal recovery-sequence positions and their immediate neighboring calls
+are unchanged, and the focused module does not import the lowerer.
+
+Seventeen direct owner/wrapper comparisons cover static and dynamic metadata,
+multiple matches, scalar, shared, public-output, public-input, and variable Mul
+constants, per-axis quantization, unmatched pruning, missing and late metadata,
+malformed axes, reverse nested topology, public internal boundaries, and
+reverse or duplicate source producers. Statistics and complete normalized
+ModelIR state are identical in every case. The move adds no semantic change and
+does not alter public APIs, artifacts, dependencies, corpus policy, ordered
+behavior, or TensorFlow isolation.
+
+## Raw StridedSlice/Pad/Concat bridge characterization
+
+The next raw source-order owner is the 543-line
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`.
+Production code and all three historical call sites remain unchanged. Its
+public fixture moved from the giant direct test into
+`test_flatbuffer_direct_stridedslice_pad_concat_bridge_layout.py`, removing the
+associated private lowerer import and 117 fixture lines from the central test.
+
+Twenty-six green characterization cases freeze static and dynamic signatures,
+two independent matches and fixed point, multiple Add users, ordinary Pad and
+MirrorPad provenance/options, scalar Mul constants, collision-safe cloning of
+shared Slice-end/Pad/Mul constants, zero-match no-prune behavior, seventeen
+existing rejection guards, statistics, the raw owner's current two-loop shape,
+and all three production calls.
+
+Forty-two concrete safety gaps are strict xfails:
+
+- ten missing, rank-three, or short-signature source/Slice/Pad/Concat/Mul
+  metadata cases still rewrite;
+- sixteen public-input, variable, wrong-dtype, or quantized Slice begin/end/
+  stride and Pad constants lack an immutable typed ownership plan;
+- changed public Slice-end and Pad constants mutate rather than clone;
+- public-input and variable Mul constants rotate in place, and a public Mul
+  output is not preserved through a private clone;
+- per-axis QDIM is not remapped for Slice, Pad, Concat, Mul constant, or renamed
+  Mul output tensors;
+- public Slice and Pad intermediates change physical layout without an adapter
+  or complete rejection;
+- duplicate post producers, reverse post/Add or Slice/Pad order, a public pre-
+  Transpose alias, and reverse or duplicate source producers are accepted;
+- malformed Concat axes and Slice masks raise rather than producing an atomic
+  no-op.
+
+Correction must build one `ModelIRGraphIndex` and a complete immutable plan for
+every branch before the first mutation. The plan must prove strict pre-
+Transpose/StridedSlice/Pad/Concat/Mul/post-Transpose/Add order, unique
+producers, exact private consumers, complete rank-four metadata, normalized
+options, and the supported multi-Add tail. Slice vectors and Pad matrices must
+have explicit unquantized INT32 metadata and be grouped by tensor identity and
+target value; public inputs and variables must reject when treated as constants,
+while unrelated users and changed public outputs receive deterministic clones.
+The Mul constant needs the same ownership policy, and all retained per-axis
+QDIM values must follow the data permutation. Every clone name, constant action,
+metadata/QDIM result, input/output setter, mask/axis option, Mul-output rename,
+and adapter removal must be known before commit. Valid statistics, Pad and
+MirrorPad behavior, multiple Add users, fixed point, pruning, and all three call
+boundaries must remain unchanged. The 543-line count is descriptive only; 2,000
+remains the ONNX operation-count tier threshold.
+
+That correction is now implemented in the 1,100-line raw owner. One
+`ModelIRGraphIndex` replaces every repeated producer/consumer reconstruction
+and remains current through indexed input/output setters plus one batched
+adapter removal. Two independent matches construct and refresh it exactly once.
+
+Each candidate proves strict source/pre-Transpose/StridedSlice/Pad/Concat/Mul/
+post-Transpose/ordered-Add topology, unique producers, exact private internal
+consumers, valid normalized options, complete rank-four source and retained-
+output metadata, and the supported one-or-more Add tail. Slice, Pad, Concat,
+and renamed Mul-output shape/signature/QDIM results and every Add broadcast are
+complete before commit. Missing post-output tensors, malformed axes or masks,
+duplicate producers, reverse order, and public aliases now leave the complete
+ModelIR unchanged.
+
+Slice begin/end/stride vectors and Pad matrices use one grouped immutable
+constant transaction. Each tensor must be an unquantized, non-variable INT32
+buffer with exact shape/signature and no runtime producer or public-input
+ownership. Requirements are grouped by tensor identity and must agree on the
+target value. An unchanged valid constant remains shared; a changed private
+constant updates once; any unrelated consumer edge or public output receives
+one deterministic collision-safe clone reused by all planned sites. The Mul
+constant has the same update/clone/reject policy, including per-axis QDIM and
+provenance-preserving clones.
+
+All forty-two former strict xfails are green. Missing post-output rejection and
+explicit one-index reuse bring the focused contract to seventy cases without
+changing Pad/MirrorPad options, multiple Add users, statistics, fixed point,
+pruning, or any of the three production calls.
+
+Ownership now resides in
+`passes/stridedslice_pad_concat_bridge_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `95a5555b` are each 1,100 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains the historical private name as a one-return compatibility wrapper.
+All three production calls are unchanged, and the focused module does not
+import the lowerer.
+
+Twenty direct owner/wrapper comparisons cover static and dynamic metadata,
+multiple matches, multiple Add users, Pad and MirrorPad, scalar constants,
+grouped shared constants, public-output/index-input/wrong-dtype index
+ownership, public and variable Mul constants, per-axis quantization, unmatched
+pruning, missing retained/post metadata, malformed options, reverse topology,
+public intermediates, and duplicate source producers. Statistics and complete
+normalized ModelIR state are identical in every case. The mechanical move does
+not alter public APIs, artifacts, dependencies, corpus policy, ordered runtime
+behavior, or TensorFlow isolation.
+
+## Raw Reshape/Transpose collapse characterization
+
+The next substantive raw source-order owner is the 218-line
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`.
+Production code and both historical calls remain unchanged. It previously had
+only ordered architecture references; the focused
+`test_flatbuffer_direct_reshape_transpose_collapse_layout.py` now owns its
+synthetic ModelIR contract.
+
+Fourteen green cases freeze the static rank-three to NHWC reshape collapse,
+two independent matches and fixed point, collision-safe shared shape cloning,
+ten existing permutation/public-boundary/fan-out/shape rejection guards,
+statistics, the raw owner's current two-loop structure, and both production
+calls.
+
+Nineteen concrete safety gaps are strict xfails:
+
+- dynamic batch signatures are collapsed into a concrete batch-one shape
+  constant and options;
+- a zero-match invocation still prunes unrelated tensors;
+- public-input, variable, wrong-TensorIR-dtype, wrong-buffer-dtype, quantized,
+  or data-less reshape-shape tensors are treated as mutable constants;
+- a changed public shape output mutates rather than receiving a private clone;
+- short input/intermediate/output signatures are ignored;
+- duplicate output or source producers, reverse Transpose/Reshape order, a
+  public internal input alias, and a reverse source producer are accepted.
+
+Correction must use one `ModelIRGraphIndex` to prove unique producers, strict
+Reshape/Transpose/Reshape/Transpose order, exact private internal consumers,
+and complete rank-three/rank-four shape and signature metadata before mutation.
+The target shape constant and `newShape`/`onnxRawNewShape` options must preserve
+a compatible dynamic batch as `-1`. The shape tensor needs an explicit
+unquantized INT32 ownership/type contract: public inputs, variables, missing
+data, runtime producers, and invalid metadata reject; unrelated users and
+changed public outputs clone through deterministic reserved-name allocation.
+The output setter, option values, shape action, removals, and pruning decision
+must all be known before commit. A no-match call must be a complete no-op.
+Valid static behavior, statistics, fixed point, provenance/options, and both
+production calls must remain unchanged. The 218-line count is descriptive
+only; 2,000 remains the ONNX operation-count tier threshold.
+
+That correction is now implemented in the 399-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated consumer scan and stays current
+through the indexed Reshape input/output setters and one batched removal. Two
+independent matches construct and refresh it exactly once.
+
+Each candidate proves unique source, intermediate, and final producers; strict
+Reshape/Transpose/Reshape/Transpose graph order; exact private internal
+consumers; complete positive physical shapes; and compatible rank-three/rank-
+four signatures. Non-batch signature dimensions must agree with the proven
+physical shape. Compatible concrete/dynamic batch signatures produce one
+target batch value, using `-1` whenever any boundary remains dynamic, and the
+same planned value updates the shape buffer and both list-valued Reshape
+options.
+
+The shape input is now an explicit immutable unquantized INT32 contract with
+exact TensorIR, buffer, shape, signature, ownership, and original-value checks.
+Public inputs, variables, runtime producers, missing data, invalid dtypes, and
+quantized values reject. A changed private shape updates once; an unrelated
+consumer or public output receives a deterministic collision-safe clone that
+preserves layout and ONNX provenance. Shape action, options, indexed output
+rename, removal set, and prune decision are complete before mutation. All
+nineteen former strict xfails are green, zero-match execution no longer prunes,
+and the explicit one-index contract brings the focused suite to thirty-four
+cases without changing valid static behavior, statistics, fixed point, or both
+production calls.
+
+Ownership now resides in
+`passes/reshape_transpose_collapse_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `48aae4b0` are each 399 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias,
+retains the historical private name as a one-return compatibility wrapper, and
+keeps both production calls unchanged. The focused module does not import the
+lowerer.
+
+Sixteen direct owner/wrapper comparisons cover static and dynamic metadata,
+multiple matches, shared and public shape outputs, public-input, variable,
+wrong-dtype, quantized, and missing-data shape rejection, zero-match no-prune,
+short signatures, reverse topology, a public internal alias, duplicate source
+producers, and missing output metadata. Statistics and complete normalized
+ModelIR state are identical in every case. The mechanical move does not alter
+public APIs, artifacts, dependencies, corpus policy, ordered runtime behavior,
+or TensorFlow isolation.
+
+## Raw attention Gather cleanup characterization
+
+The next substantive raw source-order owner is the 293-line
+`_optimize_attention_gather_transpose_reshape_cleanup_chains`. Production code
+and both historical calls remain unchanged. It previously had only ordered
+architecture references; the focused
+`test_flatbuffer_direct_attention_gather_cleanup_layout.py` now owns its
+synthetic ModelIR contract.
+
+Thirty-three green cases freeze both supported rewrites: the rank-four
+Gather/Transpose/Reshape attention tail, the double-Gather/Reshape identity,
+negative-axis normalization, exact NumPy equality, mixed multiple matches and
+fixed point, collision-safe shared-permutation naming, public Pattern-A
+Reshape outputs, existing public-intermediate/fan-out/shape/axis/constant
+rejections, statistics, the raw owner's current two-loop structure, and both
+production calls.
+
+Forty-six concrete safety gaps are strict xfails:
+
+- a zero-match invocation prunes an unrelated tensor;
+- thirty public-input, variable, wrong-TensorIR-dtype, wrong-buffer-dtype, or
+  quantized index/permutation/shape cases are accepted as compile-time
+  constants;
+- a changed public permutation output mutates rather than receiving a private
+  clone, while a shared permutation clone loses ONNX tensor provenance;
+- multi-element all-zero index tensors are treated as scalar Gather indices;
+- Pattern A collapses dynamic signatures and leaves a rank-shifted per-axis
+  QDIM unchanged;
+- Pattern B accepts inconsistent intermediate shapes and bypasses incompatible
+  output quantization metadata;
+- short or missing tensor metadata, duplicate producers, reverse graph order,
+  a public internal input alias, and a reverse source producer are accepted.
+
+Correction must build one `ModelIRGraphIndex` and complete immutable plans for
+both patterns before mutation. Each plan must prove unique producers, strict
+graph order, exact private intermediate consumers, scalar zero-index semantics,
+complete compatible shape/signature/dtype/layout/quantization metadata, and
+every public boundary. Index, permutation, and reshape-shape inputs need an
+explicit unquantized INT32 TensorIR/buffer/ownership contract. Runtime/public
+inputs, variables, producers, invalid metadata, and quantized constants must
+reject. A changed permutation with unrelated users or a public output needs a
+deterministic collision-safe clone preserving layout and ONNX provenance.
+Pattern A must preserve dynamic axes, remap retained per-axis QDIM, and update
+all permutation metadata consistently. Pattern B may bypass only metadata-
+equivalent tensors with exact Gather-derived shapes. Constant action, metadata,
+setters, removals, pruning, and statistics must be known before commit; a
+zero-match call must remain a complete no-op. The 293-line count is descriptive
+only; 2,000 remains the ONNX operation-count tier threshold.
+
+That correction is now implemented in the 740-line raw owner. One
+`ModelIRGraphIndex` replaces every repeated consumer reconstruction and stays
+current through indexed input replacement and batched/single operator removal.
+Two matches of each pattern construct and refresh it exactly once.
+
+Both patterns now prove unique producers, source-before-consumer order, exact
+private intermediate consumers, valid public boundaries, complete positive
+physical shapes, full compatible signatures, data-preserving dtypes, and
+scalar axis-zero Gather semantics before mutation. Pattern B additionally
+proves the exact two singleton-axis removals, input/Reshape boundary layout and
+quantization equivalence, and ordered downstream consumers before replacing
+all uses. Pattern A proves the exact rank-four/rank-three shape algebra,
+permutation options, target Reshape, and retained output before rank-lifting the
+Transpose. Dynamic signature axes are permuted rather than concretized;
+rank-three NCW/NWC annotations lift to NCHW/NHWC, and per-axis QDIM shifts by
+one with the inserted leading singleton dimension.
+
+Every index, permutation, and target-shape tensor now has an explicit immutable
+unquantized INT32 TensorIR and NumPy-buffer contract. Scalar indices accept the
+ONNX scalar `[]` and normalized singleton `[1]` representations but reject
+multi-element zeros. Public inputs, variables, runtime producers, wrong
+TensorIR or buffer dtypes, and quantized constants reject atomically. A changed
+private permutation updates once; an unrelated consumer or public output
+receives a deterministic collision-safe clone preserving layout and ONNX
+provenance. Constant action, option values, metadata/QDIM, input replacement,
+removals, and pruning are complete before the first mutation.
+
+All forty-six former strict xfails are green. The scalar-index and single-index
+construction contracts bring focused coverage to eighty-one cases. A no-match
+call is a complete no-op; valid statistics, NumPy-exact outputs, negative axes,
+multiple matches, fixed point, collision naming, public Pattern-A Reshape
+outputs, and both production calls remain unchanged. The 740-line count is
+descriptive only; 2,000 remains the ONNX operation-count tier threshold.
+
+Ownership now resides in
+`passes/attention_gather_cleanup_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `a48ee607` are each 740 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias,
+retains the historical private name as a one-return compatibility wrapper, and
+keeps both production calls unchanged. The focused module does not import the
+lowerer.
+
+Sixteen direct owner/wrapper comparisons cover both ordinary patterns,
+multiple and negative-axis matches, scalar and dynamic metadata, shared and
+public permutation clones, unsafe variable indices, per-axis quantization,
+zero-match no-prune, Pattern-B quantization mismatch, missing metadata, reverse
+topology, a public internal alias, and duplicate source producers. Statistics
+and complete normalized ModelIR state are identical in every case. The
+mechanical move does not alter public APIs, artifacts, dependencies, corpus
+policy, ordered runtime behavior, or TensorFlow isolation.
+
+## Raw attention pre-projection rank-lift characterization
+
+The next substantive raw source-order owner is the 190-line
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains`.
+Production code and both historical calls remain unchanged. It previously had
+only ordered architecture references; the focused
+`test_flatbuffer_direct_attention_preproj_ranklift_layout.py` now owns its
+synthetic ModelIR contract.
+
+Twenty-one green cases freeze one and two Q/K-style BatchMatMul branches, all
+four supported binary operators including reversed noncommutative inputs,
+NumPy-exact outputs, multiple matches and fixed point, twelve existing public-
+boundary/shape/fan-out/operator rejection guards, statistics, the raw owner's
+current one-loop structure, and both production calls.
+
+Twenty-seven concrete safety gaps are strict xfails:
+
+- a zero-match invocation prunes an unrelated tensor;
+- ten public-input, variable, wrong-TensorIR-dtype, wrong-buffer-dtype, or
+  quantized leading/tail Reshape-shape tensors are accepted as compile-time
+  constants;
+- dynamic signatures are concretized and retained per-axis QDIM is not shifted
+  for the inserted leading dimension;
+- a rank-three bias that broadcasts before the rewrite but not after it is
+  accepted, as are `adjX` and `adjY` BatchMatMul flags;
+- tail shapes with two negative dimensions are accepted by product alone;
+- short or missing tensor/bias metadata, dtype mismatch, duplicate producers,
+  reverse graph order, a public internal input alias, and reverse or duplicate
+  source producers are accepted.
+
+Correction must construct one `ModelIRGraphIndex` and a complete plan for the
+leading Reshape plus every BatchMatMul/binary/tail-Reshape branch before
+mutation. The plan must prove unique producers, strict order, exact consumers,
+complete compatible shape/signature/dtype/layout/quantization metadata,
+untransposed BatchMatMul flags, positive tail dimensions, and broadcast
+equivalence before and after rank lift. Leading and tail shape inputs need an
+explicit immutable unquantized INT32 TensorIR/buffer/ownership contract.
+Dynamic axes and per-axis QDIM must rank-lift by one. All branch input setters,
+metadata updates, the leading removal, pruning, and statistics must be known
+before commit, and a zero-match call must be a complete no-op. The 190-line
+count is descriptive only; 2,000 remains the ONNX operation-count tier
+threshold.
+
+That correction is now implemented in the 563-line raw owner. One
+`ModelIRGraphIndex` replaces the repeated consumer reconstruction and stays
+current through indexed BatchMatMul input setters and the single leading-
+Reshape removal. A two-branch rewrite constructs and refreshes it exactly once.
+
+The leading source/Reshape and every branch now prove unique producers, strict
+Reshape/BatchMatMul/binary/tail-Reshape order, exact private intermediate
+consumers, complete positive physical shapes, full compatible signatures,
+data-preserving dtypes, valid public boundaries, and concrete tail outputs.
+`adjX`, `adjY`, `adj_x`, and `adj_y` must all be absent or false. Each binary's
+other input must exist and broadcast to the exact old rank-three result and the
+exact new rank-four result; this retains scalar and `[K]` biases while rejecting
+rank-sensitive `[T,1,K]` values. All tail dimensions are positive and their
+product is proven against the projection width.
+
+Leading and tail shape inputs have immutable unquantized INT32 TensorIR and
+NumPy-buffer contracts with exact values, shapes, signatures, ownership, and
+runtime-producer absence. Dynamic sequence signatures rank-lift from
+`[T,1,K]` to `[1,1,T,K]`; NCW/NWC metadata lifts to NCHW/NHWC, and retained
+per-axis QDIM advances by one. Every branch setter and shape/signature/layout/
+quantization update is planned before mutation. All twenty-seven former strict
+xfails are green, zero-match execution is unchanged, and scalar-bias plus
+single-index contracts bring focused coverage to fifty cases without changing
+valid statistics, NumPy-exact outputs, fixed point, or both production calls.
+The 563-line count is descriptive only; 2,000 remains the ONNX operation-count
+tier threshold.
+
+Ownership now resides in
+`passes/attention_preproj_ranklift_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `727c19c6` are each 563 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias,
+retains the historical private name as a one-return compatibility wrapper, and
+keeps both production calls unchanged. The focused module does not import the
+lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary and multiple branches,
+reversed SUB, scalar and dynamic metadata, per-axis quantization, leading/tail
+shape ownership, zero-match no-prune, rank-sensitive bias rejection,
+BatchMatMul flags, missing bias/output metadata, reverse topology, a public
+internal alias, and duplicate source producers. Statistics and complete
+normalized ModelIR state are identical in every case. The mechanical move does
+not alter public APIs, artifacts, dependencies, corpus policy, ordered runtime
+behavior, or TensorFlow isolation.
+
+## Raw NCHW-to-NHWC elementwise roundtrip characterization
+
+The next substantive unextracted raw source-order owner is the 209-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`. Production code
+and its one ordered call remain unchanged. The focused fixture now expands its
+former three cases into thirty-two green structural, numerical, all-op-family,
+multiple-match, fixed-point, dynamic-signature, provenance, rejection,
+statistics, owner-shape, and call-boundary contracts.
+
+Twenty-eight concrete safety gaps are strict xfails: zero-match pruning;
+public, variable, mistyped, quantized, or runtime-produced transpose
+permutations; unremapped local and shared NHWC broadcast constants; stale
+logical/physical layout and per-axis QDIM; and missing metadata, incompatible
+shape/dtype/signature, public internal aliases, reverse topology, or malformed
+multi-output candidates that are not rejected transactionally.
+
+Correction must construct one `ModelIRGraphIndex` and the complete candidate
+plan before mutation. The plan must prove unique ordered topology, exact
+operator arity and boundaries, complete rank-four tensor compatibility,
+immutable unquantized INT32 permutation ownership/type, valid old/new
+broadcast semantics, and output availability. It must rotate local constants,
+clone constants with nonlocal users, preserve dynamic axes, and remap layout
+metadata and per-axis QDIM from NHWC to NCHW. All indexed rewires, output
+rename, removals, pruning, and statistics must be known before commit; a
+zero-match call must be a complete no-op. The 209-line count is descriptive
+only; 2,000 remains the ONNX operation-count tier threshold.
+
+That correction is now implemented in the 705-line raw owner. One differential
+`ModelIRGraphIndex` replaces all repeated producer/consumer scans and remains
+current through indexed input/output setters plus one batched removal. Exact
+operator arity, unique ordered topology, private boundaries, complete positive
+rank-four shape/signature/dtype/layout metadata, and both the original NHWC and
+planned NCHW broadcasts are proven before mutation.
+
+Pre/post permutations have immutable private unquantized INT32 TensorIR and
+NumPy-buffer contracts. Non-scalar embedded constants are rank-expanded and
+transposed to NCHW; shared/public constants are provenance-preserving clones,
+while private constants are updated locally. Dynamic signatures,
+logical/physical layout, and per-axis QDIM are remapped for constants,
+intermediates, and the canonical output. All twenty-eight former strict xfails
+are green, with additional constant-QDIM/ownership/provenance and duplicate-pre
+coverage bringing the focused contract to sixty-four cases. Zero-match
+execution no longer prunes, and valid numerical results, all allowed ops,
+statistics, multiple matches, fixed point, and the production call are
+unchanged. The 705-line count is descriptive only; 2,000 remains the ONNX
+operation-count tier threshold.
+
+Ownership now resides in
+`passes/elementwise_roundtrip_nchw_nhwc_layout.py`. The extracted owner and the
+corrected raw owner at checkpoint `79862309` are each 705 lines and have
+identical ASTs. The lowerer retains a one-return compatibility wrapper and the
+single ordered production call. Sixteen direct owner/wrapper families produce
+identical statistics and complete normalized ModelIR state; a two-match runtime
+case also proves one index construction with no refresh rebuild. The module
+does not import the lowerer and the mechanical move does not alter public API,
+artifacts, dependencies, corpus policy, ordered behavior, or TensorFlow
+isolation.
+
+All substantive top-level pass owners have now moved out of the lowerer. The
+next structural boundary is its nested ordered orchestration. Before moving any
+cluster, characterize the 66-line layout-recovery prefix and neighboring
+51-line layout/reshape/attention prefix, including exact call order,
+repetitions, layout-state and diagnostic propagation, and conditional gates.
+Use that evidence to introduce an explicit phase-runner contract without
+changing the current sequence.
+
+That nested-orchestration characterization is now complete without production
+changes. Existing tests already froze both complete call orders and repetition
+boundaries. A separate focused fixture now freezes exact positional/keyword
+contracts for all thirty-four calls, including model/layout/diagnostic routing
+and the unary-passthrough flag. Both helpers are straight-line zero-argument
+closures with no local state scope or control flow; their only captured data
+names are `model_ir` and `session`.
+
+Before extraction, resolve each call to its module owner. The two lowerer-local
+pass clusters used by the layout prefix and the nested layout-prefix dependency
+used by the attention prefix must become explicit callbacks. All other calls
+should receive an immutable explicit phase context instead of capturing the
+lowerer. The next implementation should define stable pass IDs and prove old/
+new execution-order plus argument equality before switching production calls.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
@@ -7110,3 +8868,750 @@ change converter source merely to keep that model in the short-runtime set.
    native op and encoder-stage codegen boundaries.
 5. Measure warm-run conversion time and peak RSS on the active Tier 0-4 set,
    then document improvements and remaining normalized failures.
+
+## Layout-recovery orchestration boundary
+
+The repeated layout-recovery prefixes are now represented by the explicit
+`passes/layout_recovery_orchestration.py` phase boundary. Its frozen
+`LayoutRecoveryContext` carries the shared ModelIR, `LayoutState`, diagnostics,
+and exactly three lowerer-local composite callbacks. Thirty pass owners are
+imported directly from focused modules, so the phase module never imports or
+captures the central lowerer.
+
+`LAYOUT_RECOVERY_PASS_IDS` defines the nineteen-step layout prefix and
+`ATTENTION_RECOVERY_PASS_IDS` defines the fifteen-step attention prefix. Each
+step is an immutable `RecoveryInvocation` containing its stable ID, callable,
+positional arguments, and keyword arguments. Builders verify that their
+constructed order exactly matches the declared IDs before runners execute the
+steps. The attention runner nests the complete layout runner as its first
+explicit invocation, preserving the former closure structure and repetition.
+
+The lowerer constructs one context after defining the three injected
+composites. Its historical zero-argument helpers remain compatibility and
+call-site boundaries, but now delegate to the phase runners and capture only
+that context. Layout state and diagnostics are shared references by design;
+the frozen context prevents rebinding while allowing each pass to mutate the
+same validated conversion state as before.
+
+Tests own both sides of this boundary. The focused orchestration fixture fixes
+all stable IDs, argument routing, context capture, wrapper wiring, and
+instrumented flattened execution order. Architecture and individual pass
+fixtures count a stable orchestrated ID together with any remaining direct
+lowerer call, retaining the former total execution-count guarantee without
+depending on every call being visible in the lowerer AST.
+
+The next characterized boundary consists of the seven-step
+preadd/mean/attention recovery sequence and the ten-step attention/gate/QDQ
+sequence. Both are currently lowerer-local straight-line closures over only
+ModelIR and the conversion session. Three steps are lowerer-local composite
+clusters; the other call slots are candidates for direct module ownership.
+Focused contracts now fix all argument routing, the two and three outer
+invocation counts, and the attention sequence's nested quantized-suffix
+boundary before an explicit runner is introduced.
+
+That boundary now uses `AttentionRecoveryContext` and stable seven-step and
+ten-step invocation specifications in
+`passes/attention_recovery_orchestration.py`. Fourteen pass owners are direct
+module imports; the three composite clusters are explicit callbacks. The
+historical lowerer helpers remain outer ordering boundaries but capture only
+the context and delegate to the phase runners.
+
+Immutable invocation execution and pre-execution ID-order validation are shared
+through `passes/recovery_orchestration.py` by both attention and layout
+orchestration. Architecture accounting retains an ordered ID sequence in
+addition to its unique-ID set so a pass present in more than one phase
+contributes its exact multiplicity to former direct-call totals.
+
+The next characterized nested boundary is a one-step safe-binary recovery
+runner reused as the final step of a six-step quantized activation/binary
+runner. Both are parameterless straight-line lowerer closures over ModelIR and
+layout state. Focused contracts fix the three total safe-binary invocations,
+two quantized runner invocations, all ModelIR/layout arguments, the model-only
+softmax canonicalization, and the nested final-step relationship before
+production extraction.
+
+That boundary now uses a frozen `QuantizedRecoveryContext` and the explicit
+stable-ID specifications in
+`passes/quantized_recovery_orchestration.py`. The one-step safe-binary phase
+and six-step quantized activation/binary phase import all six existing module
+owners directly; no lowerer-local callback or lowerer import is required. The
+quantized phase nests the safe-binary runner as its final immutable invocation,
+and the shared executor rejects ID-order drift before any callback runs.
+
+The central lowerer constructs one context and retains both historical helper
+names and all outer zero-argument call sites as compatibility/order boundaries.
+Those helpers now delegate to the explicit runners. Ordered stable-ID
+multiplicity accounts for the nested safe-binary invocation, so architecture
+tests continue to prove three total safe-binary and two total quantized phase
+executions while all characterized arguments and runtime order remain exact.
+
+Focused, architecture, central lowerer, related quantized/binary family, and
+TensorFlow-import-blocked suites pass. This mechanical extraction changes no
+public API, CLI behavior, artifact, dependency, corpus/exclusion policy,
+operation tier, pass semantics, or TensorFlow boundary. The next candidate is
+the adjacent five-step qlinear mean/concat recovery sequence; characterize its
+arguments and repetition boundaries before introducing another phase runner.
+
+That qlinear sequence is now characterized without production changes. It is a
+six-line parameterless straight-line closure over only ModelIR and calls five
+already-extracted module owners with the same single positional argument. A
+focused fixture freezes the complete order, argument contracts, two outer
+zero-argument invocations, and both neighboring boundaries. No callback,
+layout state, diagnostics, or conversion option needs to enter the eventual
+phase context. The next change should introduce a frozen ModelIR-only context
+and five stable IDs, then prove instrumented order before switching the
+historical helper to a delegate.
+
+That sequence now uses `QLinearRecoveryContext` and five stable IDs in
+`passes/qlinear_recovery_orchestration.py`. The module imports all existing
+owners directly and uses the shared immutable invocation executor, with no
+lowerer import or callback dependency. The historical lowerer helper remains a
+zero-argument order boundary but now captures only the context and delegates to
+the runner; both outer calls and their neighbors are unchanged. Focused,
+architecture, all five owner-family, core, and TensorFlow-import-blocked suites
+pass. The next orchestration candidate is the mixed layout/attention/quantized
+suffix, which must first be characterized because it carries layout,
+diagnostics, nested phase runners, local composite callbacks, and an option
+flag.
+
+That mixed suffix is now characterized without production changes. It has
+thirteen straight-line call slots, one required keyword-only duplicate-
+transpose option, two outer invocations, and no local pass-state scope or
+control flow. Focused contracts freeze all ModelIR/layout/diagnostics routing,
+the option's single destination, and both outer neighbors. Ten slots have
+direct module or extracted phase owners; the mean-attention cluster,
+attention-gate/QDQ helper, and duplicate quantized-PReLU cluster must remain
+explicit injected callbacks in a future frozen context. Extraction must prove
+the same flattened order and per-invocation option value before changing the
+historical helper.
+
+That suffix now uses a frozen `LayoutAttentionQuantizedSuffixContext` and
+thirteen stable IDs in
+`passes/layout_attention_quantized_suffix_orchestration.py`. Ten owners are
+direct imports and the three nested boundaries are explicit callbacks. The
+duplicate-transpose value remains an invocation argument rather than context
+state and is forwarded unchanged to its single destination. The historical
+keyword-only lowerer helper and both outer calls remain as ordering boundaries
+but now delegate through the context. Multiplicity-aware architecture checks
+retain all former nested helper and registered-runner totals. Focused,
+adjacent-owner, core, and TensorFlow-import-blocked suites pass. Characterize
+the larger terminal slice/concat recovery sequence before attempting the next
+phase extraction.
+
+That terminal slice/concat sequence is now characterized without production
+changes. It has fourteen straight-line call slots, two zero-argument outer
+invocations, and ModelIR/layout/diagnostics routing with no local state scope or
+control flow. Thirteen slots have existing module owners; the channel-slice/
+pad/mul cluster is the only lowerer-local callback dependency. Focused tests
+freeze all arguments and the two distinct outer neighbors. The eventual phase
+should therefore use one frozen explicit context, one injected callback, and
+fourteen stable IDs while preserving both top-level boundaries.
+
+That sequence now uses a frozen `TerminalSliceConcatRecoveryContext` and
+fourteen stable IDs in
+`passes/terminal_slice_concat_recovery_orchestration.py`. Thirteen owners are
+direct imports and the channel-slice/pad/mul boundary is one explicit callback.
+The historical helper remains a zero-argument top-level boundary but now
+captures only the context and delegates to the runner; both invocations and
+their distinct neighbors are unchanged. Architecture and adjacent owner tests
+combine stable phase multiplicity with remaining direct calls, preserving all
+former execution totals. Focused, related-owner, core, and TensorFlow-import-
+blocked suites pass. Characterize the neighboring terminal affine/concat/split
+sequence before the next extraction.
+
+The terminal affine/concat/split sequence is now characterized without
+production changes. It has eleven straight-line calls, two zero-argument outer
+invocations, six layout-aware argument contracts, and no callback,
+diagnostics, option, control-flow, or local-state dependency. Every target has
+an existing module owner. Focused tests freeze the complete order and both
+distinct terminal neighbors. The eventual phase should use a frozen ModelIR/
+layout context and eleven stable IDs with direct imports only.
+
+That sequence now uses `TerminalAffineConcatSplitRecoveryContext` and eleven
+stable IDs in
+`passes/terminal_affine_concat_split_recovery_orchestration.py`. Every owner is
+a direct import and the historical lowerer helper is a four-line delegate.
+Both outer calls and their neighbors remain unchanged. Ordered stable-ID
+multiplicity handles owners shared with the preceding terminal slice/concat
+phase without losing execution-count guarantees. Focused, adjacent-owner,
+core, and TensorFlow-import-blocked suites pass. Characterize the neighboring
+SINet pre-add/resize sequence before the next extraction.
+
+The neighboring SINet pre-add/resize sequence is now characterized without
+production changes. It is a 20-line parameterless straight-line closure with
+six ordered calls: two ModelIR-only calls followed by four ModelIR/layout
+calls. All targets already have extracted owners, so the eventual context does
+not need callbacks, diagnostics, or conversion options. Focused contracts
+freeze every argument and all four zero-argument invocations, including the
+one nested terminal-layout boundary and its three top-level repetitions. The
+focused plus architecture suite passed 252 tests, and all 11 TensorFlow-import-
+blocked tests passed. The next change should introduce a frozen ModelIR/layout
+context and six stable IDs, then prove builder equality and instrumented order
+before switching the historical helper to a delegate.
+
+That sequence now uses `SINetPreaddResizeRecoveryContext` and six stable IDs in
+`passes/sinet_preadd_resize_recovery_orchestration.py`. Every owner is a direct
+import, the first two invocations carry ModelIR only, and the final four carry
+ModelIR plus layout state. The historical helper is a four-line delegate while
+all three top-level invocations, its nested terminal-layout invocation, and
+their neighbors remain unchanged. Ordered architecture accounting combines
+the new stable IDs with remaining direct calls so the existing owner totals
+remain explicit. Focused, related-owner, core, and TensorFlow-import-blocked
+suites pass apart from one stale direct fixture that fails identically at the
+parent checkpoint. Characterize the adjacent three-step SINet terminal-layout
+sequence before the next extraction.
+
+That adjacent terminal-layout sequence is now characterized without production
+changes. It is a seven-line parameterless straight-line closure with three
+ordered slots: a ModelIR/layout shuffle-residual owner, the zero-argument SINet
+pre-add/resize helper, and a ModelIR-only terminal affine/PReLU owner. Focused
+contracts freeze all arguments, both top-level invocations, and both distinct
+outer boundaries. The eventual phase needs a frozen ModelIR/layout context,
+direct imports for the outer owners, and one explicit callback to retain the
+historical nested helper boundary. The focused plus architecture suite passed
+252 tests, and all 11 TensorFlow-import-blocked tests passed.
+
+That sequence now uses `SINetTerminalLayoutRecoveryContext` and three stable
+IDs in `passes/sinet_terminal_layout_recovery_orchestration.py`. The two outer
+owners are direct imports, while the historical pre-add/resize helper is an
+explicit zero-argument callback. The old helper is a four-line delegate and
+both top-level boundaries remain unchanged. Stable-ID multiplicity retains the
+nested pre-add/resize execution alongside its three direct calls. Focused,
+outer-owner, architecture, core, and TensorFlow-import-blocked suites pass.
+The next candidate is the terminal clamp/unary/ReLU cluster; characterize its
+shared pass-state scope and every outer boundary before extraction.
+
+That terminal clamp/unary/ReLU cluster is now characterized without production
+changes. It contains three ordered cleanup runners and constructs exactly one
+`ModelIRPassStateScope`, shared by all three along with the same ModelIR,
+layout, and diagnostics values. It has one zero-argument outer invocation
+between the layout-gated singleton-reshape and SINet terminal-layout
+boundaries. Focused contracts freeze every argument and boundary, while the
+existing pass-efficiency fixture proves one graph-index build at runtime. The
+eventual phase needs a frozen ModelIR/layout/diagnostics context, three stable
+IDs, and a fresh shared scope per phase invocation.
+
+That cluster now uses `TerminalClampUnaryReLUContext` and three stable IDs in
+`passes/terminal_clamp_unary_relu_orchestration.py`. Each invocation builder
+creates exactly one fresh scope and shares it across all three cleanup calls.
+The historical helper is a four-line delegate and its single outer boundary is
+unchanged. The efficiency fixture now drives the explicit runner and still
+observes one graph-index build. Focused, architecture, pass-efficiency, core,
+and TensorFlow-import-blocked suites pass. Characterize the neighboring
+terminal singleton-maxpool/reshape pair and its shared scope next.
+
+That neighboring terminal singleton-maxpool/reshape pair is now characterized
+without production changes. It contains two ordered cleanup runners and
+constructs exactly one `ModelIRPassStateScope`, shared with the same ModelIR,
+layout, and diagnostics values. Its sole zero-argument invocation remains
+between two layout-gated blocks. Focused contracts freeze every argument and
+boundary, while the existing efficiency fixture proves one graph-index build.
+The eventual phase needs a frozen ModelIR/layout/diagnostics context, two
+stable IDs, and one fresh shared scope per invocation.
+
+That pair now uses `TerminalSingletonMaxPoolReshapeContext` and two stable IDs
+in `passes/terminal_singleton_maxpool_reshape_orchestration.py`. Each builder
+creates exactly one fresh scope shared by both cleanup invocations. The
+historical helper is a four-line delegate and remains between the same layout-
+gated blocks. The efficiency fixture now drives the explicit runner and still
+observes one graph-index build. Focused, architecture, pass-efficiency, core,
+and TensorFlow-import-blocked suites pass. Characterize the neighboring late
+dequant/unary/fanout cluster and its shared scope next.
+
+That late dequant/unary/fanout cluster is now characterized without production
+changes. It contains three ordered cleanup runners and one shared
+`ModelIRPassStateScope`, with identical ModelIR, layout, and diagnostics
+routing. Its sole zero-argument call remains between the quantized HardSigmoid
+bridge and swish passthrough. Focused contracts freeze every argument and
+boundary, while the existing efficiency fixture proves one graph-index build.
+The eventual phase needs a frozen ModelIR/layout/diagnostics context, three
+stable IDs, and one fresh shared scope per invocation.
+
+That cluster now uses `LateDequantUnaryFanoutContext` and three stable IDs in
+`passes/late_dequant_unary_fanout_orchestration.py`. Each builder creates one
+fresh scope shared by all three cleanup invocations. The historical helper is
+a four-line delegate at the same boundary. Stable-ID multiplicity preserves
+the moved occurrences alongside remaining direct runner calls, and the
+efficiency fixture now drives the explicit phase while observing one graph-
+index build. Focused, architecture, pass-efficiency, core, and TensorFlow-
+import-blocked suites pass. Characterize the option-dependent transpose-unary
+fanout cluster and its shared scope next.
+
+That option-dependent cluster is now characterized without production
+changes. It has four ordered runner slots and one fresh shared pass-state scope
+per invocation. Layout-transpose and unary-passthrough cleanup are controlled
+by separate keyword-only options; unary-fanout and unary-binary-fanout cleanup
+always run. The attention-recovery callback exercises the default
+`False`/`True` combination, while the direct post-QDQ boundary explicitly uses
+`True`/`False`. Focused contracts freeze both active sequences, all ModelIR/
+layout/diagnostics/scope arguments, both outer placements, and the callback
+identity. The eventual phase should keep options outside its frozen context,
+derive variant-specific expected IDs, and construct one fresh shared scope for
+each build.
+
+That cluster now uses `TransposeUnaryFanoutContext` and four canonical stable
+IDs in `passes/transpose_unary_fanout_orchestration.py`. The frozen context
+contains ModelIR, layout, and diagnostics only. Both Boolean choices remain
+runner arguments, and the active expected-ID sequence is derived before the
+shared executor runs either three-step variant. Every build creates one fresh
+scope shared by all active invocations. The historical keyword-only helper is
+a delegate with unchanged defaults, callback identity, direct option values,
+and outer boundaries. Both efficiency fixtures now exercise the explicit
+runner and retain one graph-index build. Focused, architecture, pass-
+efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The late SPP/concat-unary-conv pair is now characterized without production
+changes. It has two ordered cleanup owners, one fresh shared pass-state scope,
+one zero-argument terminal invocation, and no option, callback, or control
+flow. Focused contracts freeze all ModelIR/layout/diagnostics/scope arguments
+and both outer boundaries. The eventual phase should use one frozen ModelIR/
+layout/diagnostics context, two direct owner imports, two stable IDs, and a
+fresh shared scope per build.
+
+That pair now uses `LateSPPConcatUnaryConvContext` and two stable IDs in
+`passes/late_spp_concat_unary_conv_orchestration.py`. Both owners are direct
+imports, and every builder creates one fresh scope shared by the two immutable
+invocations. The historical helper is a zero-argument delegate at the same
+terminal boundary. The efficiency fixture now exercises the explicit runner
+and retains one graph-index build. Focused, architecture, pass-efficiency,
+core, and TensorFlow-import-blocked suites pass.
+
+The boundary-batchmatmul/input-unary pair is now characterized without
+production changes. It has two ordered cleanup owners, one fresh shared pass-
+state scope, and no option or direct invocation. It is an explicit callback in
+`LayoutRecoveryContext`; focused contracts freeze its complete ModelIR/layout/
+diagnostics/scope routing, callback identity, and both stable-list neighbors.
+The eventual phase should use a frozen ModelIR/layout/diagnostics context, two
+direct owner imports, two stable IDs, and one fresh shared scope per build,
+while retaining the historical callback boundary.
+
+That pair now uses `BoundaryBatchMatMulUnaryContext` and two stable IDs in
+`passes/boundary_batchmatmul_unary_orchestration.py`. Both owners are direct
+imports, every builder creates one fresh scope shared by the immutable
+invocations, and the lowerer no longer imports either runner. The historical
+helper remains the same zero-argument `LayoutRecoveryContext` callback as a
+four-line delegate, with unchanged stable neighbors. The efficiency fixture
+now exercises the explicit runner and retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The channel-slice/pad-mul pair is now characterized without production
+changes. It has two ordered owners and one fresh shared pass-state scope. The
+helper executes twice: first as the leading callback in the terminal-slice/
+concat recovery phase and later as one direct zero-argument call between pre-
+add and affine post-add recovery. Focused contracts freeze all ModelIR/layout/
+diagnostics/scope arguments, callback identity, and both boundary forms. The
+eventual phase should use a frozen ModelIR/layout/diagnostics context, two
+direct owner imports, two stable IDs, and a fresh shared scope per execution.
+
+That pair now uses `ChannelSlicePadMulContext` and two stable IDs in
+`passes/channel_slice_pad_mul_orchestration.py`. Both owners are direct
+imports, every builder creates one fresh scope shared by the two immutable
+invocations, and the lowerer no longer imports either runner. The historical
+helper remains both the leading terminal-slice/concat callback and the
+additional late-terminal direct call as a four-line delegate. Stable helper
+multiplicity preserves two executions, and the efficiency fixture now
+exercises the explicit runner while retaining one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The late hard-activation/layout pair is now characterized without production
+changes. It always runs hard-activation passthrough with four fixed terminal
+policy flags and conditionally runs layout-transpose cleanup under one required
+keyword-only option. Both active runners share one fresh pass-state scope. The
+sole caller forwards the global layout optimization choice, and focused
+contracts freeze its outer terminal boundaries. The eventual phase should keep
+the option outside a frozen ModelIR/layout/diagnostics context, derive active
+expected IDs, and construct one fresh shared scope per build.
+
+That pair now uses `LateHardActivationLayoutContext` and two canonical stable
+IDs in `passes/late_hard_activation_layout_orchestration.py`. The required
+Boolean remains a runner argument, active expected IDs distinguish the one-
+step and two-step forms, and every build creates one fresh shared scope. All
+four terminal hard-activation flags are retained. The historical helper and
+caller keep their required keyword-only contract and outer boundaries. The
+central lowerer no longer imports the hard-activation runner, and the
+efficiency fixture exercises the enabled explicit phase with one graph-index
+build. Focused, architecture, pass-efficiency, core, and TensorFlow-import-
+blocked suites pass.
+
+The absolute-final normalization/attention pair is now characterized without
+production changes. It has two ordered owners, one fresh shared pass-state
+scope, fixed `False`/`True` normalization flags, and one zero-argument call at
+the terminal instance-normalization/dynamic-shape boundary. Focused contracts
+freeze all ModelIR/layout/diagnostics/scope arguments and the mixed-attention
+rationale. The eventual phase should use a frozen ModelIR/layout/diagnostics
+context, two direct owner imports, two stable IDs, and one fresh shared scope
+per build.
+
+That pair now uses `AbsoluteFinalNormalizationAttentionContext` and two stable
+IDs in `passes/absolute_final_normalization_attention_orchestration.py`. Both
+owners are direct imports, every builder creates one fresh scope shared by both
+immutable invocations, and the fixed normalization policy plus attention
+rationale stay with their owners. The historical helper is a four-line zero-
+argument delegate at the same sole terminal boundary. The efficiency fixture
+now exercises the explicit runner while retaining one graph-index build.
+Focused, architecture, pass-efficiency, core, and TensorFlow-import-blocked
+suites pass.
+
+The QKV attention cluster is now characterized without production changes. It
+has three ordered owner slots and one fresh shared pass-state scope. Independent
+keyword-only options control layout-transpose and prefix cleanup; bridge
+cleanup always runs. Two calls use the default prefix-plus-bridge form, while a
+late call disables prefix and forwards the global layout option. Focused
+contracts freeze all ModelIR/layout/diagnostics/scope arguments and three
+distinct outer boundaries. The eventual phase should keep both options outside
+a frozen ModelIR/layout/diagnostics context and derive active expected IDs per
+invocation.
+
+That cluster now uses `QKVAttentionContext` and three canonical stable IDs in
+`passes/qkv_attention_orchestration.py`. Both Boolean choices remain runner
+arguments, active expected IDs cover the default and both late runtime forms,
+and every build creates one fresh shared scope. The historical helper keeps
+both defaults, three callers, caller values, and outer boundaries as a
+delegate. The central lowerer no longer imports the QKV prefix or bridge
+runner. The efficiency fixture exercises the explicit default phase with one
+graph-index build. Focused, architecture, pass-efficiency, core, and
+TensorFlow-import-blocked suites pass.
+
+The duplicate-fanout/quantized-PReLU pair is now characterized without
+production changes. Its required keyword-only transpose option is forwarded
+only to duplicate-fanout cleanup, while quantized-PReLU cleanup always follows.
+Both owners share one fresh `ModelIRPassStateScope` and receive the same
+ModelIR, layout state, and diagnostics. The helper has no direct call and is
+owned by one stable callback slot in the layout/attention/quantized suffix;
+focused contracts freeze the callback identity, suffix option routing, and
+both stable neighbors. The eventual phase should keep the option outside a
+frozen ModelIR/layout/diagnostics context, expose two stable owner IDs, and
+construct one fresh shared scope per build.
+
+That pair now uses `DuplicateQuantizedPReLUContext` and two stable IDs in
+`passes/duplicate_quantized_prelu_orchestration.py`. The required transpose
+choice stays outside the frozen ModelIR/layout/diagnostics context, every
+builder creates one fresh scope shared by both immutable invocations, and the
+fixed owner order is identical for both option values. The historical helper
+remains the same keyword-only callback in the layout/attention/quantized
+suffix, with unchanged option routing and stable neighbors. Other independent
+direct calls to both cleanup runners remain untouched. The efficiency fixture
+now exercises the explicit phase and retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The constant-fold/redundant-cast pair is now characterized without production
+changes. Its optional keyword-only pass-state scope supports either fresh
+allocation or reuse of a parent scope, and both ordered owners receive the
+same ModelIR/layout/diagnostics/scope contract. Both current production calls
+use the external-scope form: one between very-late gather and normalization,
+and one after late layout/mean/SPP/gather cleanup. Focused contracts freeze
+both caller parents and their internal boundaries. The eventual phase should
+keep the optional scope outside a frozen ModelIR/layout/diagnostics context,
+allocate only when absent, and expose two stable owner IDs.
+
+That pair now uses `ConstantFoldCastContext` and two stable IDs in
+`passes/constant_fold_cast_orchestration.py`. The optional scope stays outside
+the frozen ModelIR/layout/diagnostics context: every scope-less build allocates
+one fresh scope, while an external scope is preserved by identity. Both owners
+share the resolved scope and fixed order. The historical helper remains a
+keyword-only delegate, both parent phases retain their external-scope calls and
+internal boundaries, and the central lowerer no longer imports either runner.
+The efficiency fixture now exercises the explicit external-scope phase and
+retains one graph-index build. Focused, architecture, pass-efficiency, core,
+and TensorFlow-import-blocked suites pass.
+
+The very-late gather/constant/normalization parent is now characterized without
+production changes. One fresh pass-state scope spans transpose-gather cleanup,
+the explicit constant-fold/cast pair, and fixed-policy normalization cleanup.
+Its three phase calls expand to four effective owner steps, all sharing the
+same ModelIR/layout/diagnostics/scope. Focused contracts freeze the flattened
+order, `include_instance=False`, `include_flatten=True`, the sole terminal
+call, and both outer boundaries. The eventual phase should compose the existing
+constant-fold/cast builder with the parent scope and expose all four effective
+owner IDs without duplicating the middle pair's argument construction.
+
+That parent now uses `VeryLateGatherConstantNormalizationContext` and four
+flattened stable IDs in
+`passes/very_late_gather_constant_normalization_orchestration.py`. Each build
+creates one fresh scope, builds the outer gather and fixed-policy normalization
+steps locally, and splices in the existing constant-fold/cast builder with the
+same external scope. The historical helper remains a zero-argument delegate at
+the same terminal boundary. Constant-fold/cast now has one historical helper
+caller plus one explicit builder composition; multiplicity-aware architecture
+accounting records both executions and the efficiency fixture retains one
+graph-index build. Focused, architecture, pass-efficiency, core, and
+TensorFlow-import-blocked suites pass.
+
+The SE-FC/gather-channel-fanout pair is now characterized without production
+changes. It accepts positional target ModelIR/layout values, creates one fresh
+target-specific pass-state scope, and forwards session diagnostics to two
+ordered owners. One caller uses fallback ModelIR with no layout state; the
+absolute-final caller uses the main ModelIR and session layout state. Focused
+contracts freeze both forms and their identical SiNet-tail/reconciliation
+boundaries. The eventual phase should use a frozen target context and two
+stable IDs, with the historical helper constructing a context per call rather
+than capturing one long-lived target.
+
+That pair now uses `SEFCGatherChannelFanoutContext` and two stable IDs in
+`passes/se_fc_gather_channel_fanout_orchestration.py`. The historical helper
+constructs a frozen context per positional call, so fallback and main targets
+cannot leak into each other. Every builder creates one fresh target-specific
+scope shared by both immutable invocations. Both production caller forms and
+their identical surrounding boundaries remain unchanged; unrelated direct
+runner calls remain in the lowerer. The efficiency fixture now exercises the
+explicit no-layout phase and retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The terminal-boundary layout cluster is now characterized without production
+changes. This fixed-target, zero-argument cluster shares one pass-state scope
+across dual-MUL/CONCAT, boundary-input, PAD, layout-transpose, and transpose-
+gather channel-fanout owners in that order. Every owner receives the main
+ModelIR, session layout state, session diagnostics, and the shared scope. Its
+sole call remains between the final InstanceNorm dual-stat residual-add/resize
+rewrite and the terminal layout-optimization conditional. The eventual phase
+should expose five stable IDs in a dedicated direct-owner module while
+preserving the PAD-after-boundary and transpose-after-PAD recovery sequence.
+
+That cluster now uses `TerminalBoundaryLayoutContext` and five stable IDs in
+`passes/terminal_boundary_layout_orchestration.py`. Each build creates one
+fresh scope shared by every immutable invocation, and the module imports all
+owners directly without importing the lowerer. The historical helper is a
+zero-argument delegate to a frozen main-model context at the same sole call and
+outer boundaries. The explicit order retains boundary-input before PAD and PAD
+before the final transpose sweep. One boundary-input direct import disappears;
+unrelated direct uses of the other owners remain. Multiplicity-aware
+architecture accounting preserves 120 effective ordered calls, and the
+efficiency fixture retains one graph-index build. Focused, architecture,
+pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The late layout/mean/SPP/gather/constant-fold/cast parent is now characterized
+without production changes. Its required keyword-only policy optionally adds
+layout-transpose cleanup before three fixed direct owners and the existing
+constant-fold/cast child. One fresh main-model scope spans all five required
+effective owners or all six full-policy owners. The sole caller forwards the
+global layout-optimization policy between shape-extract cleanup and expand/
+squeeze canonicalization. The eventual phase should compose the existing
+constant-fold/cast builder with its parent scope; after extraction, its dead
+lowerer delegate/context/imports can be removed while preserving two effective
+production executions of the constant-fold/cast pair.
+
+That parent now uses `LateLayoutMeanSPPGatherConstantCastContext`, five
+required IDs, and six full-policy IDs in
+`passes/late_layout_mean_spp_gather_constant_cast_orchestration.py`. Every
+build creates one fresh scope, conditionally prepends layout cleanup, builds
+three fixed direct owners, and composes the existing constant-fold/cast builder
+with the same scope. The historical helper is a required keyword-only delegate
+at the same sole caller and boundaries. Its extraction retires the now-dead
+lowerer constant-fold/cast helper, context, and imports. Production accounting
+replaces those two child IDs plus four direct calls with the six full parent
+IDs, retaining 120 effective ordered calls and two constant-fold/cast
+compositions. The full-policy efficiency fixture retains one graph-index build.
+Focused parent/child, architecture, pass-efficiency, core, and TensorFlow-
+import-blocked suites pass.
+
+The singleton/consecutive-reshape cluster is now characterized without
+production changes. It accepts positional target ModelIR/layout values,
+creates one fresh target-specific scope, and runs singleton-channel transpose,
+reshape-only duplicate-fanout, and consecutive-reshape owners in fixed order.
+Two callers use the main ModelIR/session layout; a normalization-rewrite-guarded
+fallback caller uses fallback ModelIR with no layout state. Focused contracts
+freeze all three owner contracts, `include_transpose=False`, caller forms,
+multiplicity, the fallback guard, and all six surrounding boundaries. The
+eventual phase should use a frozen target context constructed inside the
+historical helper for each call and expose three stable IDs.
+
+That cluster now uses `SingletonConsecutiveReshapeContext` and three stable IDs
+in `passes/singleton_consecutive_reshape_orchestration.py`. Each build creates
+one fresh target-specific scope and retains the fixed reshape-only duplicate-
+fanout policy. The historical helper constructs its frozen context per
+positional call, preventing main/fallback target leakage. Both main calls, the
+guarded fallback call, the guard itself, and all boundaries remain unchanged.
+Multiplicity-aware accounting moves one syntactic occurrence of each owner to
+stable IDs, preserves 120 effective ordered calls, and retains the two
+reshape-only duplicate-fanout and singleton-channel occurrences. The explicit
+no-layout efficiency fixture retains one graph-index build. Focused,
+architecture, pass-efficiency, core, and TensorFlow-import-blocked suites pass.
+
+The gate-layout cluster is now characterized without production changes. Its
+keyword-only `include_mixed_attention=True` policy selects eight full-policy
+owners or seven required owners under one main-model scope. One direct caller
+explicitly selects the reduced policy; the attention-recovery context stores
+the same helper as an argument-free callback, thereby selecting the default
+full policy. Focused contracts freeze the exact optional guard, complete owner
+contracts and order, default, direct boundary, callback identity, and empty
+callback arguments. The eventual phase should expose required/full stable-ID
+sequences while retaining the historical helper as both delegate and callback.
+
+That cluster now delegates to `GateLayoutContext` and the stable required/full
+ID sequences in `passes/gate_layout_orchestration.py`. Each invocation build
+creates one fresh main-model scope shared by every selected owner. The full
+policy prepends mixed-attention cleanup to the seven required owners; the
+reduced policy returns those same seven owners without constructing a second
+execution path. The historical helper retains its keyword-only `True` default,
+the direct caller still passes explicit `False`, and attention recovery still
+holds the helper itself as an argument-free callback. Multiplicity-aware
+accounting replaces eight direct owner calls with eight stable IDs while
+preserving 120 effective ordered calls. The explicit full-policy efficiency
+fixture retains one graph-index build.
+
+The channel-shuffle/gather cluster is now characterized without production
+changes. Its three keyword-only switches default to two-way shuffle enabled,
+NHWC shuffle enabled, and post-gather cleanup disabled. Two owners form the
+unconditional NCHW-shuffle/gather base; two optional shuffle owners precede it,
+and the optional post group appends layout-transpose plus unary and binary-
+fanout cleanup. The layout-recovery context stores the helper as an argument-
+free callback and therefore selects the four-owner default. One direct caller
+selects the seven-owner full-plus-post policy, while the late direct caller
+disables both leading shuffles and selects only the two-owner base. Focused
+contracts freeze the exact guards, all owner contracts/order, caller keywords,
+callback identity, and both direct caller boundaries.
+
+That cluster now delegates to `ChannelShuffleGatherContext` and stable leading,
+base, default, post, and seven-owner union ID sequences in
+`passes/channel_shuffle_gather_orchestration.py`. A single policy selector
+builds every one of the eight boolean combinations in the same fixed relative
+order, and every invocation build owns one fresh main-model scope shared by its
+selected owners. The historical helper preserves all three keyword-only
+defaults, both direct caller forms and boundaries remain unchanged, and layout
+recovery still stores the helper itself as its argument-free callback.
+Multiplicity-aware accounting replaces seven direct owner calls with seven
+stable IDs while retaining 120 effective ordered calls. The explicit seven-
+owner efficiency fixture retains one graph-index build.
+
+The mean/attention cluster is now characterized without production changes.
+Its keyword-only switches default to layer-normalization disabled and conv-
+attention enabled. Five owners form the unconditional mean/SE base, with the
+layer-normalization owner inserted after the first two and conv-attention
+appended last under separate guards. Both attention recovery and the layout/
+attention/quantized suffix store the same helper as an argument-free callback,
+selecting the six-owner default. One direct caller enables layer normalization
+while retaining conv attention; the terminal direct caller disables conv
+attention while retaining the default-disabled layer normalization. Focused
+contracts freeze all owner contracts/order, both exact guards, defaults,
+callback identities, caller keywords, multiplicity, and all direct boundaries.
+
+That cluster now delegates to `MeanAttentionContext` and stable prefix, base-
+tail, base, layer-normalization, conv-attention, default, and seven-owner union
+sequences in `passes/mean_attention_orchestration.py`. One selector covers all
+four policy combinations in the fixed insertion order, and each invocation
+build owns one fresh main-model scope shared by its selected owners. The helper
+retains both keyword-only defaults, both direct caller forms and boundaries are
+unchanged, and both parent compositions still store the helper itself as an
+argument-free callback. Multiplicity-aware accounting replaces seven direct
+owner calls with seven stable IDs while preserving 120 effective ordered calls.
+The new explicit seven-owner efficiency fixture observes one graph-index build.
+
+The singleton-reshape cluster is now characterized without production changes.
+It has four keyword-only switches: three independently guard layout-transpose,
+reshape-only duplicate-fanout, and multi-branch-gate owners, while the fourth is
+forwarded to the always-active singleton-spatial owner's CONCAT-post-transpose
+policy. Seven owners form the unconditional base under one main-model scope.
+The layout-optimization caller selects layout plus multi-branch owners and the
+default spatial policy for a nine-owner sequence. The terminal caller selects
+duplicate fanout, disables the spatial post-transpose policy, and runs eight
+owners. Focused contracts freeze all ten owner contracts/order, exact guards,
+the two specialized owner keywords, defaults, both caller forms, and all four
+boundaries.
+
+That cluster now delegates to `SingletonReshapeContext` and stable layout,
+prefix, duplicate, base-tail, multi-branch, active-policy, and ten-owner union
+sequences in `passes/singleton_reshape_orchestration.py`. A single selector
+covers all eight optional-owner combinations, while the independent spatial
+CONCAT-post-transpose value is forwarded for both of its values; focused tests
+therefore cover all sixteen boolean combinations. Every invocation build owns
+one fresh main-model pass-state scope shared by exactly the selected owners.
+The duplicate owner retains `include_transpose=False`, and the spatial owner
+retains the forwarded `include_concat_post_transpose` value.
+
+The historical helper is a one-call delegate with all four keyword-only
+defaults intact. Both production caller forms, their exact keywords, and all
+four surrounding boundaries are unchanged. Multiplicity-aware architecture
+accounting replaces ten direct owner calls with ten stable IDs while preserving
+120 effective ordered calls. The explicit ten-owner efficiency fixture observes
+one graph-index build and thirteen diagnostic events. An AST audit now finds no
+nested lowerer helper that directly executes more than one conversion pass;
+every `_run_*` conversion cluster delegates to a dedicated orchestration
+module.
+
+The next context-consolidation boundary is characterized without production
+changes. Twenty-one dedicated orchestration context classes expose the exact
+same frozen `model_ir`, `layout_state`, and `diagnostics` identity contract.
+Their twenty-two construction sites consist of eighteen main-session contexts,
+two target-specific helper contexts, and two child constant-fold/cast contexts.
+No site stores an option, callback, or other hidden policy in these types, and
+none of the owner modules imports the lowerer. This makes a single core
+ModelIR-pass context owned by `ConversionSession` a mechanical next step while
+keeping callback-bearing parent contexts separate.
+
+That boundary now uses the frozen `ModelIRPassContext` core contract.
+`ConversionSession` constructs one identity-bound instance after its
+`GraphIndex` and `LayoutState` and exposes it as `model_ir_pass_context`.
+Twenty-one historical context names remain as internal aliases, so their
+builders and runners keep the same signatures while importing one core type.
+All eighteen main-model orchestration consumers reference the Session-owned
+instance. The two primary/fallback helpers still create a fresh common context
+per target call, preventing ModelIR or LayoutState leakage across targets.
+
+Both composed constant-fold/cast parents now pass their existing common context
+directly to the child builder instead of reconstructing an identical object.
+Callback-bearing recovery contexts remain separate. Context reuse does not
+reuse pass state: every invocation builder still creates one fresh
+`ModelIRPassStateScope`, and only the owners selected within that build share
+its lazy graph index. Pass IDs, policy arguments, runtime order, diagnostics
+identity, and all caller boundaries remain unchanged.
+
+The callback-bearing context composition boundary is now characterized without
+production changes. `AttentionRecoveryContext`, `LayoutRecoveryContext`,
+`LayoutAttentionQuantizedSuffixContext`, and
+`TerminalSliceConcatRecoveryContext` each prepend the same ModelIR/LayoutState/
+diagnostics identity triple to one or three callback fields. Their four lowerer
+constructors use the main Session identities and ten exact callback objects.
+Focused contracts preserve the three callback invocation forms: argument-free
+cluster callbacks, the pre-Concat callback receiving ModelIR plus layout and
+diagnostics, and duplicate/PReLU receiving its Boolean keyword policy. The
+diagnostics-free SINet terminal context remains outside this boundary.
+
+The callback-bearing context boundary is now composed around the Session-owned
+`ModelIRPassContext`. The four recovery dataclasses each contain one explicit
+`pass_context` followed by their existing callback fields, and every invocation
+builder reads ModelIR, LayoutState, and diagnostics through that common object.
+All four lowerer constructors receive the exact
+`session.model_ir_pass_context` identity. The ten callbacks, their invocation
+arguments, stable pass IDs, execution order, and fresh pass-state-scope behavior
+are unchanged. `SINetTerminalLayoutRecoveryContext` remains independent because
+its diagnostics-free identity contract is intentionally different.
+
+The next diagnostics-free model/layout context boundary is characterized
+without production changes. `SINetPreaddResizeRecoveryContext`,
+`QuantizedRecoveryContext`, and `TerminalAffineConcatSplitRecoveryContext` are
+frozen dataclasses with exactly the same ModelIR/LayoutState fields. Their four
+invocation builders never read or forward diagnostics, and a full
+`ModelIRPassContext` is already a behaviorally identical input: every ModelIR,
+LayoutState, and nested-context identity remains exact. The lowerer constructs
+all three from the main Session identities. The model-only QLinear context and
+callback-bearing SINet terminal context remain explicitly outside this
+boundary.
+
+The diagnostics-free model/layout boundary is now consolidated into the common
+Session context. The three historical type names are internal aliases of
+`ModelIRPassContext`, increasing the shared alias inventory to twenty-four and
+the main-model consumers to twenty-one. Their lowerer variables all reference
+`shared_model_ir_pass_context`; no per-phase object is constructed. Diagnostics
+are available on the common object but remain inert across all four builders.
+ModelIR/LayoutState identity, nested safe-binary context identity, pass IDs,
+layout policies, and execution order are unchanged. The model-only QLinear and
+callback-bearing SINet terminal contexts remain independent.
+
+The final two unconsolidated orchestration contexts are now characterized as
+separate boundaries without production changes. The model-only
+`QLinearRecoveryContext` feeds five invocations and already accepts a full
+`ModelIRPassContext` without observing LayoutState or diagnostics. The
+`SINetTerminalLayoutRecoveryContext` retains its ModelIR/LayoutState identity
+and one argument-free pre-add/resize callback across three ordered invocations.
+Both lowerer constructors, exact callback wiring, keyword policies, and module
+independence are frozen before either type changes.
+
+All orchestration context identity is now normalized. QLinear is the twenty-
+fifth internal `ModelIRPassContext` alias and the twenty-second main-model
+consumer. SINet terminal is the fifth callback-bearing dataclass and stores one
+common `pass_context` plus its callback, bringing that callback inventory to
+eleven. Every orchestration state holder is therefore either the common core
+context or an explicit callback composition around it; no orchestration
+dataclass independently repeats ModelIR, LayoutState, or diagnostics. QLinear's
+five argument contracts and SINet's three invocation/callback contracts remain
+unchanged.

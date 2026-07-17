@@ -9,8 +9,13 @@ import onnx2tf.tflite_builder.passes.quantized_swish_layout as swish_module
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.quantized_swish_layout import (
+    SwishQDQLatePhasesResult,
+    SwishQDQPostTransposeCleanupResult,
+    SwishQDQPrimaryPhasesResult,
     copy_swish_qdq_shape_signature,
     normalize_late_swish_qdq_concat_inputs,
+    optimize_transpose_swish_qdq_nhwc_islands,
+    optimize_transpose_swish_residual_concat_closure_nhwc_chains,
     propagate_swish_qdq_nhwc_metadata,
     remove_inverse_post_transposes_for_swish_qdq,
     rewrite_transpose_swish_qdq_nhwc_branches,
@@ -1077,3 +1082,174 @@ def test_indexed_swish_late_concat_skips_index_without_required_types(
     assert result.rewritten_concat_axes == 0
     assert result.removed_input_transposes == 0
     assert result.rewritten_tensors == frozenset({"seed"})
+
+
+def test_swish_qdq_orchestrator_preserves_phase_order_options_and_stats(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("swish_qdq_orchestrator")
+    phase_calls: list[object] = []
+
+    def primary(
+        current_model_ir: ModelIR,
+        *,
+        min_spatial_stage: int,
+        require_concat_closure: bool,
+    ) -> SwishQDQPrimaryPhasesResult:
+        assert current_model_ir is model_ir
+        phase_calls.append(
+            ("primary", int(min_spatial_stage), bool(require_concat_closure))
+        )
+        return SwishQDQPrimaryPhasesResult(
+            rewritten_branches=2,
+            removed_pre_transposes=3,
+            rewritten_concat_axes=5,
+            rewritten_tensors=frozenset({"a", "b"}),
+        )
+
+    def post(
+        current_model_ir: ModelIR,
+        rewritten_tensors: set[str],
+    ) -> SwishQDQPostTransposeCleanupResult:
+        assert current_model_ir is model_ir
+        assert rewritten_tensors == {"a", "b"}
+        phase_calls.append("post")
+        return SwishQDQPostTransposeCleanupResult(removed_post_transposes=7)
+
+    def late(
+        current_model_ir: ModelIR,
+        rewritten_tensors: set[str],
+    ) -> SwishQDQLatePhasesResult:
+        assert current_model_ir is model_ir
+        assert rewritten_tensors == {"a", "b"}
+        phase_calls.append("late")
+        return SwishQDQLatePhasesResult(
+            rewritten_concat_axes=11,
+            removed_transposes=13,
+            rewritten_tensors=frozenset({"b", "c"}),
+        )
+
+    def safety(current_model_ir: ModelIR) -> dict[str, int]:
+        assert current_model_ir is model_ir
+        phase_calls.append("safety")
+        return {
+            "sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv": 17,
+        }
+
+    def prune(current_model_ir: ModelIR) -> None:
+        assert current_model_ir is model_ir
+        phase_calls.append("prune")
+
+    monkeypatch.setattr(swish_module, "run_swish_qdq_nhwc_primary_phases", primary)
+    monkeypatch.setattr(
+        swish_module,
+        "remove_inverse_post_transposes_for_swish_qdq",
+        post,
+    )
+    monkeypatch.setattr(
+        swish_module,
+        "run_swish_qdq_late_concat_and_post_cleanup",
+        late,
+    )
+    monkeypatch.setattr(
+        swish_module,
+        "sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
+        safety,
+    )
+    monkeypatch.setattr(swish_module, "_prune_unused_tensors", prune)
+
+    stats = optimize_transpose_swish_qdq_nhwc_islands(
+        model_ir,
+        min_spatial_stage=37,
+        require_concat_closure=True,
+    )
+
+    assert phase_calls == [
+        ("primary", 37, True),
+        "post",
+        "late",
+        "safety",
+        "prune",
+    ]
+    assert stats == {
+        "rewritten_transpose_swish_branches_to_nhwc": 2,
+        "removed_transpose_swish_pre": 3,
+        "propagated_nhwc_tensor_metadata": 3,
+        "rewritten_concat_axis_to_nhwc": 16,
+        "removed_transpose_swish_post": 37,
+    }
+
+
+def test_swish_qdq_closure_owner_fixes_options_and_remaps_stats(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("swish_qdq_closure_orchestrator")
+    calls: list[tuple[int, bool]] = []
+
+    def optimize(
+        current_model_ir: ModelIR,
+        *,
+        min_spatial_stage: int,
+        require_concat_closure: bool,
+    ) -> dict[str, int]:
+        assert current_model_ir is model_ir
+        calls.append((int(min_spatial_stage), bool(require_concat_closure)))
+        return {
+            "rewritten_transpose_swish_branches_to_nhwc": 2,
+            "removed_transpose_swish_pre": 3,
+            "propagated_nhwc_tensor_metadata": 5,
+            "rewritten_concat_axis_to_nhwc": 7,
+            "removed_transpose_swish_post": 11,
+        }
+
+    monkeypatch.setattr(
+        swish_module,
+        "optimize_transpose_swish_qdq_nhwc_islands",
+        optimize,
+    )
+
+    stats = optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
+
+    assert calls == [(0, True)]
+    assert stats == {
+        "optimized_transpose_swish_residual_concat_closure_nhwc_chains": 2,
+        "removed_transpose_swish_residual_concat_closure_pre": 3,
+        "rewritten_transpose_swish_residual_concat_closure_axis_to_nhwc": 7,
+        "removed_transpose_swish_residual_concat_closure_post": 11,
+    }
+
+
+def test_swish_qdq_public_owners_match_lowerer_compatibility_wrappers() -> None:
+    model_ir = ModelIR("swish_qdq_wrapper_equivalence")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = _tensor("x", [1, 4])
+    model_ir.tensors["y"] = _tensor("y", [1, 4])
+    model_ir.tensors["dead"] = _tensor("dead", [1])
+    model_ir.operators = [OperatorIR("RELU", ["x"], ["y"])]
+
+    direct_model_ir = copy.deepcopy(model_ir)
+    wrapper_model_ir = copy.deepcopy(model_ir)
+    direct_stats = optimize_transpose_swish_qdq_nhwc_islands(direct_model_ir)
+    wrapper_stats = lowering_module._optimize_transpose_swish_qdq_nhwc_islands(
+        wrapper_model_ir
+    )
+
+    assert direct_stats == wrapper_stats
+    assert direct_model_ir == wrapper_model_ir
+
+    direct_closure_model_ir = copy.deepcopy(model_ir)
+    wrapper_closure_model_ir = copy.deepcopy(model_ir)
+    direct_closure_stats = (
+        optimize_transpose_swish_residual_concat_closure_nhwc_chains(
+            direct_closure_model_ir
+        )
+    )
+    wrapper_closure_stats = (
+        lowering_module._optimize_transpose_swish_residual_concat_closure_nhwc_chains(
+            wrapper_closure_model_ir
+        )
+    )
+
+    assert direct_closure_stats == wrapper_closure_stats
+    assert direct_closure_model_ir == wrapper_closure_model_ir

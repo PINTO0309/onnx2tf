@@ -21,7 +21,6 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
-    run_boundary_input_batchmatmul_cleanup,
     run_boundary_input_normalization_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
@@ -44,6 +43,90 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_duplicate_fanout_cleanup,
     run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
+)
+from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
+    TerminalClampUnaryReLUContext,
+    run_terminal_clamp_unary_relu,
+)
+from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
+    TerminalSingletonMaxPoolReshapeContext,
+    run_terminal_singleton_maxpool_reshape,
+)
+from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
+    LateDequantUnaryFanoutContext,
+    run_late_dequant_unary_fanout,
+)
+from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
+    TransposeUnaryFanoutContext,
+    run_transpose_unary_fanout,
+)
+from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
+    LateSPPConcatUnaryConvContext,
+    run_late_spp_concat_unary_conv,
+)
+from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
+    BoundaryBatchMatMulUnaryContext,
+    run_boundary_batchmatmul_unary,
+)
+from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
+    ChannelSlicePadMulContext,
+    run_channel_slice_pad_mul,
+)
+from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
+    LateHardActivationLayoutContext,
+    run_late_hard_activation_layout,
+)
+from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
+    AbsoluteFinalNormalizationAttentionContext,
+    run_absolute_final_normalization_attention,
+)
+from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
+    QKVAttentionContext,
+    run_qkv_attention,
+)
+from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
+    DuplicateQuantizedPReLUContext,
+    run_duplicate_quantized_prelu,
+)
+from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
+    ConstantFoldCastContext,
+    run_constant_fold_cast,
+)
+from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
+    VeryLateGatherConstantNormalizationContext,
+    run_very_late_gather_constant_normalization,
+)
+from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
+    SEFCGatherChannelFanoutContext,
+    run_se_fc_gather_channel_fanout,
+)
+from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
+    TerminalBoundaryLayoutContext,
+    run_terminal_boundary_layout,
+)
+from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
+    LateLayoutMeanSPPGatherConstantCastContext,
+    run_late_layout_mean_spp_gather_constant_cast,
+)
+from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
+    SingletonConsecutiveReshapeContext,
+    run_singleton_consecutive_reshape,
+)
+from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    GateLayoutContext,
+    run_gate_layout,
+)
+from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
+    ChannelShuffleGatherContext,
+    run_channel_shuffle_gather,
+)
+from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
+    MeanAttentionContext,
+    run_mean_attention,
+)
+from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
+    SingletonReshapeContext,
+    run_singleton_reshape,
 )
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     run_terminal_quantize_dequantize_cleanup,
@@ -300,6 +383,50 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     )
 
 
+def test_mean_attention_cluster_reuses_one_lazy_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "mean_attention_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "MEAN",
+                "MUL",
+                "ADD",
+                "CONV_2D",
+                "FULLY_CONNECTED",
+                "BATCH_MATMUL",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    run_mean_attention(
+        MeanAttentionContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
+        include_layernorm=True,
+        include_conv_attention=True,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 8
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False for event in diagnostics[1:]
+    )
+
+
 def test_adjacent_gate_runners_reuse_one_lazy_pass_state(monkeypatch) -> None:
     operator_types = [
         "TRANSPOSE",
@@ -332,23 +459,14 @@ def test_adjacent_gate_runners_reuse_one_lazy_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_mixed_attention_layout_cleanup,
-        run_elementwise_gate_layout_cleanup,
-        run_pad_layout_cleanup,
-        run_dual_postconv_gate_layout_cleanup,
-        run_ndhwc_gate_layout_cleanup,
-        run_cost_volume_scatter_layout_cleanup,
-        run_add_concat_suffix_layout_cleanup,
-        run_dual_mul_concat_layout_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_gate_layout(
+        GateLayoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_mixed_attention=True,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 15
@@ -387,17 +505,12 @@ def test_qkv_attention_pair_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_qkv_attention_prefix_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_qkv_attention_bridge_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_qkv_attention(
+        QKVAttentionContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -477,18 +590,13 @@ def test_duplicate_quantized_prelu_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_duplicate_fanout_cleanup(
-        model_ir,
+    run_duplicate_quantized_prelu(
+        DuplicateQuantizedPReLUContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
         include_transpose=False,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_quantized_prelu_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
     )
 
     assert refresh_count == 1
@@ -529,14 +637,12 @@ def test_constant_fold_cast_pair_reuses_one_pass_state(monkeypatch) -> None:
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     state_scope = ModelIRPassStateScope(model_ir)
 
-    run_constant_input_fold_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_redundant_cast_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
+    run_constant_fold_cast(
+        ConstantFoldCastContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
         state_scope=state_scope,
     )
 
@@ -583,29 +689,12 @@ def test_very_late_gather_constant_normalization_cluster_reuses_one_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_transpose_gather_axis_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_constant_input_fold_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_redundant_cast_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_normalization_pad_layout_cleanup(
-        model_ir,
-        include_instance=False,
-        include_flatten=True,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_very_late_gather_constant_normalization(
+        VeryLateGatherConstantNormalizationContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -639,17 +728,12 @@ def test_se_fc_gather_channel_fanout_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_se_fc_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_transpose_gather_channel_fanout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_se_fc_gather_channel_fanout(
+        SEFCGatherChannelFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -689,20 +773,13 @@ def test_terminal_boundary_layout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_dual_mul_concat_layout_cleanup,
-        run_boundary_input_layout_cleanup,
-        run_pad_layout_cleanup,
-        run_layout_transpose_cleanup,
-        run_transpose_gather_channel_fanout_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_terminal_boundary_layout(
+        TerminalBoundaryLayoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 7
@@ -837,18 +914,13 @@ def test_late_dequant_unary_fanout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_dequant_concat_quantize_layout_cleanup,
-        run_transpose_unary_passthrough_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_late_dequant_unary_fanout(
+        LateDequantUnaryFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3
@@ -879,17 +951,12 @@ def test_terminal_singleton_maxpool_reshape_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_singleton_maxpool_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_terminal_singleton_maxpool_reshape(
+        TerminalSingletonMaxPoolReshapeContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -923,18 +990,13 @@ def test_terminal_clamp_unary_relu_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_clamp_cleanup,
-        run_transpose_unary_passthrough_cleanup,
-        run_maximum_zero_relu_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_terminal_clamp_unary_relu(
+        TerminalClampUnaryReLUContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3
@@ -1038,21 +1100,14 @@ def test_late_layout_mean_spp_gather_constant_cast_cluster_reuses_one_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_layout_transpose_cleanup,
-        run_mean_mul_add_conv_layout_cleanup,
-        run_spp_layout_cleanup,
-        run_transpose_gather_axis_cleanup,
-        run_constant_input_fold_cleanup,
-        run_redundant_cast_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_late_layout_mean_spp_gather_constant_cast(
+        LateLayoutMeanSPPGatherConstantCastContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_layout_transpose=True,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 9
@@ -1090,17 +1145,12 @@ def test_late_spp_concat_unary_conv_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_spp_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_concat_unary_conv_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_late_spp_concat_unary_conv(
+        LateSPPConcatUnaryConvContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -1129,21 +1179,13 @@ def test_late_hard_activation_layout_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_hard_activation_passthrough_cleanup(
-        model_ir,
-        include_hardswish=False,
-        include_hardsigmoid=True,
-        include_hardsigmoid_mul=True,
-        reverse_hardsigmoid_order=True,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_layout_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_late_hard_activation_layout(
+        LateHardActivationLayoutContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
+        include_layout_transpose=True,
     )
 
     assert refresh_count == 1
@@ -1180,19 +1222,12 @@ def test_absolute_final_normalization_attention_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_normalization_pad_layout_cleanup(
-        model_ir,
-        include_instance=False,
-        include_flatten=True,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_mixed_attention_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_absolute_final_normalization_attention(
+        AbsoluteFinalNormalizationAttentionContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -1226,22 +1261,16 @@ def test_shuffle_gather_cluster_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_two_way_channel_shuffle_cleanup,
-        run_nhwc_channel_shuffle_cleanup,
-        run_nchw_channel_shuffle_cleanup,
-        run_transpose_gather_axis_cleanup,
-        run_layout_transpose_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-        run_transpose_unary_binary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_channel_shuffle_gather(
+        ChannelShuffleGatherContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_two_way_shuffle=True,
+        include_nhwc_shuffle=True,
+        include_post_gather_cleanup=True,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 7
@@ -1310,18 +1339,13 @@ def test_unary_fanout_cluster_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_transpose_unary_passthrough_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-        run_transpose_unary_binary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_transpose_unary_fanout(
+        TransposeUnaryFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
         )
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3
@@ -1353,18 +1377,15 @@ def test_post_qdq_layout_unary_fanout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    for runner in [
-        run_layout_transpose_cleanup,
-        run_transpose_unary_fanout_bridge_cleanup,
-        run_transpose_unary_binary_fanout_bridge_cleanup,
-    ]:
-        runner(
-            model_ir,
+    run_transpose_unary_fanout(
+        TransposeUnaryFanoutContext(
+            model_ir=model_ir,
+            layout_state=None,
             diagnostics=diagnostics,
-            state_scope=state_scope,
-        )
+        ),
+        include_layout_transpose=True,
+        include_unary_passthrough=False,
+    )
 
     assert refresh_count == 1
     assert len(diagnostics) == 3
@@ -1400,17 +1421,12 @@ def test_boundary_batchmatmul_unary_pair_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_boundary_input_batchmatmul_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_input_unary_passthrough_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_boundary_batchmatmul_unary(
+        BoundaryBatchMatMulUnaryContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -1448,17 +1464,12 @@ def test_channel_slice_pad_mul_pair_reuses_one_pass_state(monkeypatch) -> None:
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_channel_slice_merge_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_pad_mul_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_channel_slice_pad_mul(
+        ChannelSlicePadMulContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1
@@ -1503,58 +1514,16 @@ def test_singleton_reshape_layout_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_layout_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_channel_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_duplicate_fanout_cleanup(
-        model_ir,
-        include_transpose=False,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_reshape_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_maxpool_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_flatten_concat_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_squeeze_reshape_identity_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_singleton_spatial_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_multi_branch_gate_layout_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_singleton_reshape(
+        SingletonReshapeContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        ),
+        include_layout_transpose=True,
+        include_duplicate_fanout=True,
+        include_multi_branch_gate=True,
+        include_spatial_concat_post_transpose=True,
     )
 
     assert refresh_count == 1
@@ -1587,23 +1556,12 @@ def test_singleton_consecutive_reshape_cluster_reuses_one_pass_state(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    state_scope = ModelIRPassStateScope(model_ir)
-
-    run_singleton_channel_transpose_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_duplicate_fanout_cleanup(
-        model_ir,
-        include_transpose=False,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        diagnostics=diagnostics,
-        state_scope=state_scope,
+    run_singleton_consecutive_reshape(
+        SingletonConsecutiveReshapeContext(
+            model_ir=model_ir,
+            layout_state=None,
+            diagnostics=diagnostics,
+        )
     )
 
     assert refresh_count == 1

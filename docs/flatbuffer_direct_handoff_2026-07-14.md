@@ -7302,3 +7302,8808 @@ regression is known. After synchronization, inspect the next unmodularized
 production helper in actual source order. Establish real ownership before any
 semantic change, keep model checks short, sequential, and zero-SWAP, commit and
 push coherent units, and do not create a pull request.
+
+## Static SQUEEZE-axis sanitization extraction: pre-change record
+
+Work resumed on `fb-refactor6` from merge checkpoint `e41037f1`, with a clean
+tree based on the merged `fb-refactor5` result. The earlier handoff's named
+pre-Add/Mul-constant/Reshape suffix candidate was re-audited before source
+work and found to be stale: that implementation is already completely owned
+by `passes/pre_add_mulconst_reshape_suffix_layout.py`. The next small
+unmodularized helper in actual lowerer source order was therefore
+`_sanitize_squeeze_axes_with_static_input_shapes`, a 135-line terminal
+metadata guard.
+
+The helper normalizes explicit SQUEEZE axes after all late layout and shape
+rewrites. It removes invalid and duplicate axes, may repair a non-constant
+input dimension to singleton, treats a same-rank constant payload as
+authoritative evidence against an invalid squeeze, and reconciles output shape
+and signature metadata. It has one production invocation, performs no
+topology, layout-state, lineage, quantization, constant-buffer, or artifact
+mutation, and shares its pure inference helpers with static shape
+reconciliation. No conversion failure prompted this checkpoint; the recorded
+problem was that the cohesive SQUEEZE policy still lived in the central
+lowerer.
+
+Real ownership was measured before movement with temporary, uncommitted stats
+instrumentation. The eight shortest active Tier 0 models containing ONNX
+Squeeze were run strictly sequentially through `-tb flatbuffer_direct -cotof`
+with a 60-second process-group ceiling:
+
+- `gru_14_b1.onnx` and `gru_14_b2.onnx`;
+- `torch_lstm.onnx`, `GRU.onnx`, and `GRU_org.onnx`;
+- `CNN_AUTOENCODER.onnx`, `ts_ad_model.onnx`, and `UM_best_model.onnx`.
+
+All eight passed in 2.41-3.12 seconds, every process-tree SWAP peak was zero,
+and all eight recorded zero sanitizer updates in all three counters. This is
+retained as a production zero-owner control; the existing positive synthetic
+fixtures remain the semantic owner. `GRU.onnx` fixed the pre-change artifacts:
+
+- float32:
+  `f597fff552422165dcf034aa5628618c8349ae4dc776c750fbdc13de5f086b8f`;
+- float16:
+  `6bc8c810326efe563dd9730f0875b628b0cc8fa1bfa51337f39b6e4c462ef830`;
+- tensor correspondence:
+  `00f802d0ba18acc81ba8bb32e6915b374e33f0cef6ff2b3d4cb965915e2be3f7`.
+
+The safe scope was an exact owner move only. Preserve the operator order,
+axis normalization, constant-data guard, metadata mutation order, stats keys,
+terminal scheduling, and private compatibility name. Do not add topology or
+layout inference to this mechanical checkpoint.
+
+## Static SQUEEZE-axis sanitization extraction: completed state
+
+`passes/squeeze_shape_sanitization.py` now owns the complete implementation;
+`lower_from_onnx2tf.py` retains a thin wrapper with the historical name and
+the same signature. The owner imports the two SQUEEZE shape helpers from the
+already extracted static-shape module and has no dependency on the lowerer.
+It retains the original one-pass operator traversal because the terminal
+production boundary has no reusable live graph index and the policy needs no
+producer or consumer query. Constructing a new index solely for this scan
+would add work without reducing repeated traversal.
+
+Focused tests cover non-constant singleton repair, negative/duplicate/invalid
+axis normalization, constant-payload rejection of a non-singleton axis,
+output metadata reconciliation, exact counter values, idempotence, and direct
+module/compatibility-wrapper equivalence. The architecture contract fixes the
+single owner, shared inference-helper calls, absence of producer/consumer map
+builders, and absence of a lowerer import cycle.
+
+Post-extraction `GRU.onnx` completed in 2.572 seconds with
+`evaluation_pass=true`, maximum absolute error `8.940696716308594e-08`, and
+process-tree SWAP zero. Its float32, float16, and correspondence SHA-256 values
+are byte-identical to all three pre-change values above.
+
+Verification for this checkpoint is:
+
+- the new owner, the two existing SQUEEZE sanitizer fixtures, the complete
+  shape-reconciliation suite, and the complete architecture contract:
+  `226 passed in 39.81s`;
+- scoped Ruff, Python syntax compilation, and `git diff --check`: pass before
+  documentation synchronization; the same final checks are required before
+  commit.
+
+This checkpoint changes the new SQUEEZE owner, its lowerer wrapper, a focused
+test module, the architecture contract, the architecture document, and this
+handoff. The first `uv run` after the merged 2.6.4 release bump also corrected
+the editable root-package version recorded in `uv.lock` from 2.6.3 to 2.6.4;
+the dependency set and every resolved third-party version are unchanged. The
+checkpoint changes no public API, CLI, artifact, dependency, TensorFlow
+boundary, corpus profile, exclusion, or ONNX model. No failure or regression
+is known.
+
+After this checkpoint is synchronized, inspect
+`_replace_expand_dims_and_squeeze_with_reshape`, the next unmodularized helper
+in source order. It performs topology and LayoutState mutation, so first freeze
+its real invocation counts, exact artifacts, dynamic-shape branches,
+pre-operator insertion order, pruning behavior, and wrapper contract before
+moving any code. Continue with short sequential zero-SWAP validation, commit
+and push coherent units, and do not create a pull request.
+
+## ExpandDims/Squeeze-to-Reshape extraction: pre-change record
+
+The next source-order helper is
+`_replace_expand_dims_and_squeeze_with_reshape`. Its 344-line implementation
+has one terminal production invocation and owns five coupled behaviors:
+
+- static ExpandDims/Squeeze replacement with deterministic shape constants;
+- speculative inactive-If Squeeze safety through a single `-1` target;
+- dynamic Squeeze shape plumbing through inserted SHAPE and GATHER operators;
+- semantic-rank and original-axis metadata retained for later reconciliation;
+- dead-tensor pruning and LayoutState synchronization after successful work.
+
+The helper already uses `ModelIRGraphIndex.insert_operator()` for its dynamic
+pre-operators, but the policy, nested target-selection helpers, tensor
+creation, mutation order, and pruning boundary remain in the central lowerer.
+No conversion failure prompted this checkpoint. The maintenance problem is
+the central ownership of a cohesive topology-and-shape pass, not an observed
+semantic defect.
+
+Real ownership was measured before source work with temporary, uncommitted
+stats instrumentation at the single production call. The shortest active
+positive representative, `GRU.onnx`, rewrote 13 ExpandDims/Squeeze operators
+and created 13 shape tensors. Its sequential `-tb flatbuffer_direct -cotof`
+run passed in 2.711 seconds with maximum absolute error
+`8.940696716308594e-08` and process-tree SWAP zero. The fixed artifacts are:
+
+- float32:
+  `f597fff552422165dcf034aa5628618c8349ae4dc776c750fbdc13de5f086b8f`;
+- float16:
+  `6bc8c810326efe563dd9730f0875b628b0cc8fa1bfa51337f39b6e4c462ef830`;
+- tensor correspondence:
+  `00f802d0ba18acc81ba8bb32e6915b374e33f0cef6ff2b3d4cb965915e2be3f7`.
+
+Existing synthetic tests already cover the positive static and dynamic
+Squeeze branches, speculative inactive-If execution, all-ones and dynamic
+ExpandDims no-op guards, later shape reconciliation, differential pre-operator
+insertion, and LayoutState-aware pruning. The safe scope is therefore a
+mechanical owner move only. Preserve traversal order, unique-name selection,
+branch precedence, operator/tensor construction order, option keys, graph
+index insertion order, pruning, counters, production scheduling, and the
+private compatibility signature. Algorithmic or semantic changes require a
+separate checkpoint.
+
+## ExpandDims/Squeeze-to-Reshape extraction: completed state
+
+`passes/expand_squeeze_reshape.py` now owns the complete implementation and
+`lower_from_onnx2tf.py` retains a thin private wrapper with the same positional
+and keyword contract. The single production invocation remains immediately
+after late layout/Mean/SPP/Gather/constant/Cast cleanup and before static shape
+reconciliation. No branch, traversal, mutation, counter, pruning, or scheduling
+behavior was intentionally changed.
+
+The owner still creates a `ModelIRGraphIndex` only when dynamic Squeeze
+pre-operators were collected. It inserts original operator groups in reverse
+index order and each local SHAPE/GATHER pair in reverse insertion order, which
+preserves final SHAPE, GATHER, RESHAPE execution order without direct operator-
+list replacement. Successful work retains the original unused-tensor prune and
+LayoutState synchronization boundary. Static rewrites do not pay for a graph
+index they do not need.
+
+A dedicated owner test now proves dynamic kept-axis tensor data, exact SHAPE/
+GATHER/RESHAPE order, LayoutState validity, old-wrapper equivalence, full
+ModelIR equality, and idempotence. Together with the existing dynamic-Reshape,
+shape-reconciliation, speculative-branch, all-ones, and dynamic-ExpandDims
+fixtures, the focused gate completes with `19 passed in 0.63s`. The architecture
+contract now reads the implementation from its pass module, fixes the one-call
+wrapper, differential insertion, prune/sync boundary, and absence of a lowerer
+import cycle. The complete focused set plus the complete flatbuffer-direct
+architecture contract passes `238 passed in 37.63s`.
+
+Post-extraction `GRU.onnx` completed in 2.608 seconds with
+`evaluation_pass=true`, maximum absolute error `8.940696716308594e-08`, and
+process-tree SWAP zero. Its float32, float16, and correspondence artifacts are
+byte-identical to the three pre-change hashes, proving compatibility across
+the 13 real production rewrites.
+
+This checkpoint changes the new ExpandDims/Squeeze owner, the lowerer wrapper,
+one dedicated test module, the architecture contract, the architecture
+document, and this handoff. It changes no public API, CLI, artifact, dependency,
+TensorFlow boundary, corpus profile, exclusion, or ONNX model. No failure or
+regression is known.
+
+After synchronization, inspect
+`_repair_rank4_binary_layout_mismatch_with_transpose_adapter`, the next raw
+source-order helper. First determine whether its behavior is already covered
+by an indexed binary-layout owner and measure a shortest non-zero real owner;
+do not create a duplicate pass. Continue with short sequential zero-SWAP
+validation, commit and push coherent units, and do not create a pull request.
+
+## Rank-four binary layout-adapter extraction: pre-change record
+
+`_repair_rank4_binary_layout_mismatch_with_transpose_adapter` is the next raw
+source-order helper. Its 91-line fixed-point implementation recognizes exact
+rank-four NHWC/NCHW shape permutations on ADD, MUL, SUB, DIV, MAXIMUM, and
+MINIMUM, inserts one Transpose on input 1, clones per-tensor quantization onto
+the adapted tensor, rewires only the matched operand, restarts discovery, and
+prunes unused tensors after convergence.
+
+The existing indexed binary-layout owners were audited before source work.
+They remove stale channelwise adapters or reduce established transpose bridge
+patterns; they do not insert a missing adapter for two already-materialized,
+full rank-four tensor shapes. Reusing those owners would conflate inverse
+contracts. This helper therefore remains a distinct semantic owner, but it is
+placed in a binary adapter module that can later receive the adjacent
+singleton-broadcast variant without creating duplicate central dispatch.
+
+Temporary, uncommitted instrumentation measured both unconditional production
+invocations on six short representatives: `GRU.onnx`, `iat_llie_180x320.onnx`,
+`FastestDet.onnx`, `face_detection_yunet_2023mar.onnx`,
+`human_segmentation_pphumanseg_2021oct.onnx`, and
+`osnet025_Nx3x256x128.onnx`. All twelve invocation results were zero. Every
+model passed, durations were 2.695-15.949 seconds, maximum absolute errors
+were below `2.2e-05`, and every process-tree SWAP peak was zero. The fallback
+and placeholder-restoration calls were not entered. This is retained as a
+production zero-owner control; a dedicated synthetic permutation fixture is
+the positive contract.
+
+`FastestDet.onnx` fixes the zero-owner artifacts:
+
+- float32:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`.
+
+The safe scope is an exact code move only. Preserve binary op eligibility,
+input-1-only adaptation, permutation selection precedence, unique names,
+tensor metadata and quantization, insertion/rewrite order, fixed-point restart,
+unconditional prune, stats key, four production positions, and the private
+compatibility signature. Differential indexing or expanded semantic guards
+require separate real ownership and regression evidence.
+
+## Rank-four binary layout-adapter extraction: completed state
+
+`passes/binary_layout_adapter.py` now owns the exact full-rank permutation
+adapter and `lower_from_onnx2tf.py` retains a thin private wrapper. All four
+production positions are unchanged: two unconditional terminal passes, one
+fallback normalization path, and one placeholder-MatMul restoration path. The
+adjacent singleton-broadcast repair is deliberately not moved in this
+checkpoint; it has different output-shape and operand-selection semantics and
+must be characterized separately.
+
+The implementation retains its original direct operator insertion and
+compatibility input setter. This checkpoint does not claim a differential-
+index performance change: it establishes module ownership first, while the
+six measured real models prove only zero-owner compatibility. A later indexed
+rewrite must first prove exact candidate ordering, restart behavior, and
+pruning equivalence with a non-zero real owner or an independently accepted
+synthetic contract.
+
+Seventeen dedicated tests cover all six binary types in both NHWC/NCHW
+directions, exact permutation constants, input-1-only rewiring, adapted tensor
+shape/signature, independent quantization cloning, equal/dynamic/rank/non-
+permutation no-ops, idempotence, and old-wrapper equivalence. The architecture
+contract fixes one module owner, four production calls, insertion/rewrite/
+prune ownership, and the no-import-cycle boundary. The complete focused owner
+suite plus the complete flatbuffer-direct architecture contract passes
+`237 passed in 38.80s`.
+
+Post-extraction `FastestDet.onnx` passed in 3.718 seconds with maximum absolute
+error `1.3113021850585938e-05` and process-tree SWAP zero. Its float32,
+float16, and correspondence artifacts are byte-identical to the three fixed
+pre-change hashes.
+
+This checkpoint changes the binary adapter owner, the lowerer wrapper, one
+focused test module, the architecture contract, the architecture document,
+and this handoff. It changes no public API, CLI, artifact, dependency,
+TensorFlow boundary, corpus profile, exclusion, or ONNX model. No failure or
+regression is known.
+
+After synchronization, characterize
+`_repair_rank4_binary_singleton_broadcast_layout_mismatch`, the adjacent raw
+helper. It may join `binary_layout_adapter.py` only after its two operand
+directions, output-shape guard, insertion order, and real invocation counts are
+fixed independently. Continue with short sequential zero-SWAP validation,
+commit and push coherent units, and do not create a pull request.
+
+## Singleton-broadcast binary adapter integration: pre-change record
+
+The adjacent `_repair_rank4_binary_singleton_broadcast_layout_mismatch` helper
+is a separate 172-line compatibility policy for an NCHW singleton-channel
+tensor paired with an NHWC rank-four tensor. It supports the same six binary
+operator types but has four output-driven branches:
+
+- input 0 is singleton NCHW and input 1 is NHWC, with an NCHW output: insert
+  NHWC-to-NCHW Transpose on input 1;
+- input 1 is singleton NCHW and input 0 is NHWC, with an NCHW output: insert
+  NHWC-to-NCHW Transpose on input 0;
+- input 0 is singleton NCHW with an NHWC output: reshape input 0 to
+  `[N,H,W,1]`;
+- input 1 is singleton NCHW with an NHWC output: reshape input 1 to
+  `[N,H,W,1]`.
+
+Every branch first rejects a pair that already broadcasts to the declared
+output. Accepted branches clone quantization to the adapted tensor, insert the
+adapter immediately before the binary operator, rewire only the selected
+operand, restart fixed-point discovery, and prune only when at least one repair
+occurred. This contract is related to, but not interchangeable with, the exact
+full-rank permutation adapter already in `binary_layout_adapter.py`; the two
+belong in the same op-family module under separate public owners and stats.
+
+Temporary, uncommitted instrumentation measured both unconditional production
+invocations on `GRU.onnx`, `iat_llie_180x320.onnx`, `FastestDet.onnx`,
+`face_detection_yunet_2023mar.onnx`,
+`human_segmentation_pphumanseg_2021oct.onnx`, and
+`osnet025_Nx3x256x128.onnx`. All twelve results were zero; the fallback and
+placeholder-restoration paths were not entered. All six models passed in
+2.607-16.015 seconds, their maximum absolute errors remained below `2.2e-05`,
+and all process-tree SWAP peaks were zero. This is another production zero-
+owner control, so the complete four-branch synthetic contract is required
+before integration.
+
+The fixed `FastestDet.onnx` hashes remain:
+
+- float32:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`.
+
+The safe scope is an exact move into the existing binary adapter module. Keep
+all four branch predicates and their precedence, NumPy broadcast guard,
+operand selection, adapter type, permutation/shape constants, metadata and
+quantization, unique-name behavior, insertion/rewrite order, fixed-point
+restart, conditional prune, stats key, four production positions, and private
+wrapper. Differential indexing or semantic generalization remains separate.
+
+## Singleton-broadcast binary adapter integration: completed state
+
+`passes/binary_layout_adapter.py` now owns the singleton-broadcast policy under
+`repair_rank4_binary_singleton_broadcast_layout_mismatch`. The historical
+lowerer symbol remains a thin compatibility wrapper and its four production
+positions are unchanged. The exact full-rank and singleton-broadcast policies
+remain separate functions with separate stats, because the latter chooses an
+operand and either Transpose or Reshape from the declared output layout.
+
+Twenty-four positive synthetic cases cover all four output-driven branches for
+all six supported binary operators. They additionally prove selected-operand
+rewiring, exact permutation or target-shape constants, tensor shape/signature,
+independent quantization cloning, and idempotence. A dedicated NumPy-broadcast
+no-op and direct-owner/private-wrapper equivalence complete the new focused
+contract. Together with the previously extracted exact adapter and the two
+legacy singleton tests, the focused binary module run passes `45 passed in
+0.58s`. The complete flatbuffer-direct architecture suite passes `221 passed
+in 39.12s` and fixes one module owner plus four production calls for each
+binary policy. The final combined branch gate (all four extracted owner test
+modules, shape reconciliation, active legacy compatibility selectors, and the
+complete architecture suite) passes `280 passed in 39.86s`.
+
+Post-integration `FastestDet.onnx` passed sequential isolated conversion in
+3.739 seconds with maximum absolute error
+`1.3113021850585938e-05`, evaluation pass true, and process-tree SWAP zero.
+Its float32, float16, and tensor-correspondence artifacts are byte-identical to
+the three pre-change hashes. No dependency, public API, CLI, artifact format,
+TensorFlow boundary, corpus profile, exclusion, or ONNX model changed, and no
+regression is known.
+
+The next adjacent raw lowerer helper is
+`_sanitize_static_shape_signature_consistency`. At restart, first characterize
+its production call count, positive ownership, no-op guards, metadata and
+stats contract before considering a separate extraction. Keep validation
+small and sequential, reject any model that triggers SWAP, commit and push one
+coherent checkpoint at a time, and do not create a pull request.
+
+## Static shape-signature sanitizer extraction: completed state
+
+The former 206-line `_sanitize_static_shape_signature_consistency` lowerer
+implementation is now owned by
+`passes/static_shape_signature_sanitization.py`. The old private symbol is a
+thin compatibility wrapper and both production calls remain at their original
+late-pipeline positions. This checkpoint is a mechanical ownership move: it
+retains the single producer-map build, boundary metadata handling, special
+WHERE/RANGE/RESHAPE/TOPK_V2 roots, recursive memoization, cycle stop, constant
+lineage stop, graph-output leading-axis policy, mutation order, and all four
+stats keys. It changes tensor shape signatures only; topology and LayoutState
+are untouched.
+
+Temporary environment-gated instrumentation was removed before implementation.
+On six sequential short controls, all twelve calls made zero static repairs.
+The ownership counters were nevertheless non-zero: the final `FastestDet`
+call preserved 13 boundary signatures and 26 multi-axis lineage signatures;
+both `osnet025_Nx3x256x128` calls preserved three boundary signatures and 295
+leading-axis signatures. The other measured calls were zero. All six controls
+passed in 2.609-16.515 seconds, maximum absolute error stayed below `2.2e-05`,
+and process-tree SWAP was zero.
+
+Eleven focused owner tests cover scalar completion, missing/rank-mismatched/
+stale signatures, dynamic runtime no-op, boundary-map normalization, every
+runtime-dependent root family, options and constant-shape RESHAPE targets,
+recursive leading and multi-axis lineage, constant termination, graph-output
+preservation, cycle termination, idempotence, and wrapper equality. With the
+four active legacy fixtures and the ownership selector the focused gate passes
+`16 passed in 1.89s`; the complete architecture suite passes `222 passed in
+38.25s`. The final combined branch gate across all five extracted owner test
+modules, active legacy selectors, shape reconciliation, and architecture
+passes `296 passed in 39.30s`. A fixed-seed differential harness extracted the
+old helper from the pre-change commit and compared stats plus every tensor
+signature with the new owner across 250 generated ModelIR cases; all matched.
+
+Post-extraction sequential validation used the two real positive owners only.
+`FastestDet.onnx` passed in 3.755 seconds with maximum absolute error
+`1.3113021850585938e-05`; `osnet025_Nx3x256x128.onnx` passed in 4.053 seconds
+with maximum absolute error `2.193450927734375e-05`. Both had process-tree
+SWAP zero. Their six float32, float16, and tensor-correspondence artifacts are
+byte-identical to the pre-change controls. No regression is known.
+
+The next adjacent raw lowerer helper is
+`_realign_dynamic_boundary_shape_signature_map`. Before changing it, determine
+whether it belongs with this sanitizer or ONNX boundary analysis, fix the
+alignment-helper contract and three production positions, and measure whether it
+has a non-zero short real owner. Continue with sequential zero-SWAP validation,
+commit and push coherent checkpoints, and do not create a pull request.
+
+## Dynamic boundary-signature map realignment: completed state
+
+`passes/static_shape_signature_sanitization.py` now also owns
+`realign_dynamic_boundary_shape_signature_map`. The core axis-alignment
+primitive remains in `core/onnx_analysis.py` because lowerer boundary-map
+construction uses it independently. The old private lowerer symbol is a thin
+wrapper and all three late production positions are unchanged. The owner
+retains exact map object mutation, list/type/rank guards, deterministic static-
+extent placement, update counter, and final metadata assignment. It reads no
+operator and changes no tensor or topology.
+
+Temporary instrumentation measured all three calls on `FastestDet.onnx` and
+`osnet025_Nx3x256x128.onnx`; all six results were zero. Both models passed,
+their maximum absolute errors were `1.3113021850585938e-05` and
+`2.193450927734375e-05`, and process-tree SWAP was zero. These are explicit
+zero-owner controls, while the synthetic layout-change fixtures provide the
+positive contract.
+
+The expanded focused module plus the active legacy realignment fixture and
+ownership selector passes `21 passed in 1.88s`. It covers unchanged axes,
+layout movement, repeated static extents, insufficient matches, empty/rank-
+mismatched signatures, malformed maps and entries, missing tensors/shapes,
+idempotence, and private-wrapper equality. The complete architecture suite
+passes `223 passed in 39.80s`. A fixed-seed differential harness compared the
+old and new owners over 250 generated maps; stats and final metadata matched
+in every case. The final combined branch gate across all extracted owner test
+modules, active legacy selectors, shape reconciliation, and architecture
+passes `306 passed in 39.69s`.
+
+Post-extraction sequential validation passed `FastestDet.onnx` in 3.725
+seconds and `osnet025_Nx3x256x128.onnx` in 4.080 seconds with the same two
+maximum absolute errors and SWAP zero. Their six float32, float16, and tensor-
+correspondence artifacts are byte-identical to the pre-change controls. No
+regression is known.
+
+The intervening split, static-shape inference, indexed convergence, and
+placeholder-MatMul functions are already compatibility wrappers or established
+indexed owners. The next raw source-order implementation is the large
+`_optimize_transpose_quant_dequant_bridges` helper. Before modifying it, split
+its pattern families and stats contract, identify any existing QDQ pass owners,
+measure each production call, and select the smallest real positive models.
+Continue with sequential zero-SWAP validation, commit and push coherent
+checkpoints, and do not create a pull request.
+
+## Transpose QDQ bridge ownership extraction: completed state
+
+The former 929-line `_optimize_transpose_quant_dequant_bridges` implementation
+is now owned by `passes/transpose_qdq_bridge_layout.py`; the lowerer retains a
+two-line private compatibility wrapper. This owner is distinct from the
+registered terminal Q/DQ, Concat-input, Mean, activation, PReLU, Reshape, and
+TransposeConv quantization cleanup modules. Partial family extraction was
+rejected because the existing behavior depends on a shared fixed-point loop
+with strict A→B→C→D precedence and restart after every accepted rewrite.
+
+The four retained families are the complete Transpose/Q/DQ/Transpose round
+trip, a single Q-or-DQ bridge with single/multiple post fan-out, the two-branch
+QDQ/Add/QDQ residual closure, and the mixed float/QDQ Add residual closure.
+Branch linearity, public outputs, exact inverse permutations, per-tensor grids,
+legacy fan-out, representative output selection, metadata permutation,
+quantization cloning, mutation order, pruning, and all three stats keys are
+unchanged. The ordered layout-recovery prefix contains one wrapper call and is
+expanded at the same four runtime positions.
+
+Temporary instrumentation was removed before extraction. Five existing
+positive fixtures showed first-sweep stats of one removed bridge for Pattern B,
+one for Pattern A, two removals plus one residual rewrite for Pattern C, and
+one removal plus one mixed-residual rewrite for both Pattern D variants. Their
+following three sweeps were no-ops. Six direct owner tests add exact Pattern A
+and B topology/metadata assertions, independent quantization cloning, per-
+channel/public/non-inverse no-ops, idempotence, and wrapper equality. The
+focused owner, five end-to-end families, and architecture selector pass `12
+passed in 2.18s`; the complete architecture suite passes `224 passed in
+36.96s`. The final combined branch gate across all extracted owner modules,
+active legacy selectors, shape reconciliation, and architecture passes `318
+passed in 38.66s`. The entire old and new owner ASTs are identical after
+normalizing the public function name.
+
+`face_detection_yunet_2023mar_int8.onnx` is a short positive real owner: its
+first sweep removes nine bridges and the next three sweeps are no-ops. Before
+extraction it passed in 5.049 seconds with `max_abs=0` and SWAP zero. After
+extraction it passed in 5.204 seconds with the same error and SWAP result. Its
+float32, float16, and tensor-correspondence artifacts are byte-identical to the
+pre-change controls. No regression is known.
+
+The next raw source-order orchestration is
+`_optimize_transpose_swish_qdq_nhwc_islands` and its residual-Concat closure.
+Before moving it into the existing `quantized_swish_layout.py` family, fix the
+primary/late/safety-valve ownership boundaries, both option combinations,
+stats aggregation, production call expansion, and a short positive real model.
+Continue with sequential zero-SWAP validation, commit and push coherent
+checkpoints, and do not create a pull request.
+
+## Swish-QDQ orchestration ownership extraction: completed state
+
+The complete `_optimize_transpose_swish_qdq_nhwc_islands` orchestration and
+its residual-Concat closure are now owned by
+`passes/quantized_swish_layout.py`. The central lowerer retains both historical
+private symbols as thin wrappers, and the closure and normal production
+positions remain one call each. This is a mechanical ownership move over the
+already indexed phase owners: primary branch/metadata processing, first
+inverse-post cleanup, late Concat/post cleanup, the independently owned
+wrong-way Conv-input safety valve, and final unused-tensor pruning retain their
+exact order and statistics.
+
+Temporary instrumentation was removed before implementation. The established
+160-spatial fixture and the 80-spatial closure fixture both recorded primary
+results of three rewritten branches, two removed pre-Transposes, one rewritten
+Concat axis, and twenty-four propagated tensors. Their first post cleanup
+removed two Transposes; late cleanup and the safety valve were zero. The
+independent safety fixture recorded zero primary/late work and two safety-valve
+removals. Both public orchestration ASTs are identical to their prior committed
+lowerer functions after normalizing only the moved function and direct safety-
+owner names.
+
+Three new focused tests fix exact phase order, both forwarded options,
+statistics aggregation across disjoint rewritten-tensor sets, closure option
+fixing and result remapping, and public-owner/private-wrapper equality. The
+focused indexed Swish module, existing safety delegation, both legacy Swish
+variants, and the two ownership selectors pass `26 passed in 2.26s`. The
+complete architecture suite passes `224 passed in 38.42s`. The final branch
+selection across all extracted owners and active legacy selectors passes
+`321 passed in 38.50s`. TensorFlow-import-blocked import, explicit direct
+conversion, and direct `-cotof` pass `3 passed in 4.85s`. Scoped Ruff, syntax
+compilation, and whitespace checks all pass.
+
+A read-only scan of active passing Tier 0-4 models up to 100 MiB found no graph
+with the complete ONNX Transpose/Q/DQ/Sigmoid/Mul source family. The bounded
+`dequantize_linear.onnx` candidate recorded zero closure and normal rewrites,
+so positive semantics remain fixed by the existing synthetic fixtures rather
+than a claimed production owner. Its single post-extraction sequential run
+exited zero in 12.789 seconds with process-tree SWAP zero. The established
+known `tflite_fail`, `max_abs=58.7506103515625`, and normalized error-signature
+hash were unchanged. Float32, float16, correspondence, `schema.fbs`, and
+`schema_generated.py` hashes were byte-identical to the pre-extraction
+control. This checkpoint does not reclassify or improve that known failure.
+
+Changed files are the quantized-Swish pass module, the lowerer wrappers, the
+focused indexed-Swish tests, architecture ownership checks, and the three
+branch design/handoff documents. No package, public API, CLI, artifact name,
+corpus profile, exclusion policy, or TensorFlow boundary changes. Temporary
+instrumentation and all temporary conversion outputs are removed before the
+checkpoint. No new pull request is created; future work remains commit/push
+only.
+
+The next raw source-order implementation is
+`_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains`.
+At restart, first characterize all production positions, exact family
+boundaries, statistics, and short zero-SWAP model ownership before changing
+source. Keep inference sequential and minimal, preserve any compatibility
+fallback that lacks a real owner, commit and push one coherent unit, and do not
+create a pull request.
+
+## HardSwish SE gating layout extraction: completed state
+
+The former 463-line
+`_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains`
+implementation is now owned by `passes/hardswish_se_layout.py`. The lowerer
+retains a thin private wrapper at both unchanged production positions. This is
+an exact mechanical move: after normalizing the function name, the complete
+old and new ASTs are identical. The shared consumer-map rebuild, ordered
+restart, direct/decomposed root matching, expanded/fused gate matching,
+Mean-axis rewrite, four-Transpose removal, metadata/quantization propagation,
+pruning, and statistic all remain unchanged.
+
+Eight focused owner tests cover all four direct/decomposed root and
+expanded/fused gate combinations, idempotence, public pre-output, invalid
+reduction axes, activation fan-out, and direct-owner/private-wrapper equality.
+Together with the architecture selector they pass `9 passed in 1.77s`. The
+complete architecture suite passes `225 passed in 37.10s`; the expanded branch
+gate passes `330 passed in 38.57s`; and TensorFlow-import-blocked import,
+direct, and direct `-cotof` pass `3 passed in 4.82s`.
+
+Three sequential short models were sufficient to characterize all six
+production invocations. SSDLite MobileNetV3, `inference_ops15`, and MobileNetV3
+PyTorch each recorded `[0,0]`, so no production rewrite is claimed. SSDLite is
+the fixed artifact control because it contains HardSwish, HardSigmoid, global
+pooling, Conv, Mul, Add, and Transpose families in one 384-node graph. Its
+post-extraction run passed in 7.892 seconds with
+`max_abs=3.0517578125e-05` and process-tree SWAP zero. Float32, float16,
+correspondence, `schema.fbs`, and `schema_generated.py` hashes are identical to
+the 8.338-second pre-extraction control.
+
+Changed source is limited to the new pass module, the lowerer wrapper, its
+focused tests, architecture ownership coverage, and branch documentation. No
+dependency, public API, CLI, artifact, TensorFlow boundary, corpus profile, or
+exclusion changes. Temporary instrumentation and conversion outputs are
+removed before commit. No new pull request is created.
+
+The next raw source-order boundary is
+`_optimize_transpose_pre_concat_nhwc_chains_legacy` behind the 61-line
+indexed-first `_optimize_transpose_pre_concat_nhwc_chains` wrapper. At restart,
+first inventory its existing indexed owner, legacy family boundaries,
+fallback ownership, call positions, and focused fixtures. Do not split or
+semantically narrow the 2,452-line fallback without evidence; keep conversion
+validation minimal and sequential, then commit and push only.
+
+## Generic NHWC pre-Concat legacy ownership extraction: completed state
+
+The complete 2,452-line
+`_optimize_transpose_pre_concat_nhwc_chains_legacy` implementation is now owned
+by `passes/nhwc_concat_legacy_layout.py`. The lowerer retains the historical
+private symbol as a one-call compatibility wrapper. This was an exact
+mechanical ownership move, not a semantic split or a source-line-limit change:
+after normalizing only the function name, the old and new full ASTs are
+identical. All nested planners and appliers, float/quantized indexed-family
+exclusion contracts, action precedence, fixed-point restart, constant
+copy-on-write, shape/layout/quantization propagation, canonical output
+selection, operator removal, pruning, and the historical statistic are
+unchanged.
+
+The 61-line composite wrapper is unchanged. It still dispatches the eleven
+float indexed families, then the thirteen quantized indexed families, then the
+legacy compatibility owner, and aggregates them into the single public
+`optimized_transpose_pre_concat_nhwc_chains` counter. All four explicit
+production positions are preserved. The exact pseudo-LeakyRelu plus Pad-
+companion fixture establishes a positive legacy rewrite, idempotence, and
+direct-owner/private-wrapper ModelIR equality. The pre-change nine-file Concat
+corpus passed 284 tests; after adding wrapper ownership coverage it passes 285.
+The complete architecture suite passes `226 passed in 34.16s`, the Concat plus
+architecture gate passes `511 passed in 34.86s`, and the final branch-wide
+selection passes `616 passed in 34.88s`. The complete optional-TensorFlow
+import-blocked suite, including direct conversion and direct `-cotof`, passes
+`11 passed in 9.30s`. Scoped Ruff, syntax compilation, and whitespace checks
+pass.
+
+Temporary instrumentation measured seven wrapper invocations each on
+`FastestDet.onnx` and `osnet025_Nx3x256x128.onnx`. Every float indexed,
+quantized indexed, and legacy count was zero, so this checkpoint does not claim
+a non-zero production legacy owner. FastestDet passed before extraction in
+4.541 seconds and after extraction in 4.474 seconds with identical
+`max_abs=1.3113021850585938e-05` and process-tree SWAP zero. Its core artifacts
+are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+OSNet supplied the second seven zero-owner invocations and passed in 4.810
+seconds with `max_abs=2.193450927734375e-05` and SWAP zero. Instrumentation and
+all temporary conversion output are removed before commit. Changed files are
+the new legacy pass module, lowerer compatibility wrapper/import, one focused
+legacy-owner test, the architecture ownership test, and the three branch
+documents. No dependency, public API, CLI, artifact, TensorFlow boundary,
+corpus profile, exclusion, or 2,000-ONNX-operation tier policy changes. No pull
+request is created; work remains commit/push only.
+
+The next raw source-order implementation is the 148-line
+`_optimize_transpose_slice_prepost_nhwc_passthrough_chains`. At restart, first
+inventory its production positions, exact Slice parameter/permutation and
+fan-out/public-output guards, statistics, dependencies, existing fixtures, and
+short zero-SWAP model ownership before changing source. Keep inference
+strictly sequential and minimal, then commit and push one coherent unit without
+creating a pull request.
+
+## Slice pre/post NHWC passthrough extraction: completed state
+
+The complete 148-line
+`_optimize_transpose_slice_prepost_nhwc_passthrough_chains` implementation is
+now owned by `passes/slice_prepost_layout.py`; the lowerer retains a one-call
+private compatibility wrapper at the unchanged single production position.
+After normalizing only the function name, the prior lowerer function and new
+owner ASTs are identical. The owner directly reuses the established Slice
+shape resolver in `static_shape_reconciliation.py`, preserving the existing
+dependency without copying it.
+
+The exact rank-four NHWC→NCHW Transpose, constant Slice, and inverse Transpose
+contract is unchanged. Both begin/size tensors must be constant and exclusive,
+the pre and Slice intermediates must be exclusive and non-public, permutations
+must be exact inverses, and input/output metadata must be rank four. The matcher
+continues to test the constants as-is before their NCHW→NHWC remap and accepts
+only the first representation reproducing the known post-Transpose shape.
+Constant rewrites, Slice input/output aliasing, two-Transpose removal,
+conditional pruning, fixed-point restart, and the historical statistic retain
+their exact order.
+
+The new focused corpus covers remap-required and already-NHWC constants,
+idempotence, public pre and Slice outputs, shared begin constants, pre-adapter
+fan-out, output-shape mismatch, wrong permutation, and direct-owner/private-
+wrapper equality. It passes with the architecture selector as `10 passed in
+1.77s`. The complete architecture suite passes `227 passed in 34.56s`; the
+branch-wide selection passes `626 passed in 36.18s`; and the complete optional-
+TensorFlow import-blocked suite, including direct conversion and direct
+`-cotof`, passes `11 passed in 9.32s`. Scoped Ruff, syntax compilation, and
+whitespace checks pass.
+
+Temporary instrumentation measured the single production call on Tier 0
+`UM_best_model.onnx` and Tier 2 `alike_t_opset11_192x320.onnx`; both were zero,
+so this checkpoint does not claim a non-zero production owner. ALike passed in
+6.744 seconds with `max_abs=2.345442771911621e-05` and process-tree SWAP zero.
+UM Best Model is the fixed artifact control. Before extraction it passed in
+3.335 seconds and after extraction in 3.228 seconds with identical
+`max_abs=2.384185791015625e-07` and process-tree SWAP zero. Its core artifacts
+are byte-identical:
+
+- float32 TFLite:
+  `fd4f73f2d267b7f300c164d749b2d0abf6d529cf093d32913642c7ad7c81bdbd`;
+- float16 TFLite:
+  `f003bfc1253a2dca9a81e6051bb2a9c9951f9bddbdd19b6a8111edfd11b9f2cb`;
+- tensor correspondence:
+  `87478284278c9d7e796c1e85a310f02f7f0b2f6cf87e0e74884c5465ed2857e2`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+Instrumentation and temporary outputs are removed before commit. Changed files
+are the new pass module, lowerer wrapper/import, focused corpus, architecture
+ownership check, and three branch documents. No dependency, public API, CLI,
+artifact, TensorFlow boundary, corpus profile, exclusion, or ONNX tier policy
+changes. No pull request is created; work remains commit/push only.
+
+The next raw source-order implementation is the 285-line
+`_optimize_transpose_shape_extract_nhwc_to_nchw_chains`. At restart, inventory
+its Gather/Slice remapping families, shared/public constant behavior,
+non-contiguous Slice-to-Gather conversion, production positions, statistic,
+existing fixtures, and short zero-SWAP model ownership before changing source.
+Keep inference strictly sequential and minimal, then commit and push one
+coherent unit without creating a pull request.
+
+## Shape-extraction layout ownership extraction: completed state
+
+The complete 285-line
+`_optimize_transpose_shape_extract_nhwc_to_nchw_chains` implementation is now
+owned by `passes/shape_extract_layout.py`; the lowerer retains a one-call
+private compatibility wrapper at all three unchanged production positions.
+This is an exact mechanical move: after normalizing only the function name,
+the prior lowerer function and the new owner ASTs are identical.
+
+The owner preserves Gather-index remapping from logical NCHW to physical NHWC,
+contiguous Slice remapping, and non-contiguous Slice-to-Gather conversion.
+Shared constants remain clone-on-write, with dtype and quantization metadata
+retained. All Shape consumers must be supported before mutation; public
+Transpose or Shape outputs, adapter fan-out, unsupported users or axes,
+non-constant and invalid indices, and empty selections remain strict no-ops.
+Fixed-point restart, conditional pruning, and the historical statistic are
+unchanged.
+
+The focused owner corpus plus architecture selector passes `14 passed in
+1.79s`. The complete architecture suite passes `228 passed in 34.70s`; the
+branch-wide selection passes `640 passed in 35.35s`; and the complete optional-
+TensorFlow import-blocked suite, including direct conversion and direct
+`-cotof`, passes `11 passed in 9.75s`.
+
+Tier 2 `retinaface_onnx_dynamic.onnx` establishes positive real ownership with
+production counts `1,0,0`. Before extraction it passed in 3.996 seconds and
+after extraction in 4.030 seconds with identical
+`max_abs=4.4405460357666016e-06` and process-tree SWAP zero. Its core artifacts
+are byte-identical:
+
+- float32 TFLite:
+  `ff0cbf4697ab2f7f0304d49eff912babaf2b3c31060374023b175ad01342a8ff`;
+- float16 TFLite:
+  `91b40c03d9c9628d0acb5d3c87c7a2e8cd23f8df089be6d00e52ee4db87d1c42`;
+- tensor correspondence:
+  `6edbb4f0d8436d9c064c1415840807a00e004c96b8a1f7df40954cb35d5bdc43`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+Tier 2 `alike_t_opset11_192x320.onnx` supplies three zero-owner production
+calls. It passes in 6.658 seconds with
+`max_abs=2.345442771911621e-05` and zero process-tree SWAP.
+
+Changed files are the new Shape-extraction pass, lowerer import and wrapper,
+the focused owner corpus, architecture ownership checks, and the three branch
+documents. No package, public API, CLI, artifact name, TensorFlow boundary,
+corpus profile, exclusion policy, or ONNX tier policy changes. Temporary
+instrumentation and conversion outputs are removed before commit. PR #952
+remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 1,593-line
+`_optimize_transpose_pre_add_nhwc_chains` composite. At restart, first
+inventory its indexed owner, compatibility fallback, production positions,
+statistics, and focused fixtures. Do not split or semantically narrow this
+boundary without characterized ownership and artifact evidence. Keep inference
+strictly sequential and minimal, then commit and push one coherent unit without
+creating a pull request.
+
+## Indexed-first pre-Add compatibility ownership extraction: completed state
+
+The complete 1,593-line `_optimize_transpose_pre_add_nhwc_chains`
+implementation is now owned by `passes/pre_add_layout.py`. The lowerer retains
+a one-call private compatibility wrapper at all four unchanged production
+positions and in the conservative safe-transpose bundle. This is an exact
+mechanical move: after normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The bounded `pre_add_direct_unary_layout` owner still runs first. The composite
+fallback retains its complete Swish, unary, Mul-constant, Mul/Sub-constant,
+Gather, constant-Add, nested-Add, PReLU, direct-NCHW bridge, post-alias, and
+legacy-consumer behavior. Full producer/consumer map construction, fixed-point
+restart, clone-on-write constants, shape/layout/dtype/quantization propagation,
+operator and tensor mutation order, marker behavior, pruning, and the single
+historical statistic are unchanged. This is not a source-line limit and does
+not claim that the fallback has been modernized.
+
+Before the move, the focused indexed, QLinear, and four active compatibility
+fixtures passed 27 tests. After adding forced-fallback module-owner/private-
+wrapper equality, those fixtures plus the complete architecture suite pass
+`256 passed in 35.28s`. The branch-wide extracted-owner selection passes
+`668 passed in 34.12s`; the complete optional-TensorFlow import-blocked suite,
+including direct conversion and direct `-cotof`, passes `11 passed in 9.53s`.
+Scoped Ruff, whole-lowerer Ruff with its established exclusions, syntax
+compilation, and whitespace checks pass.
+
+The first architecture selector run after the move failed because it still
+looked for the indexed-first assignment inside the lowerer function. This was
+an expected ownership-contract mismatch, not a conversion failure. The test
+now proves that `pre_add_layout.py` invokes the indexed owner first, contains
+the compatibility map/prune loop, never imports the lowerer, and that the
+lowerer retains exactly one dispatch call plus four Session-layout production
+positions and the safe-bundle position.
+
+`FastestDet.onnx` establishes positive real fallback ownership. Before and
+after extraction its eight composite results are `1,0,0,0,0,0,0,0`, while all
+eight bounded indexed-owner results are zero. The pre-extraction sequential
+`-cotof` run completed in 9.168 seconds and the post-extraction run in 9.394
+seconds. Both pass with `max_abs=1.3113021850585938e-05` and process-tree SWAP
+zero. The five core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+Changed files are the new composite pass module, lowerer import and wrapper,
+the focused forced-fallback equivalence test, architecture ownership checks,
+and the three branch documents. No dependency, public API, CLI, artifact name,
+TensorFlow boundary, corpus profile, exclusion policy, or ONNX tier policy
+changes. Temporary tracing and conversion outputs are removed before commit.
+PR #952 remains closed; work is commit/push only and no pull request is
+created.
+
+The next raw source-order implementation is the 166-line
+`_optimize_transpose_dual_pre_add_to_single_post_adapter_nhwc_chains`. At
+restart, inventory its strict dual-adapter and single-post contract, constant
+ownership, legacy-consumer and public-boundary guards, single production
+position, statistic, existing fixtures, and short zero-SWAP ownership before
+changing source. Keep inference strictly sequential and minimal, then commit
+and push one coherent unit without creating a pull request.
+
+## Dual-pre-Add single-post ownership extraction: completed state
+
+The complete 166-line
+`_optimize_transpose_dual_pre_add_to_single_post_adapter_nhwc_chains`
+implementation is now owned by `passes/dual_pre_add_layout.py`. The lowerer
+retains a one-call private compatibility wrapper at the unchanged single late
+production position. After normalizing only the function name, the prior
+lowerer function and new owner ASTs are identical.
+
+The rule still accepts two exclusive rank-four NHWC-to-NCHW Transpose outputs
+feeding one non-public Add only when no existing NCHW-to-NHWC post adapter
+consumes the Add result. It rewires the Add to the original NHWC inputs,
+creates an NHWC result with cloned dtype/shape/signature/quantization, removes
+both input adapters, and inserts one NHWC-to-NCHW compatibility adapter after
+the Add. Unique-name behavior, graph-order restart, unconditional pruning, and
+the historical statistic are unchanged.
+
+The new focused corpus fixes the positive rewrite, independent quantization
+clone, idempotence, public Add output, public pre-adapter output, wrong
+permutation, rank mismatch, input fan-out, existing inverse-post rejection,
+and direct-owner/private-wrapper equality. It passes with the architecture
+selector as `10 passed, 228 deselected in 1.96s`. The complete focused plus
+architecture gate passes `238 passed in 34.68s`; the branch-wide selection
+passes `678 passed in 36.60s`; and the complete optional-TensorFlow import-
+blocked suite passes `11 passed in 10.53s`.
+
+FastestDet, OSNet, and HumanSeg were characterized strictly sequentially before
+the move. Each reached the helper once, recorded zero rewrites, exited zero,
+and used zero process-tree SWAP. No non-zero production owner is claimed; the
+positive contract is synthetic. FastestDet is the fixed artifact control. Its
+pre-extraction conversion completed in 1.614 seconds and post-extraction in
+1.593 seconds, with byte-identical core artifacts:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+FastestDet had passed the immediately preceding sequential `-cotof` checkpoint
+at `max_abs=1.3113021850585938e-05`. Because this move reproduced the exact
+executed TFLite artifact, no redundant inference run was added. All actual
+model runs in this checkpoint remained sequential.
+
+One latent compatibility risk was recorded without semantic change. The
+historical helper creates a fixed `__nhwc_to_nchw_perm_rank4__` tensor only
+when that name is absent, but does not validate an existing tensor's dtype,
+payload, producer, variable state, consumers, or graph visibility before reuse.
+Hardening this collision requires its own focused negative/positive contract
+and artifact gate; it must not be mixed into this exact ownership move.
+
+Changed files are the new dual-pre-Add pass module, lowerer import and wrapper,
+the focused test corpus, architecture ownership test, and the three branch
+documents. No dependency, public API, CLI, artifact name, TensorFlow boundary,
+corpus profile, exclusion policy, or ONNX tier policy changes. Temporary
+tracing and conversion outputs are removed before commit. PR #952 remains
+closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 293-line
+`_optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains`. At restart,
+inventory its terminal Transpose/Mul/Add/Reshape/FullyConnected topology,
+constant ownership and mutation, graph-output contract, single production
+position, statistic, existing fixtures, and short zero-SWAP ownership before
+changing source. Keep inference strictly sequential and minimal, then commit
+and push one coherent unit without creating a pull request.
+
+## Terminal affine/Reshape/FullyConnected ownership extraction: completed state
+
+The complete 293-line
+`_optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains` implementation is
+now owned by `passes/terminal_affine_fc_layout.py`. The lowerer retains a
+one-call private compatibility wrapper at the unchanged single late production
+position. After normalizing only the function name, the prior lowerer function
+and new owner ASTs are identical.
+
+The owner preserves the exact exclusive
+Transpose→Mul→Add→Reshape→FullyConnected chain, all public intermediate guards,
+static positive NHWC/NCHW view relation, channel-constant rotation, shared
+constant copy-on-write, both `[O,I]` and `[I,O]` FullyConnected weight layouts,
+NHWC flatten-order permutation, metadata and quantization cloning, fixed-point
+restart, pruning, and statistic. No new dependency, index path, or semantic
+guard was introduced.
+
+The focused corpus covers both weight orientations, exclusive and shared Mul
+and FC constants, independent quantization clones, idempotence, public
+Transpose/Mul/Add/Reshape intermediates, wrong permutation, dynamic channel,
+weight-width mismatch, input fan-out, and module-owner/private-wrapper
+equality. The selector passes `14 passed, 229 deselected in 2.07s`; focused plus
+complete architecture passes `243 passed in 32.69s`; the branch-wide selection
+passes `692 passed in 34.75s`; and the complete optional-TensorFlow import-
+blocked suite passes `11 passed in 9.28s`.
+
+OSNet was characterized strictly sequentially and reached the helper once with
+zero rewrites before and after extraction. Its pre conversion completed in
+2.171 seconds and post conversion in 2.195 seconds; both recorded process-tree
+SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `ed63ef56007979e0f13d1e8e63cbfb590e58af1adee1d214595d03e57412c282`;
+- float16 TFLite:
+  `f22a25ab094217ea1ebc0844da8752c6b95b38b3d98be6cb58314b39e2029a7d`;
+- tensor correspondence:
+  `35a42832e43b2076b00399ba7b22a1ff5aff83795cd333474d6bf61bf7221677`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding OSNet accuracy checkpoint remains
+`max_abs=2.193450927734375e-05`; no redundant inference run was added because
+the executed TFLite artifact is identical. A read-only scan of every root ONNX
+file up to 50 MiB found no exact raw Transpose→Mul→Add→Reshape→Gemm/MatMul
+source chain. No non-zero production owner is claimed; positive behavior is
+fixed by the synthetic corpus.
+
+One existing transactional defect is recorded, not corrected. The helper can
+rotate an exclusive Mul side constant in place before attempting to materialize
+the Add side constant. If the latter is invalid, it returns a zero statistic
+after leaving the Mul constant changed. Fixing this requires immutable planning,
+full prevalidation, and an atomic negative fixture in a separate semantic
+checkpoint; mixing it into this mechanical move would obscure compatibility.
+
+Changed files are the new terminal affine/FC pass module, lowerer import and
+wrapper, focused corpus, architecture ownership test, and three branch
+documents. No dependency, public API, CLI, artifact name, TensorFlow boundary,
+corpus profile, exclusion policy, or ONNX tier policy changes. Temporary
+tracing and conversion outputs are removed before commit. PR #952 remains
+closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 263-line
+`_optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains`. At
+restart, inventory its PReLU-alpha remap, Reshape/BatchMatMul flatten-order
+permutation, shared-constant behavior, graph-output guards, conditional
+production position, statistic, fixtures, and short zero-SWAP ownership before
+changing source. Keep inference strictly sequential and minimal, then commit
+and push one coherent unit without creating a pull request.
+
+## Terminal PReLU/Reshape/BatchMatMul ownership extraction: completed state
+
+The complete 263-line
+`_optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains`
+implementation is now owned by `passes/terminal_prelu_bmm_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at the unchanged
+single conditional late production position. After normalizing only the
+function name, the prior lowerer function and new owner ASTs are identical.
+
+The owner preserves the exclusive Transpose→PReLU→Reshape→BatchMatMul chain,
+all public intermediate guards, positive NHWC/NCHW view relation, scalar,
+rank-three CHW, rank-four NCHW, and already-NHWC alpha forms, shared alpha and
+RHS copy-on-write, RHS flatten-order permutation, adjX/adjY rejection, metadata
+and quantization cloning, fixed-point restart, pruning, and statistic. The
+legacy unused producer-map build remains in place with a local compatibility
+annotation so scan cost and order are not changed by the move.
+
+The dedicated corpus plus the existing positive fixture cover every supported
+alpha form, exclusive and shared alpha/RHS constants, independent quantization
+clones, idempotence, public Transpose/PReLU/Reshape intermediates, wrong
+permutation, dynamic channel, RHS width, adjX, adjY, input fan-out,
+one-dimensional alpha rejection, and module-owner/private-wrapper equality.
+The focused selector passes `18 passed, 231 deselected in 2.06s`; the existing
+positive fixture passes independently; focused plus complete architecture
+passes `249 passed in 33.09s`; the branch-wide selection passes `711 passed in
+34.52s`; and the optional-TensorFlow import-blocked suite passes `11 passed in
+9.54s`.
+
+Tier 1 `inference_ops15.onnx` was characterized strictly sequentially. Its
+conditional helper call remained zero before and after extraction. The pre
+conversion completed in 1.823 seconds and post conversion in 1.860 seconds;
+both recorded process-tree SWAP zero. Its core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3ce4af63727dd927666f09bb51555ccfd60e1cf01b4ba7fc674170e8277b9a96`;
+- float16 TFLite:
+  `ee97304641e2b1330bbbe1f1472fc32a4a4d41d4bdb08a3e660da64b5204ce47`;
+- tensor correspondence:
+  `a50f21319df0380165e8fee2c47f679ccb1682eee965fbd3b0f05ad02cc3d276`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding `inference_ops15` sequential accuracy baseline is
+`max_abs=1.9073486328125e-06`. No duplicate inference run was added because
+the executed TFLite artifact is identical. A read-only scan of all root ONNX
+files up to 50 MiB found no exact raw Transpose→PRelu→Reshape→MatMul/Gemm
+source chain. No non-zero production owner is claimed; the positive contract
+is synthetic.
+
+The existing alpha/RHS ownership weakness remains recorded. The helper checks
+data and consumer sharing but does not fully reject a producer, variable state,
+or graph-visible constant before mutation or cloning. Adding those contracts
+requires focused compatibility evidence and an immutable planning checkpoint;
+they are not mixed into the mechanical ownership move.
+
+Changed files are the new terminal PReLU/BMM pass module, lowerer import and
+wrapper, focused corpus, architecture ownership test, and three branch
+documents. No dependency, public API, CLI, artifact name, TensorFlow boundary,
+corpus profile, exclusion policy, or ONNX tier policy changes. Temporary
+tracing and conversion outputs are removed before commit. PR #952 remains
+closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 415-line
+`_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains`. At restart, inventory
+its dual pre-Add residual prefix, Mul/Add affine constants, PReLU alpha, post
+adapters and legacy consumers, production positions, statistic, fixtures, and
+short zero-SWAP ownership before changing source. Keep inference strictly
+sequential and minimal, then commit and push one coherent unit without creating
+a pull request.
+
+## Residual Add/Mul/Add/PReLU ownership extraction: completed state
+
+The complete 415-line `_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains`
+implementation is now owned by `passes/residual_affine_prelu_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at all three unchanged
+source positions. After normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The owner preserves the dual NHWC-to-NCHW pre-Add planning, shared pre-adapter
+handling, Mul/Add/PReLU constant prevalidation, scalar and rank-four broadcast
+forms, rotation and copy-on-write, PReLU post aliases, legacy NCHW consumer
+adapter retention, tensor metadata and quantization propagation, exact mutation
+and removal order, fixed-point restart, pruning, and statistic. The separate
+indexed SiNet late-residual owner remains unchanged and in its existing phase
+order.
+
+The existing positive fixture now creates deep-copy models, invokes the module
+owner and lowerer private wrapper independently, and compares statistics,
+every operator, tensor names, dtype, shape/signature, and NumPy payload. It
+passes with the new architecture selector as `2 passed, 231 deselected in
+2.05s`. The complete indexed SiNet shuffle/residual suite passes `207 passed in
+0.83s`. Direct owner plus complete architecture passes `233 passed in 32.61s`;
+the branch-wide selection passes `713 passed in 33.97s`; and the optional-
+TensorFlow import-blocked suite passes `11 passed in 9.44s`.
+
+SiNet establishes positive real ownership. Its fourteen runtime invocation
+counts are `0,0,0,1,1,0,0,0,0,0,0,0,0,0` before and after extraction. The
+pre conversion completed in 2.048 seconds and post conversion in 1.959 seconds;
+both recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding SiNet sequential accuracy baseline remains
+`max_abs=2.572051016613841e-09`. No duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained
+sequential.
+
+The compatibility owner still validates constant data and consumers less
+strictly than newer indexed owners: producer, variable-state, and graph-
+visibility ownership is not a complete immutable contract. Hardening requires
+independent negative fixtures, full prevalidation, and atomic revalidation; it
+is not mixed into this exact ownership move.
+
+Changed files are the new residual affine/PReLU pass module, lowerer import and
+wrapper, direct owner/wrapper equality coverage in the existing fixture,
+architecture ownership test, and three branch documents. No dependency, public
+API, CLI, artifact name, TensorFlow boundary, corpus profile, exclusion policy,
+or ONNX tier policy changes. Temporary tracing and conversion outputs are
+removed before commit. PR #952 remains closed; work is commit/push only and no
+pull request is created.
+
+The next raw source-order implementation is the 477-line
+`_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains`. At restart,
+inventory its shared residual Add prefix, each Mul/Add/post-Transpose branch,
+legacy NCHW consumers, constant copy-on-write, production positions, statistic,
+fixtures, and short zero-SWAP ownership before changing source. Keep inference
+strictly sequential and minimal, then commit and push one coherent unit without
+creating a pull request.
+
+## Residual affine/post-Transpose fan-out ownership extraction: completed state
+
+The complete 477-line
+`_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains`
+implementation is now owned by `passes/residual_affine_fanout_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at all three unchanged
+source positions. After normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The owner preserves the shared dual NHWC-to-NCHW pre-Add prefix, each
+Mul-constant→Add-constant→post-Transpose branch, optional legacy NCHW
+consumers, the exact profitability guard, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, one retained legacy
+adapter, tensor metadata and quantization propagation, exact mutation/removal
+order, fixed-point restart, pruning, and statistic. No dependency, graph-index
+path, guard, or semantic policy was introduced.
+
+The focused positive fixture has two affine/post-Transpose branches, one legacy
+NCHW consumer, and a Mul constant shared with an unrelated consumer. It invokes
+the module owner and lowerer wrapper on deep copies, compares every operator,
+tensor name, shape/signature, dtype, quantization, and NumPy payload, proves
+copy-on-write, and checks idempotence. A second fixture fixes the public
+post-output no-op guard. The direct owner plus complete architecture gate passes
+`235 passed in 31.39s`; the complete indexed SiNet residual suite passes
+`207 passed in 0.77s`; the branch-wide selection passes
+`716 passed in 33.19s`; and the optional-TensorFlow import-blocked suite passes
+`11 passed in 10.03s`.
+
+SiNet is the strictly sequential artifact control. Its fourteen runtime helper
+results are all zero before and after extraction. The pre conversion completed
+in 2.438 seconds and the post conversion in 2.587 seconds; both recorded
+process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding SiNet accuracy checkpoint remains
+`max_abs=2.572051016613841e-09`. No duplicate inference was added because the
+executed TFLite artifact is identical. FastestDet supplied eight additional
+pre-move zero-owner invocations in 2.120 seconds with zero SWAP, but is not used
+as the post-move artifact control. No non-zero production owner is claimed;
+the positive contract is synthetic.
+
+One compatibility weakness remains recorded rather than changed. Side
+constants are validated for data, rank, broadcast compatibility, and consumer
+sharing, but not completely for producer ownership, variable state, or graph
+visibility. Adding immutable ownership and transactional revalidation requires
+separate negative fixtures and a semantic checkpoint; it is not mixed into
+this exact mechanical move.
+
+Changed files are the new residual affine fan-out pass module, lowerer import
+and wrapper, focused corpus, architecture ownership test, and three branch
+documents. No public API, CLI, artifact name, TensorFlow boundary, dependency,
+corpus profile, exclusion policy, or ONNX operation-tier policy changed.
+Temporary tracing and conversion outputs are removed before commit. PR #952
+remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 401-line
+`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`. At
+restart, inventory its pre-Transpose and unary-family guards, every
+Mul/Add/post-Transpose branch, constant sharing and mutation, graph-output
+boundaries, all three production positions, statistic, existing fixtures, and
+short zero-SWAP ownership before changing source. Keep inference strictly
+sequential and minimal, then commit and push one coherent unit without creating
+a pull request.
+
+## Pre-unary affine/post-Transpose fan-out ownership extraction: completed state
+
+The complete 401-line
+`_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`
+implementation is now owned by `passes/pre_unary_affine_fanout_layout.py`. The
+lowerer retains a one-call private compatibility wrapper at all three unchanged
+source positions. After normalizing only the function name, the prior lowerer
+function and new owner ASTs are identical.
+
+The owner preserves the exclusive NHWC-to-NCHW pre-Transpose, the exact
+RELU/RELU6/LOGISTIC/TANH/HARD_SWISH/LEAKY_RELU/GELU allowlist, every
+Mul-constant→Add-constant→post-Transpose branch, broadcast-aware constant
+prevalidation and rotation, shared-constant copy-on-write, tensor metadata and
+quantization propagation, exact mutation/removal order, fixed-point restart,
+pruning, and statistic. No dependency, graph-index path, layout-state behavior,
+guard, or semantic policy was introduced.
+
+Ten focused cases fix all seven accepted unary forms, a two-branch positive
+graph, an externally shared Mul constant, module-owner/private-wrapper full
+ModelIR equality, idempotence, unsupported unary rejection, and a public
+post-output no-op boundary. The adjacent focused architecture selector passes
+`12 passed, 232 deselected in 2.06s`; the complete indexed SiNet residual suite
+passes `207 passed in 0.79s`; the branch-wide selection passes
+`727 passed in 33.48s`; and the optional-TensorFlow import-blocked suite passes
+`11 passed in 9.65s`.
+
+SiNet is the minimal strictly sequential artifact control. Its five runtime
+helper results are all zero before and after extraction. The pre conversion
+completed in 2.430 seconds and the post conversion in 2.503 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The immediately preceding SiNet accuracy checkpoint remains
+`max_abs=2.572051016613841e-09`; no duplicate inference was added because the
+executed TFLite artifact is identical. This zero-owner result agrees with the
+earlier fourteen-model, five-boundary conversion characterization and the
+read-only 381-model active Tier 0-4 ONNX topology scan. No non-zero production
+owner is claimed; positive behavior is fixed synthetically.
+
+The recorded compatibility risk is unchanged. The helper rebuilds whole-graph
+producer/consumer maps in an unbounded loop, does not share GraphIndex or
+LayoutState, and does not completely validate constant producer ownership,
+variable state, or graph visibility. Replacing it with an immutable indexed
+plan requires independent semantic fixtures and is not mixed into this exact
+mechanical ownership move.
+
+Changed files are the new pre-unary affine fan-out pass module, lowerer import
+and wrapper, focused corpus, architecture ownership test, and three branch
+documents. No public API, CLI, artifact name, TensorFlow boundary, dependency,
+corpus profile, exclusion policy, or ONNX operation-tier policy changed.
+Temporary tracing and conversion outputs are removed before commit. PR #952
+remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 509-line indexed-first
+compatibility composite
+`_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains`.
+At restart, inventory its indexed owner and raw fallback boundary, per-call
+GraphIndex construction and LayoutState forwarding, Mul and reshape constants,
+legacy consumers, combined statistic, production positions, existing positive
+IAT-LLIE ownership, and fallback fixtures before changing source. Keep
+inference strictly sequential and minimal, then commit and push one coherent
+unit without creating a pull request.
+
+## Pre-Add/Mul/Reshape-suffix compatibility composite extraction: completed state
+
+The complete 509-line indexed-first
+`_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains`
+composite is now owned by
+`passes/pre_add_mulconst_reshape_suffix_compat_layout.py`. The lowerer retains
+one private compatibility wrapper at the unchanged production position and
+forwards the Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the existing indexed semantic owner as its
+first dispatch, one per-call `ModelIRGraphIndex`, caller LayoutState forwarding,
+combined statistic accumulation, direct/direct and direct/Mul-constant raw
+fallback, Mul and reshape constant mutation/copy-on-write, legacy NCHW adapter,
+fixed-point restart, exact mutation/removal order, and the sole historical
+prune/report boundary. The indexed immutable plan and its module are unchanged.
+
+The complete thirteen-case family suite covers direct and Mul-constant indexed
+paths, typed and shared constants, immutable-plan guards, graph/layout state,
+bounded dispatch, the compatibility module owner versus lowerer wrapper on deep
+copies, the single prune event, and a forced-zero indexed dispatch that proves
+the raw fallback still rewrites the accepted family. It passes
+`13 passed in 0.52s`; the branch-wide selection including the full family
+passes `740 passed in 31.18s`; and the optional-TensorFlow import-blocked suite
+passes `11 passed in 9.43s`.
+
+Tier 2 IAT-LLIE is the strictly sequential positive artifact control. Its three
+combined and indexed results remain `5,4,4`, while raw fallback results remain
+`0,0,0`, before and after extraction. The pre conversion completed in 2.162
+seconds and the post conversion in 2.074 seconds; both recorded process-tree
+SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `75e355ba8fc01f32b9e4cf2d3c630a4c5c18e6091615a07f30851be6c6eb2881`;
+- float16 TFLite:
+  `4e6f95610870597b74995f441c5cc755cdd2a555a5322504a919aef85f102c43`;
+- tensor correspondence:
+  `a52ffab6c473547076538d993dbadd39305304521232b85dda74fae492f77322`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding IAT-LLIE sequential accuracy checkpoint remains
+`max_abs=4.470348358154297e-07`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps within a fixed-point loop and has looser producer,
+variable-state, and graph-visibility ownership for mutable constants than the
+indexed plan. Replacing it with an immutable transaction requires independent
+semantic fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new pre-Add/Mul/Reshape-suffix compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility family corpus,
+updated architecture ownership test, and three branch documents. No public
+API, CLI, artifact name, TensorFlow boundary, dependency, corpus profile,
+exclusion policy, or ONNX operation-tier policy changed. Temporary tracing and
+conversion outputs are removed before commit. PR #952 remains closed; work is
+commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 302-line indexed-first
+compatibility composite
+`_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains`. At
+restart, inventory its indexed Swish owner, plain-unary and relaxed raw
+fallback, GraphIndex construction and LayoutState forwarding, reshape constant
+ownership, combined statistic, single prune/report boundary, production
+position, existing positive LINEA ownership, and fallback fixtures before
+changing source. Keep inference strictly sequential and minimal, then commit
+and push one coherent unit without creating a pull request.
+
+## Pre-unary/Reshape-suffix compatibility composite extraction: completed state
+
+The complete 302-line indexed-first
+`_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains` composite
+is now owned by `passes/pre_unary_reshape_suffix_compat_layout.py`. The lowerer
+retains one private compatibility wrapper at the unchanged production position
+and forwards Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the existing indexed Swish semantic owner,
+one per-call `ModelIRGraphIndex`, caller LayoutState, combined statistic,
+thirteen-operation plain-unary and relaxed Swish raw fallback, reshape constant
+and option updates, tensor metadata propagation, fixed-point restart, exact
+mutation/removal order, sole prune/report boundary, and removal of pruned names
+from LayoutState. The indexed immutable plan and module are unchanged.
+
+The indexed family plus the existing direct fixture now cover indexed Swish,
+shared-shape atomic rejection, bounded dispatch, stale-plan rejection,
+determinism, complete compatibility-owner/lowerer-wrapper equality, LayoutState
+cleanup, and a plain LEAKY_RELU raw fallback. The focused owner/fallback/
+architecture selection passes `9 passed, 233 deselected in 2.19s`; the
+branch-wide selection passes `748 passed in 29.98s`; and the optional-
+TensorFlow import-blocked suite passes `11 passed in 9.25s`.
+
+Tier 2 LINEA is the strictly sequential positive artifact control. Its three
+combined and indexed results remain `1,0,0`, while raw fallback results remain
+`0,0,0`, before and after extraction. The pre conversion completed in 7.958
+seconds and the post conversion in 7.751 seconds; both recorded process-tree
+SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding LINEA sequential accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps in a fixed-point loop, mutates relaxed reshape
+constants/options in place, and does not use the indexed owner's immutable
+differential transaction. Hardening requires separate semantic fixtures and is
+not mixed into this exact mechanical move.
+
+Changed files are the new pre-unary/Reshape-suffix compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary tracing and conversion
+outputs are removed before commit. PR #952 remains closed; work is commit/push
+only and no pull request is created.
+
+The next raw source-order implementation is the 297-line indexed-first
+compatibility composite
+`_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains`. At
+restart, inventory its indexed static Swish owner, plain-unary/dynamic/relaxed
+raw fallback, GraphIndex construction and LayoutState forwarding, Squeeze axes
+constants/options, combined statistic, single prune/report boundary, production
+position, existing positive `inference_ops15` ownership, and fallback fixtures
+before changing source. Keep inference strictly sequential and minimal, then
+commit and push one coherent unit without creating a pull request.
+
+## Pre-unary/Squeeze-suffix compatibility composite extraction: completed state
+
+The complete 297-line indexed-first
+`_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains` composite
+is now owned by `passes/pre_unary_squeeze_suffix_compat_layout.py`. The lowerer
+retains one private compatibility wrapper at the unchanged production position
+and forwards Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the existing indexed static Swish semantic
+owner, one per-call `ModelIRGraphIndex`, caller LayoutState, combined statistic,
+plain-unary, axis-3, dynamic-signature, and relaxed Swish raw fallback behavior,
+Squeeze axis option remapping, tensor metadata propagation, fixed-point restart,
+exact mutation/removal order, sole prune/report boundary, and removal of pruned
+names from LayoutState. The indexed immutable plan and module are unchanged.
+
+The indexed family plus the existing direct fixtures now cover indexed Swish,
+plain unary, axis-3 Swish, dynamic-signature fallback, complete compatibility-
+owner/lowerer-wrapper equality, LayoutState cleanup, bounded dispatch, stale-
+plan rejection, and determinism. The focused owner/fallback/architecture
+selection passes `9 passed, 233 deselected in 1.93s`; the branch-wide selection
+passes `756 passed in 30.79s`; and the optional-TensorFlow import-blocked suite
+passes `11 passed in 9.34s`.
+
+Tier 1 `inference_ops15.onnx` is the strictly sequential positive artifact
+control. Its three combined and indexed results remain `1,0,0`, while raw
+fallback results remain `0,0,0`, before and after extraction. The pre conversion
+completed in 2.280 seconds and the post conversion in 2.266 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3ce4af63727dd927666f09bb51555ccfd60e1cf01b4ba7fc674170e8277b9a96`;
+- float16 TFLite:
+  `ee97304641e2b1330bbbe1f1472fc32a4a4d41d4bdb08a3e660da64b5204ce47`;
+- tensor correspondence:
+  `a50f21319df0380165e8fee2c47f679ccb1682eee965fbd3b0f05ad02cc3d276`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential accuracy checkpoint remains
+`max_abs=1.9073486328125e-06`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps in a fixed-point loop and performs relaxed in-place
+Squeeze axis updates instead of using the indexed owner's immutable
+differential transaction. Hardening requires separate semantic fixtures and is
+not mixed into this exact mechanical move.
+
+Changed files are the new pre-unary/Squeeze-suffix compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary tracing and conversion
+outputs are removed before commit. PR #952 remains closed; work is commit/push
+only and no pull request is created.
+
+The next raw source-order implementation is the 271-line indexed-first
+compatibility composite
+`_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains`. At restart,
+inventory its indexed factorized rank-five owner, singleton and relaxed raw
+fallback, GraphIndex construction and LayoutState forwarding, reshape and
+permutation constant ownership, combined statistic, single prune/report
+boundary, production position, existing positive YOLO ownership, and fallback
+fixtures before changing source. Keep inference strictly sequential and
+minimal, then commit and push one coherent unit without creating a pull request.
+
+## Factorized/singleton ExpandDims compatibility composite extraction: completed state
+
+The complete 271-line indexed-first
+`_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains` composite is
+now owned by `passes/expanddims_reshape_compat_layout.py`. The lowerer retains
+one private compatibility wrapper at both unchanged production call positions
+and forwards Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the strict indexed factorized rank-four to
+rank-five Case B semantic owner, one per-call `ModelIRGraphIndex`, caller
+LayoutState, combined statistic, singleton Case A and relaxed raw fallback,
+Reshape shape and post-permutation constant/option updates, fixed-point restart,
+exact mutation/removal order, sole prune/report boundary, and removal of pruned
+names from LayoutState. The indexed immutable plan and module are unchanged.
+
+The focused indexed/compatibility suite plus both historical direct singleton
+fixtures and the architecture ownership selector passes `10 passed in 1.91s`.
+It covers indexed Case B, singleton Case A fallback, shared-constant atomic
+rejection, bounded dispatch, stale-plan rejection, determinism, complete
+compatibility-owner/lowerer-wrapper equality, and LayoutState cleanup. The
+changed-file branch regression collection including both historical direct
+fixtures passes `494 passed in 29.63s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.36s`.
+
+`yolo_test.onnx` is the strictly sequential positive artifact control. The
+previously established indexed invocation counts remain `3,0,0,0`, with zero
+raw-fallback rewrites for those accepted candidates. The pre conversion
+completed in 3.347 seconds and the post conversion in 3.378 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `439d9a8b893bf6bfbd92aa0155bd15a4185b5fcdb6e65ddb48f718a41b75bdfc`;
+- float16 TFLite:
+  `7b1ef8b13de65068b3fe8166d5481553e2e41194c0cfe9ee48f4be5ad3417eff`;
+- tensor correspondence:
+  `36d728e9294f1d4f1319c45306a088bced6b54ad393f71f4925f3178f0d9c1ca`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential accuracy checkpoint remains
+`max_abs=2.4437904357910156e-06`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds a
+complete consumer map in a fixed-point loop and uses relaxed in-place Reshape
+and post-permutation constant updates instead of the indexed owner's immutable
+differential transaction. The existing shared-constant guard remains intact;
+broader hardening requires separate semantic fixtures and is not mixed into
+this exact mechanical move.
+
+Changed files are the new factorized/singleton ExpandDims compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary conversion outputs
+are removed before commit. PR #952 remains closed; work is commit/push only and
+no pull request is created.
+
+The next raw source-order implementation is the 175-line indexed-first
+compatibility composite
+`_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains`. At restart,
+inventory its indexed static flatten-HW owner, dynamic and relaxed raw fallback,
+GraphIndex construction and LayoutState forwarding, Reshape constant ownership,
+combined statistic, single prune/report boundary, both production positions,
+existing positive LINEA ownership, and fallback fixtures before changing
+source. Keep inference strictly sequential and minimal, then commit and push
+one coherent unit without creating a pull request.
+
+## Static/dynamic flatten-HW compatibility composite extraction: completed state
+
+The complete 175-line indexed-first
+`_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains` composite is
+now owned by `passes/flatten_hw_reshape_compat_layout.py`. The lowerer retains
+one private compatibility wrapper at both unchanged production call positions
+and forwards Session `LayoutState`. After normalizing only the function name,
+the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the strict indexed static flatten-HW
+semantic owner, one per-call `ModelIRGraphIndex`, caller LayoutState, combined
+statistic, dynamic-signature and relaxed raw fallback, Reshape shape constant
+and option updates, fixed-point restart, exact mutation/removal order, sole
+prune/report boundary, and removal of pruned names from LayoutState. The indexed
+immutable plan and module are unchanged.
+
+The eight-case indexed/compatibility suite plus the architecture ownership
+selector passes `9 passed in 1.93s`. It covers the indexed static path,
+dynamic-signature fallback, shared/boundary/produced/variable shape-constant
+atomic rejection, bounded dispatch, stale-plan rejection, determinism,
+complete compatibility-owner/lowerer-wrapper equality, and LayoutState cleanup.
+The changed-file branch regression collection passes `500 passed in 29.01s`;
+the optional-TensorFlow import-blocked suite passes `11 passed in 9.22s`.
+
+Tier 2 `LINEA.onnx` is the strictly sequential positive artifact control. The
+previously established indexed invocation counts remain `2,0,0,0`, with zero
+raw-fallback rewrites for those accepted candidates. The pre conversion
+completed in 7.758 seconds and the post conversion in 7.975 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds a
+complete consumer map in a fixed-point loop and uses relaxed in-place Reshape
+constant updates instead of the indexed owner's immutable differential
+transaction. Existing graph-boundary, producer, variable-state, and exclusive-
+consumer guards remain intact; broader hardening requires separate semantic
+fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new static/dynamic flatten-HW compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary conversion outputs
+are removed before commit. PR #952 remains closed; work is commit/push only and
+no pull request is created.
+
+The next raw source-order implementation is the 218-line compatibility rewrite
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`. At
+restart, inventory both rank-adapter families, public-boundary and fan-out
+guards, shape and permutation constant behavior, fixed-point restart and prune/
+report boundaries, both production positions, existing fixtures, and short
+zero-SWAP real-model ownership before changing source. Keep inference strictly
+sequential and minimal, then commit and push one coherent unit without creating
+a pull request.
+
+## Static/relaxed attention-QKV compatibility composite extraction: completed state
+
+The intervening 218-line rank-3-to-NHWC reshape helper was re-audited before
+this unit and remains intentionally unchanged. Its previous all-active Tier 0-4
+scan found zero complete production owners and no public compatibility fixture;
+the recorded no-change decision therefore still applies. No synthetic-only
+replacement was introduced.
+
+The complete 245-line indexed-first
+`_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains`
+composite is now owned by `passes/attention_qkv_reshape_compat_layout.py`. The
+lowerer retains one private compatibility wrapper at both unchanged production
+call positions and forwards Session `LayoutState`. After normalizing only the
+function name, the prior lowerer composite and new owner ASTs are identical.
+
+The compatibility module preserves the strict indexed static HAD semantic
+owner, one per-call `ModelIRGraphIndex`, caller LayoutState, combined statistic,
+HDA `[1,2,0]`, shared-constant copy-on-write, dynamic-signature, and relaxed
+raw fallback, shape/permutation constant cloning and updates, fixed-point
+restart, exact mutation/removal order, sole prune/report boundary, and removal
+of pruned names from LayoutState. The indexed immutable plan and module are
+unchanged.
+
+The eight-case indexed/compatibility suite plus the architecture ownership
+selector passes `9 passed in 1.93s`. It covers the indexed static HAD path, HDA
+fallback, shared-constant copy-on-write, dynamic fallback, bounded dispatch,
+stale-plan rejection, determinism, complete compatibility-owner/lowerer-wrapper
+equality, and LayoutState cleanup. The changed-file branch regression
+collection passes `508 passed in 28.47s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.28s`.
+
+Tier 3 `rf-detr-nano.onnx` is the strictly sequential positive artifact
+control. The previously established indexed invocation counts remain
+`5,0,0,0`, with zero raw-fallback rewrites for those accepted candidates. The
+pre conversion completed in 10.928 seconds and the post conversion in 11.288
+seconds; both recorded process-tree SWAP zero. The core artifacts are byte-
+identical:
+
+- float32 TFLite:
+  `fda7d97eaad2b19ee2ac31411099067e78b747515952b7c65ba52a0f1454f1fb`;
+- float16 TFLite:
+  `a80051b2d6bb871ee871f0d1528e1ea7c8d4e7f6ecbfc16daec4fa78d696fd1f`;
+- tensor correspondence:
+  `262235cec5a8df73ff2afd7f1eb28678cc7312f4a19dd09d278fd8db77cbdec4`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential accuracy checkpoint remains
+`max_abs=0.000102996826171875`; no duplicate inference was added because the
+executed TFLite artifact is identical. All actual model runs remained strictly
+sequential.
+
+The raw fallback's known compatibility risk is unchanged. It rebuilds a
+complete consumer map in a fixed-point loop and performs relaxed clone-on-write
+shape/permutation mutations instead of the indexed owner's immutable
+differential transaction. Broader hardening requires separate semantic
+fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new static/relaxed attention-QKV compatibility module,
+lowerer import and wrapper, expanded indexed/compatibility tests, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary conversion outputs
+are removed before commit. PR #952 remains closed; work is commit/push only and
+no pull request is created.
+
+The adjacent 293-line attention Gather cleanup and 190-line attention pre-
+projection rank-lift helpers retain their previously measured no-change
+decisions: active-corpus scans and selected ModelIR conversions found zero
+complete production owners. At restart, preserve those decisions and inventory
+the next raw source-order implementation with an existing public fixture,
+`_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains`, before
+changing source. Confirm real ownership, mutation dependencies, production
+position, and a short zero-SWAP artifact control first. Then commit and push one
+coherent unit without creating a pull request.
+
+## Terminal Transpose/Mul/Add/PReLU compatibility extraction: completed state
+
+The complete 295-line
+`_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains` helper is
+now owned by `passes/terminal_affine_prelu_layout.py`. The lowerer retains one
+private one-call wrapper at the unchanged ordered production statement, which
+is reached through four runtime recovery invocations. After normalizing only
+the function name, the prior lowerer owner and new pass owner ASTs are
+identical. The moved inherited unused producer-map snapshot is explicitly
+marked `noqa` without changing the AST or runtime behavior.
+
+The owner preserves commutative affine inputs, NCHW-to-NHWC channel-constant
+rotation, shared-constant copy-on-write, multiple post-Transpose aliases,
+retained legacy NCHW consumers through one reverse adapter, tensor metadata and
+quantization propagation, exact mutation/removal order, fixed-point restart,
+sole prune/report boundary, and the historical statistic.
+
+The former direct-builder fixture is removed from the giant test module and
+now lives in `test_flatbuffer_direct_terminal_affine_prelu_layout.py`. It runs
+the module owner and lowerer wrapper on deep copies, compares the complete
+ModelIR, and fixes the positive terminal rewrite plus retained legacy adapter.
+Together with the architecture owner and ordered-production selectors it passes
+`3 passed, 754 deselected in 4.45s`. The changed-file branch regression
+collection passes `510 passed in 28.41s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.28s`.
+
+Tier 2 `sinet_320_op.onnx` is the strictly sequential zero-owner artifact
+control. Its four runtime counts remain `0,0,0,0` before and after extraction.
+Both conversions completed in 2.413 seconds and recorded process-tree SWAP
+zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`;
+- float16 TFLite:
+  `180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`;
+- tensor correspondence:
+  `24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential SiNet accuracy checkpoint remains
+`max_abs=2.572051016613841e-09`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the module contract is fixed by the relocated public fixture. All
+actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps in an unbounded fixed-point loop, and sequentially
+rotates three constants before the whole candidate is known to be valid. A
+later constant rejection can therefore leave an earlier exclusive constant
+mutated despite a zero statistic. Correcting that requires an immutable
+transaction and independent semantic fixtures and is not mixed into this exact
+mechanical move.
+
+Changed files are the new terminal affine/PReLU pass, lowerer import and
+wrapper, relocated focused fixture, giant-test import/removal, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary tracing and conversion
+outputs are removed before commit. PR #952 remains closed; work is commit/push
+only and no pull request is created.
+
+The next raw source-order implementation with an existing public fixture is the
+359-line `_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains`. At
+restart, inventory its axis remapping, constant ownership, partial-mutation
+risks, statistics, five production invocations, the existing direct fixture,
+and the earlier measured zero-owner decision before changing source. Use the
+smallest sequential zero-SWAP artifact control, then commit and push one
+coherent unit without creating a pull request.
+
+## Transpose/Mean/Mul/Add compatibility extraction: completed state
+
+The complete 359-line
+`_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains` helper is now owned
+by `passes/mean_affine_prepost_layout.py`. The lowerer retains one private one-
+call wrapper at all three unchanged ordered source call positions, reached
+through five runtime invocations. After normalizing only the function name, the
+prior lowerer owner and new pass owner ASTs are identical.
+
+The owner preserves NCHW-to-NHWC reduction-axis remapping, commutative affine
+inputs, static broadcast validation, channel-constant rotation and copy-on-
+write, post-Transpose alias collapse, tensor metadata and quantization
+propagation, exact mutation/removal order, fixed-point restart, sole prune/
+report boundary, and the historical statistic.
+
+The former direct-builder axis-remap fixture is removed from the giant test
+module and now lives in `test_flatbuffer_direct_mean_affine_prepost_layout.py`.
+It runs the module owner and lowerer wrapper on deep copies, compares the
+complete ModelIR, and fixes exact `[2,3]` NCHW reduction axes remapping to
+`[1,2]` NHWC axes. Together with the architecture owner/production selector it
+passes `2 passed in 1.90s`. The changed-file branch regression collection
+passes `512 passed in 27.96s`; the optional-TensorFlow import-blocked suite
+passes `11 passed in 9.29s`.
+
+Tier 2 `LINEA.onnx` is the strictly sequential zero-owner artifact control. Its
+five runtime counts remain `0,0,0,0,0` before and after extraction. The pre
+conversion completed in 7.869 seconds and the post conversion in 7.868 seconds;
+both recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential LINEA accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the module contract is fixed by the relocated public fixture. All
+actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risk is unchanged. It rebuilds the
+complete consumer map in an unbounded fixed-point loop, and can update the axes
+tensor and affine constants before the whole candidate is represented by an
+immutable plan. Correcting that requires an all-or-nothing transaction and
+independent semantic fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new Mean/Mul/Add pass, lowerer import and wrapper,
+relocated focused fixture, giant-test import/removal, updated architecture
+ownership test, and three branch documents. No public API, CLI, artifact name,
+TensorFlow boundary, dependency, corpus profile, exclusion policy, or ONNX
+operation-tier policy changed. Temporary tracing and conversion outputs are
+removed before commit. PR #952 remains closed; work is commit/push only and no
+pull request is created.
+
+The next raw source-order implementation with an existing public fixture is the
+317-line `_optimize_batchmatmul_affine_transpose_input_chains`. At restart,
+inventory both input-side transpose/affine families, constant ownership,
+statistics, production positions, the existing direct fixture, and the
+smallest sequential zero-SWAP real-model control before changing source. Then
+commit and push one coherent unit without creating a pull request.
+
+## Dual affine-input BatchMatMul compatibility extraction: completed state
+
+The complete 317-line `_optimize_batchmatmul_affine_transpose_input_chains`
+helper is now owned by `passes/batchmatmul_affine_input_layout.py`. The lowerer
+retains one private one-call wrapper at both unchanged ordered production
+positions. After normalizing only the function name, the prior lowerer owner
+and new pass owner ASTs are identical.
+
+The owner preserves commutative Mul/Add inputs, exact exclusive branch
+matching, NCHW-to-NHWC channel-constant rotation, rank-three Reshape shape
+reversal for both branches, left post-Transpose removal, `adjY=True`
+conversion, tensor metadata propagation, exact mutation/removal order, fixed-
+point restart, sole prune/report boundary, and the historical statistic.
+
+The former direct-builder dual-branch fixture is removed from the giant test
+module and now lives in
+`test_flatbuffer_direct_batchmatmul_affine_input_layout.py`. It runs the module
+owner and lowerer wrapper on deep copies, compares the complete ModelIR, and
+fixes both affine branches, shape vectors, removed Transposes, and the adjoint
+flag. Together with the architecture owner/production selector it passes
+`2 passed in 1.94s`. The changed-file branch regression collection passes
+`514 passed in 27.20s`; the optional-TensorFlow import-blocked suite passes
+`11 passed in 9.27s`.
+
+Tier 2 `LINEA.onnx` is the strictly sequential zero-owner artifact control. Its
+two runtime counts remain `0,0` before and after extraction. The pre conversion
+completed in 7.827 seconds and the post conversion in 7.917 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential LINEA accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the module contract is fixed by the relocated public fixture. All
+actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risk is unchanged. It mutates both affine
+branches sequentially before every Reshape shape constant is known valid. A
+late failure can therefore leave input rewires, tensor metadata, and rotated
+constants from an earlier branch despite a zero statistic. Correcting that
+requires an immutable all-or-nothing transaction and independent semantic
+fixtures and is not mixed into this exact mechanical move.
+
+Changed files are the new BatchMatMul affine-input pass, lowerer import and
+wrapper, relocated focused fixture, giant-test import/removal, updated
+architecture ownership test, and three branch documents. No public API, CLI,
+artifact name, TensorFlow boundary, dependency, corpus profile, exclusion
+policy, or ONNX operation-tier policy changed. Temporary tracing and conversion
+outputs are removed before commit. PR #952 remains closed; work is commit/push
+only and no pull request is created.
+
+The next raw source-order implementation with an existing public fixture is the
+363-line `_optimize_batchmatmul_reshape_se_nhwc_chains`. At restart, inventory
+its Mean/Conv/gate branch, affine constants, statistics, production positions,
+the existing direct fixture, and the smallest sequential zero-SWAP real-model
+control before changing source. Then commit and push one coherent unit without
+creating a pull request.
+
+## BatchMatMul-to-SE layout compatibility extraction: completed state
+
+The complete 363-line `_optimize_batchmatmul_reshape_se_nhwc_chains` helper is
+now owned by `passes/batchmatmul_se_layout.py`. The lowerer retains one private
+one-call wrapper at both unchanged ordered production positions. After
+normalizing only the function name, the prior lowerer owner and new pass owner
+ASTs are identical.
+
+The owner preserves the BatchMatMul/Reshape source, NCHW Mean and axis remap,
+NHWC Conv gate branch, reverse gate adapter, Logistic and residual Mul merge,
+constant updates, alias rewiring, tensor metadata and quantization propagation,
+exact mutation/removal order, fixed-point restart, sole prune/report boundary,
+and the historical statistic.
+
+The former direct-builder SE fixture is removed from the giant test module and
+now lives in `test_flatbuffer_direct_batchmatmul_se_layout.py`. It runs the
+module owner and lowerer wrapper on deep copies, compares the complete ModelIR,
+and fixes the Mean axes, Conv gate branch, affine merge, removed Transposes, and
+output aliases. Together with the architecture owner/production selector it
+passes `2 passed in 1.92s`. The changed-file branch regression collection
+passes `516 passed in 27.02s`; the optional-TensorFlow import-blocked suite
+passes `11 passed in 9.29s`.
+
+Tier 2 `LINEA.onnx` is the strictly sequential zero-owner artifact control. Its
+two runtime counts remain `0,0` before and after extraction. The pre conversion
+completed in 7.903 seconds and the post conversion in 7.939 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fd91ea915b600b3581e8e0e68925fefd5302cd1bfb373ebca8b9b9410138c611`;
+- float16 TFLite:
+  `c8e44a48221eeead187869d93dfef1f7775420335aae5c63873118738d39f9a8`;
+- tensor correspondence:
+  `ac4bc30fd7076f40adb4b357f9556aef656dde9d6e27e0e8f9d95588a0d799dd`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential LINEA accuracy checkpoint remains
+`max_abs=0.002297189086675644`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the module contract is fixed by the relocated public fixture. All
+actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risk is unchanged. It performs a long
+sequence of axes, constant, option, edge, metadata, output, and alias mutations
+without first representing the complete candidate as an immutable plan. A late
+failure can therefore leave partial state despite a zero statistic. Correcting
+that requires an all-or-nothing transaction and independent semantic fixtures
+and is not mixed into this exact mechanical move.
+
+Changed files are the new BatchMatMul SE pass, lowerer import and wrapper,
+relocated focused fixture, giant-test import/removal, updated architecture
+ownership test, and three branch documents. No public API, CLI, artifact name,
+TensorFlow boundary, dependency, corpus profile, exclusion policy, or ONNX
+operation-tier policy changed. Temporary tracing and conversion outputs are
+removed before commit. PR #952 remains closed; work is commit/push only and no
+pull request is created.
+
+The adjacent 145-line `_optimize_batchmatmul_transpose_input_to_adj_flags`
+helper has no dedicated public fixture. At restart, inspect its indirect tests,
+two production positions, transpose/adjoint guards, and short zero-SWAP real-
+model ownership before deciding whether evidence is sufficient for a mechanical
+move. Do not introduce a synthetic-only replacement merely to advance source
+order; commit and push only a coherent verified unit and do not create a pull
+request.
+
+## Rank-three BatchMatMul adjoint-input extraction: completed state
+
+The complete 145-line `_optimize_batchmatmul_transpose_input_to_adj_flags`
+helper is now owned by `passes/batchmatmul_adjoint_layout.py`. The lowerer
+retains one private one-call wrapper at both unchanged ordered production
+positions. After normalizing only the function name, the prior lowerer owner
+and new pass owner ASTs are identical; the sole Ruff suppression is a comment
+on the historical unused `removed_transpose` assignment and does not alter the
+AST.
+
+The owner preserves exclusive Transpose-output ownership, graph-output
+protection, fully known positive shape checks, exact permutation/shape
+validation, direct `[0,2,1]` Transpose removal, singleton-preserving
+Transpose-to-Reshape conversion, deterministic INT32 shape-tensor creation,
+the corresponding `adjX` or `adjY` toggle, exact mutation/removal order, fixed-
+point restart, conditional pruning, and the historical statistic.
+
+The new focused fixture runs the module owner and lowerer wrapper on deep
+copies and compares the complete ModelIR. It covers both BatchMatMul input
+positions, direct Transpose removal, singleton-preserving Reshape conversion,
+shape-tensor payload, both adjoint toggles, pruning, and idempotence. Together
+with the architecture owner/production selector it passes `2 passed in 1.88s`.
+The changed-file branch regression collection passes `518 passed in 27.32s`;
+the optional-TensorFlow import-blocked suite passes `11 passed in 9.24s`.
+Ruff, Python compilation, AST equivalence, and whitespace checks pass.
+
+Tier 0 `speech_command_classifier_trained.onnx` is the strictly sequential
+positive artifact control. Its two runtime counts remain `1,0` before and
+after extraction. The conversion-only pre run completed in 0.240 seconds and
+the post run in 0.239 seconds; both recorded process-tree SWAP zero. The core
+artifacts are byte-identical:
+
+- float32 TFLite:
+  `2cb2ff30c92901f802c32c483ae201ef45b1ea35520fb958cdbedc35e7b11cbf`;
+- float16 TFLite:
+  `eb11dd7d3120e06da1227d7f7f7c66482b5c0c56a4d5edf3ea18064f85778f44`;
+- tensor correspondence:
+  `b7abdafa2cd2f8bec4bc3e060c9006913f924eafb7ccc2f0eca9f4304c8a86da`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The single sequential pre-move accuracy checkpoint passed with
+`evaluation_pass=true`, no skipped output, and
+`max_abs=2.86102294921875e-06`. No duplicate post-move inference was added
+because the executed float32 TFLite artifact is identical. Existing isolated
+accuracy workers ran one at a time; all model conversions remained strictly
+sequential.
+
+The raw owner's known compatibility risk is unchanged. It rebuilds complete
+producer and consumer maps after each accepted adapter and directly deletes or
+mutates an operator without a transaction or shared GraphIndex/LayoutState.
+The accepted candidate has no late rejection after mutation begins, but an
+indexed transactional migration must separately prove candidate order,
+fixed-point restart, pruning, and exact artifact equivalence and is not mixed
+into this mechanical move.
+
+Changed files are the new BatchMatMul adjoint-input pass, lowerer import and
+wrapper, new focused fixture, updated architecture ownership test, and three
+branch documents. No public API, CLI, artifact name, TensorFlow boundary,
+dependency, corpus profile, exclusion policy, or ONNX operation-tier policy
+changed. Temporary tracing and conversion outputs are removed before commit.
+PR #952 remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 245-line
+`_sanitize_probable_nhwc_axis_sensitive_ops`. Its only direct fixture currently
+fixes the explicit-NCHW no-op. At restart, inventory its positive
+SPLIT/CONCATENATION/PACK/UNPACK axis repairs, terminal output-adapter branch,
+constant copy-on-write, both production positions, and the smallest sequential
+zero-SWAP real-model owner before changing source. Do not extract an
+insufficiently characterized positive owner merely to advance source order;
+commit and push only a coherent verified unit and do not create a pull request.
+
+## Probable-NHWC axis sanitizer characterization: completed state
+
+The 245-line `_sanitize_probable_nhwc_axis_sensitive_ops` implementation
+remains in `lower_from_onnx2tf.py`; this checkpoint deliberately does not move
+or change production code. Its former sole direct fixture, the explicit-NCHW
+Concat no-op, is removed from the giant direct-builder test module and placed
+in `test_flatbuffer_direct_probable_nhwc_sanitizer.py` with three new positive
+characterization cases.
+
+The four-case focused contract now fixes:
+
+- SPLIT axis 1 to axis 3 repair on a probable-NHWC input, shared-axis copy-on-
+  write, output metadata repair, unary propagation, and terminal NHWC-to-NCHW
+  graph-output adapter insertion;
+- CONCATENATION axis 1 to axis 3 repair and SLICE begin/size rotation with
+  exact output shapes;
+- metadata-only unary and binary broadcast propagation, including its zero
+  rewrite statistic;
+- preservation of an explicit NCHW Concat axis and public NCHW output.
+
+The focused suite passes `4 passed in 0.48s`. The changed-file branch
+regression collection passes `522 passed in 26.91s`; Ruff checks pass. No
+optional TensorFlow rerun is needed for this test-only checkpoint because no
+runtime or import boundary changed.
+
+Four strictly sequential real-model traces establish current production
+ownership evidence without a broad sweep. FastestDet has four zero results in
+0.795 seconds, SiNet has eight zero results in 1.121 seconds,
+inference_ops15 has four zero results in 0.785 seconds, and LINEA has four zero
+results in 5.650 seconds. Every conversion succeeded and every process-tree
+monitor recorded SWAP zero. Positive production ownership is therefore not
+claimed; the positive semantic branches are fixed by the dedicated synthetic
+contract.
+
+The previous restart note incorrectly named PACK/UNPACK branches. The actual
+owner handles SPLIT, CONCATENATION, SLICE, unary metadata, binary broadcast
+metadata, and conditional terminal output adapters; this checkpoint corrects
+the record.
+
+Changed files are the new focused sanitizer characterization module, removal
+of its relocated import/test from the giant direct-builder test, and two branch
+documents. No production source, public API, CLI, artifact, TensorFlow
+boundary, dependency, corpus profile, exclusion policy, or ONNX operation-tier
+policy changed. Temporary trace and conversion outputs are removed before
+commit. PR #952 remains closed; work is commit/push only and no pull request is
+created.
+
+At restart, compare the complete old helper AST with a proposed pass owner,
+preserve both ordered production positions, and extend the four cases to run
+the owner and compatibility wrapper on deep copies. Use one of the fixed short
+zero-owner models for sequential pre/post byte-equivalence and SWAP control.
+Do not claim positive production ownership, and do not mix a semantic or
+indexed rewrite into the exact mechanical ownership move.
+
+## Probable-NHWC axis sanitizer extraction: completed state
+
+The complete 245-line `_sanitize_probable_nhwc_axis_sensitive_ops` helper is
+now owned by `passes/probable_nhwc_axis_sanitizer.py`. The lowerer retains one
+private one-call wrapper at both unchanged ordered production positions. After
+normalizing only the function name, the prior lowerer owner and new pass owner
+ASTs are identical.
+
+The owner preserves the probable-NHWC shape heuristic, SPLIT axis repair and
+shared-axis copy-on-write, CONCATENATION axis repair, SLICE begin/size
+rotation, unary and binary output-metadata propagation, explicit/public NCHW
+guards, conditional terminal NHWC-to-NCHW graph-output adapters, fixed-point
+restart, exact mutation/insertion order, and both historical statistics.
+
+All four characterization cases now run the module owner and lowerer wrapper
+on deep copies and compare the complete ModelIR. Together with the architecture
+owner/production selector the focused gate passes `5 passed in 1.99s`. The
+changed-file branch regression collection passes `523 passed in 28.09s`; the
+optional-TensorFlow import-blocked suite passes `11 passed in 9.42s`. Ruff,
+Python compilation, full old/new AST equivalence, and whitespace checks pass.
+
+FastestDet is the strictly sequential zero-owner artifact control. Its four
+runtime results remain zero before and after extraction. The conversion-only
+pre run completed in 0.802 seconds and the post run in 0.783 seconds; both
+recorded process-tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential FastestDet accuracy checkpoint remains
+`max_abs=1.3113021850585938e-05`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; all positive semantic branches are fixed by the dedicated four-case
+contract. All actual model runs remained strictly sequential.
+
+The raw owner's known compatibility risks are unchanged. It rebuilds complete
+producer/consumer maps in its fixed-point loop, mutates SLICE constants without
+copy-on-write, treats metadata-only unary/binary changes outside the rewrite
+statistic, and inserts terminal operators directly without a transaction or
+shared GraphIndex/LayoutState. Semantic hardening and indexed migration require
+independent fixtures and are not mixed into this exact ownership move.
+
+Changed files are the new probable-NHWC sanitizer pass, lowerer import and
+wrapper, owner/wrapper-focused fixture, architecture ownership test, and three
+branch documents. No public API, CLI, artifact name, TensorFlow boundary,
+dependency, corpus profile, exclusion policy, or ONNX operation-tier policy
+changed. Temporary tracing and conversion outputs are removed before commit.
+PR #952 remains closed; work is commit/push only and no pull request is created.
+
+The next raw source-order implementation is the 207-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`. It has no
+dedicated direct fixture. At restart, inventory multi-input pre-Transpose
+ownership, the allowed elementwise closure, constant rotation, fan-out and
+public-boundary guards, post-Transpose alias handling, its single production
+position, and the smallest sequential zero-SWAP real-model owner before
+changing source. Do not introduce a synthetic-only extraction merely to
+advance source order; commit and push only a coherent verified unit and do not
+create a pull request.
+
+## NCHW/NHWC elementwise roundtrip root-metadata correction: completed state
+
+The 207-line `_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`
+implementation remains in `lower_from_onnx2tf.py`; this checkpoint deliberately
+does not extract it. A new focused module first characterized one positive
+multi-input elementwise closure plus pre-Transpose fan-out and public post-
+output rejection.
+
+The positive characterization exposed a pre-existing metadata defect before
+any correction was applied. The owner permuted every elementwise subgraph
+output from NHWC to NCHW, including the private root, then copied that already-
+permuted root metadata to the canonical post-Transpose output and permuted it a
+second time. For a `[1,8,8,3]` root this produced `[1,8,3,8]` rather than the
+required `[1,3,8,8]`. The issue was recorded as a strict xfail before the
+implementation changed.
+
+The safe correction excludes only `root_nhwc_name` from the intermediate-
+output metadata loop. Existing guards prove that this private root is consumed
+only by the matched post-Transpose and is not public. Intermediate tensors are
+still permuted once; the root metadata is copied to the canonical output and
+permuted exactly once. Rewiring, constants, alias replacement, removal order,
+fixed-point behavior, pruning, and the historical statistic are unchanged.
+
+The focused positive, fan-out rejection, public-output rejection, pruning, and
+idempotence suite passes `3 passed in 0.53s`. The changed-file branch regression
+collection passes `526 passed in 26.93s`; the optional-TensorFlow import-blocked
+suite passes `11 passed in 9.34s`. Ruff and whitespace checks pass. There are no
+remaining xfails in this focused module.
+
+Tier 1 `gaze_estimation_adas_0002.onnx` is the strictly sequential zero-owner
+artifact control. A read-only ONNX topology scan found seven structurally
+similar Transpose/elementwise/inverse-Transpose regions, but earlier lowering
+passes eliminate or alter them before this helper. Its four runtime results
+remain zero before and after the correction. The pre conversion completed in
+0.398 seconds and the post conversion in 0.395 seconds; both recorded process-
+tree SWAP zero. The core artifacts are byte-identical:
+
+- float32 TFLite:
+  `fe026fa4d996ab526e2c65506c83c0f3b709f381fc9247a5453c8731abdf70c5`;
+- float16 TFLite:
+  `392c1312bde822bd4f824d9fdca19612cf07018ac8cdbac3303407530d4a2b55`;
+- tensor correspondence:
+  `002b47c50efda861d76b941f97992a7dae1a6d8758d627f182340bf954dca272`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The active Tier 0-4 accuracy baseline remains
+`max_abs=1.2665987014770508e-07`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed. All model runs remained strictly sequential.
+
+Changed files are the one-line guarded lowerer correction, the new focused
+elementwise-roundtrip characterization module, and three branch documents. No
+public API, CLI, artifact name, TensorFlow boundary, dependency, corpus
+profile, exclusion policy, or ONNX operation-tier policy changed. Temporary
+tracing and conversion outputs are removed before commit. PR #952 remains
+closed; work is commit/push only and no pull request is created.
+
+Do not mechanically extract this corrected helper until positive production
+ownership is observed or a later checkpoint explicitly accepts the fixed
+zero-owner evidence. At restart, inventory the adjacent 555-line
+`_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains` helper's
+existing fixtures, fan-out/constant contracts, production positions, and short
+zero-SWAP real ownership before choosing the next evidence-backed unit.
+
+## Opposite-direction elementwise fan-out extraction: completed state
+
+The complete 555-line
+`_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains` helper is
+now owned by `passes/elementwise_fanout_layout.py`. The lowerer retains one
+private one-call wrapper at all three unchanged ordered production positions.
+After normalizing only the function name, the prior lowerer owner and new pass
+owner ASTs are identical.
+
+The owner preserves forward elementwise-DAG discovery, the conservative
+external-runtime-input rejection, local/shared NCHW per-channel constant
+rotation, inverse boundary-Transpose collapse, canonical aliases, legacy NCHW
+adapter retention, metadata and quantization propagation, candidate deep-copy
+snapshots, unbound-input rollback, exact mutation/removal order, fixed-point
+restart, pruning, and the historical statistic. The public unbound-input
+validator is imported through a same-name compatibility alias, so the pass has
+no reverse dependency on `lower_from_onnx2tf.py`.
+
+The former giant direct-builder fan-out fixture now lives in
+`test_flatbuffer_direct_elementwise_fanout_layout.py`. It runs the module owner
+and lowerer wrapper on deep copies, compares the complete ModelIR, and fixes
+the ERF/SIGN fan-out, three per-channel constants, two inverse boundaries,
+canonical aliases, and removed Transposes. Together with the architecture
+owner/production selector it passes `2 passed in 1.96s`. The changed-file
+branch regression collection passes `528 passed in 26.01s`; the optional-
+TensorFlow import-blocked suite passes `11 passed in 9.46s`. Ruff, Python
+compilation, full old/new AST equivalence, and whitespace checks pass.
+
+Tier 0 `shadowformer_istd_160x240_split.onnx` is the strictly sequential zero-
+owner artifact control. Its six runtime results remain zero before and after
+extraction. The pre conversion completed in 0.259 seconds and the post
+conversion in 0.261 seconds; both recorded process-tree SWAP zero. The core
+artifacts are byte-identical:
+
+- float32 TFLite:
+  `b9e9f67c5cd06f9c0bc74f3227257662f5aa4c310d2be4f51d2bb2f7f62e4e94`;
+- float16 TFLite:
+  `108d88c2ee1cb1af4a6426f545a40aa511f2a9b79405f79498384a6433ba5992`;
+- tensor correspondence:
+  `0fc970b0eeb31cbc0a62055e1313db32931e91c9792cf19eb795e362915e8114`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The active Tier 0-4 accuracy baseline remains
+`max_abs=4.0531158447265625e-06`; no duplicate inference was added because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the positive contract is the relocated focused fixture. A second
+sequential structural candidate, `convnext-det.onnx`, also converted with six
+zero results in 1.006 seconds and process-tree SWAP zero.
+
+The raw owner's known compatibility and efficiency risks are unchanged. It
+rebuilds complete producer/consumer maps and deep-copies the whole ModelIR for
+each candidate, directly mutates operators/tensors, and retains an external-
+runtime-input adapter implementation behind an earlier conservative rejection
+guard. Replacing these behaviors requires an independently proven indexed
+transaction and is not mixed into this exact ownership move.
+
+Changed files are the new elementwise fan-out pass, lowerer import and wrapper,
+relocated owner/wrapper-focused fixture, giant-test import/removal, architecture
+ownership test, and three branch documents. No public API, CLI, artifact name,
+TensorFlow boundary, dependency, corpus profile, exclusion policy, or ONNX
+operation-tier policy changed. Temporary tracing and conversion outputs are
+removed before commit. PR #952 remains closed; work is commit/push only and no
+pull request is created.
+
+The next raw source-order implementation is the 199-line
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout`. At restart,
+inventory its GraphIndex contract, constant ownership/copy-on-write, statistic
+aggregation, dedicated binary-layout and indexed-convergence fixtures, all
+production positions, and the smallest sequential zero-SWAP real-model owner
+before changing source. Keep the corrected 207-line opposite elementwise
+helper central until positive production ownership is observed or a later
+checkpoint explicitly accepts zero-owner evidence.
+
+## Channelwise broadcast-constant repair extraction: completed state
+
+The complete former 199-line
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout`
+implementation is now owned by `passes/binary_layout_adapter.py`. The lowerer
+retains one signature-compatible private wrapper. Its three direct
+`lower_onnx_to_ir` positions and the one position inside three-round indexed
+binary-layout convergence are unchanged. After normalizing only the function
+name, the prior lowerer implementation and new module owner have identical
+ASTs.
+
+The owner preserves the existing `ModelIRGraphIndex` contract. It reuses a
+valid caller index, otherwise creates one index, snapshots consumers once,
+iterates only indexed ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW operators, and uses
+the indexed producer lookup for ambiguous runtime-layout hints. Standard
+NCHW-to-NHWC constant rotation, exact inverse recovery for stale NHWC rank-four
+constants, rank-three `[C,1,1]` handling, dtype/shape/signature updates, and
+the historical statistic are unchanged. Exclusive constants mutate in place;
+shared constants retain deterministic copy-on-write, quantization cloning, and
+differential consumer updates through `_set_operator_inputs` with the shared
+index.
+
+The positive owner fixture now runs both the module owner and lowerer wrapper
+on deep copies and compares complete `ModelIRPassState` fingerprints. The
+existing no-op, shared-constant/clone-policy, no-rescan, differential-index,
+three-round convergence, and four historical rank-three/rank-four direct cases
+remain active. Architecture tests fix one implementation owner, one wrapper
+dispatch with GraphIndex forwarding, exactly three direct lowerer calls, and
+one convergence call.
+
+Validation completed as follows:
+
+- binary-layout plus indexed-convergence focused modules: `6 passed`;
+- ownership, GraphIndex, and convergence architecture selector: `3 passed`;
+- historical direct-builder broadcast cases: `4 passed, 745 deselected`;
+- changed-file branch regression collection: `532 passed in 25.64s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- old/new owner AST equivalence and whitespace checks: passed.
+
+FastestDet is the strictly sequential zero-owner artifact control. All five
+runtime results remain zero before and after extraction. The pre conversion
+completed in 0.790 seconds and the post conversion in 0.815 seconds; both
+recorded process-tree SWAP zero. The five core artifacts are byte-identical:
+
+- float32 TFLite:
+  `3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b`;
+- float16 TFLite:
+  `a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617`;
+- tensor correspondence:
+  `2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074`;
+- `schema.fbs`:
+  `0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`;
+- `schema_generated.py`:
+  `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+
+The preceding sequential FastestDet accuracy checkpoint remains
+`max_abs=1.3113021850585938e-05`; duplicate inference was not run because the
+executed TFLite artifact is identical. Positive production ownership is not
+claimed; the focused synthetic cases remain the semantic authority. All model
+runs were strictly sequential, no dependency or TensorFlow boundary changed,
+and no broad Tier conversion sweep was performed.
+
+The current branch is `fb-refactor6`. Changed files in this checkpoint are the
+binary layout owner module, lowerer import/wrapper, focused binary-layout and
+architecture tests, and the architecture, branch-description, and handoff
+documents. No public API, CLI, artifact name, corpus profile, exclusion policy,
+or ONNX operation-tier policy changed. PR #952 remains closed; this Goal uses
+commit and push only and must not create a pull request.
+
+The known limitation is deliberate: this is an exact ownership move, not a
+new transactional or semantic rewrite. No measured root model exercised a
+non-zero production rewrite; positive behavior is therefore proven by the
+focused ModelIR contracts rather than claimed from the corpus. The corrected
+207-line opposite elementwise helper remains central under its earlier no-owner
+decision.
+
+At restart, first characterize the next raw source-order implementation, the
+535-line `_optimize_convpool_output_transpose_nhwc_passthrough_chains`. Inventory
+its match/guard/rewrite phases, passthrough closure, legacy adapter retention,
+fan-out and public-boundary guards, metadata/constant handling, all production
+positions, and the smallest sequential zero-SWAP owner before changing source.
+Do not mix characterization and extraction unless the evidence proves the
+boundary, and do not create a pull request.
+
+## Conv/Pool output passthrough characterization: completed state
+
+The 535-line
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains` remains unchanged
+in `lower_from_onnx2tf.py` at its single production position. This checkpoint
+does not extract or semantically generalize it. The former 99-line giant
+direct-builder success fixture and its private-helper import have moved to the
+new compact
+`tests/test_flatbuffer_direct_convpool_output_passthrough_layout.py` module.
+
+The focused contract fixes the leading Conv/Pool NHWC-to-NCHW adapter match,
+elementwise forward closure, root bypass, private NHWC metadata hints, retained
+NHWC-to-NCHW legacy boundary adapter, valid rank-four external-runtime
+NCHW-to-NHWC adapter, and keepdims Mean-axis absorption. Seven complete
+ModelIR no-op cases cover the wrong permutation, public leading output,
+non-Conv/Pool producer, absent elementwise region, non-elementwise root fanout,
+public elementwise output, and multi-output elementwise operator. The
+architecture selector records one raw owner/call and its current whole-graph
+producer/consumer scans, direct append/delete topology mutation, setter calls,
+and prune boundary.
+
+Characterization exposes one pre-existing unsafe rejection path. The helper
+rewires `pre_output` to `pre_input` before checking that every external runtime
+input is static rank four. A rank-three external input therefore returns
+`optimized_convpool_output_transpose_nhwc_passthrough_chains: 0` while leaving
+the root input changed. A strict xfail records the required atomic no-op; no
+production correction is mixed into this test-only checkpoint.
+
+Validation completed as follows:
+
+- focused characterization plus raw-owner selector:
+  `11 passed, 242 deselected, 1 xfailed in 0.64s`;
+- changed-file branch regression collection:
+  `543 passed, 1 xfailed in 26.27s`;
+- whitespace checks: passed.
+
+Four small real-model ownership traces ran strictly sequentially with no
+inference or broad corpus sweep. FastestDet, HumanSeg
+(`human_segmentation_pphumanseg_2021oct_org.onnx`), OSNet, and inference_ops15
+each produced one zero rewrite result, completed in 0.789, 0.513, 1.239, and
+0.764 seconds, and recorded process-tree SWAP zero. All conversions succeeded.
+Positive production ownership is not claimed; the focused synthetic success
+case is the current semantic authority.
+
+Changed files are the new focused characterization module, removal of the
+relocated giant fixture/import, one architecture selector, and the three
+branch documents. Production code, public API, CLI, artifacts, TensorFlow
+boundary, dependencies, corpus profiles, exclusion policy, and ONNX operation-
+tier policy are unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, make the smallest atomicity correction: validate every external
+runtime tensor and compute its NHWC shape before rewiring any operator or
+creating any adapter. Turn the strict xfail into an ordinary passing test, keep
+all positive fingerprints and statistics unchanged, and use one short zero-
+owner model for pre/post byte-equivalence and SWAP control. Do not extract the
+helper in the same commit, and do not create a pull request.
+
+## Conv/Pool external-runtime atomicity correction: completed state
+
+The recorded unsafe rejection path is corrected without extracting or
+otherwise generalizing the raw helper. Before the first metadata or graph
+mutation, `_optimize_convpool_output_transpose_nhwc_passthrough_chains` now
+validates every discovered external runtime tensor, requires a rank-four shape,
+computes its NCHW-to-NHWC projected shape, and stores those shapes in a local
+plan. Any invalid tensor rejects the candidate before channel-last hints,
+rewiring, adapter creation, output renaming, or topology mutation.
+
+The former strict xfail is now an ordinary passing test. It supplies two
+external runtime inputs in deterministic name order: the first is valid rank
+four and the second is invalid rank three. The complete ModelIR fingerprint and
+zero statistic remain unchanged, proving that partial plan construction cannot
+leak a mutation. The valid external-input success case consumes the precomputed
+shape and retains the same adapter names, tensor metadata, permutation, and
+operator order. Architecture assertions fix prevalidation before both the first
+channel-last hint and first `_set_operator_inputs` call.
+
+Validation completed as follows:
+
+- focused Conv/Pool contract plus architecture selector:
+  `12 passed, 242 deselected in 1.87s`;
+- changed-file branch regression collection: `544 passed in 25.66s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+FastestDet is the strictly sequential zero-owner artifact control. Its single
+runtime result remains zero. The pre/post conversion-only runs completed in
+0.783 and 0.791 seconds, both with process-tree SWAP zero. Float32, float16,
+tensor-correspondence, schema, and generated-schema artifacts remain byte-
+identical with the same five hashes recorded in the preceding channelwise
+broadcast checkpoint. Its established accuracy remains
+`max_abs=1.3113021850585938e-05`; duplicate inference was not run because the
+executed TFLite artifact is identical.
+
+Changed files are the central helper, focused atomicity fixture, architecture
+ordering assertion, and three branch documents. No public API, CLI, artifact
+name, pass position, statistic, TensorFlow boundary, dependency, corpus profile,
+exclusion policy, or ONNX operation-tier policy changed. PR #952 remains
+closed; work is commit/push only.
+
+At restart, compare the complete corrected helper AST with a focused pass owner
+and explicitly decide whether four measured zero-owner models plus the positive
+synthetic contract justify an exact mechanical extraction. If extracted,
+preserve the single production call and private compatibility wrapper and do
+not mix in GraphIndex, LayoutState, or transactional redesign. Otherwise leave
+the helper central and move to the next evidence-backed family. Do not create a
+pull request.
+
+## Conv/Pool output passthrough extraction: completed state
+
+The complete corrected 556-line
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains` implementation is
+now owned by `passes/convpool_output_passthrough_compat.py`. The lowerer retains
+one signature-compatible private wrapper at the unchanged single production
+position. After normalizing only the function name, the corrected pre-move
+lowerer owner and new module owner have identical ASTs.
+
+The module preserves the exact forward elementwise closure, external runtime
+dependency discovery and prevalidation, channel-last hint accumulation, root
+rewiring, valid external NCHW-to-NHWC adapters, metadata permutation, legacy
+NHWC-to-NCHW boundary adapters, keepdims Mean-axis absorption, follow-up
+Reshape/Transpose/Squeeze adjustments, direct append/delete order, fixed-point
+restart, prune boundary, and historical statistic. It deliberately retains
+whole-graph producer/consumer maps and raw topology mutation; GraphIndex,
+LayoutState, and transactional redesign are separate future semantic work.
+
+All focused success and rejection cases now run the module owner and lowerer
+wrapper on deep copies and compare complete ModelIR fingerprints. This includes
+the two-op elementwise closure, seven unsafe no-ops, valid rank-four external
+runtime adaptation, keepdims Mean absorption, and the corrected multi-external-
+input atomic rejection. The architecture gate fixes the module as the only
+implementation owner, one wrapper dispatch, one production call, no reverse
+lowerer import, and the prevalidation-before-mutation ordering.
+
+Validation completed as follows:
+
+- full old/new owner AST comparison after function-name normalization: exact;
+- focused owner/wrapper plus architecture selector:
+  `12 passed, 242 deselected in 1.90s`;
+- changed-file branch regression collection: `544 passed in 25.25s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.36s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+FastestDet remains the strictly sequential zero-owner artifact control. Its
+single runtime result remains zero. The pre/post conversion-only runs completed
+in 0.788 and 0.807 seconds, both with process-tree SWAP zero. Float32, float16,
+tensor-correspondence, schema, and generated-schema outputs are byte-identical
+and retain the five established FastestDet hashes. The preceding accuracy
+checkpoint remains `max_abs=1.3113021850585938e-05`; duplicate inference was
+not run because the executed TFLite artifact is identical. Positive production
+ownership is not claimed.
+
+Changed files are the new compatibility owner, lowerer import/wrapper, focused
+owner/wrapper corpus, architecture ownership selector, and three branch
+documents. No public API, CLI, artifact name, pass order, statistic,
+TensorFlow boundary, dependency, corpus profile, exclusion policy, or ONNX
+operation-tier policy changed. PR #952 remains closed; work is commit/push
+only.
+
+At restart, inventory the next raw 381-line
+`_optimize_fold_conv_mul_add_affine_chains` compatibility fallback. Its indexed
+owner and focused corpus already exist, while the raw fixed-point fallback and
+three production positions remain central. Separate indexed and raw ownership,
+statistics, and cleanup boundaries; prove raw candidate order, constant
+copy-on-write, activation guards, and the smallest non-zero sequential owner
+before changing source. Do not create a pull request.
+
+## Conv/Mul affine compatibility orchestration extraction: completed state
+
+The complete 381-line indexed-first
+`_optimize_fold_conv_mul_add_affine_chains` orchestration is now owned by
+`passes/conv_mul_affine_fold_compat.py`. The existing bounded indexed owner
+remains in `conv_mul_affine_fold.py`; the compatibility owner invokes it first
+with one `ModelIRGraphIndex` and caller `LayoutState`, then executes the exact
+historical raw fallback. The lowerer keeps one signature-compatible private
+wrapper at all three unchanged production positions.
+
+After normalizing only the function name, the pre-move lowerer owner and new
+compatibility owner have identical ASTs. Two `noqa` comments merely document
+legacy unused locals and do not alter that AST. Add-only, Mul/Add, fused-ReLU,
+missing-bias, scalar/dynamic coefficients, shared constants, missing-bias
+creation, signed-zero behavior, direct removal order, single prune, four
+statistics, and LayoutState removal of pruned tensor names are unchanged.
+
+The focused wrapper boundary now runs the compatibility owner and lowerer
+wrapper on deep copies, compares complete ModelIR fingerprints and statistics,
+and compares logical/physical LayoutState maps. Existing indexed planning,
+stale-plan atomicity, determinism, rewrite bounds, legacy signed-zero bits, and
+raw fallback cases remain active. The architecture gate fixes the two-module
+ownership, indexed-before-raw order, one compatibility prune, one lowerer
+dispatch, and three production calls with Session LayoutState.
+
+Validation completed as follows:
+
+- full old/new orchestration AST comparison after name normalization: exact;
+- focused indexed/compatibility owner plus architecture selector:
+  `12 passed, 242 deselected in 1.89s`;
+- changed-file branch regression collection: `544 passed in 24.55s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.29s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Tier 2 `iat_llie_180x320.onnx` is the strictly sequential positive artifact
+control. Its three ordered results remain `12,0,0`; all twelve first-pass
+rewrites are indexed Mul-only folds and no raw fallback rewrite remains. The
+pre/post conversion-only runs completed in 0.808 and 0.791 seconds, recorded
+process-tree SWAP zero, and produced byte-identical float32, float16, tensor-
+correspondence, schema, and generated-schema artifacts. The established
+accuracy remains `max_abs=4.470348358154297e-07`; duplicate inference was not
+run because the executed TFLite artifact is identical.
+
+Changed files are the new compatibility orchestration owner, lowerer import and
+wrapper, indexed/fallback owner-wrapper fixture, architecture ownership gate,
+and three branch documents. No public API, CLI, artifact name, pass order,
+statistic, TensorFlow boundary, dependency, corpus profile, exclusion policy,
+or ONNX operation-tier policy changed. PR #952 remains closed; work is commit/
+push only.
+
+At restart, characterize the next raw 487-line
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper. Fix its Mean axes,
+fused and decomposed HardSigmoid roots, affine constant shapes, fan-out/public
+guards, metadata permutations, retry/mutation order, all production positions,
+and the smallest sequential non-SWAP real owner before changing source. Do not
+create a pull request.
+
+## Mean/HardSigmoid/MulAdd characterization: completed state
+
+The raw 487-line
+`_optimize_transpose_mean_hardsigmoid_muladd_chains` helper remains unchanged in
+`lower_from_onnx2tf.py`. Its one syntactic call belongs to the ordered QLinear/
+Mean/Concat recovery sequence, which runs at two production boundaries. This
+checkpoint does not extract or otherwise generalize the helper.
+
+The new focused ModelIR graph fixes both NHWC-to-NCHW input adapters, the
+Dequantize/keepdims-Mean/Quantize/post-Transpose branch, the decomposed
+Mul/Add/Maximum/Minimum HardSigmoid branch, residual Mul/Add wiring, downstream
+Mean consumer, legacy residual consumer, three bridge removals, local
+NHWC-to-NCHW adapter insertion, metadata propagation, and idempotence. Eight
+complete no-op cases cover a wrong q0 permutation, public q0 bridge, q0 fanout,
+non-keepdims Mean, wrong post permutation, shared sigmoid output, wrong q1
+permutation, and per-axis quantization. The architecture selector records one
+raw owner/call plus the current full producer/consumer scans, constant reads and
+writes, direct insertion/deletion, and prune boundary.
+
+Characterization exposes two pre-existing unsafe paths as strict xfails:
+
+- invalid Mean axes are normalized only after the q0 Dequantize input and
+  output metadata have already changed, so a zero-statistic rejection is not
+  atomic;
+- a public residual `add0_out` is converted from NCHW metadata and semantics to
+  NHWC without retaining a public NCHW adapter or rejecting the candidate.
+
+Validation completed as follows:
+
+- focused characterization alone: `9 passed, 2 xfailed in 0.51s`;
+- focused characterization plus raw-owner selector:
+  `10 passed, 243 deselected, 2 xfailed in 1.95s`;
+- changed-file branch regression collection:
+  `565 passed, 2 xfailed in 25.51s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Three current short INT8 representatives were traced strictly sequentially.
+YuNet INT8, PPHumanSeg INT8, and SSD MobileNet INT8 each reached both ordered
+runtime boundaries, returned `0,0`, completed in 1.007, 1.715, and 2.107
+seconds, and recorded process-tree SWAP zero. All conversions succeeded. This
+confirms the earlier broader QLinear recovery survey; positive production
+ownership is not claimed and no broad corpus sweep was repeated.
+
+Changed files are the new focused characterization module, one architecture
+selector, and the three branch documents. Production source, public API, CLI,
+artifacts, TensorFlow boundary, dependencies, corpus profiles, exclusion
+policy, and ONNX operation-tier policy are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, make two separate semantic corrections before considering
+extraction. First, validate and plan normalized Mean axes before the first
+input or metadata mutation and turn only the atomicity xfail green. Second,
+reject or preserve public `add0_out` NCHW semantics and turn only the public-
+boundary xfail green. Each commit must retain the positive fingerprint,
+statistics, ordered call, sequential zero-SWAP artifact control, and must not
+create a pull request.
+
+## Mean/HardSigmoid/MulAdd Mean-axis atomicity: completed state
+
+The first semantic correction is complete without changing the successful
+rewrite. After all topology, tensor, and per-tensor quantization guards, the
+helper now normalizes Mean axes and commits the axes constant before changing
+the q0 Dequantize input or any dependent tensor metadata. An out-of-range axis
+therefore rejects with zero statistic and a byte-identical ModelIR fingerprint.
+The same atomic contract covers the historical no-change writer rejection when
+an axis maps to itself. The architecture selector fixes validation/write-before-
+rewiring source order.
+
+The focused graph and raw-owner selector pass `12 passed, 243 deselected, 1
+xfailed in 1.93s`; the only remaining strict xfail is the public residual
+output boundary. The changed-file branch regression passes `567 passed, 1
+xfailed in 24.78s`. The TensorFlow-import-blocked optional-boundary suite passes
+`11 passed in 9.29s`. Targeted test Ruff, Python compilation, and whitespace
+checks pass. Whole-file Ruff for the central lowerer still reports its eight
+pre-existing unused import/local findings; they are unrelated and were not
+mixed into this checkpoint.
+
+YuNet INT8 was executed once at the characterization commit and once with the
+correction, strictly sequentially through the managed process-tree SWAP
+monitor. Both runs passed `-cotof` with `max_abs=0`, zero SWAP, and durations of
+5.280 and 5.320 seconds. Internal pass metrics are identical. Float32 and
+float16 TFLite, tensor-correspondence, op-error CSV, schema, and generated-
+schema artifacts are byte-identical. Accuracy and op-error JSON content differs
+only in output-directory and temporary-file paths.
+
+Changed files are the central helper, its focused fixture, the architecture
+source-order gate, and the three branch documents. Public API, CLI, artifact
+names, successful rewrite order/statistic, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, correct only the public `add0_out` boundary. The safest current
+contract is an early complete no-op when `add0_out` is a declared ModelIR
+output; place that guard before the first axes write or other mutation, turn the
+remaining strict xfail green, retain the positive rewrite fingerprint and
+statistics, and repeat one strictly sequential zero-SWAP artifact control. Do
+not create a pull request.
+
+## Mean/HardSigmoid/MulAdd public-output safety: completed state
+
+The second semantic correction is complete. Once the residual Add output name
+is known, the helper rejects a candidate whose `add0_out` is a declared ModelIR
+output. The guard runs before Mean-axis normalization/write, graph rewiring, or
+dependent metadata changes. The public NCHW boundary therefore remains a
+complete zero-statistic no-op instead of silently becoming NHWC. Successful
+private-output rewrites, legacy-consumer adapters, statistics, and idempotence
+are unchanged.
+
+The focused graph and raw-owner selector pass `13 passed, 243 deselected in
+0.61s`; no strict xfail remains. The changed-file branch regression passes `568
+passed in 25.10s`. The TensorFlow-import-blocked optional-boundary suite passes
+`11 passed in 9.35s`. Targeted test Ruff, Python compilation, and whitespace
+checks pass.
+
+YuNet INT8 was again executed strictly sequentially through the process-tree
+SWAP monitor at commit `0eced940` and with the public-output correction. Both
+runs passed `-cotof` with `max_abs=0`, zero SWAP, and durations of 6.323 and
+5.148 seconds. Internal pass metrics are identical. Float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical; the three JSON files differ only in output-directory and
+temporary-file paths.
+
+Changed files are the central helper, focused fixture, architecture source-
+order gate, and three branch documents. Public API, CLI, artifacts, successful
+rewrite order/statistic, TensorFlow boundary, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, the 496-line helper has a complete positive/rejection contract and
+both known unsafe rejection paths are fixed. If it is moved, perform an exact
+mechanical extraction into a focused pass-family module, retain a thin private
+lowerer wrapper and its single syntactic call/two runtime boundaries, prove the
+old/new body AST after function-name normalization, and repeat the existing
+focused, branch, optional-boundary, and one sequential zero-SWAP artifact
+control. Do not create a pull request.
+
+## Mean/HardSigmoid/MulAdd ownership extraction: completed state
+
+The corrected 496-line owner is now in
+`passes/mean_hardsigmoid_muladd_layout.py`. The lowerer imports it under the
+historical private pass alias and retains a two-line private wrapper. Its single
+syntactic call inside the QLinear/Mean/Concat recovery sequence and the two
+ordered runtime boundaries are unchanged. No dispatch, match, mutation,
+statistic, cleanup, or retry logic was generalized.
+
+After normalizing only the function name, the complete old lowerer owner and
+new module owner have identical ASTs; both function bodies are 496 lines. The
+focused contract now also executes the owner and lowerer wrapper on deep copies
+and compares complete ModelIR fingerprints and statistics. Architecture tests
+fix the module owner, wrapper dispatch, producer/consumer scans, constant read/
+write, public-output and Mean-axis source order, direct insertion/deletion,
+prune, and one production call. Whole-lowerer Ruff retains exactly the same
+eight pre-existing findings and gained no unused import from the move.
+
+Validation completed as follows:
+
+- normalized old/new owner AST: exact;
+- focused owner/wrapper and architecture selector:
+  `14 passed, 243 deselected in 0.63s`;
+- changed-file branch regression: `569 passed in 23.93s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.29s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+YuNet INT8 was executed strictly sequentially at commit `7ce7c658` and after
+the ownership move. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.290 and 5.215 seconds. Internal pass metrics are
+identical. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema,
+and generated-schema artifacts are byte-identical; the three JSON files differ
+only in output-directory and temporary-file paths.
+
+Changed files are the new owner module, lowerer import/wrapper, focused owner-
+wrapper fixture, architecture ownership gate, and three branch documents.
+Public API, CLI, artifacts, successful rewrite order/statistic, TensorFlow
+boundary, dependencies, corpus profiles, exclusions, and ONNX operation tiers
+are unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, inventory the next raw source-order helper before editing it. Fix
+its match/guard/rewrite contract, mutation order, all production positions, and
+the shortest sequential non-SWAP control first. Do not assume positive owner
+evidence, do not start a broad corpus sweep, and do not create a pull request.
+
+## QLinear Concat/Conv propagation characterization: completed state
+
+The next raw source-order owner is the 608-line
+`_optimize_nhwc_propagation_qlinear_concat_conv` helper. It remains unchanged
+in the lowerer, with one syntactic call inside the QLinear/Mean/Concat recovery
+sequence and two ordered runtime boundaries. This checkpoint does not extract
+or generalize it.
+
+The focused qlinear suite now fixes all four accepted input forms: quantized
+NHWC-to-NCHW Transpose before Dequantize, float Transpose before Quantize,
+singleton Reshape before Quantize, and singleton-spatial metadata
+reinterpretation. It also covers one or multiple post-Quantize adapters, an
+additional direct Concat adapter, axis remap, dynamic batch signatures, per-
+axis quantization-dimension remap, complete tensor shapes/signatures,
+idempotence, and nine atomic no-op guards. The former 119-line giant ModelIR
+fixture moved into this focused module with an identical AST, and the giant
+test no longer imports the private helper.
+
+Characterization exposes three pre-existing unsafe paths as strict xfails:
+
+- a missing Concat output tensor is detected after DQ/Quantize rewiring,
+  metadata updates, and axis mutation have begun;
+- a missing Quantize output tensor is detected even later, after the Concat
+  output metadata has also changed;
+- a public Dequantize output is permitted to change from NCHW to NHWC rather
+  than rejecting or preserving its public layout boundary.
+
+Validation completed as follows:
+
+- focused qlinear file: `17 passed, 3 xfailed in 0.53s`;
+- focused owner contract plus architecture selector:
+  `16 passed, 246 deselected, 3 xfailed in 0.64s`;
+- changed-file branch regression including the focused file:
+  `587 passed, 3 xfailed in 24.81s`;
+- moved giant fixture AST: exact;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Production source is unchanged, so the established QLinear recovery survey was
+not repeated. YuNet INT8, PPHumanSeg INT8, LPD-YuNet INT8, Version-RFB INT8,
+NanoDet INT8, YOLOX INT8, SSD MobileNet INT8, and dequantize_linear previously
+reached both runtime boundaries sequentially with zero rewrites and zero SWAP.
+The active Tier 0-4 op-set scan likewise found no positive owner. This remains
+zero-owner evidence, not a claim of production match coverage.
+
+Changed files are the focused qlinear suite, the mechanically reduced giant
+test, one architecture raw-owner gate, and three branch documents. Public API,
+CLI, production behavior, artifacts, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; work is commit/push only.
+
+At restart, first prevalidate the required Concat and Quantize output tensors
+before any candidate mutation and turn the two parameterized atomicity xfails
+green. Then separately reject or preserve a public Dequantize output and turn
+the final xfail green. Keep successful fingerprints, statistics, sequence
+position, and the existing zero-owner evidence unchanged. Do not create a pull
+request.
+
+## QLinear Concat/Conv required-output atomicity: completed state
+
+The first QLinear semantic correction is complete. After all candidate input
+forms and prospective Concat shapes are validated, the helper now resolves both
+the Concat output tensor and Quantize output tensor before applying any pending
+DQ/Quantize input rewrite, metadata update, qdim remap, or axis change. A
+missing required output therefore returns zero statistic with a complete
+unchanged ModelIR fingerprint. The successful mutation sequence is unchanged;
+moving and reusing the two tensor references reduced the raw owner from 608 to
+607 lines.
+
+The focused owner contract and architecture selector pass `18 passed, 246
+deselected, 1 xfailed in 0.64s`; only the public Dequantize-output boundary
+remains xfailed. The changed-file branch regression passes `589 passed, 1
+xfailed in 24.76s`. The TensorFlow-import-blocked optional-boundary suite passes
+`11 passed in 9.25s`. Targeted test Ruff, Python compilation, and whitespace
+checks pass.
+
+YuNet INT8 was run strictly sequentially at commit `526bd6fa` and with the
+atomicity correction. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.329 and 5.291 seconds. Internal pass metrics are
+identical. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema,
+and generated-schema artifacts are byte-identical; the three JSON files differ
+only in output-directory and temporary-file paths.
+
+Changed files are the central raw helper, focused atomicity fixture,
+architecture source-order gate, and three branch documents. Public API, CLI,
+successful behavior/statistics, artifacts, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, reject or preserve only a public Dequantize output before any
+pending rewrite is committed. Turn the final strict xfail green, retain all
+private-output success fingerprints/statistics and the existing zero-owner
+evidence, and repeat one strictly sequential zero-SWAP artifact control. Do not
+create a pull request.
+
+## QLinear Concat/Conv public-output safety: completed state
+
+The second QLinear semantic correction is complete. After planning all input
+rewrites and metadata updates but before axis validation or mutation, the helper
+now rejects any pending tensor-shape update whose tensor is a declared ModelIR
+output. Pattern 1 public Dequantize outputs therefore remain complete no-ops
+instead of changing from NCHW to NHWC. The guard is intentionally plan-based:
+an already physical NHWC public Dequantize output with no pending update still
+allows the safe singleton-Reshape optimization to proceed. Successful private-
+output behavior and statistics are unchanged. The explicit guard expands the
+raw owner from 607 to 612 lines.
+
+The focused owner contract and architecture selector pass `19 passed, 246
+deselected in 0.60s`; no strict xfail remains. The changed-file branch
+regression passes `590 passed in 24.47s`. The TensorFlow-import-blocked optional-
+boundary suite passes `11 passed in 9.27s`. Targeted test Ruff, Python
+compilation, and whitespace checks pass.
+
+YuNet INT8 was run strictly sequentially at commit `a4e4bff9` and with the
+public-output guard. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.426 and 5.259 seconds. Internal pass metrics are
+identical. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema,
+and generated-schema artifacts are byte-identical; the three JSON files differ
+only in output-directory and temporary-file paths.
+
+Changed files are the central raw helper, focused public-boundary fixtures,
+architecture source-order gate, and three branch documents. Public API, CLI,
+successful behavior/statistics, artifacts, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, the 612-line helper has a complete four-pattern positive/rejection
+contract and no known strict xfail. If moved, perform an exact mechanical
+extraction into a focused pass-family module, keep a thin private lowerer
+wrapper and the single syntactic call/two runtime boundaries, prove old/new AST
+identity after function-name normalization, and repeat focused, branch,
+optional-boundary, and one strictly sequential zero-SWAP artifact control. Do
+not create a pull request.
+
+## QLinear Concat/Conv ownership extraction: completed state
+
+The corrected 612-line QLinear Concat/Conv propagation owner now resides in
+`onnx2tf/tflite_builder/passes/qlinear_concat_conv_compat.py`. The lowerer
+imports it under a private pass alias and retains a two-line compatibility
+wrapper. Its single syntactic call in the ordered QLinear/Mean/Concat recovery
+sequence and both runtime boundaries are unchanged. This move is mechanical;
+it does not generalize the semantics or claim positive production ownership.
+
+The old and new owner bodies are both 612 lines and have identical normalized
+ASTs after changing only the function name. The focused suite executes the
+module owner and lowerer wrapper on deep copies and confirms identical return
+statistics and complete ModelIR fingerprints. Architecture tests require the
+wrapper to dispatch exactly once, keep the one production call, preserve the
+public-output guard before required-output validation and the first mutation,
+and prevent the owner module from importing the lowerer. Removing the lowerer's
+now-unused `_invert_perm` import leaves its whole-file Ruff result at exactly
+the same eight pre-existing findings.
+
+Validation completed as follows:
+
+- normalized old/new owner AST comparison: exact;
+- focused owner/wrapper and architecture selector:
+  `20 passed, 246 deselected in 0.61s`;
+- changed-file branch regression: `591 passed in 23.37s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.27s`;
+- targeted Ruff, Python compilation, whitespace, and diff checks: passed.
+
+YuNet INT8 was run strictly sequentially at corrected checkpoint `e2ccb4ac` and
+after the extraction. Both runs passed `-cotof` with `max_abs=0`, zero process-
+tree SWAP, and durations of 6.389 and 5.279 seconds. Internal pass metrics are
+exact. Float32/float16 TFLite, tensor-correspondence, op-error CSV, schema, and
+generated-schema artifacts are byte-identical; the three JSON differences
+contain output-directory or temporary-file paths only.
+
+Changed files are the new focused owner, the lowerer import/wrapper and unused-
+import cleanup, the focused owner/wrapper comparison, the architecture
+ownership/source-order checks, and three branch documents. Public API, CLI,
+successful behavior/statistics, artifacts, TensorFlow boundary, dependencies,
+corpus profiles, exclusions, and ONNX operation tiers are unchanged. PR #952
+remains closed; work is commit/push only.
+
+At restart, inventory the next raw helper in actual production source order and
+characterize its positive, rejection, ownership, and call-boundary behavior
+before editing it. Keep validation minimal and strictly sequential, do not run
+a broad corpus sweep, and do not create a pull request.
+
+## Indexed Conv-input adapter repair characterization: completed state
+
+The next raw ownership boundary is the existing Conv-input adapter repair
+group in `lower_from_onnx2tf.py`: singleton-Reshape repair, stale NCHW-to-NHWC
+Transpose repair, and `_run_indexed_conv_input_adapter_repairs`. The runner
+already builds one `ModelIRGraphIndex` for the pair. Its primary and fallback
+production calls, the later standalone stale-Transpose compatibility call,
+multiple successful rewrites, complete legacy-pair equality, index equality,
+fan-out protection, and graph-output protection were already characterized.
+
+The extraction audit found one shared pre-existing atomicity defect. Each raw
+repair rewrites the Conv input through `_set_operator_inputs` before reading
+the source `shape_signature` needed to update Conv output metadata. If that
+signature is present but shorter than rank four, indexing it raises
+`IndexError` after the graph edge has changed. The new parameterized strict
+xfail requires a zero statistic and complete unchanged ModelIR fingerprint for
+both singleton-Reshape and stale-Transpose candidates. It fails at the expected
+post-mutation exception in both cases.
+
+Validation completed as follows:
+
+- focused Conv-input adapter selector:
+  `3 passed, 257 deselected, 2 xfailed in 0.82s`;
+- changed-file focused branch regression, excluding the giant legacy module:
+  `594 passed, 2 xfailed in 23.69s`;
+- targeted Ruff: passed.
+
+One exploratory broad command accidentally included
+`tests/test_tflite_builder_direct.py` and is not the branch gate. It completed
+with `1335 passed, 2 xfailed, 6 failed`. Four failures require the intentionally
+absent TensorFlow optional extra, one reaches an incompatible user-site Torch
+binary, and the standalone giant-test SiNet fixture already fails at checkpoint
+`e7ec3a4b` with a zero rewrite. None is caused by this test-only
+characterization; no production source changed in this checkpoint.
+
+Changed files are the focused indexed Conv-input repair test and three branch
+documents. PR #952 remains closed; work is commit/push only.
+
+At restart, materialize and validate the source shape/signature before the
+first indexed Conv-input rewrite in both raw repairs. Turn both strict xfails
+green while preserving every successful fingerprint, statistic, shared-index
+behavior, and production call boundary. Do not extract the group until that
+atomicity correction is separately committed and verified. Do not create a
+pull request.
+
+## Conv-input adapter source-signature atomicity: completed state
+
+The shared Conv-input repair defect is fixed without changing successful
+rewrite behavior. Both raw repairs now materialize the source shape signature
+after all existing tensor, rank, permutation, locality, filter-channel, and
+element-count guards but before `_set_operator_inputs`. A signature that is
+present with a rank other than four rejects that candidate before any graph,
+index, tensor metadata, or topology mutation. A valid signature is the same
+value formerly computed after the edge rewrite.
+
+The stale-Transpose atomicity fixture protects its independent second valid
+adapter as a declared output, isolating the malformed first candidate while
+preserving the function's expected continue-to-later-candidates behavior. Both
+former strict xfails now return zero statistics and retain complete ModelIR
+fingerprints. The existing successful multi-rewrite comparison still matches
+the explicit repair pair exactly and retains one shared index build.
+
+Validation completed as follows:
+
+- focused Conv-input adapter and architecture selector:
+  `5 passed, 257 deselected in 0.64s`;
+- changed-file focused branch regression: `596 passed in 23.51s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.34s`;
+- targeted Ruff and Python compilation: passed.
+
+Changed files are the two raw repairs, the focused atomicity fixture, the
+architecture source-order guard, and three branch documents. Public API, CLI,
+valid-candidate behavior/statistics, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. No real-model
+conversion was added because this correction only rejects malformed metadata
+before the former first mutation and the requested validation policy favors
+minimal conversions. PR #952 remains closed; work is commit/push only.
+
+At restart, mechanically extract the two corrected repair owners and their
+shared-index runner into a focused pass-family module. Keep lowerer private
+compatibility wrappers for all three names, preserve the primary and fallback
+runner calls plus the later standalone stale-Transpose call, prove normalized
+old/new body identity, and compare direct owners with wrappers on complete
+ModelIR fingerprints and statistics. Do not create a pull request.
+
+## Conv-input adapter repair ownership extraction: completed state
+
+The corrected singleton-Reshape repair, stale NCHW-to-NHWC Transpose repair,
+and shared-index runner now reside in
+`onnx2tf/tflite_builder/passes/conv_input_adapter_repair.py`. The lowerer
+imports all three under private pass aliases and keeps private compatibility
+wrappers with the historical signatures. The primary and fallback runner calls
+and the later standalone stale-Transpose compatibility call are unchanged.
+
+The three old/new function bodies are individually AST-identical: 104 lines for
+singleton Reshape, 122 lines for stale Transpose, and 23 lines for the runner.
+Focused tests execute each owner and wrapper on deep copies and compare return
+statistics and complete ModelIR fingerprints. Architecture tests require one
+wrapper dispatch per API, module ownership of indexed candidate lookup,
+producer/consumer access, differential setter/removal, source-signature
+prevalidation, shared-index repair order, two runner production calls, and the
+standalone stale-Transpose call. The owner module does not import the lowerer.
+The whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+Validation completed as follows:
+
+- old/new AST comparisons: exact for all three owners;
+- focused owner/wrapper and architecture selector:
+  `8 passed, 257 deselected in 0.63s`;
+- changed-file focused branch regression: `599 passed in 23.36s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.35s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Tier 1 `face_blendshapes.onnx` is the historical positive model for the
+singleton-Reshape repair. It was run strictly sequentially at corrected
+checkpoint `a76ad6ff` and after extraction. Both runs passed `-cotof` with
+`max_abs=1.3709068298339844e-06`, zero process-tree SWAP, and durations of
+4.933 and 3.867 seconds. Pass metrics are exact. Float32/float16 TFLite, tensor-
+correspondence, op-error CSV, schema, and generated-schema artifacts are byte-
+identical. The three JSON differences contain only output-directory or
+temporary-file paths. The other historical positive model, Tier 3
+`sgscsh.onnx`, was not rerun because the requested policy favors one minimal,
+short positive control.
+
+Changed files are the new owner module, lowerer imports/wrappers, focused owner-
+wrapper comparison, architecture ownership checks, and three branch documents.
+Public API, CLI, valid-candidate behavior/statistics, TensorFlow boundary,
+dependencies, corpus profiles, exclusions, and ONNX operation tiers are
+unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, characterize the next 181-line raw source-order owner,
+`_repair_mixed_nhwc_inputs_for_nchw_concat`, before editing it. Fix any unsafe
+path in a separate checkpoint before a mechanical extraction. Keep validation
+minimal and strictly sequential; do not create a pull request.
+
+## Mixed NHWC-input/NCHW-Concat characterization: completed state
+
+The next 181-line raw owner is
+`_repair_mixed_nhwc_inputs_for_nchw_concat` in `lower_from_onnx2tf.py`. It has
+two production calls: fallback ModelIR and final ModelIR. The new focused module
+fixes the three-input canonical-spatial success path, the two-input output-
+contract fallback, inserted adapter shape, output channel reconciliation,
+idempotence, and four complete no-op guards. The raw-owner architecture gate
+records direct operator insertion, quantization cloning, input replacement,
+and both production positions. Existing positive tests in the broader Conv
+layout module remain active.
+
+The audit exposes three pre-existing unsafe paths as strict xfails:
+
+- with multiple NHWC candidates, the owner inserts the first adapter before
+  reading the later source signature; a short later signature raises
+  `IndexError` and leaves a partial graph mutation;
+- when at least two NCHW inputs establish the canonical spatial contract, the
+  required Concat output tensor is not resolved until after adapters and input
+  rewiring, so a missing output tensor still reports one repair;
+- a per-axis source quantization on NHWC dimension `3` is cloned onto the NCHW
+  adapter without remapping its quantized dimension to `1`.
+
+Validation completed as follows:
+
+- focused mixed-Concat owner and architecture selector:
+  `10 passed, 254 deselected, 3 xfailed in 0.77s`;
+- changed-file focused branch regression, including the new untracked test in
+  discovery: `606 passed, 3 xfailed in 24.92s`;
+- targeted Ruff and Python compilation: passed.
+
+Production source is unchanged. Public API, CLI, successful behavior,
+TensorFlow boundary, dependencies, corpus profiles, exclusions, and ONNX
+operation tiers are unchanged. PR #952 remains closed; work is commit/push
+only.
+
+At restart, build a complete immutable adapter plan before mutation: resolve
+the required output tensor, materialize every source shape/signature, choose
+collision-free tensor names across the whole plan, clone and remap per-axis
+quantization, and compute the final output metadata. Then commit insertions and
+input/output updates in the existing order. Turn all three strict xfails green
+before extracting the owner. Do not create a pull request.
+
+## Mixed NHWC-input/NCHW-Concat transactional repair: completed state
+
+The raw mixed-Concat owner now separates candidate planning from graph commit.
+Before mutation it resolves the required Concat output tensor, validates every
+input shape and every prospective source signature, reserves collision-free
+adapter and permutation names across the whole candidate, computes all adapter
+and final output shapes, and clones quantization metadata. Per-axis
+quantization remaps an original NHWC channel dimension `3` to NCHW dimension
+`1`; per-tensor quantization remains unchanged.
+
+Only a complete plan enters the commit phase. It inserts permutation tensors,
+adapter tensors, and Transpose operators in the historical input order, then
+rewrites Concat inputs and output metadata. A malformed later signature can no
+longer leave an earlier adapter behind, and an unresolved output cannot enter
+the plan. All three former strict xfails now pass. Architecture checks require
+output/signature resolution and plan append before the first ModelIR tensor,
+operator, or input mutation.
+
+Validation completed as follows:
+
+- focused mixed-Concat owner and architecture selector:
+  `13 passed, 254 deselected in 0.67s`;
+- changed-file focused branch regression: `609 passed in 23.55s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.36s`;
+- targeted Ruff and Python compilation: passed.
+
+Tier 3 `sgscsh.onnx` was run strictly sequentially at characterization
+checkpoint `ec9f6bf0` and after the correction. Both runs passed `-cotof` with
+`max_abs=2.5331974029541016e-07`, zero process-tree SWAP, and durations of
+15.216 and 14.375 seconds. Pass metrics are exact. Float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical. The three JSON differences contain only output-directory or
+temporary-file paths.
+
+Changed files are the raw repair owner, focused transactional/quantization
+fixtures, architecture mutation-order guard, and three branch documents.
+Public API, CLI, valid float/per-tensor behavior/statistics, TensorFlow
+boundary, dependencies, corpus profiles, exclusions, and ONNX operation tiers
+are unchanged. PR #952 remains closed; work is commit/push only.
+
+At restart, mechanically extract the corrected owner into a focused pass-family
+module. Keep the lowerer private compatibility wrapper and both fallback/final
+production calls, prove normalized old/new body identity, and compare direct
+owner/wrapper complete ModelIR fingerprints and statistics. Do not create a
+pull request.
+
+## Mixed NHWC-input/NCHW-Concat ownership extraction: completed state
+
+The corrected mixed-Concat owner now resides in
+`onnx2tf/tflite_builder/passes/mixed_concat_input_repair.py`. The lowerer
+imports it under a private pass alias and retains a two-line private
+compatibility wrapper. Both fallback and final production calls still target
+the historical lowerer name in the same order.
+
+The old and new owner functions are each 223 lines and have identical ASTs.
+The focused suite executes the module owner and lowerer wrapper on deep copies
+of a multi-adapter ModelIR and confirms identical return statistics and complete
+fingerprints. Architecture tests keep the corrected prevalidation plan before
+the first mutation, require one wrapper dispatch, preserve both production
+calls, and prevent the owner module from importing the lowerer. The whole
+lowerer retains exactly its eight pre-existing Ruff findings.
+
+Validation completed as follows:
+
+- old/new owner AST comparison: exact, 223 lines each;
+- focused owner/wrapper and architecture selector:
+  `14 passed, 254 deselected in 0.69s`;
+- changed-file focused branch regression: `610 passed in 23.28s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+Tier 3 `sgscsh.onnx` was run strictly sequentially at corrected checkpoint
+`55f1a541` and after extraction. Both runs passed `-cotof` with
+`max_abs=2.5331974029541016e-07`, zero process-tree SWAP, and durations of
+15.582 and 14.434 seconds. Pass metrics are exact. Float32/float16 TFLite,
+tensor-correspondence, op-error CSV, schema, and generated-schema artifacts are
+byte-identical; the three JSON differences contain only output-directory or
+temporary-file paths.
+
+Changed files are the new owner module, lowerer import/wrapper, focused owner-
+wrapper comparison, architecture ownership checks, and three branch documents.
+Public API, CLI, behavior/statistics, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; work is commit/push only.
+
+At restart, inventory the next raw helper in actual production source order
+before editing it. Characterize positive, rejection, ownership, and call-
+boundary behavior first. Keep validation minimal and strictly sequential; do
+not create a pull request.
+
+## Stale channelwise-binary Transpose characterization: completed state
+
+The next raw source-order owner is the 129-line
+`_repair_stale_nchw_to_nhwc_channelwise_binary_transposes`. It already accepts
+an optional matching `ModelIRGraphIndex`, enumerates exact indexed binary
+candidates, handles both data-input positions and channelwise-constant/Conv-
+peer evidence, removes multiple adapters differentially, preserves fan-out and
+public adapters, and participates in the lowerer's three-round shared-index
+binary convergence runner. There are also two standalone production calls.
+
+The extraction audit adds two invalid-metadata cases. A short source shape is
+already a complete zero-statistic no-op. A rank-four source with a short
+`shape_signature` exposes one pre-existing unsafe path: the binary input is
+rewritten first, the short signature is then assigned to the output, and the
+adapter is removed. The strict xfail requires a zero statistic and complete
+unchanged ModelIR fingerprint.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `5 passed, 257 deselected, 1 xfailed in 0.65s`;
+- changed-file focused branch regression:
+  `614 passed, 1 xfailed in 23.43s`;
+- targeted Ruff: passed.
+
+Production source is unchanged. Public API, CLI, successful behavior,
+TensorFlow boundary, dependencies, corpus profiles, exclusions, and ONNX
+operation tiers are unchanged. PR #952 remains closed; work is commit/push
+only.
+
+At restart, materialize and require a rank-four source signature before
+`_set_operator_inputs`, turn the strict xfail green, and preserve all indexed
+candidate order, statistics, differential index updates, convergence-runner
+behavior, and direct production calls. Extract the repair owner only after the
+correction checkpoint; keep the convergence runner central because it also
+coordinates broadcast repair and shape reconciliation. Do not create a pull
+request.
+
+## Stale binary source-signature atomicity: completed state
+
+The stale channelwise-binary Transpose repair now materializes the source
+signature after all existing tensor, shape, permutation, locality, and peer-
+evidence guards but before `_set_operator_inputs`. A present signature whose
+rank is not four rejects the candidate before graph, index, output metadata, or
+topology mutation. A valid signature is the same value formerly computed after
+the edge rewrite. Both short-shape and short-signature cases are ordinary
+complete no-ops; no strict xfail remains.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `6 passed, 257 deselected in 2.07s`;
+- changed-file focused branch regression: `615 passed in 23.40s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.44s`;
+- targeted Ruff and Python compilation: passed.
+
+No additional real-model conversion was run. The correction only moves valid
+signature materialization before the former first mutation, and the immediately
+preceding sequential `sgscsh.onnx` controls already proved exact pass metrics,
+zero SWAP, and byte-identical major artifacts across both semantic correction
+and ownership checkpoints. This follows the requested minimal-conversion
+policy.
+
+Changed files are the raw repair, focused invalid-metadata fixture,
+architecture source-order guard, and three branch documents. Public API, CLI,
+valid behavior/statistics, TensorFlow boundary, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, mechanically extract only the corrected 132-line repair owner into
+a focused pass-family module. Keep its lowerer private wrapper, the two
+standalone calls, and the three-round convergence runner call. Leave the runner
+in the lowerer because it coordinates separate broadcast and shape owners.
+Prove exact old/new AST and direct owner/wrapper fingerprint equality. Do not
+create a pull request.
+
+## Channelwise-constant stale-binary rank characterization: completed state
+
+The final pre-extraction audit distinguishes the two evidence branches in the
+stale channelwise-binary Transpose repair. Conv-peer matching short-circuits
+safely on a short source shape. Channelwise-constant matching first accepts the
+`[1,1,1,C]` constant prefix, then reads `source_shape[3]` and
+`adapter_shape[3]` before the common rank guard. A short source or adapter shape
+therefore raises `IndexError` before the helper can return its expected no-op.
+
+Two new parameterized strict xfails isolate those source and adapter cases with
+the independent second adapter protected as a graph output. Each requires a
+zero statistic and complete unchanged ModelIR fingerprint. The earlier source-
+signature correction remains green.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `6 passed, 257 deselected, 2 xfailed in 0.80s`;
+- changed-file focused branch regression:
+  `615 passed, 2 xfailed in 23.62s`;
+- targeted Ruff: passed.
+
+Production source is unchanged from checkpoint `b84b9d13`. The uncommitted
+ownership move was deliberately rolled back before this characterization, so
+the branch remains at a complete raw-owner checkpoint. Public API, CLI,
+successful behavior, TensorFlow boundary, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+work is commit/push only.
+
+At restart, move `len(source_shape) == 4` and `len(adapter_shape) == 4` guards
+before channelwise-constant and Conv-peer evidence evaluation. Turn both strict
+xfails green while preserving candidate order, statistics, and GraphIndex
+updates. Only then redo the mechanical repair-owner extraction; keep the
+convergence runner central. Do not create a pull request.
+
+## Channelwise-constant stale-binary rank safety: completed state
+
+The stale binary repair now rejects a source or adapter whose shape is not rank
+four before evaluating either channelwise-constant or Conv-peer evidence. The
+existing evidence expressions, candidate order, input-position order, indexed
+setter/removal sequence, output metadata update, and statistics are unchanged.
+Both former strict xfails are complete zero-statistic ModelIR no-ops. The
+earlier malformed-signature guard remains before the first mutation.
+
+Validation completed as follows:
+
+- focused stale-binary/convergence selector:
+  `8 passed, 257 deselected in 2.07s`;
+- changed-file focused branch regression: `617 passed in 23.23s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff and Python compilation: passed.
+
+No real-model conversion was added because the change only prevents invalid-
+rank metadata from reaching channel evidence and the requested validation
+policy favors minimal conversions. Production success behavior is covered by
+the existing multiple-match, both-input-position, channelwise-constant, Conv-
+peer, fan-out, index-equivalence, and convergence-runner fixtures.
+
+Changed files are the raw repair, focused rank fixtures, architecture guard-
+order check, and three branch documents. Public API, CLI, valid behavior/
+statistics, TensorFlow boundary, dependencies, corpus profiles, exclusions,
+and ONNX operation tiers are unchanged. PR #952 remains closed; work is
+commit/push only.
+
+At restart, mechanically extract only the corrected repair owner into a focused
+pass-family module. Keep the lowerer private wrapper, both standalone calls,
+and the three-round convergence runner call. Leave the runner central, prove
+exact old/new AST and direct owner/wrapper fingerprint equality, and do not
+create a pull request.
+
+## Stale channelwise-binary adapter ownership extraction: completed state
+
+The corrected stale NCHW-to-NHWC channelwise-binary Transpose repair now
+resides in
+`onnx2tf/tflite_builder/passes/stale_binary_adapter_repair.py`. The 132-line
+module owner is AST-identical to the corrected lowerer implementation at
+checkpoint `c869c410`. The lowerer retains the historical private function as
+a thin compatibility wrapper and forwards its optional `graph_index` to the
+module owner.
+
+The two standalone fallback/final production calls still target the private
+lowerer name in their original order. The three-round
+`_run_indexed_binary_layout_convergence` coordinator also still calls that
+wrapper with one shared index and intentionally remains in the lowerer because
+it coordinates three separate owners: broadcast-constant repair, stale
+Transpose repair, and static shape reconciliation. A focused deep-copy test
+confirms identical statistics and complete ModelIR fingerprints from direct
+owner and wrapper execution. Architecture checks keep the module independent
+of the lowerer, preserve pre-mutation rank/signature guards, require wrapper
+index forwarding, and freeze the runner and standalone call boundaries.
+
+Validation completed as follows:
+
+- old/new owner AST comparison: exact, 132 lines each;
+- focused stale-binary owner/wrapper and architecture selector:
+  `9 passed, 257 deselected in 2.11s`;
+- changed-file focused branch regression: `618 passed in 24.62s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+No additional real-model conversion was run. This checkpoint is an exact
+mechanical ownership move of the already corrected function, with direct
+owner/wrapper fingerprint coverage, and follows the requested minimal-
+conversion policy. Public API, CLI, successful behavior/statistics,
+TensorFlow boundary, dependencies, corpus profiles, exclusions, and ONNX
+operation tiers are unchanged. PR #952 remains closed; future work is
+commit/push only and must not create a pull request.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: `_optimize_nhwc_prefix_qlinear_silu_chains` (419 lines). Preserve
+its positive/rejection behavior, call boundaries, statistics, and artifact
+contract before considering ownership or semantic changes. Keep validation
+minimal and strictly sequential, and do not create a pull request.
+
+## QLinear SiLU prefix characterization: completed state
+
+The raw 419-line `_optimize_nhwc_prefix_qlinear_silu_chains` owner remains
+unchanged in `lower_from_onnx2tf.py`. New synthetic fixtures freeze both
+supported activation forms: direct DEQUANTIZE/LOGISTIC/QUANTIZE and decomposed
+DEQUANTIZE/MUL/ADD/MAXIMUM/MINIMUM/QUANTIZE. They verify exact statistics,
+NHWC input rewiring, redundant pre/post Transpose removal, rank-four metadata
+permutation, and downstream alias rewiring. A combined two-chain fixture
+freezes fixed-point restart and order, while a legacy RELU consumer freezes
+the inserted NHWC-to-NCHW adapter, tensor shapes, and permutation payload.
+
+Eight ordinary rejection cases cover wrong pre-permutation, public and fan-out
+pre-adapters, per-axis quantization, shared sigmoid-quantize output, a blocked
+layout-sensitive consumer, public post-adapter output, and a non-singleton
+HardSigmoid constant. The raw owner returns zero and preserves operator and
+shape metadata for each. Architecture coverage records its 419-line central
+ownership, consumer-map scan, mutation APIs, fixed-point loop, and existing
+ordered QLinear recovery boundary.
+
+Four strict xfails isolate pre-existing defects before any source correction:
+
+- rejected calls eagerly create and prune
+  `__nhwc_to_nchw_perm_rank4__`, leaving a tensor-lineage metadata event rather
+  than a complete ModelIR no-op;
+- a second zero-rewrite call after success repeats that metadata mutation, so
+  the helper is not fully idempotent;
+- an unrelated public tensor occupying the reserved name is reused as the
+  adapter permutation without validating `[0,3,1,2]`;
+- a rank-two `mul_out` signature is accepted, after which the helper rewires
+  the graph and creates a rank-four Transpose adapter carrying malformed
+  signature metadata.
+
+Validation completed as follows:
+
+- focused QLinear SiLU prefix plus ordered-owner architecture selector:
+  `14 passed, 245 deselected, 4 xfailed in 0.68s`;
+- changed-file focused branch regression:
+  `631 passed, 4 xfailed in 23.56s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.35s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No model conversion was repeated. The earlier QLinear recovery-group audit
+already ran the candidate set strictly sequentially, observed zero rewrites in
+every instrumented invocation, and recorded zero process-tree SWAP. Production
+source, public API, CLI, artifacts, TensorFlow boundary, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; future work is commit/push only and must not create a pull request.
+
+At restart, fix these four xfails before extracting the owner. Prevalidate the
+Mul output shape and effective signature as rank four and build the complete
+legacy-adapter plan before changing DEQUANTIZE/MUL/user inputs or metadata.
+Create the permutation constant only if a committed plan needs an adapter.
+Reuse the reserved name only when dtype, shape, signature, and payload are
+exact; otherwise allocate a collision-safe name without mutating the existing
+tensor. Preserve valid candidate order, fixed-point count, statistics, both
+production sequence boundaries, and all ordinary characterization. Keep tests
+and any necessary model validation strictly sequential, then commit and push;
+do not create a pull request.
+
+## QLinear SiLU prefix transactional correction: completed state
+
+The four strict xfails from the preceding characterization are now green. The
+509-line raw lowerer owner prevalidates every metadata target shape and
+effective signature as rank four before changing any tensor or operator. It
+builds adapter tensors, Transpose operators, collision-free names, and
+cumulative legacy-consumer input updates as an immutable local plan before
+commit. A malformed DEQUANTIZE, activation, Quantize, or final Mul signature
+therefore returns zero with an unchanged graph and metadata.
+
+`__nhwc_to_nchw_perm_rank4__` is no longer created at function entry. A
+candidate with no legacy consumer never allocates it. A legacy-adapter plan
+reuses an existing tensor only when its INT32 dtype, `[4]` shape/signature,
+exact `[0,3,1,2]` payload, non-variable state, and absent quantization all
+match. Any other occupied name remains unchanged and a collision-safe name is
+planned. Tensor pruning now runs only after at least one successful rewrite,
+so rejected and second zero-rewrite calls preserve tensor-lineage metadata and
+are fully idempotent.
+
+An additional same-consumer/two-input-slot fixture exposed a separate existing
+issue while validating cumulative plans. `_build_tensor_consumer_map` returns
+the same operator index once per matching input. The raw owner then enumerates
+both matching slots for each repeated index, plans four adapters, and leaves
+two redundant adapters. This is recorded as the sole strict xfail and was not
+fixed in the transactional checkpoint, satisfying the record-before-fix
+boundary.
+
+Validation completed as follows:
+
+- focused QLinear SiLU correction plus ordered-owner architecture selector:
+  `22 passed, 245 deselected, 1 xfailed in 2.04s`;
+- changed-file focused branch regression:
+  `639 passed, 1 xfailed in 23.83s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.25s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+No real-model conversion was added because the prior sequential QLinear group
+audit already established zero production rewrites and zero process-tree SWAP
+for every measured candidate. Public API, CLI, production call order and
+statistics, TensorFlow boundary, dependencies, corpus profiles, exclusions,
+and ONNX operation tiers are unchanged. PR #952 remains closed; future work is
+commit/push only and must not create a pull request.
+
+At restart, deduplicate `mul_users` by operator index in first-observed order
+before classifying Transpose and legacy consumers. Turn the two-slot strict
+xfail green and prove that distinct consumer order, one adapter per input slot,
+unique naming, exact permutation reuse/collision behavior, fixed-point count,
+and all ordinary rejections remain unchanged. Only after that correction
+should the 509-line owner be mechanically extracted into a focused pass module
+with an exact corrected AST and a lowerer compatibility wrapper. Keep tests
+strictly sequential, commit and push coherent units, and do not create a pull
+request.
+
+## QLinear SiLU legacy-consumer deduplication: completed state
+
+The sole remaining strict xfail is green. The raw owner now converts the final
+Mul consumer edge list into first-observed unique operator indices before
+classifying Transpose and legacy consumers. It does not reorder distinct
+operators. Each unique legacy operator is visited once and its matching input
+slots are enumerated once, so a two-slot ADD receives two adapters instead of
+four. A second fixture with two independent RELU consumers proves stable
+consumer order, deterministic `_adapter`/`_adapter_1` naming, and one adapter
+per edge. Existing single-slot, exact-permutation reuse, collision-safe
+allocation, fixed-point, rejection, idempotence, and malformed-metadata tests
+remain green.
+
+Validation completed as follows:
+
+- focused QLinear SiLU plus ordered-owner architecture selector:
+  `24 passed, 245 deselected in 0.66s`;
+- changed-file focused branch regression: `641 passed in 23.41s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.38s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the whole lowerer retains exactly its eight pre-existing Ruff findings.
+
+No additional model conversion was run because the earlier sequential QLinear
+group audit established zero production rewrites and zero process-tree SWAP
+for every measured candidate. Public API, CLI, valid statistics, ordered
+production boundaries, TensorFlow isolation, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers remain unchanged. PR #952 remains closed;
+future work is commit/push only and must not create a pull request.
+
+At restart, mechanically extract the corrected 513-line
+`_optimize_nhwc_prefix_qlinear_silu_chains` owner into a focused QLinear SiLU
+pass module. Keep the historical lowerer private function as a thin wrapper and
+preserve its position inside both `_run_qlinear_mean_concat_recovery_sequence`
+invocations. Prove exact corrected old/new AST identity and direct
+owner/wrapper statistics plus complete ModelIR equality across LOGISTIC,
+decomposed HardSigmoid, legacy-adapter, multiple-match, and collision cases.
+Keep validation minimal and strictly sequential, then commit and push; do not
+create a pull request.
+
+## QLinear SiLU prefix ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/qlinear_silu_prefix_layout.py`. Its function and
+the corrected predecessor at checkpoint `0cf699fd` are each 513 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains `_optimize_nhwc_prefix_qlinear_silu_chains` as a one-return
+compatibility wrapper. `_run_qlinear_mean_concat_recovery_sequence` still
+calls that name in its original position, and both production sequence
+boundaries are unchanged.
+
+The focused suite executes direct module owner and lowerer wrapper on deep
+copies of four contracts: LOGISTIC, decomposed HardSigmoid, legacy consumer
+adapter insertion, and invalid reserved-name collision. Statistics, complete
+ModelIR fingerprints/layout state, and metadata are identical. Architecture
+tests parse transactional planning, conditional prune, and ordered consumer
+deduplication from the module owner, prevent a lowerer import cycle, require a
+single wrapper dispatch, and preserve the existing ordered recovery sequence.
+Extraction made `_is_singleton_constant_tensor` unused in the lowerer, so that
+import alone was removed; the lowerer retains exactly its eight earlier Ruff
+findings.
+
+Validation completed as follows:
+
+- corrected old/new owner AST comparison: exact, 513 lines each;
+- focused owner/wrapper and architecture selector:
+  `28 passed, 245 deselected in 1.96s`;
+- changed-file focused branch regression: `645 passed in 23.53s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.40s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No real-model conversion was repeated. The owner move is mechanically exact,
+direct owner/wrapper equality covers all non-zero synthetic families, and the
+prior sequential QLinear group audit established zero production rewrites and
+zero process-tree SWAP for every measured candidate. Public API, CLI, valid
+behavior/statistics, ordered production boundaries, TensorFlow isolation,
+dependencies, corpus profiles, exclusions, and ONNX operation tiers are
+unchanged. PR #952 remains closed; future work is commit/push only and must not
+create a pull request.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: `_optimize_transpose_mean_maxpool_concat_conv_chains` (310 lines).
+Freeze its positive, rejection, fixed-point, metadata, quantization, pruning,
+statistics, and ordered production boundaries before deciding on correctness
+changes or mechanical ownership. Reuse the earlier zero-owner model evidence,
+keep any additional validation minimal and strictly sequential, then commit
+and push; do not create a pull request.
+
+## Mean/MaxPool/Concat/Conv characterization: completed state
+
+The raw 310-line
+`_optimize_transpose_mean_maxpool_concat_conv_chains` owner remains unchanged
+in `lower_from_onnx2tf.py`. Its new synthetic positive contract verifies:
+
+- direct NHWC input rewiring for the Mean DEQUANTIZE branch;
+- Mean axes `[2,3]` to `[1,2]` and keepDims metadata;
+- removal of the pool NCHW adapter and every post-Quantize NHWC adapter;
+- Concat input replacement and axis `1` to `3`;
+- static and dynamic batch shape/signature propagation;
+- per-axis QDIM `1` to `3`;
+- deterministic multiple-post and multiple-chain fixed-point behavior;
+- exact statistics, pruning, and second-call idempotence.
+
+Ten ordinary rejection cases cover wrong pre/pool permutation, public/fan-out
+pre-adapter, keepDims and Mean axes, Concat axis, incompatible per-axis QDIM,
+public post output, and non-Transpose post consumers. They return zero and
+preserve the complete ModelIR. Architecture coverage records the central
+310-line owner, consumer/producer map rebuilds, mutation utilities, unbounded
+fixed-point loop, and existing ordered recovery boundary.
+
+Nine strict xfails isolate pre-existing problems before any source correction:
+
+- short `q_raw_nhwc` and `pool_nhwc` signatures are consumed after input,
+  axes, and metadata mutation;
+- a missing, rank-three, or short-signature additional Concat input is checked
+  only after both branches and the Concat have been rewritten;
+- the Mean axes constant is modified when shared with another operator, listed
+  as a graph output, listed as a graph input, or marked variable.
+
+Each strict xfail requires a zero statistic and unchanged graph/tensor/options/
+constant/metadata state. Current behavior raises or leaves partial/nonlocal
+mutation, proving the correction boundary rather than merely documenting a
+theoretical risk.
+
+Validation completed as follows:
+
+- focused raw-owner plus ordered-boundary architecture selector:
+  `17 passed, 246 deselected, 9 xfailed in 0.93s`;
+- changed-file focused branch regression:
+  `661 passed, 9 xfailed in 23.74s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.30s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No model conversion was repeated. The earlier sequential QLinear recovery
+audit already established zero rewrites and zero process-tree SWAP for every
+measured candidate. Production source, public API, CLI, behavior, ordered
+boundaries, TensorFlow isolation, dependencies, corpus profiles, exclusions,
+and ONNX operation tiers are unchanged. PR #952 remains closed; future work is
+commit/push only and must not create a pull request.
+
+At restart, require `mean_axes` to be an immutable local INT32 constant: not a
+graph input/output, not variable, and consumed only by the matched Mean. Before
+mutation, resolve and rank-validate the source signature, every planned Concat
+input after pool substitution, every target tensor/signature, the new Mean and
+Concat shapes/signatures, the Concat axis, and optional per-axis QDIM update.
+Only a complete plan may commit setters, constant data, options, metadata,
+alias rewiring, and removals. Turn all nine strict xfails green while preserving
+valid candidate order/statistics and production boundaries. Do not extract the
+owner until the correction is committed; keep tests strictly sequential,
+commit and push, and do not create a pull request.
+
+## Mean/MaxPool/Concat/Conv transactional correction: completed state
+
+All nine strict xfails from the preceding characterization are green. The raw
+owner now requires `mean_axes` to satisfy every local-ownership invariant:
+
+- TensorIR dtype and backing NumPy dtype are both INT32;
+- the tensor is non-variable and unquantized;
+- it is absent from graph inputs and graph outputs;
+- its exact consumer list contains only the matched Mean.
+
+Before the first ModelIR mutation, the owner resolves rank-four shape and
+effective signature for the NHWC source, removed NCHW intermediates, both
+DEQUANTIZE branches, Mean and pool outputs, every pool-substituted Concat input,
+Concat/Quantize outputs, and every removable post-adapter output. It computes
+the new Mean axes/shape/signature, complete Concat shape/signature, optional
+per-axis QDIM remap, post aliases, and removal indices as one local plan. The
+commit phase has no rejection branch after its first setter. Missing/rank-three/
+short-signature Concat inputs and short source/pool signatures now return zero
+without graph, constant, option, tensor, or metadata mutation.
+
+Pruning is conditional on a non-zero rewrite. The owner no longer constructs
+the producer map that was never read, removing one whole-graph scan from every
+fixed-point round. Three additional ordinary guards verify axes TensorIR dtype,
+buffer dtype, and quantization state. Valid static/dynamic, multiple-post,
+multiple-chain, per-axis quantization, rejection, and idempotence contracts all
+remain green.
+
+Validation completed as follows:
+
+- focused corrected-owner plus ordered-boundary architecture selector:
+  `29 passed, 246 deselected in 1.97s`;
+- changed-file focused branch regression: `673 passed in 22.86s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 10.27s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- central lowerer Ruff findings decreased from eight to seven after removal of
+  the unused producer-map assignment.
+
+No real-model conversion was repeated because the prior sequential QLinear
+recovery audit established zero production rewrites and zero process-tree SWAP
+for every measured candidate. Public API, CLI, valid behavior/statistics,
+ordered boundaries, TensorFlow isolation, dependencies, corpus profiles,
+exclusions, and ONNX operation tiers are unchanged. PR #952 remains closed;
+future work is commit/push only and must not create a pull request.
+
+At restart, mechanically extract the corrected 382-line
+`_optimize_transpose_mean_maxpool_concat_conv_chains` owner into a focused
+Mean/MaxPool/Concat pass module. Keep the historical private lowerer name as a
+one-return wrapper and preserve its position in
+`_run_qlinear_mean_concat_recovery_sequence` plus both production sequence
+boundaries. Prove exact corrected old/new AST identity and direct owner/wrapper
+statistics plus complete ModelIR/metadata equality for static, dynamic,
+multiple-post, multiple-chain, per-axis, and rejection cases. Keep validation
+minimal and strictly sequential, commit and push, and do not create a pull
+request.
+
+## Mean/MaxPool/Concat/Conv ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/mean_maxpool_concat_layout.py`. Its function and
+the corrected predecessor at checkpoint `7b0f08a9` are each 382 lines and have
+identical ASTs. The lowerer imports the module owner under a private pass alias
+and retains `_optimize_transpose_mean_maxpool_concat_conv_chains` as a
+one-return compatibility wrapper. Its position in
+`_run_qlinear_mean_concat_recovery_sequence` and both production sequence
+boundaries are unchanged.
+
+Direct owner/wrapper characterization covers static, dynamic batch,
+multiple-post, multiple-chain, and rejection graphs. Deep-copied executions
+produce identical statistics and complete normalized ModelIR state, including
+constant payloads, options, per-axis quantization, tensor metadata, topology,
+and diagnostics. Architecture tests parse axes ownership, rank-four planning,
+commit ordering, and conditional pruning from the module owner, prevent a
+lowerer import cycle, require one wrapper dispatch, and preserve the ordered
+recovery sequence. Extraction made `_quant_scale_count` unused in the lowerer,
+so that import was removed; seven prior Ruff findings remain.
+
+Validation completed as follows:
+
+- corrected old/new owner AST comparison: exact, 382 lines each;
+- focused owner/wrapper and architecture selector:
+  `34 passed, 246 deselected in 2.00s`;
+- changed-file focused branch regression: `678 passed in 22.62s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.31s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+No model conversion was repeated. The ownership move is mechanically exact,
+direct tests cover every synthetic non-zero family, and the previous sequential
+QLinear recovery audit established zero production rewrites and zero process-
+tree SWAP for every measured candidate. Public API, CLI, valid behavior/
+statistics, ordered boundaries, TensorFlow isolation, dependencies, corpus
+profiles, exclusions, and ONNX operation tiers are unchanged. PR #952 remains
+closed; future work is commit/push only and must not create a pull request.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: `_canonicalize_softmax_transpose_chains` (190 lines). Freeze its
+positive and rejection topology, axis option changes, aliasing, fixed-point/
+pruning behavior, statistics, and ordered production boundaries before any
+correction or extraction. Reuse existing model evidence, keep additional
+validation minimal and strictly sequential, commit and push, and do not create
+a pull request.
+
+## Softmax/Transpose canonicalizer characterization: completed state
+
+The raw 190-line `_canonicalize_softmax_transpose_chains` owner and its two
+ordered production boundaries are unchanged. A focused synthetic contract now
+freezes the successful nonterminal and terminal chain, independent graph-order
+matches, fixed-point idempotence, shared-permutation cloning and collision-safe
+names, Softmax option/axis/provenance preservation, historical unmatched-graph
+pruning, ten existing topology/arity/fan-out/public-output/per-axis rejection
+guards, and both nested recovery-sequence boundaries.
+
+Twenty-four concrete unsafe cases are strict xfails:
+
+- the Softmax input is replanned as NHWC but the Softmax output remains NWHC,
+  causing the post-Transpose shape and signature to swap H/W;
+- six non-last, out-of-range, or malformed Softmax axes are rewritten even
+  though only normalized rank-four axis three is semantically invariant;
+- seven missing or incomplete rank-four tensor/signature cases still mutate;
+- five public-input, variable, dtype-invalid, buffer-dtype-invalid, or
+  quantized permutation constants are modified in place;
+- one public permutation output is modified instead of preserved through a
+  private constant clone;
+- duplicate Softmax/post producers, reverse Softmax/post order, and a public
+  internal input are not rejected.
+
+Each unsafe case requires a zero statistic and byte-for-byte normalized
+ModelIR equality. Production code, public API, CLI, artifacts, dependencies,
+corpus profiles, exclusions, operation tiers, and TensorFlow boundaries are
+unchanged. No additional model conversion was run; this checkpoint is
+synthetic characterization only. PR #952 remains closed, and no pull request
+may be created or reopened.
+
+Validation completed as follows:
+
+- focused characterization: `16 passed, 24 xfailed in 0.72s`;
+- characterization, terminal Softmax owner, and architecture integration:
+  `293 passed, 24 xfailed in 20.76s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.32s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed.
+
+At restart, correct the raw owner transactionally before extracting it.
+Require a normalized last-axis Softmax, unique topologically ordered producers,
+private intermediate tensors, complete rank-four shape/signature metadata,
+and immutable local INT32 permutation buffers. Public constant outputs may be
+preserved through private clones, but public inputs and variable permutations
+must reject. Precompute both permutation actions, every metadata value, marker
+options, clone names, and pruning consequences before the first mutation. Turn
+all 24 strict xfails green while preserving the successful graph-order count,
+fixed point, shared-buffer cloning, terminal-output behavior, marker contract,
+and both ordered boundaries. Validate sequentially, commit and push, and do not
+create a pull request.
+
+## Softmax/Transpose transactional correction: completed state
+
+All 24 strict xfails are green. The corrected raw owner is 343 lines and builds
+one `ModelIRGraphIndex` instead of rebuilding complete producer and consumer
+maps during each fixed-point round. It requires unique producers and strict
+`pre-previous < pre < Softmax < post` order, rejects produced tensors also
+declared as public inputs, and preserves the former private fan-out and
+terminal-output guards. Softmax options must describe normalized rank-four
+last axis (`3` or `-1`); a missing axis retains TFLite last-axis semantics.
+
+All four required activation tensors now supply complete rank-four shape and
+effective signature metadata before mutation. The new NHWC shape/signature is
+applied to both Softmax input and output, and the final NCHW metadata is derived
+from that planned Softmax output. This fixes the former H/W swap without
+depending on a later reconcile pass. Per-axis activation quantization remains
+conservatively ineligible.
+
+Both permutation changes are immutable plans. Each source must be a
+non-variable, unquantized INT32 TensorIR with an INT32 NumPy buffer. Public
+inputs reject because their runtime value is overridable. Shared and public-
+output constants receive deterministic private clones, while a uniquely owned
+local constant is updated in place. Clone names are reserved in a candidate-
+local set and become globally reserved only after both permutation plans,
+metadata, and marker options succeed. A dedicated post-permutation failure
+case proves that the pre-permutation, lineage, tensors, options, and metadata
+remain unchanged.
+
+Validation completed as follows:
+
+- focused corrected owner: `42 passed in 0.55s`;
+- corrected owner plus all focused Softmax/layout and architecture suites:
+  `443 passed in 20.90s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 10.06s`;
+- targeted Python compilation and whitespace checks: passed;
+- targeted Ruff reports the same seven pre-existing lowerer findings and no
+  new test finding.
+
+No real-model conversion was added. The correction rejects unsafe
+optimizations while retaining the original graph when evidence is incomplete;
+all known valid synthetic families and the broader Softmax pass set are green.
+Public API, CLI, artifacts, dependencies, corpus profiles, exclusions,
+operation tiers, and TensorFlow boundaries are unchanged. PR #952 remains
+closed; no pull request was created or reopened.
+
+At restart, mechanically extract the corrected 343-line
+`_canonicalize_softmax_transpose_chains` owner to a focused pass module. Retain
+the historical lowerer private name as a one-return wrapper, import the shared
+terminal marker from its existing owner, and preserve both nested recovery-
+sequence positions. Prove corrected old/new AST identity and direct owner/
+wrapper equality for static/dynamic metadata, multiple branches, shared and
+public-output clones, `axis=-1`, terminal output, pruning, rejection, and
+atomicity cases. Validate sequentially, commit and push, and do not create a
+pull request.
+
+## Softmax/Transpose ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/softmax_transpose_canonicalization.py`. Its
+function and the corrected raw owner at checkpoint `9a9898e3` are each 343
+lines and have identical ASTs. The central lowerer imports it under the private
+`_canonicalize_softmax_transpose_chains_pass` alias and retains the historical
+private name as a one-return wrapper. The two positions inside
+`_run_quantized_activation_binary_bridge_recovery_sequence` and
+`_run_layout_attention_quantized_recovery_suffix` are unchanged. The module
+imports the shared NHWC-propagation marker from `terminal_softmax_layout`
+without importing the lowerer.
+
+Ten direct owner/wrapper comparisons cover static shapes with dynamic batch
+signatures, two independent branches, shared permutation clones, a public-
+output clone, normalized axis `-1`, a terminal output, historical zero-match
+pruning, unsafe axis rejection, incomplete metadata rejection, and post-plan
+atomic rejection. Deep-copied executions produce identical statistics and
+complete normalized ModelIR state, including tensor buffers, topology,
+options, metadata, provenance, quantization, and lineage diagnostics.
+
+Validation completed as follows:
+
+- corrected checkpoint/module AST comparison: exact, 343 lines each;
+- focused owner/wrapper and architecture selector: `300 passed in 20.88s`;
+- all focused Softmax/layout plus architecture suites:
+  `453 passed in 21.13s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.42s`;
+- targeted Ruff for the new module and tests, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly seven pre-existing Ruff findings.
+
+No real-model conversion was repeated. The move is mechanically identical to
+the corrected checkpoint, and direct equality covers every synthetic non-zero
+family plus the critical rejection boundaries. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, ordered runtime
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed; no
+pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: the 394-line
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains`. Reuse its two existing
+public fixtures (ordinary and legacy-consumer variants), then freeze multiple-
+match, constant ownership/rotation, adapter naming, rank/signature,
+quantization, public-boundary, pruning, fixed-point, statistics, and ordered-
+production-boundary behavior. Record unsafe behavior as strict xfails before
+correction. Keep conversion validation minimal and strictly sequential,
+commit and push coherent checkpoints, and do not create a pull request.
+
+## Concat/Mul/Transpose/Add bridge characterization: completed state
+
+The raw 394-line `_optimize_concat_mul_add_transpose_nhwc_bridge_chains` owner
+and both ordered production positions are unchanged. Its ordinary and legacy-
+consumer fixtures were moved from `test_tflite_builder_direct.py` into the
+focused `test_flatbuffer_direct_concat_mul_add_bridge_layout.py`, reducing the
+giant direct test by 211 lines while preserving and expanding the same public
+behavior.
+
+The focused contract covers ordinary static and dynamic-batch signatures,
+legacy-consumer and public-Concat-output compatibility adapters, two
+independent graph-order matches, second-call fixed point, four-dimensional and
+scalar Mul constants, shared-constant collision-safe cloning, zero-match no-
+prune behavior, Concat options/axis/provenance, nine existing arity/layout/
+fan-out/public-output/constant rejection guards, statistics, and both nested
+recovery-sequence boundaries.
+
+Sixteen concrete problems are strict xfails:
+
+- the appended legacy adapter is later than its existing consumer, violating
+  topological order;
+- five missing/rank-three/short-signature retained metadata cases still
+  rewrite;
+- public-input and variable Mul constants rotate in place, and a public
+  constant output is not cloned;
+- ordinary and legacy per-axis quantized tensors retain QDIM 1 after moving to
+  NHWC instead of remapping to QDIM 3;
+- the fixed adapter-permutation name overwrites a public input rather than
+  allocating a private collision-safe constant;
+- malformed legacy metadata raises only after Mul-constant mutation;
+- a duplicate post producer, reverse post/Add order, and a produced internal
+  tensor also declared as a public input are not rejected.
+
+Validation completed as follows:
+
+- focused characterization: `18 passed, 16 xfailed in 0.75s`;
+- focused characterization plus ordered architecture suite:
+  `266 passed, 16 xfailed in 20.88s`;
+- broad direct/architecture collection: `1005 passed, 16 xfailed, 6 failed in
+  172.21s`; four failures require the absent TensorFlow extra, one requires a
+  compatible PyTorch binary, and one is an independently failing unchanged
+  SiNet helper expectation that also fails alone;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.42s`;
+- targeted Ruff for the new focused module, Python compilation, and whitespace
+  checks: passed. The giant direct test retains ten unrelated pre-existing
+  unused-import findings after removal of this owner's import.
+
+No model conversion was run. Production source, public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, and TensorFlow
+isolation are unchanged. PR #952 remains closed; no pull request was created,
+reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Build
+one indexed, graph-order candidate plan that validates unique producers,
+strict operator order, public boundaries, complete rank-four shape/signature
+metadata, constant ownership, and quantization. Precompute Mul-constant update
+or clone, QDIM remaps, canonical Concat metadata/name, adapter-permutation
+reuse or private clone, all setters/removals, and the adapter insertion index
+before mutation. Insert the adapter before its first legacy consumer, turn all
+16 strict xfails green, preserve the 18 existing cases and both production
+boundaries, validate sequentially, commit and push, and do not create a pull
+request.
+
+## Concat/Mul/Transpose/Add transactional correction: completed state
+
+All 16 strict xfails are green. The corrected raw owner is 652 lines and uses
+one `ModelIRGraphIndex` for candidate enumeration, unique-producer checks,
+consumer ownership, setters, batched removals, and adapter insertion. Two
+independent matches allocate the index once; complete maps are no longer
+rebuilt on each fixed-point round.
+
+Before the first mutation, each candidate now proves strict
+pre-Transpose/Concat/Mul/post-Transpose/Add order, unique retained producers,
+private internal edges, complete rank-four source/Concat/Mul shapes and
+effective signatures, valid Concat axis/options, NHWC add-bias broadcast, and
+all public-boundary rules. Missing tensors, short signatures, duplicate post
+producers, reverse post/Add order, and public internal aliases return zero with
+complete ModelIR equality.
+
+Mul constants have a complete immutable plan. Scalars and already compatible
+lower-rank broadcasts remain untouched. Rank-three or rank-four constants are
+rotated only after ownership and broadcast validation; shared and public-
+output constants receive deterministic private clones, while public inputs
+and variables reject. Per-axis quantization is cloned and remapped with the
+same permutation for the Mul constant, canonical Concat tensor, and Mul output.
+Both ordinary and legacy variants now use QDIM 3 for NHWC while the legacy
+adapter output retains its original NCHW metadata.
+
+Canonical tensor names and adapter-permutation names use candidate-local
+reservations that are published only on commit. A reserved, public, variable,
+wrong-dtype, quantized, or wrong-value adapter constant is preserved and a
+private INT32 constant is allocated. Every setter, removal, metadata update,
+option update, and adapter insertion is planned before commit. Compatibility
+adapters are inserted immediately after Concat, ahead of the main Mul and all
+legacy consumers, so both legacy and public-Concat-output graphs validate as
+topological ModelIR.
+
+Validation completed as follows:
+
+- focused corrected owner, including one-index and invariant checks:
+  `35 passed in 0.59s`;
+- focused corrected owner plus ordered architecture suite:
+  `283 passed in 20.49s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.35s`;
+- targeted Python compilation, focused-test Ruff, and whitespace checks:
+  passed;
+- central lowerer Ruff findings decreased from seven to six because the
+  corrected owner removed an unused local assignment.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to proven candidates; incomplete evidence now leaves the
+original graph intact. Public API, CLI, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, both ordered runtime boundaries, and
+TensorFlow isolation are unchanged. PR #952 remains closed; no pull request
+was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 652-line
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains` owner into a focused
+pass module. Keep the historical lowerer private name as a one-return wrapper
+and preserve its position in both terminal recovery sequences. Prove corrected
+checkpoint/module AST identity plus direct owner/wrapper equality for ordinary
+static/dynamic, multiple, scalar, shared/public constants, legacy/public
+Concat adapters, per-axis quantization, collision, pruning, rejection, and
+atomicity cases. Validate sequentially, commit and push, and do not create a
+pull request.
+
+## Concat/Mul/Transpose/Add ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/concat_mul_add_bridge_layout.py`. Its function
+and the corrected raw owner at checkpoint `5193fc11` are each 652 lines and
+have identical ASTs. The central lowerer imports it under the private
+`_optimize_concat_mul_add_transpose_nhwc_bridge_chains_pass` alias and keeps
+the historical private name as a one-return wrapper. Its third position in
+both terminal Concat recovery sequences and the immediate neighboring calls
+are unchanged. The pass module does not import the lowerer.
+
+Fifteen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two independent matches, scalar constants, shared and public-output
+constant clones, legacy and public-Concat-output adapters, ordinary and legacy
+per-axis quantization, adapter-name collision, unmatched pruning behavior,
+missing metadata, reverse topology, and a public internal boundary. Deep-
+copied executions produce identical statistics and complete normalized
+ModelIR state, including tensor buffers, quantization, options, provenance,
+topology, metadata, and diagnostics.
+
+Validation completed as follows:
+
+- corrected checkpoint/module AST comparison: exact, 652 lines each;
+- focused owner/wrapper and safety contract: `50 passed in 0.61s`;
+- focused contract plus ordered architecture suite:
+  `298 passed in 20.20s`;
+- targeted Python compilation and whitespace checks: passed;
+- targeted Ruff reports only the six pre-existing lowerer findings after the
+  extraction-specific `_quant_scale_count` import was removed.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+ordered runtime behavior, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: the 452-line
+`_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains`. Its existing
+legacy-consumer fixture remains in `tests/test_tflite_builder_direct.py` and
+its two ordered production positions are already asserted by architecture
+tests. Move relevant fixtures into a focused module, freeze positive,
+multiple-match, constant ownership, metadata, quantization, adapter naming,
+topology, public-boundary, pruning, fixed-point, statistics, and ordered-
+boundary behavior, and record unsafe behavior as strict xfails before any
+correction. Keep conversion validation minimal and strictly sequential,
+commit and push coherent checkpoints, and do not create a pull request.
+
+## Concat/Mul/Add/Transpose/Add characterization: completed state
+
+The 452-line raw
+`_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains` owner and its
+fourth position in both terminal Concat recovery sequences are unchanged. The
+existing legacy-consumer fixture moved from `test_tflite_builder_direct.py`
+into the focused
+`test_flatbuffer_direct_concat_mul_add_transpose_add_bridge_layout.py`,
+reducing the giant direct test by 102 lines.
+
+The focused contract freezes ordinary static and dynamic signatures, legacy
+compatibility output, two independent matches, fixed point, scalar constants,
+collision-safe shared Mul/Add constant clones, no-match pruning behavior,
+Concat options/axis semantics/version/provenance, nine existing rejection
+guards, statistics, the 452-line/two-While raw-owner shape, and both ordered
+production boundaries.
+
+Twenty-seven reproduced safety problems are strict xfails:
+
+- one non-topological legacy adapter placement;
+- seven incomplete source/Concat/Mul/Add metadata cases;
+- six public-input, variable, or public-output affine-constant ownership
+  violations;
+- two ordinary/legacy per-axis QDIM failures;
+- five unsafe reserved adapter-permutation ownership/value cases;
+- two late partial-mutation cases for the second affine constant and legacy
+  metadata;
+- one malformed Concat-axis exception;
+- three duplicate-producer, reverse-order, or public-internal-alias cases.
+
+Validation completed as follows:
+
+- focused characterization: `18 passed, 27 xfailed in 0.96s`;
+- focused characterization plus ordered architecture suite:
+  `266 passed, 27 xfailed in 21.04s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.60s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion was changed or run. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+and TensorFlow isolation are unchanged. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use
+one `ModelIRGraphIndex` to enumerate candidates and prove unique producers,
+strict pre-Transpose/Concat/Mul/Add/post-Transpose/tail-Add order, private
+internal edges, complete rank-four effective metadata, immutable affine-
+constant ownership, valid broadcasts, per-axis QDIM remaps, and safe adapter
+ownership/names. Precompute both constant update-or-clone actions, canonical
+Concat metadata/name, every setter/removal, and the producer-before-consumer
+adapter insertion index before mutation. Turn all 27 strict xfails green,
+preserve the 18 existing cases and both production boundaries, validate
+sequentially, commit and push, and do not create a pull request.
+
+## Concat/Mul/Add/Transpose/Add transactional correction: completed state
+
+All 27 former strict xfails are green. The corrected raw owner is 866 lines
+and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite
+proves the index is refreshed exactly once. Producer/consumer maps are no
+longer rebuilt on every candidate round.
+
+Before mutation, each candidate proves strict pre-Transpose/Concat/Mul/Add/
+post-Transpose/tail-Add order, unique producers, exact internal consumers,
+private intermediate boundaries, complete rank-four source/Concat/Mul/Add
+shape and effective-signature metadata, safe Concat axis/options, and a valid
+NHWC tail broadcast. Missing tensors, rank-three sources, short signatures,
+malformed axes, duplicate producers, reverse order, and public internal aliases
+now return zero without changing tensors, operators, metadata, lineage, or
+diagnostics.
+
+Mul and pre-Transpose Add constants share one immutable planning policy.
+Scalars and already NHWC-compatible broadcasts remain unchanged. NCHW rank-
+three/four values rotate only after ownership and target-broadcast validation;
+shared and public-output constants receive deterministic private clones,
+while public inputs and variables reject. Per-axis quantization is cloned and
+remapped for both constants, the canonical Concat tensor, Mul output, and Add
+output. Ordinary and legacy paths therefore use QDIM 3 for all NHWC tensors,
+while the compatibility output keeps its original NCHW contract.
+
+Candidate-local name reservations are published only at commit. The reserved
+adapter permutation is reused only when it is a private immutable unquantized
+INT32 tensor with exact `[4]` metadata, an INT32 backing buffer, and the exact
+permutation. Public, variable, wrong-dtype, quantized, or wrong-value tensors
+are preserved and receive a private collision-safe replacement. The adapter
+is inserted immediately after Concat and before all existing consumers. Both
+constant plans, every metadata/QDIM result, canonical tensor, adapter, setter,
+removal, and insertion are complete before the first mutation.
+
+Validation completed as follows:
+
+- corrected focused contract, including all former xfails and one-index
+  construction: `46 passed in 0.59s`;
+- corrected focused contract, adjacent extracted bridge contract, and ordered
+  architecture suite: `344 passed in 20.58s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.40s`;
+- targeted Python compilation and whitespace checks: passed;
+- central lowerer Ruff remains at the same six pre-existing findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is limited to fully proven candidates; incomplete evidence leaves the graph
+unchanged. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, both ordered runtime boundaries, and TensorFlow
+isolation are unchanged. PR #952 remains closed; no pull request was created,
+reopened, or updated.
+
+At restart, mechanically extract the corrected 866-line
+`_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains` owner into a
+focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve its position in both terminal recovery sequences. Prove
+corrected checkpoint/module AST identity and direct owner/wrapper equality for
+ordinary static/dynamic, multiple, scalar, shared/public constants, legacy
+adapters, per-axis quantization, adapter collisions, pruning, rejection, and
+atomicity cases. Validate sequentially, commit and push, and do not create a
+pull request.
+
+## Concat/Mul/Add/Transpose/Add ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/concat_mul_add_transpose_add_bridge_layout.py`.
+Its function and the corrected raw owner at checkpoint `4a5f0394` are each 866
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains_pass` alias and
+keeps the historical private name as a one-return wrapper. Its fourth position
+in both terminal Concat recovery sequences and both immediate neighboring
+calls are unchanged. The pass module does not import the lowerer.
+
+Nineteen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two independent matches, scalar constants, separate shared Mul/Add
+constant collisions, separate public-output clones, legacy adapters, ordinary
+and legacy per-axis quantization, adapter-name collision, unmatched pruning,
+missing metadata, late constant and metadata evidence, malformed axis,
+reverse topology, and a public internal boundary. Deep-copied executions
+produce identical statistics and complete normalized ModelIR state, including
+buffers, quantization, options, provenance, topology, metadata, lineage, and
+diagnostics.
+
+Validation completed as follows:
+
+- corrected checkpoint/module AST comparison: exact, 866 lines each;
+- focused safety plus owner/wrapper contract: `65 passed in 0.63s`;
+- focused contract, adjacent extracted bridge contract, and ordered
+  architecture suite: `363 passed in 19.78s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.34s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly six pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+ordered runtime behavior, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: the 461-line
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains`. Its
+existing public fixture remains in `tests/test_tflite_builder_direct.py`, and
+both ordered positions are already asserted by architecture tests. Move the
+fixture into a focused module, freeze positive, multiple-match, constants,
+metadata, quantization, adapter naming, topology, public-boundary, pruning,
+fixed-point, statistics, and ordered-boundary behavior, and record unsafe
+behavior as strict xfails before correction. Keep validation minimal and
+strictly sequential, commit and push coherent checkpoints, and do not create a
+pull request.
+
+## Concat/Mul/Add/Add/Mean/Reshape characterization: completed state
+
+The 461-line raw
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains` owner and
+its fifth position in both terminal Concat recovery sequences are unchanged.
+The existing positive fixture moved from `test_tflite_builder_direct.py` into
+the focused `test_flatbuffer_direct_concat_mul_add_add_mean_reshape_layout.py`,
+reducing the giant direct test by 94 lines.
+
+The focused contract freezes static and dynamic signatures, two independent
+matches, fixed point, scalar constants, collision-safe shared clones for Mul
+and both Adds, shared Mean-axes cloning, exact old-Mean-shape rewriting, no-
+match pruning behavior, Concat/Mean options/version/provenance, ten existing
+rejection guards, statistics, the 461-line/two-While owner shape, and both
+ordered production boundaries.
+
+Forty-two reproduced safety problems are strict xfails:
+
+- eleven incomplete source/Concat/Mul/Add/Mean metadata cases;
+- nine affine-constant public/variable/output ownership violations;
+- one complete per-axis QDIM case;
+- six unsafe or public-output Mean-axes cases;
+- six unsafe, shared, or public-output Reshape-shape cases;
+- four late partial-mutation cases;
+- one malformed Concat-axis exception;
+- three duplicate-producer, reverse-order, or public-alias cases;
+- one identity Mean-axis mapping false negative with partial mutation.
+
+Validation completed as follows:
+
+- focused characterization: `21 passed, 42 xfailed in 1.21s`;
+- focused characterization plus ordered architecture suite:
+  `269 passed, 42 xfailed in 20.55s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.49s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion was changed or run. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+and TensorFlow isolation are unchanged. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use
+one `ModelIRGraphIndex` to prove unique producers, strict pre-Transpose/Concat/
+Mul/Add/Add/Mean/Reshape order, private intermediates, exact consumers, and
+complete rank-four effective metadata. Precompute immutable update-or-clone
+plans for all three affine constants, an ownership/type-safe Mean-axes plan
+that accepts identity mappings, and a conditional ownership/type-safe Reshape-
+shape plan. Remap every affected per-axis QDIM and complete all names, tensors,
+setters, metadata changes, and removals before the first mutation. Turn all 42
+strict xfails green, preserve the 21 existing cases and both production
+boundaries, validate sequentially, commit and push, and do not create a pull
+request.
+
+## Concat/Mul/Add/Add/Mean/Reshape transactional correction: completed state
+
+All 42 former strict xfails are green. The corrected raw owner is 869 lines
+and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite proves
+the index is refreshed exactly once. Indexed setters and one batched removal
+replace repeated whole-graph producer/consumer reconstruction and direct
+operator deletion.
+
+Before mutation, each candidate proves unique producers, strict pre-Transpose/
+Concat/Mul/Add/Add/Mean/Reshape order, exact private internal consumers,
+complete rank-four source/Concat/Mul/Add/Mean effective metadata, valid Concat
+axis/options, Mean keep-dims semantics, and no unsupported Concat fan-out.
+Missing tensors, rank-three sources, short signatures, malformed axes,
+duplicate Mean producers, reverse order, and public internal aliases now leave
+the complete ModelIR unchanged.
+
+Mul and both Add constants share one immutable action planner. Scalars and
+already compatible NHWC broadcasts remain unchanged. Rotated rank-three/four
+constants require valid target broadcasting and non-public-input, non-variable
+ownership; shared and public-output values receive deterministic private
+clones. Rank-specific per-axis QDIM remaps apply to all three constants, while
+Concat, Mul, both Add outputs, and Mean output use the full rank-four remap.
+
+Mean axes now have an explicit immutable unquantized INT32 contract covering
+TensorIR dtype, backing-buffer dtype, shape/signature, ownership, range, and
+negative-axis normalization. Identity remaps are successful no-change plans;
+changed shared/public-output axes clone. The Reshape shape is rewritten only
+when it exactly equals the old Mean shape, and then uses the same ownership,
+type, metadata, and cloning policy. Both plans, every affine action, all QDIM
+results, names, tensors, setters, metadata writes, and removals are complete
+before commit, so late constant or Mean evidence cannot leave partial state.
+
+Validation completed as follows:
+
+- corrected focused contract, including all former xfails, one-index, and
+  Concat-fan-out checks: `65 passed in 0.64s`;
+- corrected focused contract, both adjacent extracted bridge contracts, and
+  ordered architecture suite: `428 passed in 20.13s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.39s`;
+- targeted Ruff for the focused test, Python compilation, and whitespace
+  checks: passed;
+- central lowerer Ruff findings decreased from six to five because the new
+  owner removed the obsolete `reshape_out_name` local.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is limited to fully proven candidates; incomplete evidence leaves the graph
+unchanged. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, both ordered runtime boundaries, and TensorFlow
+isolation are unchanged. PR #952 remains closed; no pull request was created,
+reopened, or updated.
+
+At restart, mechanically extract the corrected 869-line
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains` owner into
+a focused pass module. Keep the historical lowerer private name as a one-
+return wrapper and preserve its position in both terminal recovery sequences.
+Prove corrected checkpoint/module AST identity and direct owner/wrapper
+equality for static/dynamic, multiple, scalar, shared/public affine constants,
+Mean axes, Reshape shape, quantization, pruning, rejection, and atomicity
+cases. Validate sequentially, commit and push, and do not create a pull
+request.
+
+## Concat/Mul/Add/Add/Mean/Reshape ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/concat_mul_add_add_mean_reshape_layout.py`. Its
+function and the corrected raw owner at checkpoint `3c3579fd` are each 869
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains_pass` alias
+and keeps the historical private name as a one-return wrapper. Its fifth
+position in both terminal Concat recovery sequences and immediate neighboring
+calls are unchanged. The pass module does not import the lowerer.
+
+Twenty-three direct owner/wrapper comparisons cover ordinary static and
+dynamic metadata, two independent matches, scalar constants, separate shared
+and public-output actions for all three affine constants, shared and public
+Mean axes, exact and public Reshape shapes, per-axis quantization, identity
+axes, unmatched pruning, missing metadata, late affine and Mean evidence,
+malformed axis, reverse topology, and a public internal boundary. Deep-copied
+executions produce identical statistics and complete normalized ModelIR state,
+including buffers, quantization, options, provenance, topology, metadata,
+lineage, and diagnostics.
+
+Validation completed as follows:
+
+- corrected checkpoint/module AST comparison: exact, 869 lines each;
+- focused safety plus owner/wrapper contract: `88 passed in 0.66s`;
+- focused contract, both adjacent extracted bridge contracts, and ordered
+  architecture suite: `451 passed in 20.05s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.44s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+ordered runtime behavior, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: the 356-line
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains`. Its existing
+public fixture remains in `tests/test_tflite_builder_direct.py`, and both
+ordered positions are asserted by architecture tests. Move the fixture into a
+focused module, freeze positive, multiple-match, nested-Concat, constants,
+metadata, quantization, topology, public-boundary, pruning, fixed-point,
+statistics, and ordered-boundary behavior, and record unsafe behavior as
+strict xfails before correction. Keep validation minimal and strictly
+sequential, commit and push coherent checkpoints, and do not create a pull
+request.
+
+## Nested-Concat/Mul/Transpose characterization: completed state
+
+The 356-line raw
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains` owner and its
+historical position in both terminal Concat recovery sequences are unchanged.
+The existing mixed-axis fixture moved from `test_tflite_builder_direct.py` into
+the focused `test_flatbuffer_direct_concat_tree_mul_add_bridge_layout.py`, and
+the giant direct test no longer imports this private owner.
+
+The twenty green focused cases freeze static and dynamic-batch mixed-axis
+Concat trees, two independent graph-order matches, fixed point, scalar
+constants, collision-safe shared constant cloning, negative-axis
+normalization, zero-match no-prune behavior, twelve existing rejection guards,
+statistics, the current 356-line/three-While owner shape, and both ordered
+production boundaries.
+
+Nineteen reproduced safety problems are strict xfails:
+
+- eight incomplete source/inner-Concat/root-Concat/Mul metadata cases;
+- three unsafe public-input, variable, or public-output Mul-constant ownership
+  paths;
+- one complete per-axis QDIM case;
+- two malformed inner/root Concat-axis cases;
+- one late metadata case that leaves a rotated constant behind;
+- four duplicate-producer, reverse-order, or public-alias cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `20 passed, 19 xfailed in 0.90s`;
+- focused characterization plus ordered architecture suite:
+  `268 passed, 19 xfailed in 19.22s`;
+- focused characterization, the three adjacent Concat bridge contracts, and
+  ordered architecture suite: `471 passed, 19 xfailed in 20.10s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.66s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion changed or ran. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+ordered runtime behavior, and TensorFlow isolation are unchanged. The 356-line
+count is descriptive only; 2,000 remains the ONNX operation-count threshold
+for tiering. PR #952 remains closed; no pull request was created, reopened, or
+updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use
+one `ModelIRGraphIndex` to enumerate the recursive Concat tree in deterministic
+graph order and prove unique producers, strict pre-Transpose/Concat/Mul/post-
+Transpose/Add order, private intermediates, exact consumers, and complete
+rank-four effective metadata. Precompute an ownership-aware Mul-constant
+update-or-clone plan, QDIM remaps, validated normalized axes, all indexed
+setters, metadata writes, rewires, and removals before the first mutation.
+Turn all 19 strict xfails green while preserving the twenty existing cases,
+statistics, fixed point, pruning behavior, and both production boundaries.
+Validate sequentially, commit and push, and do not create a pull request.
+
+## Nested-Concat/Mul/Transpose transactional correction: completed state
+
+All nineteen former strict xfails are green. The corrected raw owner is 675
+lines and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite
+refreshes it exactly once. Indexed setters and one batched removal replace
+repeated complete producer/consumer reconstruction and direct operator
+deletion.
+
+Before mutation, each candidate proves unique producers, strict leaf pre-
+Transpose/nested-Concat/Mul/post-Transpose/Add graph order, exact internal
+consumers, private intermediate boundaries, valid normalized Concat axes, and
+complete rank-four source, every Concat-output, and Mul-output shape/effective-
+signature metadata. Missing or short metadata, rank-three sources, malformed
+axes, duplicate post producers, reverse topology, and public aliases now leave
+the complete ModelIR unchanged.
+
+Every recursive Concat input replacement, remapped axis/options dictionary,
+shape/signature permutation, quantization action, Add rewire, and removal is
+planned before commit. All per-axis QDIM values follow the NCHW-to-NHWC
+permutation for every retained Concat output and the Mul output. The Add-side
+NHWC channel broadcast is validated against the planned Mul shape.
+
+The Mul constant uses one immutable ownership plan. Scalars and already
+compatible NHWC broadcasts remain unchanged. Required rank-four rotations
+reject public inputs and variables; shared and public-output values receive a
+deterministic collision-safe private clone; private single-use values update in
+place. The constant QDIM follows its data permutation, and clones preserve
+dtype, quantization, logical/physical layout, and ONNX provenance.
+
+Validation completed sequentially as follows:
+
+- corrected focused safety and one-index contract: `42 passed in 0.56s`;
+- corrected focused contract, the three adjacent extracted Concat bridge
+  contracts, and ordered architecture suite: `493 passed in 19.70s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.68s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is limited to fully proven candidates; incomplete evidence leaves the graph
+unchanged. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, both ordered runtime boundaries, and TensorFlow
+isolation are unchanged. The 675-line count is descriptive only; 2,000 remains
+the ONNX operation-count tier threshold. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 675-line
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains` owner into a
+focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve both ordered positions. Prove corrected checkpoint/module
+AST identity and direct owner/wrapper equality for static/dynamic, multiple,
+scalar, shared/public constants, quantization, pruning, rejection, and atomicity
+cases. Validate sequentially, commit and push, and do not create a pull request.
+
+## Nested-Concat/Mul/Transpose ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/concat_tree_mul_add_bridge_layout.py`. Its
+function and the corrected raw owner at checkpoint `4111187c` are each 675
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains_pass` alias and
+keeps the historical private name as a one-return wrapper. Its position after
+the extracted Concat/Mul/Add/Add/Mean/Reshape owner and before singleton-gate
+recovery in both terminal sequences is unchanged. The pass module does not
+import the lowerer.
+
+Seventeen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two matches, scalar constants, shared collision-safe and public-
+output clones, public-input and variable rejection, per-axis quantization,
+unmatched pruning, missing and late metadata, malformed axes, reverse nested
+topology, a public internal boundary, and reverse or duplicate source
+producers. Deep-copied executions produce identical statistics and complete
+normalized ModelIR state, including buffers, quantization, options,
+provenance, topology, metadata, lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 675 lines each;
+- focused safety plus owner/wrapper contract: `59 passed in 0.58s`;
+- focused contract, the three adjacent extracted Concat bridge contracts, and
+  ordered architecture suite: `510 passed in 19.29s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.54s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+ordered runtime behavior, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next raw source-order owner before
+editing it: the 543-line
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`.
+Its existing public fixture remains in `tests/test_tflite_builder_direct.py`,
+and all three production calls are already asserted by architecture tests.
+Move the fixture into a focused module; freeze positive, multiple-match,
+StridedSlice/Pad constants, Concat/Mul/Add constants, metadata, quantization,
+topology, public-boundary, pruning, fixed-point, statistics, and ordered-call
+behavior; and record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.
+
+## StridedSlice/Pad/Concat bridge characterization: completed state
+
+The 543-line raw
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`
+owner and all three production calls are unchanged. The existing public fixture
+moved from `test_tflite_builder_direct.py` into the focused
+`test_flatbuffer_direct_stridedslice_pad_concat_bridge_layout.py`, reducing the
+giant direct test by 117 lines and removing its private owner import.
+
+The twenty-six green cases freeze static and dynamic-batch signatures, two
+independent graph-order matches and fixed point, multiple Add users, Pad and
+MirrorPad options/provenance, scalar Mul constants, collision-safe external-
+user clones for Slice-end, Pad, and Mul constants, zero-match no-prune behavior,
+seventeen existing rejection guards, statistics, the current 543-line/two-
+While owner shape, and all three ordered production calls.
+
+Forty-two reproduced safety problems are strict xfails:
+
+- ten incomplete source/Slice/Pad/Concat/Mul metadata cases;
+- sixteen unsafe public-input, variable, wrong-dtype, or quantized Slice-vector
+  and Pad-matrix constant paths;
+- two changed public Slice/Pad constant outputs that mutate instead of clone;
+- three unsafe public-input, variable, or public-output Mul-constant paths;
+- one complete per-axis QDIM case;
+- two public Slice/Pad intermediate boundaries;
+- six duplicate-producer, reverse-order, or public-alias cases;
+- two malformed Concat/Slice option cases that raise.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `26 passed, 42 xfailed in 1.23s`;
+- focused characterization plus ordered architecture suite:
+  `274 passed, 42 xfailed in 18.98s`;
+- focused characterization, the four adjacent extracted Concat bridge
+  contracts, and ordered architecture suite:
+  `536 passed, 42 xfailed in 20.06s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.31s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, ordered
+runtime behavior, and TensorFlow isolation are unchanged. The 543-line count
+is descriptive only; 2,000 remains the ONNX operation-count tier threshold. PR
+#952 remains closed; no pull request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use one
+`ModelIRGraphIndex` to prove unique producers, strict pre-Transpose/
+StridedSlice/Pad/Concat/Mul/post-Transpose/Add order, exact private internal
+consumers, complete rank-four metadata, and the supported ordered multi-Add
+tail. Precompute grouped ownership/type-safe unquantized INT32 actions for all
+Slice vectors and Pad matrices, an ownership-aware Mul-constant action, every
+QDIM remap, normalized mask/axis option, clone name, indexed setter, Mul-output
+rename, and batched removal before the first mutation. Turn all 42 strict
+xfails green while preserving the twenty-six existing cases, statistics,
+fixed point, pruning, Pad/MirrorPad behavior, and all three production calls.
+Validate sequentially, commit and push, and do not create a pull request.
+
+## StridedSlice/Pad/Concat transactional correction: completed state
+
+All forty-two former strict xfails are green. The corrected raw owner is 1,100
+lines and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite
+refreshes it exactly once. Indexed input/output setters and one batched removal
+replace repeated complete producer/consumer scans and direct operator deletion.
+
+Before mutation, each candidate proves unique producers, strict source/pre-
+Transpose/StridedSlice/Pad/Concat/Mul/post-Transpose/ordered-Add graph order,
+exact private internal consumers, complete rank-four source/Slice/Pad/Concat/
+Mul metadata, a present post-output tensor, valid normalized Concat and Slice
+options, and the supported one-or-more Add tail. Missing or short metadata,
+missing post output, malformed axes/masks, duplicate producers, reverse order,
+and public aliases now return zero with complete ModelIR equality.
+
+All Slice, Pad, Concat, and renamed Mul-output shapes/signatures and per-axis
+QDIM values are planned before commit. Add channel-last constants are checked
+against the planned Mul shape. The Mul output is renamed through the indexed
+producer setter before the post-Transpose is removed, so every existing valid
+Add user remains connected without a transient stale index.
+
+Slice begin/end/stride vectors and Pad matrices share one grouped immutable
+constant transaction. Every value must have exact unquantized INT32 TensorIR,
+buffer, shape, and signature metadata, no public-input or variable ownership,
+and no runtime producer. Requirements sharing a tensor identity must agree on
+one target. Unchanged values remain shared, private changed values update once,
+and changed public outputs or values with any unrelated consumer edge receive
+one deterministic collision-safe clone reused at all planned sites. Clone
+metadata preserves layout and ONNX provenance. The Mul constant uses the same
+ownership-aware update/clone policy and remaps its QDIM with its data.
+
+Validation completed sequentially as follows:
+
+- corrected focused safety, grouped-clone, missing-post, and one-index
+  contract: `70 passed in 0.62s`;
+- corrected focused contract, the four adjacent extracted Concat bridge
+  contracts, and ordered architecture suite: `580 passed in 19.32s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.38s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to fully proven candidates; incomplete evidence leaves the
+graph unchanged. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, Pad/MirrorPad behavior, multiple Add users, all
+three ordered runtime calls, and TensorFlow isolation are unchanged. The
+1,100-line count is descriptive only; 2,000 remains the ONNX operation-count
+tier threshold. PR #952 remains closed; no pull request was created, reopened,
+or updated.
+
+At restart, mechanically extract the corrected 1,100-line
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains`
+owner into a focused pass module. Keep the historical lowerer private name as
+a one-return wrapper and preserve all three production calls. Prove corrected
+checkpoint/module AST identity and direct owner/wrapper equality for static/
+dynamic, multiple, multi-Add, Pad/MirrorPad, scalar, grouped shared/public
+constants, quantization, pruning, rejection, and atomicity cases. Validate
+sequentially, commit and push, and do not create a pull request.
+
+## StridedSlice/Pad/Concat ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/stridedslice_pad_concat_bridge_layout.py`. Its
+function and the corrected raw owner at checkpoint `95a5555b` are each 1,100
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains_pass`
+alias and keeps the historical private name as a one-return wrapper. All three
+production calls remain unchanged. The pass module does not import the lowerer.
+
+Twenty direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two matches, multiple Add users, Pad and MirrorPad, scalar Mul,
+grouped shared constants, public index outputs, public-input and wrong-dtype
+index rejection, public and variable Mul ownership, per-axis quantization,
+unmatched pruning, missing retained and post-output metadata, malformed
+options, reverse topology, a public intermediate, and duplicate source
+producers. Deep-copied executions produce identical statistics and complete
+normalized ModelIR state, including buffers, quantization, options,
+provenance, topology, metadata, lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 1,100 lines each;
+- focused safety plus owner/wrapper contract: `90 passed in 0.65s`;
+- focused contract, the four adjacent extracted Concat bridge contracts, and
+  ordered architecture suite: `600 passed in 18.48s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.41s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+Pad/MirrorPad and multiple-Add behavior, all three ordered runtime calls, and
+TensorFlow isolation are unchanged. PR #952 remains closed; no pull request
+was created, reopened, or updated.
+
+At restart, inventory and characterize the next substantive raw source-order
+owner before editing it: the 218-line
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`.
+No focused public fixture currently owns this pass; only architecture coverage
+references it. Build focused synthetic ModelIR cases for positive, dynamic,
+multiple-match, shape-constant ownership, metadata, quantization, topology,
+public boundaries, pruning, fixed point, statistics, and every production-call
+boundary. Record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.
+
+## Reshape/Transpose collapse characterization: completed state
+
+The 218-line raw
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains` owner and
+both production calls are unchanged. It had no focused public fixture; the new
+`test_flatbuffer_direct_reshape_transpose_collapse_layout.py` now owns its
+synthetic ModelIR contract.
+
+The fourteen green cases freeze ordinary static collapse, two independent
+graph-order matches and fixed point, collision-safe shared shape cloning, ten
+existing wrong-permutation/public-intermediate/fan-out/incompatible-shape/
+missing-output rejection guards, statistics, the current 218-line/two-While
+owner shape, and both production calls.
+
+Nineteen reproduced safety problems are strict xfails:
+
+- one dynamic-batch signature case that writes concrete batch one;
+- one zero-match case that prunes an unrelated tensor;
+- six unsafe public-input, variable, TensorIR/buffer dtype, quantized, or
+  data-less shape-constant cases;
+- one changed public shape output that mutates instead of cloning;
+- five short input/intermediate/output signature cases;
+- five duplicate-producer, reverse-order, or public-alias cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `14 passed, 19 xfailed in 0.67s`;
+- focused characterization plus ordered architecture suite:
+  `262 passed, 19 xfailed in 18.17s`;
+- focused characterization, the five adjacent extracted bridge contracts, and
+  ordered architecture suite: `614 passed, 19 xfailed in 18.63s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.23s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. The 218-line
+count is descriptive only; 2,000 remains the ONNX operation-count tier
+threshold. PR #952 remains closed; no pull request was created, reopened, or
+updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use one
+`ModelIRGraphIndex` to prove unique producers, strict Reshape/Transpose/
+Reshape/Transpose order, exact private internal consumers, complete rank-three/
+rank-four shapes and signatures, and a valid output boundary. Derive the target
+shape/options from compatible output signatures so a dynamic batch remains
+`-1`. Precompute an ownership/type-safe unquantized INT32 shape update-or-clone,
+collision-safe name, indexed output setter, option changes, removals, and prune
+decision before mutation. Turn all 19 strict xfails green while preserving the
+fourteen existing cases, statistics, fixed point, provenance/options, and both
+production calls. Validate sequentially, commit and push, and do not create a
+pull request.
+
+## Reshape/Transpose collapse transactional correction: completed state
+
+All nineteen former strict xfails are green. The corrected raw owner is 399
+lines and constructs one `ModelIRGraphIndex`; a two-branch fixed-point rewrite
+refreshes it exactly once. Indexed input/output setters and one batched removal
+replace the repeated consumer scan and direct operator deletion.
+
+Before mutation, each candidate proves unique source/intermediate/output
+producers, strict Reshape/Transpose/Reshape/Transpose graph order, exact private
+internal consumers, complete rank-three/rank-four positive physical shapes,
+and compatible full-length signatures. The proven physical N/S/C/H/W
+relationship remains unchanged. Every non-batch signature dimension must equal
+its physical dimension, while each batch signature may be the physical batch
+or `-1`; any dynamic boundary makes the planned target batch `-1`. Shape-buffer,
+`newShape`, and `onnxRawNewShape` targets therefore remain consistent.
+
+The first Reshape shape input has an immutable unquantized INT32 contract:
+TensorIR and NumPy buffer dtype, `[4]` shape/signature, data presence, ownership,
+runtime-producer absence, and equality with the proven first Reshape shape are
+validated. Public inputs, variables, wrong dtypes, quantization, missing data,
+and produced constants reject. Private values update once; public outputs and
+values with unrelated consumer edges receive one deterministic collision-safe
+clone preserving layout and ONNX provenance.
+
+Shape action, clone name, dynamic options, indexed output rename, removals, and
+pruning are complete before commit. Missing/short metadata, duplicate or
+reverse topology, and public aliases leave the complete ModelIR unchanged. A
+zero-match invocation no longer prunes unrelated tensors.
+
+Validation completed sequentially as follows:
+
+- corrected focused dynamic, no-prune, ownership, topology, and one-index
+  contract: `34 passed in 0.54s`;
+- corrected focused contract, the five adjacent extracted bridge contracts,
+  and ordered architecture suite: `634 passed in 19.12s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.77s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to fully proven candidates. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. The 399-line count is
+descriptive only; 2,000 remains the ONNX operation-count tier threshold. PR
+#952 remains closed; no pull request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 399-line
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains` owner
+into a focused pass module. Keep the historical lowerer private name as a one-
+return wrapper and preserve both production calls. Prove corrected checkpoint/
+module AST identity and direct owner/wrapper equality for static/dynamic,
+multiple, shared/public/invalid shape constants, no-prune, signatures,
+topology, and atomicity cases. Validate sequentially, commit and push, and do
+not create a pull request.
+
+## Reshape/Transpose collapse ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/reshape_transpose_collapse_layout.py`. Its
+function and the corrected raw owner at checkpoint `48aae4b0` are each 399
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains_pass`
+alias and keeps the historical private name as a one-return wrapper. Both
+production calls remain unchanged. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary static and dynamic
+metadata, two matches, shared collision-safe and public-output shape clones,
+public-input, variable, wrong-dtype, quantized, and missing-data rejection,
+zero-match no-prune, short signatures, reverse topology, a public internal
+alias, duplicate source producers, and missing output metadata. Deep-copied
+executions produce identical statistics and complete normalized ModelIR state,
+including buffers, quantization, options, provenance, topology, metadata,
+lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 399 lines each;
+- focused safety plus owner/wrapper contract: `50 passed in 0.55s`;
+- focused contract, the five adjacent extracted bridge contracts, and ordered
+  architecture suite: `650 passed in 18.26s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.59s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. PR #952 remains
+closed; no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next substantive raw source-order
+owner before editing it: the 293-line
+`_optimize_attention_gather_transpose_reshape_cleanup_chains`. It currently has
+only architecture references and no focused public fixture. Build focused
+synthetic ModelIR cases for positive and multiple matches, Gather/Transpose/
+Reshape shape and axis constants, metadata, quantization, topology, public
+boundaries, pruning, fixed point, statistics, and every production-call
+boundary. Record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.
+
+## Attention Gather cleanup characterization: completed state
+
+The 293-line raw
+`_optimize_attention_gather_transpose_reshape_cleanup_chains` owner and both
+production calls remain unchanged. It had no focused public fixture; the new
+`test_flatbuffer_direct_attention_gather_cleanup_layout.py` now owns the
+synthetic ModelIR contract.
+
+Thirty-three green cases freeze Pattern A and Pattern B, exact NumPy equality,
+negative-axis normalization, two matches of each pattern and fixed point,
+collision-safe shared-permutation naming, the supported public Pattern-A
+Reshape output, existing public-intermediate/fan-out/axis/shape/constant
+rejections, statistics, the current 293-line/two-While owner shape, and both
+production calls.
+
+Forty-six reproduced safety problems are strict xfails:
+
+- one zero-match case prunes an unrelated tensor;
+- thirty unsafe public-input, variable, TensorIR/buffer dtype, or quantized
+  index/permutation/shape constant cases;
+- two unsafe public-output/shared-clone permutation ownership/provenance cases;
+- two multi-element zero-index cases;
+- one dynamic-signature and one retained per-axis-QDIM case in Pattern A;
+- one inconsistent intermediate-shape and one quantization-bypass case in
+  Pattern B;
+- three incomplete-metadata and four invalid-topology cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `33 passed, 46 xfailed in 1.05s`;
+- focused characterization, the six adjacent extracted bridge/collapse
+  contracts, and ordered architecture suite:
+  `683 passed, 46 xfailed in 19.42s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.51s`;
+- focused-test Ruff/format checks, Python compilation, and whitespace checks:
+  passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. PR #952 remains
+closed; no pull request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Build
+one `ModelIRGraphIndex` and complete Pattern-A/Pattern-B plans proving unique
+ordered topology, exact private intermediates, scalar zero indices, complete
+shape/signature/dtype/layout/quantization compatibility, and public boundaries.
+Give all match constants an immutable unquantized INT32 ownership/type
+contract; clone changed shared/public permutation values deterministically with
+full provenance. Preserve dynamic signatures, remap Pattern-A QDIM, require
+exact Pattern-B metadata equivalence, and precompute every setter, removal, and
+prune decision before mutation. Turn all 46 strict xfails green while
+preserving valid behavior, statistics, fixed point, and both production calls.
+Validate sequentially, commit and push, and do not create a pull request.
+
+## Attention Gather cleanup transactional correction: completed state
+
+All forty-six former strict xfails are green. The corrected raw owner is 740
+lines and constructs one `ModelIRGraphIndex`; mixed two-Pattern-A/two-Pattern-B
+fixed-point execution refreshes it exactly once. Indexed replacements and
+batched/single removals replace every repeated full consumer scan.
+
+Before mutation, each candidate proves unique producers, strict graph order,
+exact private intermediate consumers, complete positive physical shapes and
+full compatible signatures, data-preserving dtypes, scalar zero-index Gather
+semantics, and valid public boundaries. Pattern B proves exact singleton-axis
+shape reduction and source/Reshape layout plus quantization equivalence before
+bypassing the chain. Pattern A proves the complete rank-lift algebra, target
+Reshape, permutation options, and retained output metadata. Its dynamic axes
+remain dynamic, NCW/NWC layout annotations rank-lift to NCHW/NHWC, and retained
+per-axis QDIM advances by one.
+
+Index, permutation, and target-shape constants now require immutable,
+unquantized INT32 TensorIR and NumPy buffers with exact values and shapes.
+Public inputs, variables, runtime producers, wrong TensorIR/buffer dtypes, and
+quantized values reject. Scalar `[]` and normalized `[1]` index representations
+remain supported, while multi-element zeros reject. A private permutation
+updates once; unrelated consumers and public outputs receive deterministic
+collision-safe clones preserving layout and ONNX provenance. All actions are
+planned before commit, and zero-match execution no longer prunes.
+
+Validation completed sequentially as follows:
+
+- corrected focused contract: `81 passed in 0.59s`;
+- corrected focused contract plus ordered architecture suite:
+  `329 passed in 18.32s`;
+- corrected focused contract, six adjacent extracted bridge/collapse
+  contracts, and ordered architecture suite: `731 passed in 18.68s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.42s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly six pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is limited to fully proven candidates. Public API, CLI, artifacts, dependencies,
+corpus profiles, exclusions, operation tiers, both ordered runtime calls, and
+TensorFlow isolation are unchanged. The 740-line count is descriptive only;
+2,000 remains the ONNX operation-count tier threshold. PR #952 remains closed;
+no pull request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 740-line
+`_optimize_attention_gather_transpose_reshape_cleanup_chains` owner into a
+focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve both production calls. Prove corrected checkpoint/module
+AST identity and direct owner/wrapper equality for both patterns, dynamic and
+scalar metadata, multiple matches, constant ownership/cloning, quantization,
+pruning, rejection, topology, and atomicity cases. Validate sequentially,
+commit and push, and do not create a pull request.
+
+## Attention Gather cleanup ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/attention_gather_cleanup_layout.py`. Its function
+and the corrected raw owner at checkpoint `a48ee607` are each 740 lines and
+have identical ASTs. The central lowerer imports it under the private
+`_optimize_attention_gather_transpose_reshape_cleanup_chains_pass` alias and
+keeps the historical private name as a one-return wrapper. Both production
+calls remain unchanged. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary Pattern A and Pattern
+B, two matches of each, negative axes, scalar indices, dynamic signatures,
+shared and public permutation cloning, variable-index rejection, per-axis
+QDIM, zero-match no-prune, Pattern-B quantization mismatch, missing metadata,
+reverse topology, a public internal alias, and duplicate source producers.
+Deep-copied executions produce identical statistics and complete normalized
+ModelIR state, including buffers, quantization, options, provenance, topology,
+metadata, lineage, and diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 740 lines each;
+- focused safety plus owner/wrapper contract: `97 passed in 0.63s`;
+- focused contract plus ordered architecture suite: `345 passed in 17.51s`;
+- focused contract, six adjacent extracted bridge/collapse contracts, and
+  ordered architecture suite: `747 passed in 18.22s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.61s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly six pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. PR #952 remains closed;
+no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the next substantive raw source-order
+owner before editing it: the 190-line
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains`. It
+currently has only architecture references and no focused public fixture.
+Build focused synthetic ModelIR cases for valid and multiple matches, dynamic
+shape/signature metadata, Reshape constants/options, BatchMatMul flags,
+quantization, topology, public boundaries, pruning, fixed point, statistics,
+and both production-call boundaries. Record unsafe behavior as strict xfails
+before correction. Keep validation minimal and strictly sequential, commit and
+push coherent checkpoints, and do not create a pull request.
+
+## Attention pre-projection rank-lift characterization: completed state
+
+The 190-line raw
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains` owner and
+both production calls remain unchanged. It had no focused public fixture; the
+new `test_flatbuffer_direct_attention_preproj_ranklift_layout.py` now owns the
+synthetic ModelIR contract.
+
+Twenty-one green cases freeze one- and two-branch rank lift, ADD/SUB/MUL/DIV
+including reversed SUB/DIV inputs, exact NumPy equality, fixed point, twelve
+existing public-boundary/shape/fan-out/operator rejections, statistics, the
+current 190-line/one-While owner shape, and both production calls.
+
+Twenty-seven reproduced safety problems are strict xfails:
+
+- one zero-match case prunes an unrelated tensor;
+- ten unsafe public-input, variable, TensorIR/buffer dtype, or quantized
+  leading/tail shape-constant cases;
+- one dynamic-signature and one per-axis-QDIM case;
+- one rank-sensitive bias broadcast and two BatchMatMul flag cases;
+- one nonpositive tail-shape case;
+- five incomplete metadata/dtype cases and five invalid-topology cases.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `21 passed, 27 xfailed in 0.77s`;
+- focused characterization, attention Gather cleanup, six adjacent extracted
+  bridge/collapse contracts, and ordered architecture suite:
+  `768 passed, 27 xfailed in 18.92s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.66s`;
+- focused-test Ruff/format checks, Python compilation, and whitespace checks:
+  passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, both
+ordered runtime calls, and TensorFlow isolation are unchanged. PR #952 remains
+closed; no pull request was created, reopened, or updated.
+
+At restart, correct the raw owner transactionally before extracting it. Use one
+`ModelIRGraphIndex` to prove the complete leading-Reshape and all-branch
+topology, metadata, untransposed BatchMatMul flags, positive tail shape, and
+old/new binary broadcast equivalence. Give leading and tail shape inputs an
+immutable unquantized INT32 ownership/type contract. Preserve dynamic
+signatures, shift retained per-axis QDIM with the rank lift, precompute every
+branch setter/metadata action and the single removal, and leave zero-match
+execution untouched. Turn all 27 strict xfails green while preserving exact
+valid outputs, statistics, fixed point, and both production calls. Validate
+sequentially, commit and push, and do not create a pull request.
+
+## Attention pre-projection rank-lift transactional correction: completed state
+
+All twenty-seven former strict xfails are green. The corrected raw owner is 563
+lines and constructs one `ModelIRGraphIndex`; the two-branch fixed-point rewrite
+refreshes it exactly once. Indexed BatchMatMul input setters and one indexed
+leading-Reshape removal replace every repeated full consumer scan.
+
+Before mutation, the leading source/Reshape and every projection branch prove
+unique producers, strict operator order, exact private intermediate consumers,
+complete positive shapes and compatible signatures, data-preserving dtypes,
+valid boundaries, and concrete tail outputs. All BatchMatMul transpose flags
+must be false. The binary's other input must exist and broadcast to the exact
+old and new result shapes, retaining scalar and `[K]` bias behavior while
+rejecting rank-sensitive forms. Tail dimensions are all positive and multiply
+to the projection width.
+
+Leading and tail shape constants now require immutable, unquantized INT32
+TensorIR and NumPy buffers with exact values, shapes, signatures, ownership,
+and no runtime producer. Dynamic sequence signatures, NCW/NWC layout metadata,
+and per-axis QDIM rank-lift by one. The complete all-branch plan is built before
+the first setter; invalid later branches cannot leave partial updates, and
+zero-match execution no longer prunes.
+
+Validation completed sequentially as follows:
+
+- corrected focused contract: `50 passed in 0.58s`;
+- corrected focused contract, attention Gather cleanup, six adjacent extracted
+  bridge/collapse contracts, and ordered architecture suite:
+  `797 passed in 19.42s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.52s`;
+- focused-test Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly five pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The rewrite
+is restricted to fully proven candidates. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. The 563-line count is
+descriptive only; 2,000 remains the ONNX operation-count tier threshold. PR
+#952 remains closed; no pull request was created, reopened, or updated.
+
+At restart, mechanically extract the corrected 563-line
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains` owner into
+a focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve both production calls. Prove corrected checkpoint/module
+AST identity and direct owner/wrapper equality for valid multiple/binary/scalar/
+dynamic/quantized cases plus constant, broadcast, flag, metadata, topology, and
+atomic rejection cases. Validate sequentially, commit and push, and do not
+create a pull request.
+
+## Attention pre-projection rank-lift ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/attention_preproj_ranklift_layout.py`. Its
+function and the corrected raw owner at checkpoint `727c19c6` are each 563
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains_pass` alias
+and keeps the historical private name as a one-return wrapper. Both production
+calls remain unchanged. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary and two-branch
+rewrites, reversed SUB, scalar bias, dynamic signatures, per-axis QDIM,
+variable leading and public-input tail shape rejection, zero-match no-prune,
+rank-sensitive bias, `adjX`, missing bias/output metadata, reverse topology, a
+public internal alias, and duplicate source producers. Deep-copied executions
+produce identical statistics and complete normalized ModelIR state, including
+buffers, quantization, options, provenance, topology, metadata, lineage, and
+diagnostics.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 563 lines each;
+- focused safety plus owner/wrapper contract: `66 passed in 0.59s`;
+- focused contract, attention Gather cleanup, six adjacent extracted bridge/
+  collapse contracts, and ordered architecture suite:
+  `813 passed in 18.20s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.28s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, both ordered
+runtime calls, and TensorFlow isolation are unchanged. PR #952 remains closed;
+no pull request was created, reopened, or updated.
+
+At restart, inventory the next substantive unextracted raw owner before editing
+it: the 209-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains`. Unlike the two
+attention owners, it already has the focused
+`test_flatbuffer_direct_elementwise_roundtrip_nchw_nhwc.py` fixture. First
+measure the existing positive/rejection/topology/metadata/quantization/pruning/
+fixed-point and production-call coverage, move or extend only missing focused
+contracts, and record unsafe behavior as strict xfails before correction. Keep
+validation minimal and strictly sequential, commit and push coherent
+checkpoints, and do not create a pull request.
+
+## NCHW-to-NHWC elementwise roundtrip characterization: completed state
+
+The 209-line raw
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` owner and its one
+ordered production call remain unchanged. Its existing focused fixture had
+only one valid rewrite and two boundary rejections. The expanded fixture now
+owns the complete synthetic ModelIR characterization.
+
+Thirty-two green cases freeze structural and NumPy-exact rewrites, all fifteen
+allowed unary/binary op types, two independent matches and fixed point,
+dynamic signatures, provenance/options/version retention, nine existing
+permutation/operator/public-boundary/fan-out/runtime-input rejections, the
+existing duplicate-producer rejection, statistics, the current 209-line/two-
+While owner shape, and the single production call.
+
+Twenty-eight reproduced safety problems are strict xfails:
+
+- one zero-match invocation prunes an unrelated tensor;
+- twelve public-input, variable, TensorIR/buffer dtype, quantized, or
+  runtime-produced pre/post permutation tensors are accepted as compile-time
+  constants;
+- three local channel/full-rank NHWC constants and one shared NHWC constant
+  are not remapped or cloned for the rewritten NCHW subgraph;
+- one layout-metadata and one per-axis-QDIM case retain NHWC coordinates after
+  the shape has changed to NCHW;
+- nine incomplete tensor/dtype/shape/signature/public-boundary/topology/output
+  candidates mutate instead of being rejected transactionally.
+
+Validation completed sequentially as follows:
+
+- focused characterization: `32 passed, 28 xfailed in 0.90s`;
+- focused characterization, the two preceding attention contracts, six
+  adjacent extracted bridge/collapse contracts, and ordered architecture
+  suite: `845 passed, 28 xfailed in 19.54s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.48s`;
+- focused-test Ruff formatting/lint checks: passed.
+
+No production source or real-model conversion changed or ran. Public API, CLI,
+artifacts, dependencies, corpus profiles, exclusions, operation tiers, the
+ordered runtime call, and TensorFlow isolation are unchanged. The 209-line
+count is descriptive only; 2,000 remains the ONNX operation-count tier
+threshold. PR #952 remains closed; no pull request was created, reopened, or
+updated.
+
+At restart, correct the raw owner transactionally before extracting it. Build
+one `ModelIRGraphIndex` and a complete candidate plan before mutation. Prove
+unique ordered producers/consumers, exact arity, private boundaries, complete
+rank-four shape/signature/dtype/layout metadata, transpose equivalence, and
+elementwise broadcast compatibility. Give both transpose permutations an
+immutable unquantized INT32 ownership/type contract. Plan local constant
+rotation and shared/public constant cloning without changing nonlocal users;
+remap dynamic metadata, logical/physical layout, and per-axis QDIM from NHWC
+to NCHW. Apply indexed setters/removals only after the full preflight and leave
+zero-match execution untouched. Turn all 28 strict xfails green while
+preserving NumPy-exact valid outputs, all allowed ops, statistics, fixed point,
+and the production call. Validate sequentially, commit and push, and do not
+create a pull request.
+
+## NCHW-to-NHWC elementwise roundtrip correction: completed state
+
+All twenty-eight former strict xfails are green. The corrected raw owner is 705
+lines and constructs one `ModelIRGraphIndex`; it performs no legacy producer or
+consumer-map rebuilds. Indexed input/output setters and one batched indexed
+removal keep the same index current across multiple matches.
+
+Before mutation, each candidate proves exact unary/binary and Transpose arity,
+unique ordered producers, private intermediate consumers, complete positive
+rank-four physical shapes, compatible dynamic signatures, matching dtypes,
+valid logical/physical layout annotations, and exact old/new elementwise
+broadcast results. Both pre and post permutation inputs now require immutable,
+private, unquantized INT32 TensorIR and NumPy buffers with exact values, shape,
+signature, and no runtime producer.
+
+Non-scalar NHWC constants are rank-expanded and transposed into NCHW only after
+their metadata and original broadcast have been proven. Private constants are
+updated locally; constants with public or nonlocal consumers are cloned with
+their dtype, quantization, layout, and ONNX provenance preserved. Dynamic
+output signatures, logical/physical layout, and per-axis QDIM are remapped from
+NHWC to NCHW for intermediate, canonical output, and transformed constant
+tensors. A zero-match invocation is now a complete no-op and does not prune.
+
+Validation completed sequentially as follows:
+
+- corrected focused contract: `64 passed in 0.62s`;
+- corrected focused contract, the two preceding attention contracts, six
+  adjacent extracted bridge/collapse contracts, and ordered architecture
+  suite: `877 passed in 19.11s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.52s`;
+- focused-test Ruff and Python compilation/whitespace checks: passed;
+- the central lowerer retains exactly two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public API,
+CLI, artifacts, dependencies, corpus profiles, exclusions, operation tiers,
+the ordered production call, and TensorFlow isolation are unchanged. The
+705-line count is descriptive only; 2,000 remains the ONNX operation-count
+tier threshold. PR #952 remains closed; no pull request was created, reopened,
+or updated.
+
+At restart, mechanically extract the corrected 705-line
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains` owner into a
+focused pass module. Keep the historical lowerer private name as a one-return
+wrapper and preserve the ordered production call. Prove corrected checkpoint/
+module AST identity and direct owner/wrapper equality for valid, multiple,
+dynamic, constant-remap/clone, layout/QDIM, permutation-ownership, missing-
+metadata, public-boundary, reverse-topology, duplicate-producer, and zero-match
+cases. Validate sequentially, commit and push, and do not create a pull request.
+
+## NCHW-to-NHWC elementwise roundtrip ownership extraction: completed state
+
+The corrected owner now resides in
+`onnx2tf/tflite_builder/passes/elementwise_roundtrip_nchw_nhwc_layout.py`.
+Its function and the corrected raw owner at checkpoint `79862309` are each 705
+lines and have identical ASTs. The central lowerer imports it under the private
+`_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains_pass` alias, keeps
+the historical private name as a one-return wrapper, and preserves the single
+ordered production call. The pass module does not import the lowerer.
+
+Sixteen direct owner/wrapper comparisons cover ordinary and two-chain rewrites,
+dynamic signatures, local and shared constant remapping, output and constant
+per-axis QDIM, variable/public permutation rejection, zero-match no-prune,
+missing output metadata, a public internal alias, reverse topology, duplicate
+root/pre producers, and variable feature constants. Deep-copied executions
+produce identical statistics and complete normalized ModelIR state, including
+buffers, quantization, layouts, provenance, topology, metadata, lineage, and
+diagnostics. A runtime contract also proves that two matches construct and
+refresh exactly one `ModelIRGraphIndex`.
+
+Validation completed sequentially as follows:
+
+- corrected checkpoint/module AST comparison: exact, 705 lines each;
+- focused safety plus owner/wrapper contract: `81 passed in 0.62s`;
+- focused contract, the two preceding attention contracts, six adjacent
+  extracted bridge/collapse contracts, and ordered architecture suite:
+  `894 passed in 18.16s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.37s`;
+- targeted Ruff for the new module and focused test, Python compilation, and
+  whitespace checks: passed;
+- the central lowerer retains exactly two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. The move is
+mechanically identical to the corrected checkpoint. Public API, CLI, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, ordered runtime
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed; no
+pull request was created, reopened, or updated.
+
+No substantive top-level raw owner remains outside `lower_onnx_to_ir`; the
+remaining central body is now mostly ordered orchestration and small
+compatibility wrappers. At restart, inventory the nested layout orchestration
+before editing it, beginning with the 66-line
+`_run_layout_recovery_prefix_pass_sequence` and adjacent 51-line
+`_run_layout_reshape_attention_recovery_prefix`. Freeze their exact order,
+repetition, session/layout-state/diagnostic dependencies, and call boundaries;
+then design the smallest explicit phase-runner contract that can move them out
+of the 2,634-line lowerer without changing pass order or behavior. Record unsafe
+or implicit coupling before correction, validate sequentially, commit and push,
+and do not create a pull request.
+
+## Nested layout-recovery orchestration characterization: completed state
+
+The 66-line `_run_layout_recovery_prefix_pass_sequence`, the adjacent 51-line
+`_run_layout_reshape_attention_recovery_prefix`, and all production call sites
+remain unchanged. Existing architecture coverage already fixed the nineteen-
+call and fifteen-call order, the three attention-prefix repetitions and their
+immediate boundaries, the nested layout-prefix invocation, and the direct final
+layout-prefix recovery call.
+
+The new focused `test_flatbuffer_direct_layout_recovery_orchestration.py`
+fixture fills the remaining extraction-contract gaps without extending the
+large architecture test. It freezes every positional and keyword argument,
+including which calls receive only `model_ir`, which receive
+`session.layout_state`, which also receive `session.diagnostics`, and the final
+`include_unary_passthrough=True`. Both helpers are proven to have no parameters,
+branch/loop/try/context-manager control flow, or local
+`ModelIRPassStateScope`; after excluding their call targets, their only captured
+data names are `model_ir` and `session`.
+
+Validation completed sequentially as follows:
+
+- focused orchestration contract: `4 passed in 0.22s`;
+- focused orchestration plus ordered architecture suite:
+  `252 passed in 16.81s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.23s`;
+- focused-test Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, pass order, real-model conversion, or broad direct suite
+changed or ran. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, map each of the thirty-four call targets to its extracted module
+owner before moving either helper. Three dependencies are still nested lowerer
+clusters (`_run_boundary_batchmatmul_unary_layout_pass_cluster`,
+`_run_channel_shuffle_gather_layout_pass_cluster`, and the layout-prefix call
+from the attention prefix); preserve those as explicit injected callbacks while
+direct module owners receive an explicit `model_ir`/layout-state/diagnostics
+context. Design a declarative ordered phase specification with stable pass IDs
+and no lambda closure over mutable lowerer locals, then add direct old/new
+execution-order and argument-equivalence tests before changing production call
+sites. Keep the change mechanical, validate sequentially, commit and push, and
+do not create a pull request.
+
+## Explicit layout-recovery orchestration: completed state
+
+The two characterized nested sequences now delegate to
+`passes/layout_recovery_orchestration.py`. A frozen `LayoutRecoveryContext`
+owns the explicit ModelIR, layout-state, diagnostics, and three unavoidable
+lowerer-local callback dependencies. The phase module imports the other thirty
+pass owners directly; it does not import the central lowerer and uses no lambda
+closure over mutable lowerer locals.
+
+The module exposes nineteen stable layout-recovery IDs and fifteen stable
+layout/reshape/attention-recovery IDs. Immutable `RecoveryInvocation` values
+preserve every positional and keyword argument and execute in the characterized
+order. The attention sequence invokes the complete layout sequence as its
+first explicit step. Runtime assertions reject accidental drift between the
+declared IDs and constructed invocation order.
+
+The historical nested helper names and all outer call sites remain in place.
+Their bodies shrink from 66 to 2 lines and from 51 to 4 lines respectively,
+each capturing only the single explicit context. The three injected callbacks
+remain lowerer-local because they compose nested pass clusters; all other work
+is owned by the new phase module. Existing pass return values continue to be
+ignored exactly as before.
+
+Focused tests prove the stable ID lists, all thirty-four argument contracts,
+wrapper/context wiring, and identical flattened execution order under
+instrumented callbacks. The ordered architecture suite now treats stable phase
+IDs as first-class execution boundaries while retaining module-owner,
+compatibility-wrapper, repetition, and total-call-count checks. Four adjacent
+owner fixtures were adjusted to count one moved stable phase boundary in
+addition to the remaining direct lowerer calls; their owner and call-argument
+checks remain intact.
+
+Validation completed sequentially as follows:
+
+- focused orchestration contract: `6 passed in 0.58s`;
+- central lowerer synthetic smoke: `32 passed in 0.59s`;
+- ordered architecture suite: `248 passed in 18.11s`;
+- focused orchestration, nine adjacent extracted pass contracts, and ordered
+  architecture suite: `900 passed in 18.10s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.49s`.
+
+No real-model conversion or broad direct-suite repeat was added. This is a
+mechanical orchestration extraction: public API, CLI, artifacts, dependencies,
+corpus profiles, exclusions, operation tiers, pass order, repetition, and
+TensorFlow isolation are unchanged. PR #952 remains closed; no pull request
+was created, reopened, or updated.
+
+At restart, inventory and characterize the next self-contained orchestration
+cluster before moving it. Prefer a small focused fixture and stable phase IDs,
+retain lowerer-local composites as explicitly injected callbacks, and prove
+old/new order and argument equality before changing production wiring. Keep
+real-model conversions minimal and sequential, commit and push coherent
+checkpoints, and do not create a pull request.
+
+## Attention-recovery orchestration characterization: completed state
+
+The next extraction boundary is the adjacent 14-line
+`_run_preadd_mean_attention_recovery_sequence` and 27-line
+`_run_attention_gate_qdq_recovery_sequence`. They remain unchanged in
+production. The first has seven ordered steps and two zero-argument production
+invocations. The second has ten ordered steps and three zero-argument
+invocations, one of which is nested between mean-attention and duplicate
+quantized-PReLU clusters in the layout/attention/quantized suffix.
+
+The new focused
+`test_flatbuffer_direct_attention_recovery_orchestration.py` fixture freezes
+all seventeen call slots and every positional and keyword argument. It proves
+which calls receive only `model_ir`, which also receive
+`session.layout_state`, and that trailing-output cleanup alone additionally
+receives `session.diagnostics`. Both helpers have no parameters, local
+`ModelIRPassStateScope`, or branch/loop/try/context-manager control flow; after
+excluding call targets, their only captured data is `model_ir` and `session`.
+The fixture also fixes all zero-argument outer invocations and the nested
+quantized-suffix boundary.
+
+Validation completed sequentially as follows:
+
+- focused attention-recovery characterization: `4 passed in 0.19s`;
+- both orchestration fixtures plus ordered architecture suite:
+  `258 passed in 17.08s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.38s`;
+- focused-test Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, pass order, real-model conversion, or broad direct suite
+changed or ran. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, map the seventeen call slots to their extracted module owners.
+Preserve the three lowerer-local composite dependencies
+(`_run_mean_attention_layout_pass_cluster`, `_run_gate_layout_pass_cluster`,
+and `_run_transpose_unary_fanout_layout_pass_cluster`) as explicit callbacks.
+Give the remaining owners an immutable explicit ModelIR/layout/diagnostics
+context, declare stable IDs for both ordered sequences, and prove old/new
+flattened order and argument equality before switching the two historical
+helpers. Keep validation sequential, commit and push coherent checkpoints, and
+do not create a pull request.
+
+## Explicit attention-recovery orchestration: completed state
+
+The characterized sequences now delegate to
+`passes/attention_recovery_orchestration.py`. A frozen
+`AttentionRecoveryContext` carries ModelIR, layout state, diagnostics, and the
+three lowerer-local mean-attention, gate-layout, and transpose-unary-fanout
+composite callbacks. The other fourteen targets are imported from their
+existing pass module owners; the orchestration module does not import the
+lowerer.
+
+The module declares seven stable preadd/mean/attention IDs and ten stable
+attention/gate/QDQ IDs. Both builders emit immutable invocations with the
+characterized positional and keyword arguments. The shared
+`passes/recovery_orchestration.py` primitive now owns immutable invocation
+execution and verifies the complete stable-ID sequence before running any
+callback. The preceding layout runner uses the same primitive, eliminating its
+duplicate execution/drift-check logic without changing its specifications.
+
+The historical lowerer helper names and every outer invocation remain in
+place. Each helper now has a two-line body that captures only the explicit
+attention context. Existing direct call-count architecture tests now add the
+stable phase multiplicity; this is intentionally a sequence count rather than
+set membership because pre-add appears in both the earlier layout prefix and
+the new preadd/mean/attention phase.
+
+Focused tests prove context construction, wrapper wiring, all seventeen IDs
+and argument contracts, instrumented execution order, zero-argument outer
+boundaries, lowerer-import isolation, and rejection of ID drift before the
+first callback. Three pre-existing quantized expected-builder tests were also
+corrected to import graph mutation helpers from their real owner,
+`core.model_ir_utils`, instead of relying on private lowerer re-exports that
+were already absent at checkpoint `9c210cf2`.
+
+Validation completed sequentially as follows:
+
+- both orchestration fixtures: `15 passed in 0.75s`;
+- central lowerer synthetic smoke: `32 passed in 0.59s`;
+- ordered architecture suite: `248 passed in 17.61s`;
+- three corrected quantized expected-builder fixtures: `29 passed in 0.59s`;
+- attention target-focused plus architecture suite: `433 passed in 17.39s`;
+- both orchestration fixtures, adjacent extracted pass contracts, and ordered
+  architecture suite: `909 passed in 18.70s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.44s`;
+- targeted Ruff, Python compilation, and whitespace checks: passed;
+- the central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct suite was added. This is a mechanical
+orchestration extraction: public API, CLI, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, pass order, invocation multiplicity,
+and TensorFlow isolation are unchanged. PR #952 remains closed; no pull
+request was created, reopened, or updated.
+
+At restart, inventory the next adjacent recovery sequence rather than widening
+this checkpoint. The one-step safe-binary wrapper and the six-step quantized
+activation/binary sequence form a likely next nested boundary, but first freeze
+their exact shared invocation multiplicity and module-owner/callback routing.
+Keep validation sequential, commit and push coherent checkpoints, and do not
+create a pull request.
+
+## Quantized activation/binary orchestration characterization: completed state
+
+The next extraction boundary is the five-line one-step
+`_run_safe_binary_bridge_recovery_sequence` and the nineteen-line six-step
+`_run_quantized_activation_binary_bridge_recovery_sequence`. Production is
+unchanged. Safe-binary has three zero-argument outer invocations, including the
+nested final step of quantized activation/binary; the latter has two
+zero-argument outer invocations.
+
+The focused `test_flatbuffer_direct_quantized_recovery_orchestration.py`
+fixture freezes both helpers as parameterless straight-line closures over only
+`model_ir` and `session`, with no local pass-state scope or control flow. It
+fixes the safe-binary ModelIR/layout arguments; the hard-sigmoid, max-pool,
+softmax, and logistic ModelIR/layout calls; the model-only softmax
+canonicalization; the nested safe-binary final step; and every zero-argument
+outer boundary.
+
+Validation completed sequentially as follows:
+
+- focused quantized-recovery characterization: `4 passed in 0.21s`;
+- focused characterization plus ordered architecture suite:
+  `252 passed in 16.85s`;
+- TensorFlow-import-blocked optional-boundary suite: `11 passed in 9.51s`;
+- focused-test Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, pass order, real-model conversion, or broad direct suite
+changed or ran. Public API, CLI, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, and TensorFlow isolation are unchanged. PR #952
+remains closed; no pull request was created, reopened, or updated.
+
+At restart, map the five quantized targets and safe-binary target directly to
+their existing module owners. This boundary requires no lowerer-local composite
+callback: an immutable ModelIR/layout context and a nested stable-ID runner are
+sufficient. Preserve the historical helper names, both outer invocation
+counts, and the three total safe-binary invocations. Prove instrumented order
+and arguments before switching production wiring, validate sequentially,
+commit and push, and do not create a pull request.
+
+## Explicit quantized activation/binary recovery orchestration: completed state
+
+The characterized nested boundary now delegates to
+`passes/quantized_recovery_orchestration.py`. A frozen
+`QuantizedRecoveryContext` carries the shared ModelIR and `LayoutState`; this
+boundary needs no injected lowerer-local callback. The new module imports the
+safe-binary, quantized hard-sigmoid, max-pool, softmax, logistic, and softmax-
+transpose canonicalization owners directly and does not import the central
+lowerer.
+
+`SAFE_BINARY_RECOVERY_PASS_IDS` declares the one-step safe-binary phase, while
+`QUANTIZED_ACTIVATION_BINARY_PASS_IDS` declares the six-step quantized phase.
+The latter invokes the complete safe-binary runner as its final stable step.
+Both use the shared immutable `RecoveryInvocation` executor, which verifies
+the exact ID order before executing a callback. The characterized positional
+and keyword arguments, nested structure, and ignored return values are
+unchanged.
+
+The historical lowerer helper names and every zero-argument outer call remain
+in place. Their bodies shrink from five to two lines and from nineteen to four
+lines and capture only the explicit context. Architecture accounting includes
+the ordered stable-ID multiplicity, preserving three total safe-binary helper
+invocations and two total quantized helper invocations even though one nested
+call is no longer visible in the lowerer AST. The obsolete lowerer import of
+the safe-binary owner was removed.
+
+Focused contracts verify both stable ID sequences, every argument, explicit
+context and wrapper wiring, instrumented order, outer invocation counts, and
+lowerer-import isolation. The softmax canonicalization architecture fixture
+now checks its moved boundary through the stable quantized sequence while
+retaining the remaining direct lowerer boundary. The indexed logistic-gate
+expected builder now imports graph mutation helpers from their actual owner,
+`core.model_ir_utils`, rather than an already-absent private lowerer re-export.
+
+Sequential validation completed as follows:
+
+- focused quantized orchestration: `8 passed in 0.57s`;
+- focused orchestration plus ordered architecture: `256 passed in 17.91s`;
+- affected logistic/softmax/orchestration/architecture set:
+  `324 passed in 17.41s`;
+- related safe-binary and quantized pass-family set:
+  `703 passed in 17.36s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 9.92s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+One diagnostic broad direct-suite run before the two fixture-owner updates
+reported `1436 passed, 8 failed`. Two failures were the stale logistic-gate and
+softmax AST contracts corrected above. Four require the intentionally absent
+TensorFlow optional extra:
+`test_tflite_backend_matrix_add`,
+`test_tflite_backend_matrix_hardswish_rewrite_on_off`,
+`test_tf_converter_resize_cubic_avoids_flex_resize_bicubic`, and
+`test_tf_converter_resize_cubic_honors_cubic_coeff_a`. One is the documented
+incompatible local Torch binary failure in
+`test_flatbuffer_direct_group_norm_alias_builtin_conversion`. The remaining
+unrelated existing failure is
+`test_flatbuffer_direct_sinet_concat_resize_affine_transpose_chain_optimized`,
+whose direct pass statistic is zero instead of one; this extraction neither
+calls nor changes that owner. No real-model conversion was added.
+
+Public APIs, CLI behavior, artifacts, dependencies, corpus profiles,
+exclusions, operation tiers, runtime pass order, invocation multiplicity, and
+TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR is
+open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent five-step
+`_run_qlinear_mean_concat_recovery_sequence` before moving production code.
+Freeze every argument and all outer repetition/boundary contracts first, then
+introduce another explicit stable-ID phase only if direct module ownership can
+preserve the exact flattened sequence. Keep verification sequential and
+minimal, commit and push a coherent checkpoint, and do not create a pull
+request.
+
+## QLinear mean/concat recovery orchestration characterization: completed state
+
+The adjacent six-line `_run_qlinear_mean_concat_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over only
+`model_ir`, contains no pass-state scope or control flow, and performs five
+model-only calls in this exact order: mean/HardSigmoid/MulAdd, QLinear SiLU
+prefix, QLinear concat/conv propagation, concat pre-QDQ cleanup, and
+mean/max-pool/concat/conv recovery. Its return values continue to be ignored.
+
+All five targets already have extracted module owners in
+`mean_hardsigmoid_muladd_layout.py`, `qlinear_silu_prefix_layout.py`,
+`qlinear_concat_conv_compat.py`, `quantization_cleanup.py`, and
+`mean_maxpool_concat_layout.py`. No lowerer-local composite callback, layout
+state, diagnostics, or option flag is required for a future phase context.
+
+The focused `test_flatbuffer_direct_qlinear_recovery_orchestration.py` freezes
+the helper shape and capture set, all five positional/keyword argument
+contracts, both zero-argument outer invocations, and their exact neighboring
+boundaries. Validation completed sequentially as follows:
+
+- focused characterization: `4 passed in 0.18s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.98s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 10.06s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran in this checkpoint. Public APIs, CLI behavior, artifacts,
+dependencies, corpus profiles, exclusions, operation tiers, and TensorFlow
+isolation are unchanged. PR #952 remains closed, no branch PR is open, and no
+pull request was created, reopened, or updated.
+
+At restart, introduce a frozen ModelIR-only context and a five-ID immutable
+invocation specification that imports these owners directly. Preserve the
+historical helper name, its two outer calls and boundaries, and the exact
+argument/order contract. Prove direct builder arguments and instrumented order
+before changing the lowerer delegate, validate sequentially, commit and push,
+and do not create a pull request.
+
+## Explicit QLinear mean/concat recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/qlinear_recovery_orchestration.py`. A frozen
+`QLinearRecoveryContext` contains only the shared ModelIR. The phase module
+imports all five existing owners directly and does not import or capture the
+central lowerer.
+
+`QLINEAR_MEAN_CONCAT_PASS_IDS` declares the exact five-step order. Immutable
+`RecoveryInvocation` values pass the same single ModelIR positional argument
+with no keyword arguments, and the shared executor validates the complete ID
+sequence before executing any callback. Existing pass return values remain
+ignored exactly as before.
+
+The historical lowerer helper and both zero-argument outer calls remain in
+place. Its body shrinks from six to two lines and captures only the explicit
+context. The two neighboring boundaries are unchanged. Architecture tests
+account for moved direct calls through ordered stable-ID multiplicity while
+retaining each module owner and compatibility-wrapper contract.
+
+Focused tests prove all five IDs and argument contracts, context construction,
+wrapper wiring, both outer boundaries and invocation counts, instrumented
+execution order, and lowerer-import isolation. Sequential validation completed
+as follows:
+
+- focused qlinear orchestration: `7 passed in 0.60s`;
+- focused orchestration plus ordered architecture: `255 passed in 18.05s`;
+- five owner-focused suites plus orchestration and architecture:
+  `394 passed in 17.69s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.81s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_layout_attention_quantized_recovery_suffix` before changing production
+code. It combines direct owners, already-extracted phase runners, lowerer-local
+clusters, layout/diagnostic routing, and the
+`include_duplicate_transpose` option, so freeze its exact flattened order,
+arguments, repetition, and conditional boundary first. Keep verification
+sequential and minimal, commit and push coherent checkpoints, and do not
+create a pull request.
+
+## Layout/attention/quantized recovery suffix characterization: completed state
+
+The 41-line `_run_layout_attention_quantized_recovery_suffix` remains unchanged
+in production. It is a straight-line helper with one required keyword-only
+boolean, no branch/loop/try/context-manager control flow, and no local
+`ModelIRPassStateScope`. Its data captures are ModelIR, session, and
+`include_duplicate_transpose`.
+
+The focused
+`test_flatbuffer_direct_layout_attention_quantized_suffix_orchestration.py`
+freezes all thirteen call slots and every positional and keyword argument. It
+distinguishes model-only calls from layout-aware calls and the one
+layout/diagnostics cleanup. It also proves that the option reaches only the
+duplicate quantized-PReLU cluster as `include_transpose`, both outer calls pass
+the global duplicate-transpose option by keyword, and both exact neighboring
+boundaries remain fixed.
+
+Ten slots resolve to existing module owners or already-extracted phase
+runners. Three dependencies remain lowerer-local/nested boundaries:
+`_run_mean_attention_layout_pass_cluster`,
+`_run_attention_gate_qdq_recovery_sequence`, and
+`_run_duplicate_quantized_prelu_pass_cluster`. A future context must therefore
+carry ModelIR, layout state, diagnostics, and these three explicit callbacks;
+the duplicate callback must retain its per-invocation boolean argument.
+
+Validation completed sequentially as follows:
+
+- focused suffix characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.93s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.58s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, map the ten direct slots to their current module callables and
+introduce a frozen explicit context plus thirteen stable IDs. Keep the three
+nested dependencies as injected callbacks, pass the duplicate-transpose flag
+through the immutable invocation specification, and prove flattened
+instrumented order and exact argument equivalence before switching the
+historical helper. Validate sequentially, commit and push, and do not create a
+pull request.
+
+## Explicit layout/attention/quantized recovery suffix: completed state
+
+The characterized suffix now delegates to
+`passes/layout_attention_quantized_suffix_orchestration.py`. A frozen
+`LayoutAttentionQuantizedSuffixContext` carries ModelIR, layout state,
+diagnostics, and exactly three explicit lowerer-local callbacks: mean-
+attention, attention-gate/QDQ recovery, and duplicate quantized-PReLU. The
+other ten targets are imported directly from their existing pass modules, and
+the new phase module does not import the central lowerer.
+
+`LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS` declares the exact thirteen-step
+order. Immutable invocations preserve all positional and keyword arguments.
+The per-call `include_duplicate_transpose` value is forwarded without coercion
+only to the duplicate callback's `include_transpose` keyword. Shared execution
+validates the complete ID sequence before running any callback.
+
+The lowerer constructs the context after all three callback dependencies are
+defined. The historical keyword-only helper and both outer call sites remain;
+its body shrinks from 41 to eight lines and delegates through the explicit
+context. Both neighboring boundaries and the global option routing are
+unchanged. Ordered stable-ID accounting preserves three total attention-
+gate/QDQ helper calls, one duplicate quantized-PReLU cluster call, two total
+quantized-reshape cleanups, and the existing total of 118 registered runner
+calls.
+
+Focused tests prove all thirteen IDs and argument contracts, callback identity,
+option identity, context and wrapper wiring, outer invocation counts and
+boundaries, instrumented execution order, and lowerer-import isolation.
+Adjacent attention and softmax fixtures now follow the stable suffix IDs rather
+than assuming every nested call remains visible in the lowerer AST.
+
+Sequential validation completed as follows:
+
+- focused suffix orchestration: `7 passed in 0.58s`;
+- focused orchestration plus ordered architecture: `255 passed in 18.25s`;
+- adjacent attention/softmax/orchestration/architecture set:
+  `316 passed in 16.92s`;
+- related thirteen-slot owner and phase-family set:
+  `820 passed in 19.23s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.68s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_terminal_slice_concat_layout_recovery_sequence` before changing
+production code. It is substantially larger and mixes several lowerer-local
+clusters with direct owners and layout/diagnostic routing, so freeze its exact
+call slots, arguments, captures, repetition, and outer boundaries first. Keep
+verification sequential and minimal, commit and push coherent checkpoints,
+and do not create a pull request.
+
+## Terminal slice/concat recovery orchestration characterization: completed state
+
+The 37-line `_run_terminal_slice_concat_layout_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, contains no control flow or local pass-state scope, and
+has fourteen ordered call slots. Thirteen slots resolve to existing module
+owners; only `_run_channel_slice_pad_mul_layout_pass_cluster` remains a
+lowerer-local composite dependency.
+
+The focused
+`test_flatbuffer_direct_terminal_slice_concat_recovery_orchestration.py`
+freezes every call and positional/keyword argument, including six layout-aware
+owners and the final layout/diagnostics cleanup. It also proves both outer
+invocations remain zero-argument top-level boundaries. Both share the same
+preceding channel-slice/MulAdd call, but only the earlier predecessor receives
+layout state, and their following calls remain the boundary QDQ/concat and
+slice-pre/post owners respectively.
+
+Validation completed sequentially as follows:
+
+- focused terminal slice/concat characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.20s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.72s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, map the thirteen direct slots to their current module callables and
+introduce a frozen ModelIR/layout/diagnostics context with the single channel-
+slice/pad/mul callback plus fourteen stable IDs. Prove every builder argument
+and instrumented order before switching the historical helper, preserve both
+outer boundaries, validate sequentially, commit and push, and do not create a
+pull request.
+
+## Explicit terminal slice/concat recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/terminal_slice_concat_recovery_orchestration.py`. A frozen
+`TerminalSliceConcatRecoveryContext` carries ModelIR, layout state,
+diagnostics, and the one lowerer-local channel-slice/pad/mul composite
+callback. The remaining thirteen targets are imported directly from their
+existing pass modules; the new phase module does not import the central
+lowerer.
+
+`TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS` declares the exact fourteen-step
+order. Immutable invocations preserve each model-only, layout-aware, and final
+layout/diagnostics argument contract. Shared execution validates the complete
+ID sequence before running the first callback.
+
+The historical zero-argument helper and both top-level outer calls remain. Its
+body shrinks from 37 to four lines and captures only the explicit context. Both
+distinct outer neighbors and the earlier predecessor's layout keyword remain
+unchanged. Multiplicity-aware architecture accounting preserves the prior
+sanitizer, affine-post-add, channel-cluster, split-family, singleton-gate,
+stride-slice bridge, layout-cleanup, and overall registered-runner totals.
+
+Focused tests prove all fourteen IDs and arguments, callback identity, context
+and wrapper wiring, both outer invocation contracts and neighbors,
+instrumented order, and lowerer-import isolation. Four concat-family fixtures
+now check the moved terminal adjacency through stable IDs while continuing to
+check the separate terminal affine/concat/split sequence directly. The stride-
+slice fixture similarly combines its moved stable occurrence with remaining
+direct calls.
+
+Sequential validation completed as follows:
+
+- focused terminal slice/concat orchestration: `7 passed in 0.58s`;
+- focused orchestration plus ordered architecture: `255 passed in 18.62s`;
+- five adjacent concat/stride-slice fixtures plus orchestration and
+  architecture: `607 passed in 18.43s`;
+- related fourteen-slot owner and phase-family set:
+  `867 passed in 18.64s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.76s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_terminal_affine_concat_split_recovery_sequence` before changing
+production code. Several owner fixtures already expose its relationship to the
+new stable terminal slice/concat phase; freeze its complete call/argument list,
+captures, repetition, and outer boundaries before choosing the next explicit
+context. Validate sequentially, commit and push, and do not create a pull
+request.
+
+## Terminal affine/concat/split recovery characterization: completed state
+
+The 30-line `_run_terminal_affine_concat_split_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, has no control flow or local pass-state scope, and contains
+eleven ordered calls. Every target already has an extracted module owner; no
+lowerer-local callback, diagnostics, or conversion option is required.
+
+The focused
+`test_flatbuffer_direct_terminal_affine_concat_split_recovery_orchestration.py`
+freezes all eleven positional/keyword argument contracts, distinguishing the
+six layout-aware slots from five model-only slots. It also proves both outer
+invocations remain zero-argument top-level boundaries and retains their two
+distinct predecessor/follower pairs at the absolute end of the optimization
+pipeline.
+
+Validation completed sequentially as follows:
+
+- focused terminal affine/concat/split characterization:
+  `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.63s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 10.21s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout context and eleven stable IDs
+with direct imports of every existing owner. Prove builder argument equality
+and instrumented order before switching the historical helper, preserve both
+top-level outer boundaries, validate sequentially, commit and push, and do not
+create a pull request.
+
+## Explicit terminal affine/concat/split recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/terminal_affine_concat_split_recovery_orchestration.py`. A frozen
+`TerminalAffineConcatSplitRecoveryContext` contains only ModelIR and layout
+state. All eleven existing owners are imported directly; no lowerer callback,
+diagnostics, option, or central-lowerer import is required.
+
+`TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS` declares the exact eleven-step
+order. Immutable invocations preserve the six layout-aware and five model-only
+argument contracts, and the shared executor validates the complete sequence
+before running any owner.
+
+The historical helper and both zero-argument top-level invocations remain as
+ordering boundaries. Its body shrinks from 30 to four lines and captures only
+the context. Both distinct predecessor/follower pairs remain unchanged.
+Several IDs intentionally also occur in the terminal slice/concat phase;
+ordered multiplicity rather than unique-ID membership preserves every former
+owner execution total. The only newly unique moved owner, affine-chain fold,
+retains its total of three invocations.
+
+Focused tests prove all stable IDs and arguments, explicit context/wrapper
+wiring, both outer boundaries, instrumented order, and lowerer-import
+isolation. Four concat-family fixtures now verify both terminal sequences via
+their independent stable adjacency lists.
+
+Sequential validation completed as follows:
+
+- focused terminal affine/concat/split orchestration: `7 passed in 0.57s`;
+- focused orchestration plus ordered architecture: `255 passed in 17.92s`;
+- four adjacent concat fixtures plus orchestration and architecture:
+  `517 passed in 17.55s`;
+- related eleven-slot owner and phase-family set:
+  `806 passed in 18.08s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.08s` (`32` plus `11`);
+- targeted Ruff, Python compilation, and whitespace checks: passed; the
+  central lowerer retains exactly its two pre-existing Ruff findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_sinet_preadd_resize_recovery_sequence` before changing production code.
+Freeze its exact call/argument list, lowerer-local dependencies, captures,
+repetition, and outer boundaries before defining another phase context.
+Validate sequentially, commit and push, and do not create a pull request.
+
+## SINet pre-add/resize recovery orchestration characterization: completed state
+
+The 20-line `_run_sinet_preadd_resize_recovery_sequence` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session, has no control flow or local pass-state scope, and contains six
+ordered calls. The first two calls are ModelIR-only and the final four route
+the session layout state explicitly. Every target already has an extracted
+module owner; no lowerer-local callback, diagnostics, or conversion option is
+required.
+
+The focused
+`test_flatbuffer_direct_sinet_preadd_resize_recovery_orchestration.py` freezes
+all six positional/keyword argument contracts and their exact order. It also
+proves all four zero-argument invocations remain present: three top-level
+pipeline boundaries and one nested boundary inside
+`_run_sinet_terminal_layout_recovery_sequence`. The nested predecessor and
+follower and all three distinct top-level predecessor/follower pairs are
+recorded explicitly.
+
+Validation completed sequentially as follows:
+
+- focused SINet pre-add/resize characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.74s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.86s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout context, six stable IDs, and
+direct imports of every existing owner. Preserve the historical helper, all
+three top-level invocations, the one nested invocation, and every neighboring
+boundary. Prove builder argument equality and instrumented order before
+switching the helper to a delegate, validate sequentially, commit and push,
+and do not create a pull request.
+
+## Explicit SINet pre-add/resize recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/sinet_preadd_resize_recovery_orchestration.py`. A frozen
+`SINetPreaddResizeRecoveryContext` contains only ModelIR and layout state. All
+six existing owners are imported directly; no lowerer callback, diagnostics,
+conversion option, or central-lowerer import is required.
+
+`SINET_PREADD_RESIZE_RECOVERY_PASS_IDS` declares the exact six-step order.
+Immutable invocations preserve the two ModelIR-only and four layout-aware
+argument contracts, and the shared executor validates the complete sequence
+before running an owner. The historical helper remains a four-line delegate.
+Its three top-level calls, one nested terminal-layout call, and all four
+neighboring boundaries are unchanged.
+
+Architecture ownership accounting now combines the stable phase occurrence
+with remaining direct lowerer calls. This preserves the existing module-owner
+contracts for the two residual-affine passes and all four SINet passes without
+mistaking a mechanically moved call for a removed invocation.
+
+Sequential validation completed as follows:
+
+- focused SINet pre-add/resize orchestration: `7 passed in 0.58s`;
+- ordered architecture: `248 passed in 17.80s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 17.13s`;
+- related residual-affine/SINet owner set, excluding one documented stale
+  assertion: `282 passed in 1.42s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.09s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+The diagnostic related-owner run including
+`test_flatbuffer_direct_sinet_concat_resize_affine_transpose_chain_optimized`
+reported `282 passed, 1 failed`. Its stale `optimized == 1` expectation also
+fails unchanged at parent checkpoint `71d1814e`, where the optimizer returns
+zero, proving that it is not a regression from this extraction. The temporary
+detached comparison worktree was removed immediately after verification.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize the adjacent
+`_run_sinet_terminal_layout_recovery_sequence` before changing production
+code. Freeze its three-slot order, nested pre-add/resize phase boundary,
+ModelIR/layout routing, top-level repetitions, and outer neighbors before
+choosing its explicit context. Validate sequentially, commit and push, and do
+not create a pull request.
+
+## SINet terminal-layout recovery orchestration characterization: completed state
+
+The seven-line `_run_sinet_terminal_layout_recovery_sequence` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, has no control flow or local pass-state scope, and contains
+three ordered calls. The first call routes ModelIR and layout state to the
+shuffle-residual owner, the second invokes the existing zero-argument SINet
+pre-add/resize helper, and the third routes ModelIR alone to the terminal
+affine/PReLU owner.
+
+The focused
+`test_flatbuffer_direct_sinet_terminal_layout_recovery_orchestration.py`
+freezes all three positional/keyword argument contracts and their exact order.
+It proves both outer invocations remain zero-argument top-level boundaries and
+records their two distinct predecessor/follower pairs. Since the middle slot
+must retain the historical nested helper boundary, a future extracted phase
+requires one explicit callback in addition to ModelIR and layout state; its two
+outer owners can be imported directly.
+
+Validation completed sequentially as follows:
+
+- focused SINet terminal-layout characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.36s`;
+- TensorFlow-import-blocked optional boundary: `11 passed in 9.47s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout context, one explicit pre-add/
+resize callback, three stable IDs, and direct imports of the two outer owners.
+Preserve the historical helper, both zero-argument top-level invocations, the
+nested pre-add/resize helper call, and both neighboring boundary pairs. Prove
+builder argument equality and instrumented order before switching the helper
+to a delegate, validate sequentially, commit and push, and do not create a pull
+request.
+
+## Explicit SINet terminal-layout recovery orchestration: completed state
+
+The characterized sequence now delegates to
+`passes/sinet_terminal_layout_recovery_orchestration.py`. A frozen
+`SINetTerminalLayoutRecoveryContext` contains ModelIR, layout state, and one
+explicit zero-argument pre-add/resize recovery callback. The shuffle-residual
+and terminal affine/PReLU owners are imported directly; the module does not
+import the central lowerer.
+
+`SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS` declares the exact three-step order.
+Immutable invocations preserve the first ModelIR/layout contract, the middle
+zero-argument callback, and the final ModelIR-only contract. The shared
+executor validates all IDs before running an owner. The historical terminal
+helper is now a four-line delegate, while both zero-argument top-level calls
+and their two distinct predecessor/follower pairs remain unchanged.
+
+The pre-add/resize helper remains the identical callback object stored in the
+new context. Its three direct top-level calls plus the stable nested callback
+retain the former total of four executions. Architecture accounting likewise
+combines stable phase occurrences with remaining direct calls for the two
+outer module owners.
+
+Sequential validation completed as follows:
+
+- both adjacent SINet orchestration fixtures: `14 passed in 0.70s`;
+- ordered architecture: `248 passed in 17.77s`;
+- both orchestration fixtures, both outer owner suites, and ordered
+  architecture: `470 passed in 17.38s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.01s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, and TensorFlow isolation
+are unchanged. PR #952 remains closed, no branch PR is open, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory and characterize
+`_run_terminal_clamp_unary_relu_pass_cluster` before changing production code.
+Freeze its three cleanup calls, shared per-invocation `ModelIRPassStateScope`,
+ModelIR/layout/diagnostics routing, repetition count, and outer boundaries.
+Preserve the existing scope-efficiency invariant, validate sequentially,
+commit and push, and do not create a pull request.
+
+## Terminal clamp/unary/ReLU orchestration characterization: completed state
+
+The 26-line `_run_terminal_clamp_unary_relu_pass_cluster` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session, has no control flow, and is invoked exactly once. It creates one
+`ModelIRPassStateScope` from ModelIR and layout state, then routes that same
+scope, ModelIR, layout state, and diagnostics through three ordered cleanup
+runners: clamp canonicalization, transpose-unary passthrough, and maximum-zero
+ReLU canonicalization.
+
+The focused
+`test_flatbuffer_direct_terminal_clamp_unary_relu_orchestration.py` freezes the
+single scope-construction contract, the complete three-runner argument order,
+the shared `state_scope` identity by name, the zero-argument outer invocation,
+and its location after the layout-gated singleton-reshape boundary and before
+the SINet terminal-layout boundary. The existing runtime efficiency fixture
+continues to prove that these runners build the graph index once and reuse it
+for both later calls.
+
+Validation completed sequentially as follows:
+
+- focused terminal clamp/unary/ReLU characterization: `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.48s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 9.86s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and three
+stable IDs with direct imports from `graph_cleanup` and `layout_transpose`.
+Construct exactly one fresh `ModelIRPassStateScope` for each phase invocation
+and attach that same object to all three immutable invocations. Preserve the
+historical zero-argument helper and its sole outer boundary, prove builder
+arguments, scope identity, and instrumented order before switching it to a
+delegate, validate sequentially, commit and push, and do not create a pull
+request.
+
+## Explicit terminal clamp/unary/ReLU orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/terminal_clamp_unary_relu_orchestration.py`. A frozen
+`TerminalClampUnaryReLUContext` contains only ModelIR, layout state, and
+diagnostics. The three cleanup owners are imported directly from
+`graph_cleanup` and `layout_transpose`; the phase module does not import the
+central lowerer.
+
+`TERMINAL_CLAMP_UNARY_RELU_PASS_IDS` declares the exact three-step order. Each
+builder call creates one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope object, ModelIR, layout,
+and diagnostics to all three immutable invocations. The shared executor
+validates every ID before running an owner. The canonicalization-order comment
+was moved with the second invocation rather than discarded.
+
+The historical helper is now a four-line delegate, and its sole zero-argument
+top-level call remains between the same layout-gated singleton-reshape and
+SINet terminal-layout boundaries. Architecture accounting combines the three
+stable IDs with remaining direct runner calls. The runtime efficiency fixture
+now executes the explicit phase runner itself and still proves one graph-index
+build followed by two scope reuses.
+
+Sequential validation completed as follows:
+
+- focused terminal clamp/unary/ReLU orchestration: `7 passed in 0.59s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `285 passed in 19.09s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.71s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; two moved cleanup imports were removed and the central lowerer now
+  retains exactly its two pre-existing F401 findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_terminal_singleton_maxpool_reshape_pass_pair` before changing production
+code. Freeze both cleanup calls, their shared per-invocation
+`ModelIRPassStateScope`, all ModelIR/layout/diagnostics arguments, repetition,
+and outer boundaries. Validate sequentially, commit and push, and do not create
+a pull request.
+
+## Terminal singleton-maxpool/reshape orchestration characterization: completed state
+
+The 19-line `_run_terminal_singleton_maxpool_reshape_pass_pair` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session, has no control flow, and is invoked exactly once. It
+creates one `ModelIRPassStateScope` from ModelIR and layout state, then routes
+that same scope, ModelIR, layout state, and diagnostics first to singleton-
+maxpool layout cleanup and then to consecutive-reshape cleanup. The retained
+comment documents why the second cleanup must follow boundary cleanup.
+
+The focused
+`test_flatbuffer_direct_terminal_singleton_maxpool_reshape_orchestration.py`
+freezes the single scope-construction contract, both complete runner argument
+contracts, their exact order and shared `state_scope` name, the sole zero-
+argument invocation, and its location between two layout-gated blocks. The
+existing pass-efficiency fixture continues to prove that the pair builds the
+graph index once and reuses it for the second runner.
+
+Validation completed sequentially as follows:
+
+- focused terminal singleton-maxpool/reshape characterization:
+  `4 passed in 0.16s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 16.69s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.02s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `singleton_maxpool_layout` and
+`graph_cleanup`. Construct exactly one fresh `ModelIRPassStateScope` per phase
+invocation and attach the same object to both immutable invocations. Preserve
+the historical helper, its sole zero-argument call, both layout-gated outer
+boundaries, and the canonicalization-order comment. Prove builder arguments,
+scope identity, and instrumented order before switching to a delegate,
+validate sequentially, commit and push, and do not create a pull request.
+
+## Explicit terminal singleton-maxpool/reshape orchestration: completed state
+
+The characterized pair now delegates to
+`passes/terminal_singleton_maxpool_reshape_orchestration.py`. A frozen
+`TerminalSingletonMaxPoolReshapeContext` contains only ModelIR, layout state,
+and diagnostics. The two cleanup owners are imported directly from
+`singleton_maxpool_layout` and `graph_cleanup`; the phase module does not
+import the central lowerer.
+
+`TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS` declares the exact two-step
+order. Every builder call constructs one fresh `ModelIRPassStateScope` from the
+context's ModelIR/layout pair and attaches the identical scope, ModelIR,
+layout, and diagnostics values to both immutable invocations. The shared
+executor validates both IDs before running an owner, and the boundary-cleanup
+comment moved with the second invocation.
+
+The historical helper is now a four-line delegate. Its sole zero-argument call
+remains between the same two layout-gated blocks. Architecture accounting
+combines both stable IDs with remaining direct runner calls. The runtime
+efficiency fixture now executes this explicit runner and still proves one
+graph-index build with reuse by consecutive-reshape cleanup.
+
+Sequential validation completed as follows:
+
+- focused terminal singleton-maxpool/reshape orchestration:
+  `7 passed in 0.60s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `285 passed in 18.86s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.94s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_late_dequant_unary_fanout_pass_cluster` before changing production code.
+Freeze its three cleanup calls, shared per-invocation pass-state scope,
+ModelIR/layout/diagnostics arguments, sole outer invocation, and both
+neighbors. Validate sequentially, commit and push, and do not create a pull
+request.
+
+## Late dequant/unary/fanout orchestration characterization: completed state
+
+The 26-line `_run_late_dequant_unary_fanout_pass_cluster` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session, has no control flow, and is invoked exactly once. It creates one
+`ModelIRPassStateScope` from ModelIR and layout state, then routes the same
+scope, ModelIR, layout state, and diagnostics through dequant/concat/quantize
+cleanup, transpose-unary passthrough cleanup, and transpose-unary fanout bridge
+cleanup in that exact order.
+
+The focused
+`test_flatbuffer_direct_late_dequant_unary_fanout_orchestration.py` freezes the
+single scope construction, all three complete runner argument contracts, the
+shared `state_scope` name, the sole zero-argument invocation, and its exact
+placement between the quantized HardSigmoid bridge and swish passthrough. The
+existing pass-efficiency fixture continues to prove one graph-index build and
+two later scope reuses.
+
+Validation completed sequentially as follows:
+
+- focused late dequant/unary/fanout characterization: `4 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.65s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.84s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and three
+stable IDs with direct imports from `dequant_concat_quantize_layout` and
+`layout_transpose`. Construct exactly one fresh `ModelIRPassStateScope` per
+phase invocation and attach the identical object to all three immutable
+invocations. Preserve the historical helper, sole zero-argument call, both
+outer neighbors, and unary-fold rationale comment. Prove builder arguments,
+scope identity, and instrumented order before switching to a delegate,
+validate sequentially, commit and push, and do not create a pull request.
+
+## Explicit late dequant/unary/fanout orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/late_dequant_unary_fanout_orchestration.py`. A frozen
+`LateDequantUnaryFanoutContext` contains only ModelIR, layout state, and
+diagnostics. All three cleanup owners are imported directly from
+`dequant_concat_quantize_layout` and `layout_transpose`; the phase module does
+not import the central lowerer.
+
+`LATE_DEQUANT_UNARY_FANOUT_PASS_IDS` declares the exact three-step order. Each
+builder call constructs one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the same scope, ModelIR, layout, and
+diagnostics to all three immutable invocations. The shared executor validates
+every ID before execution, and the final unary-fold rationale comment moved
+with its invocation.
+
+The historical helper is a four-line delegate at the same sole zero-argument
+boundary between the quantized HardSigmoid bridge and swish passthrough.
+Architecture ownership uses stable-ID multiplicity for the moved dequant,
+unary passthrough, and unary fanout occurrences while retaining all other
+direct calls. The efficiency fixture now drives the explicit runner and still
+observes one graph-index build followed by two scope reuses.
+
+Sequential validation completed as follows:
+
+- focused late dequant/unary/fanout orchestration: `7 passed in 0.64s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `285 passed in 19.25s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.02s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the neighboring
+`_run_transpose_unary_fanout_layout_pass_cluster` before changing production
+code. Freeze its option-dependent calls, default values, shared pass-state
+scope, all ModelIR/layout/diagnostics arguments, invocation variants, and outer
+boundaries. Validate sequentially, commit and push, and do not create a pull
+request.
+
+## Transpose/unary-fanout orchestration characterization: completed state
+
+The 35-line `_run_transpose_unary_fanout_layout_pass_cluster` remains
+unchanged in production. It exposes two keyword-only options with the exact
+defaults `include_layout_transpose=False` and
+`include_unary_passthrough=True`. Every invocation creates one fresh
+`ModelIRPassStateScope` from ModelIR and layout state and shares it, together
+with the same ModelIR, layout, and diagnostics values, across all active
+cleanup runners.
+
+The focused
+`test_flatbuffer_direct_transpose_unary_fanout_orchestration.py` freezes the
+four ordered runner slots and their complete arguments. Layout-transpose and
+unary-passthrough cleanup are independently conditional; unary-fanout and
+unary-binary-fanout cleanup are unconditional. It also freezes both runtime
+variants: the attention-recovery callback uses the defaults, whereas the sole
+direct post-QDQ invocation requests layout-transpose and disables unary
+passthrough. The direct call remains between the layout-attention suffix and
+safe-binary recovery sequence, and the callback remains between the terminal
+transpose-convolution cleanup and dequant/ReLU/quantize bridge in
+`ATTENTION_GATE_QDQ_PASS_IDS`. The two existing efficiency fixtures continue
+to prove one graph-index build for each variant.
+
+Sequential validation completed as follows:
+
+- focused transpose/unary-fanout characterization: `4 passed in 0.60s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 18.72s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 11.18s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and four
+stable IDs with direct imports from `layout_transpose`. Keep the two options as
+runner arguments rather than context state. Build the active expected-ID tuple
+per variant, create exactly one fresh `ModelIRPassStateScope` per phase
+invocation, and attach it to every active immutable invocation. Preserve the
+historical keyword-only helper, both option defaults, the attention callback
+identity, the explicit post-QDQ call, and every surrounding boundary. Prove
+both variants, fresh/shared scope identity, and instrumented order before
+switching to a delegate; validate sequentially, commit and push, and do not
+create a pull request.
+
+## Explicit transpose/unary-fanout orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/transpose_unary_fanout_orchestration.py`. A frozen
+`TransposeUnaryFanoutContext` contains only ModelIR, layout state, and
+diagnostics. All four cleanup owners are imported directly from
+`layout_transpose`; the phase module does not import the central lowerer.
+
+`TRANSPOSE_UNARY_FANOUT_PASS_IDS` is the canonical four-owner sequence, while
+`active_transpose_unary_fanout_pass_ids` derives the exact expected sequence
+for each option combination. The default attention callback executes unary-
+passthrough, unary-fanout, and unary-binary-fanout cleanup. The explicit post-
+QDQ call executes layout-transpose, unary-fanout, and unary-binary-fanout
+cleanup. Options remain per-invocation arguments and are not frozen into the
+context. Each builder call creates one fresh `ModelIRPassStateScope` and
+attaches the identical scope, ModelIR, layout, and diagnostics values to all
+active immutable invocations. The shared executor validates the variant-
+specific IDs before executing an owner.
+
+The historical helper is now a ten-line keyword-only delegate with the same
+`False`/`True` defaults. Its attention-recovery callback identity, explicit
+post-QDQ `True`/`False` call, and all adjacent boundaries are unchanged.
+Architecture accounting moves one syntactic occurrence of every owner to its
+stable ID while retaining the callback's separate phase multiplicity. Both
+runtime efficiency fixtures now execute the explicit runner and still prove
+one graph-index build per three-step variant. The obsolete direct unary-
+passthrough import was removed from the central lowerer.
+
+Sequential validation completed as follows:
+
+- focused transpose/unary-fanout orchestration: `9 passed in 0.66s`;
+- focused orchestration, ordered architecture, and pass-efficiency:
+  `287 passed in 19.73s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.00s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, option semantics, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory the next still-central post-lowering cluster before any
+production edit. Prefer a small cluster with existing module owners, freeze
+its complete option/callback/state-scope contract and every runtime boundary,
+then create characterization and implementation as separate sequentially
+validated commits. Continue to minimize real-model conversion, commit and push
+only, and do not create a pull request.
+
+## Late SPP/concat-unary-conv orchestration characterization: completed state
+
+The 17-line `_run_late_spp_concat_unary_conv_pass_pair` remains unchanged in
+production. It is a parameterless straight-line closure over ModelIR and
+session with no option, callback, or control-flow dependency. Every invocation
+creates one `ModelIRPassStateScope` from ModelIR and layout state, then routes
+the identical scope, ModelIR, layout state, and diagnostics first to SPP layout
+cleanup and then to concat/unary/conv layout cleanup.
+
+The focused
+`test_flatbuffer_direct_late_spp_concat_unary_conv_orchestration.py` freezes
+the one scope construction, both complete cleanup argument contracts, their
+exact order, the sole zero-argument invocation, and its terminal placement
+between strided-slice/pad/concat bridge recovery and shape-extract layout
+recovery. The existing efficiency fixture continues to prove one graph-index
+build across both runners.
+
+Sequential validation completed as follows:
+
+- focused late SPP/concat-unary-conv characterization:
+  `4 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 18.18s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.81s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `spp_layout` and
+`concat_unary_conv_layout`. Construct exactly one fresh
+`ModelIRPassStateScope` per phase invocation and attach the identical object to
+both immutable invocations. Preserve the historical helper, its sole zero-
+argument call, both outer neighbors, and runtime efficiency. Prove builder
+arguments, fresh/shared scope identity, and instrumented order before switching
+to a delegate; validate sequentially, commit and push, and do not create a pull
+request.
+
+## Explicit late SPP/concat-unary-conv orchestration: completed state
+
+The characterized pair now delegates to
+`passes/late_spp_concat_unary_conv_orchestration.py`. A frozen
+`LateSPPConcatUnaryConvContext` contains only ModelIR, layout state, and
+diagnostics. The SPP and concat/unary/conv cleanup owners are imported directly
+from their existing pass modules; the phase module does not import the central
+lowerer.
+
+`LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS` declares the exact two-step order. Every
+builder call constructs one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope, ModelIR, layout, and
+diagnostics values to both immutable invocations. The shared executor validates
+both IDs before running an owner.
+
+The historical helper is now a four-line zero-argument delegate at the same
+sole terminal boundary between strided-slice/pad/concat bridge recovery and
+shape-extract layout recovery. Architecture accounting combines both stable
+IDs with all remaining direct owner calls. The runtime efficiency fixture now
+executes the explicit phase runner and still proves one graph-index build with
+reuse by the second cleanup.
+
+Sequential validation completed as follows:
+
+- focused late SPP/concat-unary-conv orchestration: `7 passed in 0.61s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 19.72s`;
+- pass-efficiency: `30 passed in 0.55s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.06s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, runtime pass order, invocation multiplicity, shared-scope efficiency,
+and TensorFlow isolation are unchanged. PR #952 remains closed, no branch PR
+is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize another small still-central shared-
+scope cluster before changing production. The 17-line boundary-batchmatmul/
+input-unary pair is a likely candidate, but first freeze all of its actual
+callback and outer phase boundaries. Validate sequentially, keep real-model
+conversion minimal, commit and push only, and do not create a pull request.
+
+## Boundary-batchmatmul/input-unary orchestration characterization: completed state
+
+The 17-line `_run_boundary_batchmatmul_unary_layout_pass_cluster` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session with no option or control-flow dependency. It creates one
+`ModelIRPassStateScope` from ModelIR and layout state, then passes the identical
+scope, ModelIR, layout state, and diagnostics first to boundary-input
+batch-matmul cleanup and then to input-unary passthrough cleanup.
+
+This helper has no direct invocation. It remains the exact
+`boundary_batchmatmul_unary_cluster` callback stored in
+`LayoutRecoveryContext`, and its stable execution slot remains between
+transpose quant/dequant bridge recovery and the NCHW/NHWC elementwise
+roundtrip owner in `LAYOUT_RECOVERY_PASS_IDS`.
+
+The focused
+`test_flatbuffer_direct_boundary_batchmatmul_unary_orchestration.py` freezes
+the scope construction, both complete cleanup argument contracts, their exact
+order, callback-only ownership, callback identity, and both stable phase
+neighbors. The existing efficiency fixture continues to prove one graph-index
+build across both runners.
+
+Sequential validation completed as follows:
+
+- focused boundary-batchmatmul/input-unary characterization:
+  `4 passed in 0.57s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.92s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 11.03s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `boundary_input_chains` and
+`input_passthrough_layout`. Build one fresh `ModelIRPassStateScope` per phase
+invocation and attach the identical object to both immutable invocations.
+Preserve the historical zero-argument helper as the same
+`LayoutRecoveryContext` callback and retain both stable-list neighbors. Prove
+builder arguments, fresh/shared scope identity, instrumented order, and
+callback identity before switching to a delegate; validate sequentially,
+commit and push, and do not create a pull request.
+
+## Explicit boundary-batchmatmul/input-unary orchestration: completed state
+
+The characterized pair now delegates to
+`passes/boundary_batchmatmul_unary_orchestration.py`. A frozen
+`BoundaryBatchMatMulUnaryContext` contains only ModelIR, layout state, and
+diagnostics. Both cleanup owners are imported directly from
+`boundary_input_chains` and `input_passthrough_layout`; the phase module does
+not import the central lowerer.
+
+`BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS` declares the exact two-step order. Every
+builder call creates one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope, ModelIR, layout, and
+diagnostics values to both immutable invocations. The shared executor validates
+both IDs before execution.
+
+The historical helper is now a four-line zero-argument delegate and remains
+the same callback object supplied to `LayoutRecoveryContext`. Its stable slot
+between quant/dequant bridge recovery and elementwise roundtrip recovery is
+unchanged. The two direct runner imports were removed from the central lowerer,
+and architecture checks now require their ownership to reside in stable phase
+IDs. The efficiency fixture executes the explicit runner and still observes
+one graph-index build across the pair.
+
+Sequential validation completed as follows:
+
+- focused boundary-batchmatmul/input-unary orchestration:
+  `7 passed in 0.58s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 19.25s`;
+- pass-efficiency: `30 passed in 0.57s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.00s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, callback identity, runtime pass order, invocation multiplicity, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory and characterize the adjacent channel-slice/pad-mul
+shared-scope pair before changing production. Freeze its two potentially
+different keyword contracts, callback-only ownership in the terminal
+slice/concat phase, stable neighbors, and existing efficiency behavior.
+Validate sequentially, keep real-model conversion minimal, commit and push
+only, and do not create a pull request.
+
+## Channel-slice/pad-mul orchestration characterization: completed state
+
+The 17-line `_run_channel_slice_pad_mul_layout_pass_cluster` remains unchanged
+in production. It is a parameterless straight-line closure over ModelIR and
+session. Every invocation creates one `ModelIRPassStateScope` from ModelIR and
+layout state, then passes the identical scope, ModelIR, layout state, and
+diagnostics first to channel-slice merge cleanup and then to pad/mul cleanup.
+
+The helper has two runtime boundaries. It is the first callback in
+`TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS`, immediately before affine post-add
+recovery, and it also has one zero-argument late-terminal direct call between
+pre-add recovery and the same affine post-add owner. The focused
+`test_flatbuffer_direct_channel_slice_pad_mul_orchestration.py` freezes both
+complete cleanup contracts, the shared scope, direct invocation, callback
+identity, stable-list position, and direct neighbors. The existing efficiency
+fixture continues to prove one graph-index build per pair invocation.
+
+Sequential validation completed as follows:
+
+- focused channel-slice/pad-mul characterization: `5 passed in 0.61s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.96s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.62s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `channel_slice_layout` and `pad_layout`.
+Build one fresh `ModelIRPassStateScope` per phase invocation and attach the same
+object to both immutable invocations. Preserve the historical zero-argument
+helper as the terminal-slice/concat callback, its additional direct call, and
+both kinds of boundaries. Prove builder arguments, fresh/shared scope identity,
+instrumented order, callback identity, and two total executions before
+switching to a delegate; validate sequentially, commit and push, and do not
+create a pull request.
+
+## Explicit channel-slice/pad-mul orchestration: completed state
+
+The characterized pair now delegates to
+`passes/channel_slice_pad_mul_orchestration.py`. A frozen
+`ChannelSlicePadMulContext` contains only ModelIR, layout state, and
+diagnostics. Both cleanup owners are imported directly from
+`channel_slice_layout` and `pad_layout`; the phase module does not import the
+central lowerer.
+
+`CHANNEL_SLICE_PAD_MUL_PASS_IDS` declares the exact two-step order. Every
+builder call creates one fresh `ModelIRPassStateScope` from the context's
+ModelIR/layout pair and attaches the identical scope, ModelIR, layout, and
+diagnostics values to both immutable invocations. The shared executor validates
+both IDs before execution.
+
+The historical helper is now a four-line zero-argument delegate. It remains
+both the leading terminal-slice/concat callback and the same additional late-
+terminal direct call between pre-add and affine post-add recovery. The two
+direct runner imports were removed from the central lowerer. Architecture
+accounting combines stable owner IDs with one direct helper invocation and one
+callback phase slot, preserving both runtime executions. The efficiency
+fixture now executes the explicit runner and still observes one graph-index
+build across the pair.
+
+Sequential validation completed as follows:
+
+- focused channel-slice/pad-mul orchestration: `8 passed in 0.60s`;
+- focused orchestration plus ordered architecture:
+  `256 passed in 19.52s`;
+- pass-efficiency: `30 passed in 0.55s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.68s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, callback identity, runtime pass order, invocation multiplicity, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory the next small still-central shared-scope cluster. The
+late hard-activation/layout-transpose pair is a likely option-dependent
+candidate; freeze its required option, active runner sequence, scope sharing,
+sole direct boundary, and all arguments before editing production. Validate
+sequentially, keep real-model conversion minimal, commit and push only, and do
+not create a pull request.
+
+## Late hard-activation/layout orchestration characterization: completed state
+
+The 25-line `_run_late_hard_activation_layout_pass_pair` remains unchanged in
+production. It requires the keyword-only `include_layout_transpose` option,
+creates one `ModelIRPassStateScope` from ModelIR and layout state, always runs
+hard-activation passthrough cleanup, and conditionally runs layout-transpose
+cleanup with the same scope, ModelIR, layout, and diagnostics values.
+
+The hard-activation invocation retains the exact terminal policy:
+`include_hardswish=False`, `include_hardsigmoid=True`,
+`include_hardsigmoid_mul=True`, and `reverse_hardsigmoid_order=True`. Its sole
+caller forwards `optimize_layout_transpose_chains` unchanged to the required
+option. The pair remains between the specialized hard-swish/SE/hard-sigmoid
+fusion and final pre-concat cleanup.
+
+The focused
+`test_flatbuffer_direct_late_hard_activation_layout_orchestration.py` freezes
+the required signature, scope construction, conditional placement, both full
+runner contracts, all four hard-activation policy flags, caller option value,
+and outer boundaries. The existing efficiency fixture exercises the enabled
+two-step form and continues to prove one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused late hard-activation/layout characterization: `4 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 18.31s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.86s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `input_passthrough_layout` and
+`layout_transpose`. Keep `include_layout_transpose` as a required runner
+argument, derive the active expected-ID sequence, and create one fresh shared
+scope per build. Preserve all four hard-activation flags, the historical
+required keyword-only helper, caller option value, and both outer boundaries.
+Prove both enabled and disabled builder forms, fresh/shared scope identity, and
+instrumented order before switching to a delegate; validate sequentially,
+commit and push, and do not create a pull request.
+
+## Explicit late hard-activation/layout orchestration: completed state
+
+The characterized pair now delegates to
+`passes/late_hard_activation_layout_orchestration.py`. A frozen
+`LateHardActivationLayoutContext` contains only ModelIR, layout state, and
+diagnostics. Both owners are imported directly from
+`input_passthrough_layout` and `layout_transpose`; the phase module does not
+import the central lowerer.
+
+`LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS` is the canonical two-owner sequence,
+while `active_late_hard_activation_layout_pass_ids` derives the one-step or
+two-step expected sequence from the required per-invocation option. The option
+is not stored in context state. Every builder creates one fresh
+`ModelIRPassStateScope`; the enabled form attaches the identical scope,
+ModelIR, layout, and diagnostics values to both immutable invocations. The
+hard-activation invocation retains all four characterized Boolean policy
+flags. The shared executor validates the active IDs before execution.
+
+The historical helper remains a required keyword-only delegate and its sole
+caller continues to forward `optimize_layout_transpose_chains`. Both terminal
+neighbors remain unchanged. The last central hard-activation runner import was
+removed; architecture accounting now requires its two source occurrences to
+reside in stable phase IDs. The efficiency fixture executes the enabled
+explicit runner and still proves one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused late hard-activation/layout orchestration: `9 passed in 0.61s`;
+- focused orchestration plus ordered architecture:
+  `257 passed in 19.36s`;
+- pass-efficiency: `30 passed in 0.57s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 11.05s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, option semantics, runtime pass order, invocation multiplicity, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory and characterize the absolute-final normalization/
+attention shared-scope pair before changing production. Freeze its fixed
+normalization flags, complete argument contracts, one direct boundary, and
+existing efficiency behavior. Validate sequentially, keep real-model
+conversion minimal, commit and push only, and do not create a pull request.
+
+## Absolute-final normalization/attention orchestration characterization: completed state
+
+The 21-line `_run_absolute_final_normalization_attention_pass_pair` remains
+unchanged in production. It is a parameterless straight-line closure over
+ModelIR and session. Every invocation creates one `ModelIRPassStateScope` from
+ModelIR and layout state, then passes the same scope, ModelIR, layout, and
+diagnostics first to normalization/pad cleanup and then to mixed-attention
+layout cleanup.
+
+The normalization invocation retains the fixed terminal policy
+`include_instance=False` and `include_flatten=True`. The sole zero-argument
+call remains between terminal instance-normalization post-bias recovery and
+dynamic rank-1 unsqueeze/reshape shape-input rewriting. The retained comment
+documents why mixed attention must follow late boundary/layout repair.
+
+The focused
+`test_flatbuffer_direct_absolute_final_normalization_attention_orchestration.py`
+freezes the scope construction, both complete argument contracts, fixed
+normalization flags, exact order, sole invocation, and outer boundaries. The
+existing efficiency fixture continues to prove one graph-index build across
+the pair.
+
+Sequential validation completed as follows:
+
+- focused absolute-final normalization/attention characterization:
+  `4 passed in 0.20s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 18.70s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 11.17s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable IDs with direct imports from `pad_layout` and `attention_layout`.
+Construct one fresh `ModelIRPassStateScope` per phase invocation and attach the
+same object to both immutable invocations. Preserve the normalization flags,
+the attention rationale comment, historical zero-argument helper, sole call,
+and both outer boundaries. Prove builder arguments, fresh/shared scope
+identity, and instrumented order before switching to a delegate; validate
+sequentially, commit and push, and do not create a pull request.
+
+## Explicit absolute-final normalization/attention orchestration: completed state
+
+The characterized pair now delegates to
+`passes/absolute_final_normalization_attention_orchestration.py`. A frozen
+`AbsoluteFinalNormalizationAttentionContext` contains only ModelIR, layout
+state, and diagnostics. Both owners are imported directly from `pad_layout`
+and `attention_layout`; the phase module does not import the central lowerer.
+
+`ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS` declares the exact two-step
+order. Every builder creates one fresh `ModelIRPassStateScope` from the
+context's ModelIR/layout pair and attaches the identical scope, ModelIR,
+layout, and diagnostics values to both immutable invocations. The fixed
+`include_instance=False` and `include_flatten=True` policy remains attached to
+normalization cleanup, and the mixed-attention rationale comment moved with
+the second invocation. The shared executor validates both IDs before running
+an owner.
+
+The historical helper is now a four-line zero-argument delegate at the same
+sole terminal boundary. Architecture accounting moves one syntactic occurrence
+of both owners to stable IDs while retaining all other direct calls. The
+efficiency fixture now executes the explicit phase and still observes one
+graph-index build with reuse by mixed-attention cleanup.
+
+Sequential validation completed as follows:
+
+- focused absolute-final normalization/attention orchestration:
+  `7 passed in 0.59s`;
+- focused orchestration plus ordered architecture:
+  `255 passed in 18.52s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.16s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, fixed policy, runtime pass order, invocation multiplicity, shared-scope
+efficiency, and TensorFlow isolation are unchanged. PR #952 remains closed, no
+branch PR is open, and no pull request was created, reopened, or updated.
+
+At restart, inventory the remaining option-dependent shared-scope helpers
+before choosing the next extraction. The QKV attention cluster is a likely
+candidate but has two independent Boolean choices and multiple runtime forms;
+freeze every active sequence and boundary before production changes. Validate
+sequentially, keep real-model conversion minimal, commit and push only, and do
+not create a pull request.
+
+## QKV attention orchestration characterization: completed state
+
+The 29-line `_run_qkv_attention_layout_pass_cluster` remains unchanged in
+production. It exposes keyword-only defaults
+`include_layout_transpose=False` and `include_prefix=True`, creates one
+`ModelIRPassStateScope` from ModelIR and layout state, conditionally runs
+layout-transpose and QKV-prefix cleanup, and always runs QKV-bridge cleanup.
+Every active owner receives the same ModelIR, layout, diagnostics, and scope.
+
+The helper has three calls and two syntactic forms. Two calls use the defaults,
+executing prefix then bridge cleanup. The late bridge call disables prefix and
+forwards `optimize_layout_transpose_chains` to the layout option, yielding
+either bridge-only or layout-transpose plus bridge cleanup. One default call is
+inside the layout-enabled block between batch-matmul input-adj recovery and
+split/conv/concat recovery. The second default call is between the same
+batch-matmul recovery and ReLU/split recovery. The late form remains between
+shape-extract recovery and split/conv/concat recovery.
+
+The focused `test_flatbuffer_direct_qkv_attention_orchestration.py` freezes
+both defaults, both independent guards, all three cleanup contracts, all three
+call sites, both syntactic invocation forms, and every surrounding boundary.
+The existing efficiency fixture exercises the default two-step form and
+continues to prove one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused QKV attention characterization: `5 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.17s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.22s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and three
+stable IDs with direct imports from `layout_transpose` and `attention_layout`.
+Keep both Boolean choices as runner arguments, derive the active expected-ID
+sequence for all combinations, and build one fresh shared scope per invocation.
+Preserve the historical keyword-only helper, both defaults, three callers,
+caller values, and every outer boundary. Prove the production default and late
+forms, fresh/shared scope identity, and instrumented order before switching to
+a delegate; validate sequentially, commit and push, and do not create a pull
+request.
+
+## Explicit QKV attention orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/qkv_attention_orchestration.py`. A frozen `QKVAttentionContext`
+contains only ModelIR, layout state, and diagnostics. The three owners are
+imported directly from `layout_transpose` and `attention_layout`; the phase
+module does not import the central lowerer.
+
+`QKV_ATTENTION_PASS_IDS` is the canonical three-owner sequence, while
+`active_qkv_attention_pass_ids` derives the active sequence from both
+per-invocation options. The options remain outside context state. The default
+form executes prefix plus bridge cleanup; the late form executes bridge-only
+or layout-transpose plus bridge cleanup. Every builder creates one fresh
+`ModelIRPassStateScope` and attaches the same scope, ModelIR, layout, and
+diagnostics values to all active immutable invocations. The shared executor
+validates the variant-specific IDs before execution.
+
+The historical helper retains both keyword-only defaults as a delegate. Its
+two default calls, one prefix-disabled late call, forwarded global layout
+option, and all three outer boundaries are unchanged. The final central QKV
+prefix/bridge imports were removed. Architecture accounting moves one
+syntactic occurrence of each owner to stable IDs while retaining all three
+helper calls. The efficiency fixture executes the explicit default form and
+still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused QKV attention orchestration: `12 passed in 0.61s`;
+- focused orchestration plus ordered architecture:
+  `260 passed in 18.47s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.83s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, option semantics, runtime pass order, invocation multiplicity, shared-
+scope efficiency, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, inventory and characterize the duplicate-fanout/quantized-PReLU
+shared-scope pair before production changes. Freeze its required transpose
+option, complete argument routing, callback uses from the layout/attention
+suffix, all direct calls, and every active boundary. Validate sequentially,
+keep real-model conversion minimal, commit and push only, and do not create a
+pull request.
+
+## Duplicate-fanout and quantized-PReLU orchestration characterization: completed state
+
+The 21-line `_run_duplicate_quantized_prelu_pass_cluster` remains unchanged
+in production. It requires the keyword-only `include_transpose` option,
+creates one `ModelIRPassStateScope` from ModelIR and the session layout state,
+and executes duplicate-fanout cleanup followed by quantized-PReLU cleanup.
+Both owners receive the same ModelIR, layout, diagnostics, and scope; only the
+duplicate-fanout owner receives the required option.
+
+The helper has no direct call expression in the central lowerer. It remains
+the sole `duplicate_quantized_prelu_cluster` callback of the ordered layout/
+attention/quantized suffix. That callback occupies one stable slot after the
+attention-gate/QDQ recovery callback and before dequantize/transpose-conv/
+quantize recovery. The suffix builder forwards its required
+`include_duplicate_transpose` value as the helper's `include_transpose`
+keyword. Existing suffix characterization continues to freeze the two outer
+suffix calls, their shared feature-flag value, and their surrounding
+boundaries.
+
+Sequential validation completed as follows:
+
+- focused duplicate/quantized-PReLU characterization: `5 passed in 0.59s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.26s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.77s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, option semantics, callback identity,
+shared-scope behavior, and TensorFlow isolation are unchanged. PR #952 remains
+closed, no branch PR is open, and no pull request was created, reopened, or
+updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable owner IDs with direct imports from `graph_cleanup` and
+`quantized_prelu`. Keep `include_transpose` as a required runner argument and
+create one fresh shared scope per build. Preserve the historical keyword-only
+helper as the same suffix callback, including its option routing and stable
+neighbors. Prove both option values, fresh/shared scope identity, instrumented
+order, architecture accounting, and the efficiency invariant before switching
+to the delegate; validate sequentially, commit and push, and do not create a
+pull request.
+
+## Explicit duplicate-fanout and quantized-PReLU orchestration: completed state
+
+The characterized pair now delegates to
+`passes/duplicate_quantized_prelu_orchestration.py`. A frozen
+`DuplicateQuantizedPReLUContext` contains only ModelIR, layout state, and
+diagnostics. `DUPLICATE_QUANTIZED_PRELU_PASS_IDS` is the canonical two-owner
+sequence, and the phase module imports both cleanup owners directly without
+importing the central lowerer.
+
+`include_transpose` remains a required per-invocation argument rather than
+context state. Both Boolean values retain the same duplicate-fanout then
+quantized-PReLU sequence; only the first owner's behavior changes. Every
+builder creates one fresh `ModelIRPassStateScope` and attaches that same scope,
+ModelIR, layout, and diagnostics to both immutable invocations. The shared
+executor validates the two stable IDs before execution.
+
+The historical helper keeps its keyword-only required option as a delegate.
+It remains the exact callback stored in the layout/attention/quantized suffix,
+with unchanged option forwarding and stable neighbors. Architecture accounting
+moves one syntactic occurrence of each owner to the new stable IDs without
+changing total owner multiplicity. Both cleanup imports remain in the central
+lowerer because independent direct call sites still use them; those unrelated
+sites were deliberately left unchanged. The efficiency fixture now executes
+the explicit phase and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused duplicate/quantized-PReLU orchestration: `10 passed in 0.60s`;
+- focused orchestration plus ordered architecture:
+  `258 passed in 19.35s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.38s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, option semantics, runtime order, callback identity, invocation
+multiplicity, shared-scope efficiency, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the remaining shared-scope helpers and select the next
+small ordered boundary. Characterize required options, all active forms,
+caller multiplicity, callback ownership, and outer boundaries before changing
+production. Validate sequentially, keep real-model conversion minimal, commit
+and push only, and do not create a pull request.
+
+## Constant-fold and redundant-cast orchestration characterization: completed state
+
+The 21-line `_run_constant_fold_cast_cleanup_pass_cluster` remains unchanged
+in production. Its keyword-only `state_scope` defaults to `None`; that form
+creates a fresh `ModelIRPassStateScope` from the current ModelIR and layout
+state. A supplied scope bypasses allocation. Constant-input folding then
+redundant-cast cleanup receive the same ModelIR, layout, diagnostics, and
+resolved scope.
+
+Both current production calls supply an existing scope. The very-late gather/
+constant/normalization parent places the pair after transpose-gather cleanup
+and before fixed-policy normalization-pad cleanup. The late layout/mean/SPP/
+gather parent places it after transpose-gather cleanup as the terminal action.
+The implicit fresh-scope form remains a supported internal capability even
+though no current production caller relies on it.
+
+Sequential validation completed as follows:
+
+- focused constant-fold/cast characterization: `5 passed in 0.18s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 17.47s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.41s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, scope-allocation semantics, parent
+boundaries, shared-scope behavior, and TensorFlow isolation are unchanged. PR
+#952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and two
+stable owner IDs with direct imports from `constant_fold` and `cast_cleanup`.
+Keep the optional external scope as a runner/builder argument; allocate a fresh
+scope only when it is absent. Preserve the historical helper signature, both
+external-scope production callers, and all internal parent boundaries as a
+delegate. Prove implicit and external scope identity plus instrumented order
+before switching production; validate sequentially, commit and push, and do
+not create a pull request.
+
+## Explicit constant-fold and redundant-cast orchestration: completed state
+
+The characterized pair now delegates to
+`passes/constant_fold_cast_orchestration.py`. A frozen
+`ConstantFoldCastContext` contains only ModelIR, layout state, and diagnostics.
+`CONSTANT_FOLD_CAST_PASS_IDS` is the canonical two-owner sequence, and the
+phase module imports constant-input folding and redundant-cast cleanup directly
+without importing the central lowerer.
+
+The optional `state_scope` remains a runner/builder argument rather than
+context state. When absent, each builder creates one fresh
+`ModelIRPassStateScope`; when supplied, the builder preserves that exact
+object. In both forms, the same resolved scope, ModelIR, layout, and diagnostics
+are attached to both immutable invocations. The shared executor validates the
+two stable IDs before execution.
+
+The historical helper retains its keyword-only `state_scope=None` signature as
+a delegate. Both production parents still pass their existing scope, and the
+pair remains between the same internal neighbors. Architecture accounting
+moves one syntactic occurrence of each owner to stable IDs without changing
+total multiplicity. The now-unused central runner imports were removed, making
+the phase module their orchestration owner. The efficiency fixture executes
+the explicit external-scope form and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused constant-fold/cast orchestration: `10 passed in 0.60s`;
+- focused orchestration plus ordered architecture:
+  `258 passed in 17.96s`;
+- pass-efficiency: `30 passed in 0.52s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.85s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, optional-scope semantics, parent boundaries, runtime order, invocation
+multiplicity, shared-scope efficiency, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, use the explicit constant-fold/cast builder as the composable
+foundation when characterizing the very-late gather/constant/normalization
+parent. Freeze its four effective owner steps, fixed normalization policy,
+shared external scope, sole call, and outer terminal boundaries before
+production changes. Validate sequentially, keep real-model conversion minimal,
+commit and push only, and do not create a pull request.
+
+## Very-late gather/constant/normalization orchestration characterization: completed state
+
+The 22-line `_run_very_late_gather_constant_normalization_pass_cluster`
+remains unchanged in production. It creates one fresh
+`ModelIRPassStateScope`, runs transpose-gather-axis cleanup, passes the same
+scope into the explicit constant-fold/redundant-cast helper, and finishes with
+normalization-pad cleanup using fixed `include_instance=False` and
+`include_flatten=True` policy.
+
+The three direct phase calls expand to four effective cleanup owners in this
+order: transpose-gather axis, constant-input fold, redundant cast, and
+normalization pad. Every owner receives the same ModelIR, layout, diagnostics,
+and scope. The helper has one zero-argument terminal call after the final
+transpose/mul/post-transpose/add recovery and before dynamic reshape shape
+resolution.
+
+Sequential validation completed as follows:
+
+- focused very-late characterization: `4 passed in 0.57s`;
+- focused characterization plus ordered architecture:
+  `252 passed in 17.25s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.32s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, fixed normalization policy, terminal
+boundaries, shared-scope behavior, and TensorFlow isolation are unchanged. PR
+#952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context and four
+stable effective owner IDs. Create one fresh scope, build the transpose-gather
+and normalization invocations locally, and splice in
+`build_constant_fold_cast_invocations(..., state_scope=state_scope)` so the
+middle pair is not duplicated. Preserve the historical zero-argument helper,
+fixed normalization flags, sole caller, and outer terminal boundaries as a
+delegate. Validate sequentially, commit and push, and do not create a pull
+request.
+
+## Explicit very-late gather/constant/normalization orchestration: completed state
+
+The characterized parent now delegates to
+`passes/very_late_gather_constant_normalization_orchestration.py`. A frozen
+`VeryLateGatherConstantNormalizationContext` contains only ModelIR, layout
+state, and diagnostics. The four canonical stable IDs name transpose-gather
+axis cleanup, constant-input folding, redundant-cast cleanup, and
+normalization-pad cleanup in their effective runtime order.
+
+Every builder creates one fresh `ModelIRPassStateScope`. It constructs the
+outer gather and fixed-policy normalization invocations locally, then composes
+the middle pair with `build_constant_fold_cast_invocations` while supplying
+that same scope. The existing constant-fold/cast builder therefore remains the
+single source of its two argument contracts; all four immutable invocations
+share ModelIR, layout, diagnostics, and scope by identity. The shared executor
+validates the flattened four-ID sequence before execution.
+
+The historical very-late helper is now a zero-argument delegate at the same
+sole terminal boundary. Its former call to the historical constant-fold/cast
+helper is replaced by builder composition; that helper retains its one
+remaining late-layout parent caller. Architecture accounting now records both
+constant-fold/cast executions explicitly, increasing the ordered runner total
+from 118 to 120 without changing runtime multiplicity. The efficiency fixture
+executes the explicit parent and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused very-late plus composed constant-fold/cast orchestration:
+  `17 passed in 0.70s`;
+- both focused files plus ordered architecture:
+  `265 passed in 16.65s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.25s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, fixed normalization policy, runtime order, terminal boundaries,
+invocation multiplicity, shared-scope efficiency, and TensorFlow isolation are
+unchanged. PR #952 remains closed, no branch PR is open, and no pull request
+was created, reopened, or updated.
+
+At restart, inventory the next small shared-scope helper. The positional
+target-ModelIR/target-layout SE-FC/gather-fanout pair is a likely candidate;
+freeze both target forms, diagnostics routing, shared scope, caller
+multiplicity, and boundaries before deciding how its context should be created.
+Validate sequentially, keep real-model conversion minimal, commit and push
+only, and do not create a pull request.
+
+## SE-FC and gather-channel-fanout orchestration characterization: completed state
+
+The 20-line `_run_se_fc_gather_channel_fanout_pass_cluster` remains unchanged
+in production. It requires positional target ModelIR and target layout values,
+creates one fresh `ModelIRPassStateScope` for that target, and executes SE-FC
+layout cleanup followed by transpose-gather channel-fanout cleanup. Both owners
+receive the target ModelIR/layout, session diagnostics, and the same scope.
+
+There are two production target forms. The fallback block passes
+`(fallback_ir, None)`, while the absolute-final main path passes
+`(model_ir, session.layout_state)`. In both paths the pair remains immediately
+after SiNet shuffle/residual/mul/post-transpose tail cleanup and before static
+shape reconciliation. Neither caller supplies options or keyword arguments.
+
+Sequential validation completed as follows:
+
+- focused SE-FC/gather-fanout characterization: `5 passed in 0.17s`;
+- focused characterization plus ordered architecture:
+  `253 passed in 16.60s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.41s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, target routing, caller multiplicity,
+boundaries, shared-scope behavior, and TensorFlow isolation are unchanged. PR
+#952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, introduce a frozen target ModelIR/layout/diagnostics context and
+two stable owner IDs with direct imports from `se_layout` and
+`layout_transpose`. Because target values differ per call, construct the
+context inside the historical helper from its positional arguments and session
+diagnostics rather than storing fallback state in one long-lived context.
+Preserve both positional caller forms and every boundary as a delegate. Prove
+fresh/shared scope identity and instrumented order before switching production;
+validate sequentially, commit and push, and do not create a pull request.
+
+## Explicit SE-FC and gather-channel-fanout orchestration: completed state
+
+The characterized pair now delegates to
+`passes/se_fc_gather_channel_fanout_orchestration.py`. A frozen
+`SEFCGatherChannelFanoutContext` contains one target ModelIR, its optional
+layout state, and session diagnostics. The two canonical stable IDs preserve
+SE-FC layout cleanup followed by transpose-gather channel-fanout cleanup, and
+the phase module imports both owners directly without importing the lowerer.
+
+The historical helper keeps its two required positional arguments and creates
+the frozen context inside each call. It therefore does not retain fallback
+ModelIR or layout state in one long-lived session context. Each builder creates
+one fresh `ModelIRPassStateScope` for the supplied target and attaches that
+same scope, target, layout, and diagnostics to both immutable invocations. The
+shared executor validates the two IDs before execution.
+
+Both production callers remain syntactically unchanged: fallback still passes
+`(fallback_ir, None)` and main still passes
+`(model_ir, session.layout_state)`. Their SiNet-tail and reconciliation
+neighbors are unchanged. Other independent central calls to both cleanup
+runners remain untouched, so their existing imports are retained. Architecture
+accounting moves one syntactic occurrence of each owner to stable IDs while
+preserving the ordered total of 120. The efficiency fixture executes the
+explicit no-layout form and still observes one graph-index build.
+
+Sequential validation completed as follows:
+
+- focused SE-FC/gather-fanout orchestration: `9 passed in 0.61s`;
+- focused orchestration plus ordered architecture:
+  `257 passed in 16.79s`;
+- pass-efficiency: `30 passed in 0.57s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.37s` (`32` plus `11`);
+- targeted Ruff, Python compilation, formatting, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, target routing, caller multiplicity, boundaries, runtime order,
+shared-scope efficiency, and TensorFlow isolation are unchanged. PR #952
+remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the remaining shared-scope helpers and select the next
+bounded phase. Prefer a fixed-target zero-argument cluster over the larger
+option-dependent channel-shuffle or singleton clusters. Freeze all owner
+contracts, caller multiplicity, and boundaries first; validate sequentially,
+keep real-model conversion minimal, commit and push only, and do not create a
+pull request.
+
+## Terminal-boundary layout orchestration characterization: completed state
+
+The fixed-target, zero-argument
+`_run_terminal_boundary_layout_pass_cluster` remains unchanged in production.
+It creates one `ModelIRPassStateScope` for the main ModelIR and session layout
+state, then executes dual-MUL/CONCAT cleanup, boundary-input recovery, PAD
+recovery, final transpose cleanup, and transpose-gather channel-fanout cleanup
+in that exact order. All five owners receive the same main ModelIR, layout
+state, session diagnostics, and scope. The intermediate PAD rerun remains
+necessary because boundary-input recovery can recreate input-head wrappers;
+the following transpose sweep remains after it.
+
+There is exactly one argument-free production call. It remains immediately
+after transpose/InstanceNorm dual-stat residual-add/resize cleanup and before
+the terminal `optimize_layout_transpose_chains` conditional. Focused contracts
+freeze the zero-argument signature, fresh/shared scope construction, five full
+owner contracts, fixed order, caller multiplicity, and both outer boundaries.
+
+Sequential characterization validation completed as follows:
+
+- focused terminal-boundary contracts: `4 passed in 0.16s`;
+- focused contracts plus ordered architecture: `252 passed in 17.11s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.20s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, fixed owner contracts, caller
+multiplicity, terminal boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and five
+stable owner IDs in a dedicated phase module. Import owners directly from
+`dual_mul_concat_layout`, `boundary_input_layout`, `pad_layout`, and
+`layout_transpose`; do not import the lowerer. Preserve the historical helper
+as one zero-argument delegate, keep the PAD/transpose order and comments
+semantically represented by the phase, and leave all unrelated direct owner
+calls untouched. Move the efficiency fixture to the explicit runner, prove
+one graph-index build and instrumented order, validate sequentially, then
+commit and push only. Do not create or reopen a pull request.
+
+## Explicit terminal-boundary layout orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/terminal_boundary_layout_orchestration.py`. A frozen
+`TerminalBoundaryLayoutContext` contains the main ModelIR, optional layout
+state, and session diagnostics. Five stable IDs preserve dual-MUL/CONCAT,
+boundary-input, PAD, layout-transpose, and transpose-gather channel-fanout
+cleanup in the original order. The phase imports each owner directly and does
+not import the central lowerer.
+
+Every invocation builder allocates one fresh `ModelIRPassStateScope` and
+attaches that same scope, context ModelIR/layout, and diagnostics to all five
+immutable invocations. The shared executor validates the complete stable-ID
+sequence before execution. The PAD step remains after boundary-input recovery,
+and the transpose sweep remains after PAD recovery, preserving the two
+dependencies formerly documented only by comments in the lowerer.
+
+The historical helper is now a zero-argument one-line delegate to a frozen
+main-model context. Its only production call and both outer boundaries are
+unchanged. The lowerer no longer imports the boundary-input runner directly;
+the other four owner imports remain because independent direct call sites still
+use them. Architecture accounting moves one syntactic call for each owner to
+the five stable IDs while preserving the ordered total of 120. The efficiency
+fixture now calls the explicit no-layout phase and still observes one graph-
+index build and the same seven diagnostics events.
+
+Sequential validation completed as follows:
+
+- focused terminal-boundary orchestration: `8 passed in 0.56s`;
+- focused orchestration plus ordered architecture:
+  `256 passed in 18.71s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.23s` (`32` plus `11`);
+- targeted Ruff, formatting, Python compilation, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, fixed owner contracts, runtime order, caller multiplicity, terminal
+boundaries, shared-scope efficiency, and TensorFlow isolation are unchanged.
+PR #952 remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the remaining shared-scope helpers again. The bounded
+fixed-target zero-argument terminal phase is complete, so select the smallest
+option-dependent cluster whose complete policy matrix and caller boundaries
+can be characterized without real-model conversions. Preserve option defaults
+and call multiplicity, validate sequentially, make separate characterization
+and implementation checkpoints, commit and push only, and do not create or
+reopen a pull request.
+
+## Late layout/mean/SPP/gather/constant-fold/cast characterization: completed state
+
+The 43-line
+`_run_late_layout_mean_spp_gather_constant_cast_pass_cluster` remains
+unchanged in production. It requires the keyword-only
+`include_layout_transpose` policy, creates one main-model/session-layout
+`ModelIRPassStateScope`, optionally runs layout-transpose cleanup, then always
+runs mean/MUL/ADD/CONV layout cleanup, SPP cleanup, transpose-gather-axis
+cleanup, and the existing constant-fold/cast child with the same scope. The
+child expands to constant-input-fold and redundant-cast owners, producing five
+required effective IDs or six when layout cleanup is enabled.
+
+There is exactly one production call. It forwards
+`optimize_layout_transpose_chains` to the required policy and remains between
+shape-extract layout cleanup and expand/squeeze-to-reshape replacement.
+Focused contracts freeze the required keyword-only signature, one scope,
+complete direct and child contracts, both flattened policy sequences, the
+single exact optional guard, caller multiplicity, policy forwarding, and both
+outer boundaries.
+
+Sequential characterization validation completed as follows:
+
+- focused late-layout policy contracts: `5 passed in 0.61s`;
+- focused contracts plus ordered architecture: `253 passed in 16.46s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.14s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, optional policy, owner contracts,
+caller multiplicity, boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen ModelIR/layout/diagnostics context, required and
+full stable-ID sequences, and a dedicated phase module. Build the optional
+layout invocation locally, build the three required direct owners locally,
+and compose `build_constant_fold_cast_invocations` with the same external
+scope. Preserve both policy forms and the historical helper as a keyword-only
+delegate. Because that extraction removes the last production caller of the
+constant-fold/cast helper, remove its now-dead lowerer helper/context/imports
+and transfer its production accounting to the new parent IDs without changing
+the pair's effective multiplicity. Move the efficiency fixture to the full
+explicit policy, validate sequentially, commit and push only, and do not create
+or reopen a pull request.
+
+## Explicit late layout/mean/SPP/gather/constant-fold/cast orchestration: completed state
+
+The characterized parent now delegates to
+`passes/late_layout_mean_spp_gather_constant_cast_orchestration.py`. A frozen
+`LateLayoutMeanSPPGatherConstantCastContext` contains the main ModelIR, its
+optional layout state, and session diagnostics. The module exposes a five-ID
+required sequence and a six-ID full sequence. The full policy prepends layout-
+transpose cleanup; both policies then run mean/MUL/ADD/CONV layout cleanup,
+SPP cleanup, transpose-gather-axis cleanup, constant-input folding, and
+redundant-cast cleanup in the original order.
+
+Each builder creates one fresh `ModelIRPassStateScope`. It constructs the
+optional layout invocation and three fixed direct invocations locally, then
+composes `build_constant_fold_cast_invocations` with that exact external scope.
+All effective invocations therefore share the same ModelIR, layout state,
+diagnostics, and scope. The phase runner selects and validates the complete
+expected five- or six-ID sequence before executing it.
+
+The historical parent helper keeps its required keyword-only policy and is now
+a one-line delegate to a frozen main-model context. Its sole caller continues
+to forward `optimize_layout_transpose_chains`, and both outer boundaries are
+unchanged. The extraction removed the last lowerer caller of the standalone
+constant-fold/cast helper, so that dead helper, its context, and both imports
+were removed. Constant-fold/cast remains one reusable child builder shared by
+this parent and the very-late normalization parent.
+
+Architecture accounting replaces four direct owner calls and the standalone
+two-ID child accounting with the six full parent IDs. The effective ordered
+total remains 120, and constant-fold/cast remains represented twice across its
+two parent compositions. The efficiency fixture now calls the explicit full
+policy and still observes one graph-index build and nine diagnostics events.
+
+Sequential validation completed as follows:
+
+- focused late parent, constant-fold/cast child, and ordered architecture:
+  `267 passed in 18.21s`;
+- pass-efficiency: `30 passed in 0.54s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.24s` (`32` plus `11`);
+- targeted Ruff, formatting, Python compilation, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, optional policy, runtime order, caller multiplicity, boundaries,
+shared-scope efficiency, and TensorFlow isolation are unchanged. PR #952
+remains closed, no branch PR is open, and no pull request was created,
+reopened, or updated.
+
+At restart, characterize the smaller positional
+`_run_singleton_consecutive_reshape_pass_cluster`. Freeze its three owner
+contracts, fresh target-specific scope, both main-model callers, conditional
+fallback caller, target/layout forms, and every boundary before extraction.
+Validate sequentially, keep real-model conversion minimal, make separate
+characterization and implementation checkpoints, commit and push only, and do
+not create or reopen a pull request.
+
+## Singleton/consecutive-reshape orchestration characterization: completed state
+
+The 27-line `_run_singleton_consecutive_reshape_pass_cluster` remains
+unchanged in production. It requires positional target ModelIR/layout values,
+creates one fresh target-specific `ModelIRPassStateScope`, and runs singleton-
+channel transpose cleanup, duplicate-fanout cleanup with
+`include_transpose=False`, and consecutive-reshape cleanup in that exact order.
+All three owners receive the target ModelIR/layout, session diagnostics, and
+the same scope.
+
+There are three production calls. Two pass
+`(model_ir, session.layout_state)` and one conditional fallback call passes
+`(fallback_ir, None)`. The first main call remains after terminal InstanceNorm
+dual-stat residual-add/resize cleanup and before the optional layout-transpose
+sweep. The second remains between rank-4 singleton-broadcast repair and static
+shape reconciliation. The fallback call remains under the positive
+normalization-rewrite guard, between the equivalent fallback repair and
+reconciliation calls.
+
+Sequential characterization validation completed as follows:
+
+- focused target/caller/boundary contracts: `5 passed in 0.18s`;
+- focused contracts plus ordered architecture: `253 passed in 16.92s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.36s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, target routing, duplicate-fanout
+policy, caller multiplicity, conditional guard, boundaries, shared-scope
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed, and
+no pull request was created, reopened, or updated.
+
+At restart, introduce a frozen target ModelIR/layout/diagnostics context and
+three stable IDs in a dedicated phase module. Build one fresh target-specific
+scope, preserve fixed `include_transpose=False`, and import the owners directly
+from `singleton_reshape_layout` and `graph_cleanup` without importing the
+lowerer. Construct the context inside the historical helper for every
+positional call so main and fallback state cannot leak.
+Preserve all three callers and every boundary, move the efficiency fixture to
+the explicit no-layout runner, validate sequentially, commit and push only,
+and do not create or reopen a pull request.
+
+## Explicit singleton/consecutive-reshape orchestration: completed state
+
+The characterized cluster now delegates to
+`passes/singleton_consecutive_reshape_orchestration.py`. A frozen
+`SingletonConsecutiveReshapeContext` contains one target ModelIR, its optional
+layout state, and session diagnostics. Three stable IDs preserve singleton-
+channel transpose cleanup, reshape-only duplicate-fanout cleanup, and
+consecutive-reshape cleanup in the original order. The module imports both
+owner modules directly and does not import the central lowerer.
+
+Each builder creates one fresh target-specific `ModelIRPassStateScope` and
+attaches that same target, layout, diagnostics, and scope to all immutable
+invocations. The duplicate-fanout invocation explicitly retains
+`include_transpose=False`, and the shared executor validates all three IDs
+before execution. A second build for the same context creates a different
+scope, so calls cannot share stale graph indexes.
+
+The historical helper preserves its two required positional arguments and
+constructs the frozen context inside every call. Both main calls still pass
+`(model_ir, session.layout_state)`, while the guarded fallback call still
+passes `(fallback_ir, None)`. All three call expressions, the normalization
+guard, and all six surrounding boundaries are unchanged. Other direct uses of
+the three owners remain in the lowerer.
+
+Architecture accounting moves one syntactic call of each owner to stable IDs
+while preserving the effective ordered total of 120. Dedicated accounting
+also preserves the two reshape-only duplicate-fanout occurrences and two
+singleton-channel transpose occurrences. The efficiency fixture now calls the
+explicit no-layout phase and still observes one graph-index build and three
+diagnostics events.
+
+Sequential validation completed as follows:
+
+- focused singleton/consecutive orchestration plus ordered architecture:
+  `257 passed in 18.57s`;
+- pass-efficiency: `30 passed in 0.55s`;
+- central lowerer synthetic smoke plus TensorFlow-import-blocked optional
+  boundary: `43 passed in 10.20s` (`32` plus `11`);
+- targeted Ruff, formatting, Python compilation, and whitespace checks:
+  passed; the central lowerer retains exactly its two pre-existing F401
+  findings.
+
+No real-model conversion or broad direct-suite repeat was added. Public APIs,
+CLI behavior, artifacts, dependencies, corpus profiles, exclusions, operation
+tiers, target routing, duplicate-fanout policy, runtime order, caller
+multiplicity, guard, boundaries, shared-scope efficiency, and TensorFlow
+isolation are unchanged. PR #952 remains closed, no branch PR is open, and no
+pull request was created, reopened, or updated.
+
+At restart, characterize `_run_gate_layout_pass_cluster`, the smallest
+remaining one-boolean shared-scope cluster. Freeze both mixed-attention policy
+forms, the complete owner sequence, default and explicit callers (including
+callback-driven invocation), scope sharing, and all boundaries before
+extraction. Validate sequentially, keep real-model conversion minimal, make
+separate characterization and implementation checkpoints, commit and push
+only, and do not create or reopen a pull request.
+
+## Gate-layout orchestration characterization: completed state
+
+The 57-line `_run_gate_layout_pass_cluster` remains unchanged in production.
+It has one keyword-only `include_mixed_attention=True` default, creates one
+main-model/session-layout `ModelIRPassStateScope`, optionally runs mixed-
+attention cleanup, then always runs elementwise-gate, PAD, dual-postconv-gate,
+NDHWC-gate, cost-volume/scatter, add/CONCAT-suffix, and dual-MUL/CONCAT cleanup
+in that exact order. Every active owner receives the same ModelIR, layout
+state, session diagnostics, and scope.
+
+Both policy forms are production contracts. One direct caller inside the
+layout-optimization block explicitly passes `include_mixed_attention=False`;
+it remains between SA/PA mirror-PAD propagation and the two-iteration
+normalization loop. `AttentionRecoveryContext` also stores the same helper as
+an argument-free callback. Its attention-gate/QDQ invocation supplies no args
+or keywords, so the helper default selects the eight-owner full policy.
+
+Sequential characterization validation completed as follows:
+
+- focused gate policy/callback contracts: `5 passed in 0.59s`;
+- focused gate, attention-recovery, and ordered architecture:
+  `262 passed in 16.86s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 10.27s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation tiers, default/reduced policy, callback
+wiring, caller multiplicity, boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context, seven
+required IDs, and eight full-policy IDs in `gate_layout_orchestration.py`.
+Build the optional mixed-attention invocation followed by all seven required
+owners under one fresh scope. Preserve the helper's keyword-only `True`
+default as a delegate, its explicit-False caller, and its identity as the
+argument-free attention-recovery callback. Move the efficiency fixture to the
+full explicit runner, update multiplicity-aware accounting without changing
+the 120 effective-call total, validate sequentially, commit and push only, and
+do not create or reopen a pull request.
+
+## Gate-layout orchestration extraction: completed state
+
+`passes/gate_layout_orchestration.py` now owns a frozen
+`GateLayoutContext`, the seven-ID `GATE_LAYOUT_REQUIRED_PASS_IDS`, the
+eight-ID `GATE_LAYOUT_PASS_IDS`, invocation construction, and ordered
+execution. Every build creates one fresh `ModelIRPassStateScope` for the
+context's ModelIR/layout and shares it across every selected owner. The
+required sequence is built once; full policy prepends mixed-attention cleanup,
+so the two policy forms cannot silently diverge.
+
+The historical `_run_gate_layout_pass_cluster` is now a one-call delegate. It
+retains the keyword-only `include_mixed_attention=True` contract, forwards the
+policy unchanged, and uses one fixed main-model/session-layout/diagnostics
+context. Its only direct caller still passes explicit `False` between SA/PA
+mirror-PAD propagation and the two-iteration normalization loop. The same
+helper remains the argument-free attention-recovery callback and therefore
+continues to select the default full policy.
+
+Architecture accounting imports the eight full-policy IDs. Eight direct owner
+calls moved out of the lowerer and became eight stable IDs, leaving the total
+at 120 effective ordered calls. Existing independent late mixed-attention,
+PAD, NDHWC-gate, and cost-volume/scatter calls remain direct. The previously
+orchestrated terminal-boundary dual-MUL/CONCAT occurrence remains separately
+counted. The efficiency fixture now exercises the explicit full-policy runner
+with no layout state and still observes one graph-index refresh.
+
+Sequential implementation validation completed as follows:
+
+- focused required/full policies, contracts, delegate, callback, and boundaries:
+  `10 passed in 0.58s`;
+- focused gate, attention-recovery, and ordered architecture:
+  `267 passed in 19.80s`;
+- pass efficiency: `30 passed in 0.58s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 15.46s` (`32` plus `11`).
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, full/reduced
+policy, runtime order, caller multiplicity, callback wiring, boundaries,
+shared-scope semantics, and TensorFlow isolation are unchanged. PR #952 remains
+closed, and no pull request was created, reopened, or updated.
+
+At restart, inventory and characterize the still-inline channel-shuffle/gather
+cluster and its three independent policy switches before extraction. Freeze
+every caller's keyword form and surrounding boundary, verify whether any
+callback-driven compositions invoke it, and preserve all full/reduced policy
+combinations. Continue with separate characterization and implementation
+checkpoints, sequential tests, minimal real-model conversion, commit and push
+only, and do not create or reopen a pull request.
+
+## Channel-shuffle/gather orchestration characterization: completed state
+
+The 55-line `_run_channel_shuffle_gather_layout_pass_cluster` remains unchanged
+in production. It has three keyword-only switches with defaults
+`include_two_way_shuffle=True`, `include_nhwc_shuffle=True`, and
+`include_post_gather_cleanup=False`. One main-model/session-layout
+`ModelIRPassStateScope` is shared by every selected owner.
+
+Its exact union order is two-way channel shuffle, NHWC channel shuffle, NCHW
+channel shuffle, transpose/GATHER-axis cleanup, layout-transpose cleanup,
+transpose/unary-fanout cleanup, and transpose/unary/binary-fanout cleanup. The
+first two owners have separate one-owner guards, the NCHW-shuffle/gather pair
+is unconditional, and one exact post-gather guard owns the final three calls.
+All owners receive the same ModelIR, layout state, session diagnostics, and
+scope.
+
+Three caller forms are active. `LayoutRecoveryContext` stores the helper, and
+the final layout-recovery invocation calls it without arguments or keywords,
+selecting the default four-owner sequence. One direct caller inside the layout-
+optimization block passes only `include_post_gather_cleanup=True`, selecting
+all seven owners between slice/logistic/CONCAT tail cleanup and pre-add/mean-
+attention recovery. The late direct caller passes both leading-shuffle switches
+as `False`, leaves post cleanup at its default, and selects only the NCHW-
+shuffle/gather pair between reshape/transpose collapse and attention-QKV
+reshape cleanup.
+
+Sequential characterization validation completed as follows:
+
+- focused helper policy/caller/callback contracts: `5 passed in 0.65s`;
+- focused channel-shuffle/gather, layout-recovery, and ordered architecture:
+  `259 passed in 20.82s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 12.09s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation-count tiers, all three policy forms, callback
+wiring, caller multiplicity, boundaries, shared-scope behavior, and TensorFlow
+isolation are unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and
+stable base, default, post, and seven-owner union ID sequences in
+`channel_shuffle_gather_orchestration.py`. Construct each selected owner once
+under one fresh scope, preserve the helper's three keyword-only defaults as a
+delegate, retain both direct caller forms and its argument-free layout-recovery
+callback identity, and move the full-policy efficiency fixture to the explicit
+runner. Replace seven direct owner calls with seven stable IDs without changing
+the 120 effective-call total. Validate sequentially, commit and push only, and
+do not create or reopen a pull request.
+
+## Channel-shuffle/gather orchestration extraction: completed state
+
+`passes/channel_shuffle_gather_orchestration.py` now owns a frozen
+`ChannelShuffleGatherContext` plus stable leading, base, default, post, and
+seven-owner union ID sequences. A single selector composes two independently
+optional leading owners, the unconditional two-owner base, and the optional
+three-owner post group. Focused parameterization covers all eight boolean
+combinations, so a policy combination unused by current callers cannot silently
+change order or argument contracts.
+
+Every invocation build creates one fresh `ModelIRPassStateScope` for the
+context's main ModelIR/layout and shares it across all selected owners. The
+historical helper is a one-call delegate retaining keyword-only defaults
+`True`, `True`, and `False`, and forwards every switch explicitly. Its direct
+full-plus-post and late-base callers, exact keyword forms, and all four direct
+boundaries remain unchanged. `LayoutRecoveryContext` still stores the helper
+itself, and its argument-free invocation continues to select the default four-
+owner policy.
+
+Architecture accounting imports the seven-owner union. Seven direct owner
+calls moved out of the lowerer and became seven stable IDs, leaving the total
+at 120 effective ordered calls. Existing independent layout-transpose and other
+orchestrated gather/fanout occurrences remain separately counted. The full-
+plus-post efficiency fixture now invokes the explicit phase with no layout
+state and still observes one graph-index refresh.
+
+Sequential implementation validation completed as follows:
+
+- focused all-policy contracts, delegate, callback, and boundaries:
+  `22 passed in 0.82s`;
+- focused channel-shuffle/gather, layout-recovery, and ordered architecture:
+  `276 passed in 22.70s`;
+- pass efficiency: `30 passed in 0.62s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 12.05s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer still reports exactly the same two pre-existing F401
+  findings and no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, all eight
+policy combinations, runtime order, caller multiplicity, callback wiring,
+boundaries, shared-scope semantics, and TensorFlow isolation are unchanged.
+PR #952 remains closed, and no pull request was created, reopened, or updated.
+
+At restart, inventory the remaining inline post-lowering helper clusters and
+select the smallest bounded cluster whose caller policies and target ModelIR
+forms can be fully characterized. Preserve separate characterization and
+implementation checkpoints, sequential validation, minimal real-model
+conversion, commit and push only, and do not create or reopen a pull request.
+
+## Mean/attention orchestration characterization: completed state
+
+AST inventory shows that only two nested lowerer helpers still own multi-pass
+inline execution: the 53-line mean/attention cluster and the 76-line singleton-
+reshape cluster. The smaller mean/attention cluster was selected first. All
+other `_run_*` helpers are already delegates into dedicated orchestration
+modules or progress-control helpers.
+
+The production `_run_mean_attention_layout_pass_cluster` remains unchanged. It
+has keyword-only defaults `include_layernorm=False` and
+`include_conv_attention=True`, and creates one main-model/session-layout
+`ModelIRPassStateScope`. Its exact union order is transpose/MEAN passthrough,
+MEAN-MUL-ADD-CONV cleanup, optional layer-normalization statistics, terminal
+MEAN cleanup, SE-CONV cleanup, SE-FC cleanup, and optional conv-attention
+cleanup. The five non-optional owners retain their fixed relative order, and
+every selected owner receives the same ModelIR, layout, diagnostics, and scope.
+
+Four caller identities produce three active policy forms. Both
+`AttentionRecoveryContext` and `LayoutAttentionQuantizedSuffixContext` store
+the helper itself, and their corresponding invocations supply no arguments or
+keywords, selecting the default five-owner base plus conv attention. The first
+direct caller passes only `include_layernorm=True`, retaining conv attention;
+it remains between mean-affine cleanup and attention-gate/QDQ recovery. The
+terminal direct caller passes only `include_conv_attention=False`, selecting
+the five-owner base; its outer previous boundary is terminal-boundary layout
+and its inner next boundary is batch-matmul affine input cleanup.
+
+Sequential characterization validation completed as follows:
+
+- focused helper policy/caller/callback contracts: `5 passed in 0.67s`;
+- focused mean/attention, both parent orchestrations, and ordered architecture:
+  `269 passed in 21.78s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `41 passed in 12.18s` (`30` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation-count tiers, all three active policy forms,
+callback wiring, caller multiplicity, boundaries, shared-scope behavior, and
+TensorFlow isolation are unchanged. PR #952 remains closed, and no pull request
+was created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and
+stable base, default, layernorm, conv-attention, and seven-owner union IDs in
+`mean_attention_orchestration.py`. Use one policy selector for all four boolean
+combinations and one fresh scope per build. Preserve the historical helper's
+two keyword-only defaults as a delegate, both direct caller forms, and its
+identity as both argument-free callbacks. Add an explicit full-policy
+efficiency fixture and replace seven direct owner calls with seven stable IDs
+without changing the 120 effective-call total. Validate sequentially, commit
+and push only, and do not create or reopen a pull request.
+
+## Mean/attention orchestration extraction: completed state
+
+`passes/mean_attention_orchestration.py` now owns a frozen
+`MeanAttentionContext` and stable prefix, base-tail, base, layer-normalization,
+conv-attention, default, and seven-owner union sequences. One selector composes
+the prefix, optional layer-normalization insertion, base tail, and optional
+conv-attention suffix. Focused parameterization covers all four boolean
+combinations, including the currently unused layernorm-without-conv form.
+
+Every invocation build creates one fresh `ModelIRPassStateScope` for the fixed
+main ModelIR/session layout and shares it across every selected owner. The
+historical helper is now a one-call delegate with its keyword-only `False`,
+`True` defaults intact and forwards both switches explicitly. Its layernorm-
+plus-conv direct caller and terminal base-only direct caller retain exact
+keywords and all four boundaries. Both `AttentionRecoveryContext` and
+`LayoutAttentionQuantizedSuffixContext` still store the helper itself, and
+their argument-free invocations continue to select the default base-plus-conv
+policy.
+
+Architecture accounting imports the seven-owner union. Seven direct owner
+calls moved out of the lowerer and became seven stable IDs, retaining 120
+effective ordered calls. Existing independent layer-normalization and SE-FC
+calls and prior orchestrated occurrences remain separately counted. A new
+explicit full-policy efficiency fixture covers all seven owners with no layout
+state and observes one graph-index refresh across eight diagnostic events.
+
+Sequential implementation validation completed as follows:
+
+- focused all-policy contracts, delegate, callbacks, and boundaries:
+  `14 passed in 0.67s`;
+- focused mean/attention, both parent orchestrations, and ordered architecture:
+  `278 passed in 22.48s`;
+- pass efficiency: `31 passed in 0.62s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 12.02s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer retains exactly the two pre-existing F401 findings and
+  introduces no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, all four
+policy combinations, runtime order, caller multiplicity, callback wiring,
+boundaries, shared-scope semantics, and TensorFlow isolation are unchanged.
+PR #952 remains closed, and no pull request was created, reopened, or updated.
+
+At restart, the only remaining nested lowerer helper with inline multi-pass
+execution is `_run_singleton_reshape_layout_pass_cluster`. Characterize its ten
+owner calls, three policy switches, two active caller forms, exact guards, and
+boundaries before extraction. Keep characterization and implementation as
+separate checkpoints, validate sequentially, minimize real-model conversion,
+commit and push only, and do not create or reopen a pull request.
+
+## Singleton-reshape orchestration characterization: completed state
+
+The earlier restart note's “three policy switches” referred only to optional-
+owner guards. The 76-line production helper actually exposes four keyword-only
+switches and remains unchanged: `include_layout_transpose=False`,
+`include_duplicate_fanout=False`, `include_multi_branch_gate=False`, and
+`include_spatial_concat_post_transpose=True`. The first three guard optional
+owners; the fourth is forwarded to an always-active owner's internal policy.
+
+The ten-owner union order is layout-transpose cleanup, singleton-channel
+transpose cleanup, reshape-only duplicate-fanout cleanup, singleton-reshape
+cleanup, singleton-maxpool cleanup, flatten/CONCAT/reshape cleanup, consecutive-
+reshape cleanup, squeeze/reshape identity cleanup, singleton-spatial reshape
+cleanup, and multi-branch-gate cleanup. The seven-owner unconditional base
+excludes only the three guarded owners. All active owners share one main-model/
+session-layout `ModelIRPassStateScope`, ModelIR, layout, and diagnostics. The
+duplicate owner always receives `include_transpose=False`; the spatial owner
+always runs and receives `include_concat_post_transpose` from the fourth switch.
+
+There are exactly two direct callers and no callback composition. The final
+statement of the layout-optimization block enables layout-transpose and multi-
+branch-gate cleanup, retains the default spatial policy, and runs nine owners
+between split/CONV/CONCAT bridge cleanup and terminal clamp/unary/ReLU recovery.
+The unconditional terminal caller enables duplicate fanout and disables the
+spatial CONCAT-post-transpose policy, running eight owners between SINet pre-add/
+resize recovery and indexed shape convergence cleanup.
+
+Sequential characterization validation completed as follows:
+
+- focused helper policy/caller/boundary contracts: `5 passed in 0.21s`;
+- focused singleton-reshape and ordered architecture: `253 passed in 19.86s`;
+- pass-efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 11.97s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, runtime sequence, real-model conversion, or broad suite
+changed or ran. Public APIs, CLI behavior, artifacts, dependencies, corpus
+profiles, exclusions, operation-count tiers, both active caller policies,
+specialized owner arguments, caller multiplicity, boundaries, shared-scope
+behavior, and TensorFlow isolation are unchanged. PR #952 remains closed, and
+no pull request was created, reopened, or updated.
+
+At restart, introduce a frozen main ModelIR/layout/diagnostics context and
+stable base, optional-owner, active-caller, and ten-owner union sequences in
+`singleton_reshape_orchestration.py`. Use one selector for all eight optional-
+owner combinations while forwarding both spatial-policy values independently;
+cover all sixteen boolean combinations. Preserve the helper's four keyword-
+only defaults and both caller forms as a delegate. Move the existing full-union
+efficiency fixture to the explicit runner and replace ten direct owner calls
+with ten stable IDs without changing the 120 effective-call total. Validate
+sequentially, commit and push only, and do not create or reopen a pull request.
+
+## Singleton-reshape orchestration extraction: completed state
+
+`passes/singleton_reshape_orchestration.py` now owns a frozen
+`SingletonReshapeContext` and stable layout, prefix, duplicate, base-tail,
+multi-branch, base, active-policy, and ten-owner union sequences. Its selector
+covers all eight combinations of the three optional-owner guards. The spatial
+CONCAT-post-transpose policy remains independent and is forwarded unchanged,
+so focused build and instrumented-runner tests cover all sixteen combinations.
+The reshape-only duplicate owner always receives `include_transpose=False`.
+
+Every invocation build creates one fresh main-model/session-layout
+`ModelIRPassStateScope` shared by exactly the selected owners. The historical
+helper is now a single-call delegate with its keyword-only `False`, `False`,
+`False`, `True` defaults intact. The nine-owner layout/multi caller and the
+eight-owner duplicate/no-spatial-post caller retain their exact keywords,
+multiplicity, and all four surrounding boundaries.
+
+Architecture accounting moves ten direct owner calls out of the lowerer and
+replaces them with ten stable IDs, retaining 120 effective ordered calls. The
+explicit ten-owner efficiency fixture observes one graph-index refresh and
+thirteen diagnostic events. A fresh AST inventory confirms that every nested
+lowerer `_run_*` conversion cluster is now a one-runner delegate; no inline
+multi-pass execution remains in those helpers.
+
+Sequential implementation validation completed as follows:
+
+- focused all-policy, delegate, caller, and boundary contracts plus ordered
+  architecture: `285 passed in 20.71s`;
+- pass efficiency: `31 passed in 0.58s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 12.32s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, all sixteen
+policy combinations, specialized owner arguments, runtime order, caller
+multiplicity, boundaries, shared-scope semantics, and TensorFlow isolation are
+unchanged. PR #952 remains closed, and no pull request was created, reopened,
+or updated.
+
+At restart, do not search for another inline nested lowerer multi-pass cluster:
+that inventory is now empty. Re-read the remaining architecture plan and select
+the next bounded boundary that advances the fixed ConversionSession/GraphIndex/
+ordered-pass contract. Preserve sequential validation and minimal real-model
+conversion, commit and push each coherent unit, and do not create, reopen, or
+update a pull request.
+
+## Shared ModelIR-pass context characterization: completed state
+
+The first boundary after completing nested helper extraction is the repeated
+three-field orchestration context. Twenty-one dedicated frozen dataclasses all
+store only `model_ir`, `layout_state`, and `diagnostics` with identity semantics.
+There are twenty-two production constructors: eighteen long-lived main-model/
+session-layout/session-diagnostics contexts in the lowerer, two per-call target-
+specific contexts for primary/fallback routing, and two child
+`ConstantFoldCastContext` constructions inside composed phases. No constructor
+has positional arguments or hidden option/callback state. Callback-bearing
+parent recovery contexts remain structurally distinct and are outside this
+boundary. None of the twenty-one owner modules imports the lowerer.
+
+Sequential characterization validation completed as follows:
+
+- focused shared-context identity, construction-site, and import contracts:
+  `23 passed in 0.58s`;
+- focused shared-context plus ordered architecture: `271 passed in 17.63s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.86s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, runtime pass order, caller policies, target routing,
+scope construction, diagnostics identity, and TensorFlow isolation remain
+unchanged. PR #952 remains closed, and no pull request was created, reopened,
+or updated.
+
+At restart, introduce one frozen core `ModelIRPassContext` owned by
+`ConversionSession`. Preserve the twenty-one existing context names as internal
+aliases while moving their builders/runners to the common type. Reuse the
+session-owned instance for all eighteen main-model consumers, construct fresh
+common contexts for the two target-specific helper calls, and pass the parent
+context directly into both constant-fold/cast child builders. Do not merge the
+callback-bearing parent contexts. Keep every pass ID, policy argument, fresh
+scope-per-build rule, diagnostic list identity, and caller boundary unchanged;
+validate the complete focused orchestration set sequentially before committing
+and pushing, and do not create or update a pull request.
+
+## Shared ModelIR-pass context consolidation: completed state
+
+`core/model_ir_pass_context.py` now defines the single frozen
+`ModelIRPassContext` identity contract. `ConversionSession.__post_init__`
+constructs it after the Session-owned `GraphIndex` and `LayoutState`, binding
+the main `ModelIR`, the exact LayoutState object, and the exact diagnostics
+list. It is also exported from the internal `tflite_builder.core` seam without
+exposing it through the public onnx2tf API.
+
+The twenty-one prior three-field context names remain available as aliases to
+the common type, preserving internal imports, constructor signatures, type
+annotations, and runner APIs. The lowerer maps all eighteen long-lived
+main-model context variables to `session.model_ir_pass_context`. The SE-FC/
+gather-fanout and singleton/consecutive-reshape helpers construct a fresh
+`ModelIRPassContext` for each positional target call, so fallback and primary
+state cannot leak. The late layout/mean/SPP/gather and very-late gather/
+normalization parents pass their existing context directly into the reusable
+constant-fold/cast child builder, eliminating the final two redundant
+constructions. Callback-bearing recovery contexts remain deliberately
+separate.
+
+Sharing the immutable context does not widen any graph-index scope. Every phase
+builder still creates one fresh `ModelIRPassStateScope`, and only its immutable
+invocations share that scope. Stable IDs, option defaults and forwarding,
+callback identities, runtime owner order, target routing, diagnostics list
+identity, and all lowerer boundaries are unchanged.
+
+Sequential implementation validation completed as follows:
+
+- all twenty-one affected orchestration families plus the shared-context
+  contract: `250 passed in 2.92s`;
+- shared-context contract plus ordered architecture: `273 passed in 18.07s`;
+- pass efficiency: `31 passed in 0.51s`;
+- central lowerer core smoke plus TensorFlow-import-blocked optional boundary:
+  `43 passed in 10.29s` (`32` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer retains only its two pre-existing F401 findings.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, pass IDs,
+runtime order, caller policies, target identity, scope lifetime, diagnostics,
+and TensorFlow isolation remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
+
+At restart, inventory the callback-bearing recovery context types before
+changing them. Determine whether they can embed the Session-owned
+`ModelIRPassContext` while retaining their callback identities and argument
+contracts; characterize that boundary first. Do not merge callbacks into the
+common core context, do not widen any `ModelIRPassStateScope`, keep validation
+sequential and real-model conversion minimal, commit and push coherent units,
+and do not create or update a pull request.
+
+## Callback-bearing context composition characterization: completed state
+
+Four remaining frozen recovery contexts contain the complete
+`model_ir`/`layout_state`/`diagnostics` identity triple followed only by
+callbacks:
+
+- `AttentionRecoveryContext`: mean/attention, gate-layout, and transpose/unary-
+  fanout cluster callbacks;
+- `LayoutRecoveryContext`: boundary-BatchMatMul/unary, pre-Concat, and channel-
+  shuffle/gather callbacks;
+- `LayoutAttentionQuantizedSuffixContext`: mean/attention, attention-gate/QDQ,
+  and duplicate/quantized-PReLU callbacks;
+- `TerminalSliceConcatRecoveryContext`: channel-slice/Pad-Mul callback.
+
+Each type is frozen, each lowerer constructor passes the same main ModelIR,
+Session LayoutState, and Session diagnostics identities, and the ten callbacks
+retain their exact helper identities. Runtime invocation characterization
+freezes three distinct contracts: cluster callbacks receive no arguments;
+pre-Concat receives the ModelIR positional argument plus layout and diagnostics
+keywords; duplicate/quantized-PReLU receives only its forwarded
+`include_transpose` Boolean keyword. The callback-bearing
+`SINetTerminalLayoutRecoveryContext` has no diagnostics field and remains
+outside the consolidation boundary. None of the five modules imports the
+lowerer.
+
+Sequential characterization validation completed as follows:
+
+- focused callback base/callback/invocation/import contracts:
+  `8 passed in 0.51s`;
+- focused callback parents, shared context, and ordered architecture:
+  `317 passed in 17.57s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.26s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, callback identity and arguments, runtime pass order,
+scope lifetime, diagnostics, and TensorFlow isolation remain unchanged. PR
+#952 remains closed, and no pull request was created, reopened, or updated.
+
+At restart, replace the repeated base fields of only those four contexts with
+one explicit `pass_context: ModelIRPassContext` field. Pass
+`session.model_ir_pass_context` from all four lowerer constructors and read
+ModelIR/LayoutState/diagnostics through that field in their builders. Preserve
+all ten callbacks, their exact invocation arguments, stable pass IDs, caller
+boundaries, and every builder's existing scope behavior. Leave the
+diagnostics-free SINet terminal context unchanged. Validate the four complete
+parent suites sequentially, commit and push only, and do not create or update a
+pull request.
+
+## Callback-bearing context composition: implemented state
+
+The characterized boundary is implemented for exactly four dataclasses:
+
+- `AttentionRecoveryContext`;
+- `LayoutRecoveryContext`;
+- `LayoutAttentionQuantizedSuffixContext`;
+- `TerminalSliceConcatRecoveryContext`.
+
+Each now stores one `pass_context: ModelIRPassContext` followed by its existing
+callbacks. Their invocation builders resolve ModelIR, LayoutState, and
+diagnostics through that common object. All four lowerer constructors receive
+the exact `session.model_ir_pass_context` identity, eliminating eight repeated
+dataclass base fields and eight repeated constructor keywords. The production
+diff is a net reduction of twenty lines.
+
+All ten callback objects and all three invocation forms remain unchanged:
+cluster callbacks are argument-free; pre-Concat receives ModelIR positionally
+and LayoutState/diagnostics by keyword; duplicate/quantized-PReLU receives only
+the forwarded `include_transpose` keyword. Stable pass IDs, execution order,
+caller boundaries, diagnostics identity, and fresh scope-per-builder behavior
+also remain unchanged. `SINetTerminalLayoutRecoveryContext` is still separate
+because it intentionally has no diagnostics field.
+
+Sequential validation completed as follows:
+
+- focused four parents, four callback-owning children, the composition
+  contract, and the excluded SINet boundary: `100 passed in 1.68s`;
+- callback composition, four parents, SINet exclusion, shared context, and
+  ordered architecture: `317 passed in 17.57s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 9.96s` (`31` plus `11`);
+- central lowerer core smoke: `32 passed in 0.59s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The central lowerer retains exactly its two pre-existing F401
+  findings and has no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, runtime
+policies, callback behavior, pass ordering, scope lifetime, and TensorFlow
+isolation remain unchanged. PR #952 remains closed, and no pull request was
+created, reopened, or updated.
+
+At restart, inventory the remaining context shapes after this composition and
+select one coherent boundary whose identity and callback/target contracts can
+be characterized independently. Add the characterization checkpoint before
+changing production code. Continue to keep the diagnostics-free SINet terminal
+context separate unless a broader invariant is first proved. Run validation
+sequentially, keep real-model conversions minimal, commit and push coherent
+units only, and do not create or update a pull request.
+
+## Diagnostics-free model/layout context characterization: completed state
+
+The remaining unconsolidated orchestration context inventory contains five types.
+The next coherent boundary consists of the three frozen types that contain
+exactly `model_ir` and `layout_state` and no callbacks:
+
+- `SINetPreaddResizeRecoveryContext`;
+- `QuantizedRecoveryContext`;
+- `TerminalAffineConcatSplitRecoveryContext`.
+
+Their four builders cover six SINet recovery invocations, one safe-binary
+invocation, six quantized-activation/binary invocations, and eleven terminal
+affine/concat/split invocations. None of the three modules reads a diagnostics
+attribute or imports the lowerer. A Session-shaped `ModelIRPassContext` can
+already be passed to every builder without production changes: all ordinary
+invocations receive the exact ModelIR, all layout-enabled invocations receive
+the exact LayoutState, and the nested safe-binary recovery receives the exact
+context object. Its diagnostics list is never forwarded or observed.
+
+The three lowerer constructors currently pass the same main `model_ir` and
+`session.layout_state` identities. `QLinearRecoveryContext` remains outside the
+boundary because it contains only ModelIR.
+`SINetTerminalLayoutRecoveryContext` also remains outside because it adds a
+callback to the ModelIR/LayoutState pair.
+
+Sequential characterization validation completed as follows:
+
+- focused field, lowerer wiring, behavioral-substitution, exclusion, and import
+  contracts: `12 passed in 0.51s`;
+- the new contract, all three parents, both excluded contexts, shared context,
+  and ordered architecture: `321 passed in 16.99s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.50s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, runtime pass order, nested context identity, diagnostics,
+and TensorFlow isolation remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
+
+At restart, replace only those three simple context dataclasses with compatible
+internal aliases of `ModelIRPassContext`. Pass the exact
+`session.model_ir_pass_context` from their three lowerer construction sites and
+read ModelIR/LayoutState through the common type. Preserve all four builder
+signatures, stable pass IDs, layout-enabled index sets, and the quantized
+nested-context identity. Update their complete focused suites and the new
+characterization contract. Leave QLinear and callback-bearing SINet terminal
+unchanged. Validate sequentially, commit and push only, and do not create or
+update a pull request.
+
+## Diagnostics-free model/layout context composition: implemented state
+
+`SINetPreaddResizeRecoveryContext`, `QuantizedRecoveryContext`, and
+`TerminalAffineConcatSplitRecoveryContext` are now internal aliases of the core
+`ModelIRPassContext`. Their pass modules no longer define duplicate dataclasses
+or import ModelIR/LayoutState directly. The shared-context inventory therefore
+contains twenty-four alias names.
+
+The lowerer no longer imports or constructs those three historical context
+names. `quantized_recovery_context`,
+`terminal_affine_concat_split_recovery_context`, and
+`sinet_preadd_resize_recovery_context` all reference
+`shared_model_ir_pass_context`, increasing the main-model shared consumers from
+eighteen to twenty-one. This removes twenty-nine net production lines.
+
+All four builders retain their signatures and exact invocation sequences. The
+common diagnostics list exists on the Session-owned object but is never read or
+forwarded. Every ordinary invocation receives the same ModelIR, each
+layout-enabled invocation receives the same LayoutState, and quantized
+activation recovery still passes the exact same context object into nested safe
+binary recovery. Stable pass IDs, layout-enabled index sets, caller boundaries,
+and runtime order are unchanged. `QLinearRecoveryContext` and
+`SINetTerminalLayoutRecoveryContext` remain independent.
+
+Sequential implementation validation completed as follows:
+
+- the composition contract, all three parent suites, and expanded shared-
+  context contract: `62 passed in 1.11s`;
+- the new contract, all three parents, both excluded contexts, expanded shared
+  context, and ordered architecture: `324 passed in 16.96s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.15s` (`31` plus `11`);
+- central lowerer core smoke: `32 passed in 0.61s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The central lowerer retains exactly its two pre-existing F401
+  findings and no new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, runtime
+order, nested context identity, diagnostics behavior, and TensorFlow isolation
+remain unchanged. PR #952 remains closed, and no pull request was created,
+reopened, or updated.
+
+At restart, inventory the two remaining unconsolidated orchestration contexts
+separately: model-only `QLinearRecoveryContext` and callback-bearing
+`SINetTerminalLayoutRecoveryContext`. Do not combine their different contracts
+without characterization. First determine whether using or composing the
+Session-owned `ModelIRPassContext` is behaviorally inert for each builder and
+whether eliminating either type reduces real duplication without widening
+runtime state. Commit characterization before production changes, validate
+sequentially, commit and push only, and do not create or update a pull request.
+
+## Final two orchestration contexts: characterization checkpoint
+
+The two remaining unconsolidated context types have intentionally different
+contracts and are characterized separately before production changes.
+
+`QLinearRecoveryContext` is a frozen model-only dataclass. Its five stable
+invocations all receive the exact ModelIR and no keyword arguments. Passing a
+full Session-shaped `ModelIRPassContext` to the builder is already behaviorally
+identical: neither its LayoutState nor diagnostics identity is read or
+forwarded. The lowerer currently constructs the type with only the main
+`model_ir`.
+
+`SINetTerminalLayoutRecoveryContext` is a frozen ModelIR/LayoutState/callback
+dataclass. Its first invocation receives exact ModelIR and LayoutState, the
+middle pre-add/resize callback receives no arguments, and the final invocation
+receives only exact ModelIR. The lowerer passes
+`_run_sinet_preadd_resize_recovery_sequence` as the exact callback. Neither
+module imports the lowerer or reads diagnostics.
+
+Sequential characterization validation completed as follows:
+
+- focused remaining-field, behavioral-substitution, callback, lowerer-wiring,
+  and import contracts: `6 passed in 0.51s`;
+- remaining contract, both parents, related previous context contracts, shared
+  context, and ordered architecture: `323 passed in 16.80s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.11s` (`31` plus `11`);
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed.
+
+No production source, real-model conversion, or broad corpus suite changed or
+ran. Public APIs, CLI behavior, artifacts, dependencies, corpus exclusions,
+operation-count tiers, runtime order, callback identity, diagnostics behavior,
+and TensorFlow isolation remain unchanged. PR #952 remains closed, and no pull
+request was created, reopened, or updated.
+
+At restart, handle the two types independently in one bounded implementation
+unit. Make `QLinearRecoveryContext` an internal alias of `ModelIRPassContext`
+and bind its lowerer variable to `shared_model_ir_pass_context`; this should
+bring the shared inventory to twenty-five alias names and twenty-two main-model
+consumers. For SINet terminal, retain a dedicated frozen callback-bearing
+dataclass but replace its ModelIR/LayoutState fields with one
+`pass_context: ModelIRPassContext`, pass the exact Session-owned object from the
+lowerer, and read identities through it. Preserve all eight total pass IDs,
+five QLinear argument contracts, the three SINet invocation contracts, and the
+exact argument-free callback. Update the earlier exclusion tests, validate
+sequentially including core smoke, commit and push only, and do not create or
+update a pull request.
+
+## Final orchestration context consolidation: implemented state
+
+The orchestration context inventory is fully normalized around the core
+`ModelIRPassContext`.
+
+`QLinearRecoveryContext` is now the twenty-fifth internal alias of the common
+type. The lowerer no longer imports or constructs it;
+`qlinear_recovery_context` is the twenty-second main-model consumer of
+`shared_model_ir_pass_context`. The five QLinear invocations still receive only
+the exact ModelIR and no keywords; the shared LayoutState and diagnostics remain
+inert.
+
+`SINetTerminalLayoutRecoveryContext` remains a dedicated frozen dataclass
+because it owns a callback, but its fields are now `pass_context` and
+`preadd_resize_recovery`. Its lowerer constructor receives the exact
+`session.model_ir_pass_context`. Both model invocations read through that object
+and the pre-add/resize callback remains argument-free and identical. It is now
+the fifth callback-bearing composition, with eleven callbacks across those five
+types.
+
+Consequently, every orchestration state holder is either a direct
+`ModelIRPassContext` alias or a callback-bearing dataclass that explicitly
+contains one. No orchestration dataclass independently repeats ModelIR,
+LayoutState, or diagnostics. This final unit removes seven net production
+lines.
+
+Sequential implementation validation completed as follows:
+
+- remaining-context, QLinear, SINet terminal/pre-add, callback composition,
+  model/layout composition, and shared-context suites:
+  `76 passed in 1.16s`;
+- the same related contracts plus ordered architecture:
+  `324 passed in 16.96s`;
+- pass efficiency plus TensorFlow-import-blocked optional boundary:
+  `42 passed in 10.19s` (`31` plus `11`);
+- central lowerer core smoke: `32 passed in 0.59s`;
+- focused Ruff formatting/lint, Python compilation, and whitespace checks:
+  passed. The lowerer retains exactly its two pre-existing F401 findings and no
+  new unused import.
+
+No real-model conversion or broad corpus suite ran. Public APIs, CLI behavior,
+artifacts, dependencies, corpus exclusions, operation-count tiers, runtime
+order, callback identity, diagnostics behavior, and TensorFlow isolation remain
+unchanged. PR #952 remains closed, and no pull request was created, reopened,
+or updated.
+
+At restart, do not add more context-wrapper work: this boundary is complete.
+Inventory the remaining direct lowerer-to-pass calls and core contract
+boundaries, then select one coherent non-context duplication with measurable
+scan/allocation or ownership cost. Characterize its owners, arguments, order,
+scope, and GraphIndex behavior before production changes. Continue sequential
+validation, keep real-model conversion minimal, commit and push coherent units
+only, and do not create or update a pull request.
+
+### Pause checkpoint summary
+
+Current branch: `fb-refactor6`. This unit is intended to be committed as
+`Consolidate remaining pass contexts` and pushed to `origin/fb-refactor6` before
+pausing. No pull request is open or permitted.
+
+Completed in this checkpoint:
+
+- characterized the final two distinct context contracts in commit
+  `9242a67c`;
+- converted QLinear to the common context alias and Session-owned lowerer
+  identity;
+- composed SINet terminal state from the common context plus its callback;
+- expanded shared-context and callback-context inventories and removed the last
+  repeated orchestration identity fields;
+- preserved all pass IDs, invocation arguments, callback identity, runtime
+  order, diagnostics behavior, TensorFlow isolation, and public boundaries.
+
+Files changed by the implementation checkpoint:
+
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `onnx2tf/tflite_builder/passes/qlinear_recovery_orchestration.py`;
+- `onnx2tf/tflite_builder/passes/sinet_terminal_layout_recovery_orchestration.py`;
+- `tests/test_flatbuffer_direct_callback_context_composition.py`;
+- `tests/test_flatbuffer_direct_model_layout_context_composition.py`;
+- `tests/test_flatbuffer_direct_qlinear_recovery_orchestration.py`;
+- `tests/test_flatbuffer_direct_remaining_context_composition.py`;
+- `tests/test_flatbuffer_direct_shared_model_ir_pass_context.py`;
+- `tests/test_flatbuffer_direct_sinet_terminal_layout_recovery_orchestration.py`;
+- `docs/flatbuffer_direct_architecture.md`;
+- `docs/fb_refactor6_pull_request_description.md`;
+- this handoff document.
+
+Important design decisions:
+
+- core identity remains exclusively in `ModelIRPassContext`;
+- simple orchestration names are aliases, while callback owners remain small
+  frozen compositions around `pass_context`;
+- callbacks are not added to the core context;
+- a Session-owned object is reused for main-model phases, while existing
+  target-specific context construction remains unchanged.
+
+Tests completed for the implementation are the `76`, `324`, `42`, and `32`
+passing sets listed above, plus focused Ruff formatting/lint, Python compilation,
+and whitespace checks. Inference remained single-process; no real-model or
+broad corpus conversion was run for this structural unit.
+
+Known issues are limited to the central lowerer's two pre-existing F401 reports:
+the aliased pre-add/direct-unary pass import and `_is_inverse_perm`. They were
+not introduced by this unit. Because no real-model conversion ran, broad Tier
+accuracy/performance evidence is unchanged rather than newly established.
+
+The overall Goal remains incomplete. Quantization/split/exporter work, remaining
+direct lowerer/pass duplication, broader registry/layout modernization, and
+later tiered regression/efficiency gates still require work. On resume, first
+confirm a clean synchronized `fb-refactor6`, then inventory direct
+lowerer-to-pass calls and core ownership boundaries. Select and characterize one
+non-context duplication before editing production. Do not resume context-wrapper
+work, do not parallelize inference, and do not create a pull request.

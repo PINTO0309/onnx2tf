@@ -6,8 +6,163 @@ from pathlib import Path
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
     _NATIVE_CODEGEN_FUNCTION_SOURCE,
 )
+from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
+    ATTENTION_RECOVERY_PASS_IDS,
+    LAYOUT_RECOVERY_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
+    ATTENTION_GATE_QDQ_PASS_IDS,
+    PREADD_MEAN_ATTENTION_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
+    QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
+    SAFE_BINARY_RECOVERY_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
+    QLINEAR_MEAN_CONCAT_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
+    LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
+    TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
+    TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
+    SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
+    SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
+    TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
+    TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
+    LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
+    TRANSPOSE_UNARY_FANOUT_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
+    LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
+    BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
+    CHANNEL_SLICE_PAD_MUL_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
+    LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
+    ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
+    QKV_ATTENTION_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
+    DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.constant_fold_cast_orchestration import (
+    CONSTANT_FOLD_CAST_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
+    VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
+    SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
+    TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
+    LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
+    SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    GATE_LAYOUT_PASS_IDS,
+    GATE_LAYOUT_REQUIRED_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
+    CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_LEADING_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_PASS_IDS,
+    CHANNEL_SHUFFLE_GATHER_POST_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
+    MEAN_ATTENTION_BASE_PASS_IDS,
+    MEAN_ATTENTION_BASE_TAIL_PASS_IDS,
+    MEAN_ATTENTION_CONV_PASS_IDS,
+    MEAN_ATTENTION_DEFAULT_PASS_IDS,
+    MEAN_ATTENTION_LAYERNORM_PASS_IDS,
+    MEAN_ATTENTION_PASS_IDS,
+    MEAN_ATTENTION_PREFIX_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
+    SINGLETON_RESHAPE_BASE_PASS_IDS,
+    SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+    SINGLETON_RESHAPE_DUPLICATE_BASE_PASS_IDS,
+    SINGLETON_RESHAPE_DUPLICATE_PASS_IDS,
+    SINGLETON_RESHAPE_LAYOUT_MULTI_PASS_IDS,
+    SINGLETON_RESHAPE_LAYOUT_PASS_IDS,
+    SINGLETON_RESHAPE_MULTI_BRANCH_PASS_IDS,
+    SINGLETON_RESHAPE_PASS_IDS,
+    SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATED_PASS_ID_SEQUENCE = (
+    *LAYOUT_RECOVERY_PASS_IDS,
+    *ATTENTION_RECOVERY_PASS_IDS,
+    *PREADD_MEAN_ATTENTION_PASS_IDS,
+    *ATTENTION_GATE_QDQ_PASS_IDS,
+    *SAFE_BINARY_RECOVERY_PASS_IDS,
+    *QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
+    *QLINEAR_MEAN_CONCAT_PASS_IDS,
+    *LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS,
+    *TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+    *TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
+    *SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
+    *SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
+    *TERMINAL_CLAMP_UNARY_RELU_PASS_IDS,
+    *TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
+    *LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
+    *TRANSPOSE_UNARY_FANOUT_PASS_IDS,
+    *LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
+    *BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
+    *CHANNEL_SLICE_PAD_MUL_PASS_IDS,
+    *LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS,
+    *ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
+    *QKV_ATTENTION_PASS_IDS,
+    *DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
+    *LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS,
+    *VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
+    *SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS,
+    *TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
+    *SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
+    *GATE_LAYOUT_PASS_IDS,
+    *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
+    *MEAN_ATTENTION_PASS_IDS,
+    *SINGLETON_RESHAPE_PASS_IDS,
+)
+ORCHESTRATED_PASS_IDS = frozenset(
+    ORCHESTRATED_PASS_ID_SEQUENCE
+)
+
+
+def _orchestrated_pass_count(pass_id: str) -> int:
+    return ORCHESTRATED_PASS_ID_SEQUENCE.count(str(pass_id))
+
+
 DEPENDENCY_SCOPED_ROOTS = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / name
     for name in ["core", "passes", "op_families"]
@@ -260,25 +415,12 @@ def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-
-    registered_calls = {
-        call.func.id: call
-        for call in helper_calls
-        if call.func.id
-        in {
-            "run_hard_activation_passthrough_cleanup",
-            "run_spp_layout_cleanup",
-            "run_ndhwc_concat_layout_cleanup",
-        }
-    }
-    assert set(registered_calls) == {
-        "run_hard_activation_passthrough_cleanup",
-        "run_spp_layout_cleanup",
-        "run_ndhwc_concat_layout_cleanup",
-    }
-    for call in registered_calls.values():
-        assert all(keyword.arg != "state_scope" for keyword in call.keywords)
+    assert tuple(expected_order) == LAYOUT_RECOVERY_PASS_IDS
+    assert [call.func.id for call in helper_calls] == ["run_layout_recovery_prefix"]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "layout_recovery_context"
+    assert helper_calls[0].keywords == []
 
     helper_invocations = [
         node
@@ -287,7 +429,80 @@ def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 2
+
+
+def test_transpose_qdq_bridge_optimizer_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_optimize_transpose_quant_dequant_bridges"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_transpose_quant_dequant_bridges_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    recovery_prefix = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_layout_recovery_prefix_pass_sequence"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(recovery_prefix)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "transpose_qdq_bridge_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "optimize_transpose_quant_dequant_bridges"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    for pattern_name in ("Pattern A:", "Pattern B:", "Pattern C:", "Pattern D:"):
+        assert pattern_name in owner_function_source
+    assert "while True:" in owner_function_source
+    assert "_build_tensor_consumer_map(model_ir)" in owner_function_source
+    assert "_build_tensor_producer_map(model_ir)" in owner_function_source
+    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    for stat_key in (
+        "removed_transpose_quantize_dequantize_bridges",
+        "rewritten_add_qdq_residual_transpose_bridges",
+        "rewritten_mixed_add_qdq_residual_transpose_bridges",
+    ):
+        assert f'"{stat_key}"' in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
 
 
 def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None:
@@ -330,17 +545,14 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-
-    squeeze_call = helper_calls[-1]
-    assert all(keyword.arg != "state_scope" for keyword in squeeze_call.keywords)
-    include_unary = next(
-        keyword
-        for keyword in squeeze_call.keywords
-        if keyword.arg == "include_unary_passthrough"
-    )
-    assert isinstance(include_unary.value, ast.Constant)
-    assert include_unary.value.value is True
+    assert tuple(expected_order) == ATTENTION_RECOVERY_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_layout_reshape_attention_recovery_prefix"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "layout_recovery_context"
+    assert helper_calls[0].keywords == []
 
     layout_recovery = next(
         statement
@@ -414,7 +626,14 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert tuple(expected_order) == PREADD_MEAN_ATTENTION_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_preadd_mean_attention_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "attention_recovery_context"
+    assert helper_calls[0].keywords == []
 
     recovery_block = next(
         statement
@@ -498,9 +717,14 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-    trailing_call = helper_calls[-2]
-    assert all(keyword.arg != "state_scope" for keyword in trailing_call.keywords)
+    assert tuple(expected_order) == ATTENTION_GATE_QDQ_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_attention_gate_qdq_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "attention_recovery_context"
+    assert helper_calls[0].keywords == []
 
     helper_invocations = [
         node
@@ -509,26 +733,13 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 3
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 3
 
-    outer_helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_layout_attention_quantized_recovery_suffix"
-    )
-    outer_index = next(
-        index
-        for index, statement in enumerate(outer_helper.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
-    )
-    assert outer_helper.body[outer_index - 1].value.func.id == (
+    outer_index = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.index(helper_name)
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[outer_index - 1] == (
         "_run_mean_attention_layout_pass_cluster"
     )
-    assert outer_helper.body[outer_index + 1].value.func.id == (
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[outer_index + 1] == (
         "_run_duplicate_quantized_prelu_pass_cluster"
     )
 
@@ -585,14 +796,15 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_optimize_dequant_hardsigmoid_quantize_chains",
         "_optimize_dequant_maxpool_quantize_chains",
         "_optimize_dequant_softmax_quantize_chains",
         "_optimize_dequant_logistic_quantize_chains",
         "_canonicalize_softmax_transpose_chains",
         "_run_safe_binary_bridge_recovery_sequence",
-    ]
+    )
+    assert QUANTIZED_ACTIVATION_BINARY_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -600,7 +812,13 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert [call.func.id for call in helper_calls] == [
+        "run_quantized_activation_binary_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "quantized_recovery_context"
+    assert helper_calls[0].keywords == []
 
     direct_boundaries = []
     for statement in lowerer.body:
@@ -706,6 +924,9 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
     assert "_build_tensor_consumer_map" not in owner_source
     assert "_build_tensor_producer_map" not in owner_source
     assert "while True" not in owner_source
+    assert SAFE_BINARY_RECOVERY_PASS_IDS == (
+        "_run_safe_binary_bridge_recovery_pass",
+    )
 
     helper_calls = [
         statement.value
@@ -715,15 +936,12 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value.func, ast.Name)
     ]
     assert [call.func.id for call in helper_calls] == [
-        "_run_safe_binary_bridge_recovery_pass"
+        "run_safe_binary_recovery"
     ]
-    layout_keyword = next(
-        keyword
-        for keyword in helper_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "quantized_recovery_context"
+    assert helper_calls[0].keywords == []
 
     compatibility_dispatchers = {
         "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe":
@@ -758,13 +976,7 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
             "candidate",
         }
 
-    quantized_helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_quantized_activation_binary_bridge_recovery_sequence"
-    )
-    assert quantized_helper.body[-1].value.func.id == helper_name
+    assert QUANTIZED_ACTIVATION_BINARY_PASS_IDS[-1] == helper_name
 
     direct_boundaries = []
     for statement in lowerer.body:
@@ -797,7 +1009,7 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(all_invocations) == 3
+    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 3
 
 
 def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
@@ -816,13 +1028,14 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_optimize_transpose_mean_hardsigmoid_muladd_chains",
         "_optimize_nhwc_prefix_qlinear_silu_chains",
         "_optimize_nhwc_propagation_qlinear_concat_conv",
         "_optimize_concat_pre_quantize_dequantize",
         "_optimize_transpose_mean_maxpool_concat_conv_chains",
-    ]
+    )
+    assert QLINEAR_MEAN_CONCAT_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -830,7 +1043,13 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert [call.func.id for call in helper_calls] == [
+        "run_qlinear_mean_concat_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "qlinear_recovery_context"
+    assert helper_calls[0].keywords == []
 
     boundaries = []
     for statement in lowerer.body:
@@ -858,6 +1077,288 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
     ]
 
 
+def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "qlinear_silu_prefix_layout.py"
+    )
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    owner_name = "_optimize_nhwc_prefix_qlinear_silu_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert owner.end_lineno - owner.lineno + 1 == 513
+    call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" in call_names
+    assert "_build_tensor_producer_map" not in call_names
+    assert "ModelIRGraphIndex" not in call_names
+    assert "_read_transpose_perm" in call_names
+    assert "_set_operator_inputs" in call_names
+    assert "_replace_tensor_inputs" in call_names
+    assert "_permute_tensor_metadata_if_rank_matches" in call_names
+    assert "_prune_unused_tensors" in call_names
+    assert "_is_exact_nhwc_to_nchw_perm_tensor" in call_names
+    assert "_unique_tensor_name" in call_names
+    outer_loops = [node for node in owner.body if isinstance(node, ast.While)]
+    assert len(outer_loops) == 1
+    assert isinstance(outer_loops[0].test, ast.Constant)
+    assert outer_loops[0].test.value is True
+
+    metadata_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "metadata_target_names"
+            for target in node.targets
+        )
+    )
+    signature_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "legacy_mul_signature"
+            for target in node.targets
+        )
+    )
+    adapter_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "adapter_insertions"
+    )
+    tensor_mutations = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Subscript)
+            and "model_ir.tensors" in ast.unparse(target)
+            for target in node.targets
+        )
+    ]
+    setter_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_set_operator_inputs"
+    ]
+    first_mutation_line = min(
+        [node.lineno for node in tensor_mutations]
+        + [node.lineno for node in setter_calls]
+    )
+    assert metadata_plan.lineno < first_mutation_line
+    assert signature_plan.lineno < first_mutation_line
+    assert adapter_plan.lineno < first_mutation_line
+
+    prune_guard = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Name)
+            and candidate.func.id == "_prune_unused_tensors"
+            for candidate in ast.walk(node)
+        )
+    )
+    assert ast.unparse(prune_guard.test) == "optimized > 0"
+
+    mul_users_assignment = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "mul_users"
+            for target in node.targets
+        )
+    )
+    assert "dict.fromkeys" in ast.unparse(mul_users_assignment.value)
+    legacy_user_loop = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "user_idx"
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "mul_users"
+    )
+    assert mul_users_assignment.lineno < legacy_user_loop.lineno
+
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    dispatch = wrapper.body[0].value
+    assert isinstance(dispatch, ast.Call)
+    assert isinstance(dispatch.func, ast.Name)
+    assert dispatch.func.id == f"{owner_name}_pass"
+    assert len(dispatch.args) == 1
+    assert isinstance(dispatch.args[0], ast.Name)
+    assert dispatch.args[0].id == "model_ir"
+
+
+def test_mean_maxpool_concat_corrected_owner_contract_is_explicit() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "mean_maxpool_concat_layout.py"
+    )
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    owner_name = "_optimize_transpose_mean_maxpool_concat_conv_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert owner.end_lineno - owner.lineno + 1 == 382
+    call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" in call_names
+    assert "_build_tensor_producer_map" not in call_names
+    assert "ModelIRGraphIndex" not in call_names
+    assert "_read_transpose_perm" in call_names
+    assert "_read_const_ints_from_tensor" in call_names
+    assert "_write_const_ints_to_tensor" in call_names
+    assert "_set_operator_inputs" in call_names
+    assert "_replace_tensor_inputs" in call_names
+    assert "_prune_unused_tensors" in call_names
+    assert "_rank4_shape_and_signature" in call_names
+    outer_loops = [node for node in owner.body if isinstance(node, ast.While)]
+    assert len(outer_loops) == 1
+    assert isinstance(outer_loops[0].test, ast.Constant)
+    assert outer_loops[0].test.value is True
+
+    axes_guard = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.If)
+        and "mean_axes_name in model_ir.inputs" in ast.unparse(node.test)
+        and "mean_axes_name in model_ir.outputs" in ast.unparse(node.test)
+        and "mean_axes_tensor.is_variable" in ast.unparse(node.test)
+    )
+    planned_concat_inputs = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "planned_concat_inputs"
+            for target in node.targets
+        )
+    )
+    tensor_plans = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "tensor_plans"
+    )
+    concat_shape_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "concat_shape_plan"
+            for target in node.targets
+        )
+    )
+    remove_plan = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "remove_indices"
+            for target in node.targets
+        )
+    )
+    mutation_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {
+            "_set_operator_inputs",
+            "_write_const_ints_to_tensor",
+            "_replace_tensor_inputs",
+        }
+    ]
+    first_mutation_line = min(node.lineno for node in mutation_calls)
+    assert axes_guard.lineno < first_mutation_line
+    assert planned_concat_inputs.lineno < first_mutation_line
+    assert tensor_plans.lineno < first_mutation_line
+    assert concat_shape_plan.lineno < first_mutation_line
+    assert remove_plan.lineno < first_mutation_line
+
+    prune_guard = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Name)
+            and candidate.func.id == "_prune_unused_tensors"
+            for candidate in ast.walk(node)
+        )
+    )
+    assert ast.unparse(prune_guard.test) == "optimized > 0"
+
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    dispatch = wrapper.body[0].value
+    assert isinstance(dispatch, ast.Call)
+    assert isinstance(dispatch.func, ast.Name)
+    assert dispatch.func.id == f"{owner_name}_pass"
+    assert len(dispatch.args) == 1
+    assert isinstance(dispatch.args[0], ast.Name)
+    assert dispatch.args[0].id == "model_ir"
+
+
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -874,7 +1375,7 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
         "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
         "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
@@ -888,7 +1389,8 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         "_optimize_dequant_softmax_quantize_chains",
         "_optimize_dequant_logistic_quantize_chains",
         "_canonicalize_softmax_transpose_chains",
-    ]
+    )
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -896,21 +1398,18 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-
-    calls_by_name = {call.func.id: call for call in helper_calls}
-    for registered_name in ("run_quantized_reshape_cleanup",):
-        assert all(
-            keyword.arg != "state_scope"
-            for keyword in calls_by_name[registered_name].keywords
-        )
-    duplicate_keyword = next(
-        keyword
-        for keyword in calls_by_name[
-            "_run_duplicate_quantized_prelu_pass_cluster"
-        ].keywords
-        if keyword.arg == "include_transpose"
+    assert [call.func.id for call in helper_calls] == [
+        "run_layout_attention_quantized_suffix"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "layout_attention_quantized_suffix_context"
     )
+    assert len(helper_calls[0].keywords) == 1
+    duplicate_keyword = helper_calls[0].keywords[0]
+    assert duplicate_keyword.arg == "include_duplicate_transpose"
     assert isinstance(duplicate_keyword.value, ast.Name)
     assert duplicate_keyword.value.id == "include_duplicate_transpose"
 
@@ -966,35 +1465,42 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
         if isinstance(node, ast.FunctionDef)
         and node.name == "_run_mean_attention_layout_pass_cluster"
     )
-    expected_order = [
-        "run_transpose_mean_passthrough_cleanup",
-        "run_mean_mul_add_conv_layout_cleanup",
-        "run_layernorm_statistics_layout_cleanup",
-        "run_terminal_mean_layout_cleanup",
-        "run_se_conv_layout_cleanup",
-        "run_se_fc_layout_cleanup",
-        "run_conv_attention_layout_cleanup",
+    assert MEAN_ATTENTION_BASE_PASS_IDS == (
+        *MEAN_ATTENTION_PREFIX_PASS_IDS,
+        *MEAN_ATTENTION_BASE_TAIL_PASS_IDS,
+    )
+    assert MEAN_ATTENTION_DEFAULT_PASS_IDS == (
+        *MEAN_ATTENTION_BASE_PASS_IDS,
+        *MEAN_ATTENTION_CONV_PASS_IDS,
+    )
+    assert MEAN_ATTENTION_PASS_IDS == (
+        *MEAN_ATTENTION_PREFIX_PASS_IDS,
+        *MEAN_ATTENTION_LAYERNORM_PASS_IDS,
+        *MEAN_ATTENTION_BASE_TAIL_PASS_IDS,
+        *MEAN_ATTENTION_CONV_PASS_IDS,
+    )
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_mean_attention"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert statement.value.args[0].id == "mean_attention_context"
+    assert [keyword.arg for keyword in statement.value.keywords] == [
+        "include_layernorm",
+        "include_conv_attention",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
+    assert [argument.arg for argument in helper.args.kwonlyargs] == [
+        "include_layernorm",
+        "include_conv_attention",
+    ]
     assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        value.value
+        for value in helper.args.kw_defaults
+        if isinstance(value, ast.Constant)
+    ] == [False, True]
 
     helper_invocations = [
         node
@@ -1003,7 +1509,11 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_mean_attention_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 4
+    assert (
+        len(helper_invocations)
+        + _orchestrated_pass_count("_run_mean_attention_layout_pass_cluster")
+        == 4
+    )
 
 
 def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
@@ -1027,26 +1537,15 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
         "run_qkv_attention_prefix_cleanup",
         "run_qkv_attention_bridge_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == QKV_ATTENTION_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        and node.func.id == "run_qkv_attention"
+    ]
+    assert len(helper_calls) == 1
 
     helper_invocations = [
         node
@@ -1092,7 +1591,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_run_channel_slice_pad_mul_layout_pass_cluster",
         "_optimize_transpose_mul_posttranspose_add_nhwc_chains",
         "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
@@ -1107,7 +1606,8 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
         "_optimize_transpose_pre_add_nhwc_chains",
         "run_layout_transpose_cleanup",
-    ]
+    )
+    assert TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -1115,10 +1615,16 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
-    assert all(
-        keyword.arg != "state_scope" for keyword in helper_calls[-1].keywords
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_slice_concat_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "terminal_slice_concat_recovery_context"
     )
+    assert helper_calls[0].keywords == []
 
     invocation_indexes = [
         index
@@ -1174,7 +1680,7 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
         "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
@@ -1186,7 +1692,8 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         "_optimize_transpose_split_channelwise_tail_to_single_post_nchw",
         "_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw",
         "_sanitize_probable_nhwc_axis_sensitive_ops",
-    ]
+    )
+    assert TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS == expected_order
     helper_calls = [
         statement.value
         for statement in helper.body
@@ -1194,7 +1701,16 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_affine_concat_split_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "terminal_affine_concat_split_recovery_context"
+    )
+    assert helper_calls[0].keywords == []
 
     invocation_indexes = [
         index
@@ -1260,28 +1776,40 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert tuple(expected_order) == SINET_PREADD_RESIZE_RECOVERY_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_sinet_preadd_resize_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "sinet_preadd_resize_recovery_context"
+    assert helper_calls[0].keywords == []
 
-    terminal_helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_sinet_terminal_layout_recovery_sequence"
-    )
-    nested_index = next(
-        index
-        for index, statement in enumerate(terminal_helper.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
-    )
-    assert terminal_helper.body[nested_index - 1].value.func.id == (
+    nested_index = SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS.index(helper_name)
+    assert SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS[nested_index - 1] == (
         "_optimize_sinet_shuffle_residual_transpose_chains"
     )
-    assert terminal_helper.body[nested_index + 1].value.func.id == (
+    assert SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS[nested_index + 1] == (
         "_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains"
     )
+    terminal_context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "sinet_terminal_layout_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(terminal_context_assignment.value, ast.Call)
+    callback_keyword = next(
+        keyword
+        for keyword in terminal_context_assignment.value.keywords
+        if keyword.arg == "preadd_resize_recovery"
+    )
+    assert isinstance(callback_keyword.value, ast.Name)
+    assert callback_keyword.value.id == helper_name
 
     invocation_indexes = [
         index
@@ -1324,7 +1852,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(all_invocations) == 4
+    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 4
 
 
 def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
@@ -1355,7 +1883,14 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in helper_calls] == expected_order
+    assert tuple(expected_order) == SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_sinet_terminal_layout_recovery"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "sinet_terminal_layout_recovery_context"
+    assert helper_calls[0].keywords == []
 
     invocation_indexes = [
         index
@@ -1388,6 +1923,419 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains",
         "_run_sinet_preadd_resize_recovery_sequence",
     ]
+
+
+def test_terminal_affine_prelu_owner_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_affine_prelu_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = (
+        "optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains"
+    )
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert len(
+        [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_prune_unused_tensors"
+        ]
+    ) == 1
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+
+
+def test_mean_affine_prepost_owner_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "mean_affine_prepost_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "optimize_transpose_mean_mul_add_const_prepost_nhwc_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert len(
+        [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_prune_unused_tensors"
+        ]
+    ) == 1
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+
+
+def test_batchmatmul_affine_input_owner_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "batchmatmul_affine_input_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "optimize_batchmatmul_affine_transpose_input_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert len(
+        [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_prune_unused_tensors"
+        ]
+    ) == 1
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 2
+
+
+def test_batchmatmul_se_owner_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "batchmatmul_se_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "optimize_batchmatmul_reshape_se_nhwc_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert len(
+        [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_prune_unused_tensors"
+        ]
+    ) == 1
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 2
+
+
+def test_batchmatmul_adjoint_owner_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "batchmatmul_adjoint_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "optimize_batchmatmul_transpose_input_to_adj_flags"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_read_transpose_perm" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert len(
+        [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_prune_unused_tensors"
+        ]
+    ) == 1
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 2
+
+
+def test_probable_nhwc_axis_sanitizer_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "probable_nhwc_axis_sanitizer.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "sanitize_probable_nhwc_axis_sensitive_ops"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_write_const_ints_to_tensor" in owner_source
+    assert "_set_operator_outputs" in owner_source
+    assert any(isinstance(node, ast.While) for node in ast.walk(owner))
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
+
+
+def test_elementwise_fanout_owner_has_one_lowerer_adapter() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "elementwise_fanout_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_find_unbound_nonconstant_operator_inputs" in owner_source
+    assert "candidate_snapshot = copy.deepcopy(model_ir)" in owner_source
+    assert any(isinstance(node, ast.While) for node in ast.walk(owner))
+
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_pass"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
 
 def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
@@ -1649,6 +2597,193 @@ def test_hardswish_shape_sanitizer_has_one_indexed_module_owner() -> None:
     assert "lower_from_onnx2tf" not in owner_source
 
 
+def test_squeeze_shape_sanitizer_has_one_module_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_sanitize_squeeze_axes_with_static_input_shapes"
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_sanitize_squeeze_axes_with_static_input_shapes_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "squeeze_shape_sanitization.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "sanitize_squeeze_axes_with_static_input_shapes"
+    )
+    owner_call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_parse_axes_option" in owner_call_names
+    assert "_infer_squeeze_output_shape_and_signature" in owner_call_names
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
+def test_static_shape_signature_sanitizer_has_one_module_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    wrapper_name = "_sanitize_static_shape_signature_consistency"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_sanitize_static_shape_signature_consistency_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 2
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "static_shape_signature_sanitization.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "sanitize_static_shape_signature_consistency"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert "_build_tensor_producer_map(model_ir)" in owner_function_source
+    assert "_read_const_ints_from_tensor(" in owner_function_source
+    assert "_is_fully_known_positive_shape(" in owner_function_source
+    assert "dynamic_lineage_cache" in owner_function_source
+    assert "dynamic_lineage_visiting" in owner_function_source
+    for operator_type in ("WHERE", "RANGE", "RESHAPE", "TOPK_V2"):
+        assert f'"{operator_type}"' in owner_function_source
+    for stat_key in (
+        "sanitized_static_shape_signature_consistency",
+        "preserved_dynamic_boundary_shape_signature",
+        "preserved_dynamic_leading_axis_shape_signature",
+        "preserved_dynamic_lineage_shape_signature",
+    ):
+        assert f'"{stat_key}"' in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
+def test_boundary_signature_realigner_has_one_module_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    wrapper_name = "_realign_dynamic_boundary_shape_signature_map"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_realign_dynamic_boundary_shape_signature_map_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 3
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "static_shape_signature_sanitization.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "realign_dynamic_boundary_shape_signature_map"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert (
+        "_align_boundary_signature_to_current_shape("
+        in owner_function_source
+    )
+    assert (
+        '"dynamic_boundary_shape_signature_map"'
+        in owner_function_source
+    )
+    assert (
+        '"realigned_dynamic_boundary_shape_signature_map"'
+        in owner_function_source
+    )
+    assert "model_ir.operators" not in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
 def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -1786,19 +2921,23 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
 
 
 def test_rank4_broadcast_constant_repair_uses_one_graph_index() -> None:
-    lowering_path = (
-        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_layout_adapter.py"
     )
-    lowering_source = lowering_path.read_text(encoding="utf-8")
-    lowering_tree = ast.parse(lowering_source)
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
     repair = next(
         node
-        for node in lowering_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name
-        == "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
+        == "repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
     )
-    repair_source = ast.get_source_segment(lowering_source, repair)
+    repair_source = ast.get_source_segment(owner_source, repair)
     assert repair_source is not None
     call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
@@ -1832,17 +2971,27 @@ def test_rank4_broadcast_constant_repair_uses_one_graph_index() -> None:
 
 
 def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "stale_binary_adapter_repair.py"
+    )
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
     repair_name = "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes"
     repair = next(
         node
-        for node in lowering_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == repair_name
     )
+    assert "lower_from_onnx2tf" not in owner_source
     repair_call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
         for node in ast.walk(repair)
@@ -1856,6 +3005,24 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
     assert "producer" in repair_call_names
     assert "consumer_indices" in repair_call_names
     assert "remove_operator" in repair_call_names
+    channelwise_assignment = next(
+        node
+        for node in ast.walk(repair)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "channelwise_const_matches"
+            for target in node.targets
+        )
+    )
+    rank_guard = next(
+        node
+        for node in ast.walk(repair)
+        if isinstance(node, ast.If)
+        and "len(source_shape)" in ast.unparse(node.test)
+        and "len(adapter_shape)" in ast.unparse(node.test)
+    )
+    assert rank_guard.lineno < channelwise_assignment.lineno
     setter_call = next(
         node
         for node in ast.walk(repair)
@@ -1863,6 +3030,16 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_set_operator_inputs"
     )
+    source_signature_assignment = next(
+        node
+        for node in ast.walk(repair)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "source_signature"
+            for target in node.targets
+        )
+    )
+    assert source_signature_assignment.lineno < setter_call.lineno
     setter_index_keyword = next(
         keyword
         for keyword in setter_call.keywords
@@ -1870,6 +3047,29 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
     )
     assert isinstance(setter_index_keyword.value, ast.Name)
     assert setter_index_keyword.value.id == "graph_index"
+
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == repair_name
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"{repair_name}_pass"
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].args[0], ast.Name)
+    assert wrapper_calls[0].args[0].id == "model_ir"
+    wrapper_index_keyword = next(
+        keyword
+        for keyword in wrapper_calls[0].keywords
+        if keyword.arg == "graph_index"
+    )
+    assert isinstance(wrapper_index_keyword.value, ast.Name)
+    assert wrapper_index_keyword.value.id == "graph_index"
 
     helper_name = "_run_indexed_binary_layout_convergence"
     helper = next(
@@ -1928,13 +3128,41 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
         "model_ir",
     ]
 
+    direct_repair_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == repair_name
+    ]
+    assert [
+        call.args[0].id
+        for call in sorted(
+            direct_repair_invocations,
+            key=lambda candidate: candidate.lineno,
+        )
+    ] == [
+        "fallback_ir",
+        "model_ir",
+    ]
+
 
 def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "conv_input_adapter_repair.py"
+    )
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
+    assert "lower_from_onnx2tf" not in owner_source
     repair_names = [
         "_repair_singleton_nhwc_conv_input_reshapes",
         "_repair_stale_nchw_to_nhwc_conv_input_transposes",
@@ -1942,7 +3170,7 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
     for repair_name in repair_names:
         repair = next(
             node
-            for node in lowering_tree.body
+            for node in owner_tree.body
             if isinstance(node, ast.FunctionDef) and node.name == repair_name
         )
         call_names = {
@@ -1967,6 +3195,17 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == "_set_operator_inputs"
         )
+        source_signature_assignment = next(
+            node
+            for node in ast.walk(repair)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "source_signature"
+                for target in node.targets
+            )
+        )
+        assert source_signature_assignment.lineno < setter_call.lineno
         setter_index_keyword = next(
             keyword
             for keyword in setter_call.keywords
@@ -1975,10 +3214,31 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
         assert isinstance(setter_index_keyword.value, ast.Name)
         assert setter_index_keyword.value.id == "graph_index"
 
+        wrapper = next(
+            node
+            for node in lowering_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == repair_name
+        )
+        wrapper_calls = [
+            node
+            for node in ast.walk(wrapper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == f"{repair_name}_pass"
+        ]
+        assert len(wrapper_calls) == 1
+        wrapper_index_keyword = next(
+            keyword
+            for keyword in wrapper_calls[0].keywords
+            if keyword.arg == "graph_index"
+        )
+        assert isinstance(wrapper_index_keyword.value, ast.Name)
+        assert wrapper_index_keyword.value.id == "graph_index"
+
     helper_name = "_run_indexed_conv_input_adapter_repairs"
     helper = next(
         node
-        for node in lowering_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     helper_calls = [
@@ -1998,6 +3258,20 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
         )
         assert isinstance(index_keyword.value, ast.Name)
         assert index_keyword.value.id == "graph_index"
+
+    helper_wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    helper_wrapper_calls = [
+        node
+        for node in ast.walk(helper_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"{helper_name}_pass"
+    ]
+    assert len(helper_wrapper_calls) == 1
 
     lowerer = next(
         node
@@ -2029,6 +3303,133 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
     assert direct_transpose_invocations[0].args[0].id == "model_ir"
 
 
+def test_mixed_nhwc_nchw_concat_repair_has_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "mixed_concat_input_repair.py"
+    )
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    assert "lower_from_onnx2tf" not in owner_source
+    owner_name = "_repair_mixed_nhwc_inputs_for_nchw_concat"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_clone_quantization" in owner_calls
+    assert "_quant_scale_count" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "insert" in owner_calls
+
+    tensor_insertions = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Attribute)
+            and isinstance(target.value.value, ast.Name)
+            and target.value.value.id == "model_ir"
+            and target.value.attr == "tensors"
+            for target in node.targets
+        )
+    ]
+    operator_insertions = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "insert"
+    ]
+    input_setters = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_set_operator_inputs"
+    ]
+    first_mutation_line = min(
+        node.lineno
+        for node in tensor_insertions + operator_insertions + input_setters
+    )
+    output_assignment = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "output_tensor"
+            for target in node.targets
+        )
+    )
+    source_signature_assignment = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "source_signature"
+            for target in node.targets
+        )
+    )
+    plan_append = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "adapter_plans"
+        and node.func.attr == "append"
+    )
+    assert output_assignment.lineno < first_mutation_line
+    assert source_signature_assignment.lineno < first_mutation_line
+    assert plan_append.lineno < first_mutation_line
+
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"{owner_name}_pass"
+    ]
+    assert len(wrapper_calls) == 1
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert [
+        call.args[0].id
+        for call in sorted(invocations, key=lambda candidate: candidate.lineno)
+    ] == ["fallback_ir", "model_ir"]
+
+
 def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
     owner_path = (
         REPO_ROOT
@@ -2040,10 +3441,18 @@ def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    swish_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "quantized_swish_layout.py"
+    )
     owner_source = owner_path.read_text(encoding="utf-8")
     owner_tree = ast.parse(owner_source)
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
+    swish_tree = ast.parse(swish_path.read_text(encoding="utf-8"))
     owner_name = "sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
     owner = next(
         node
@@ -2113,16 +3522,16 @@ def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
 
     swish_owner = next(
         node
-        for node in lowering_tree.body
+        for node in swish_tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == "_optimize_transpose_swish_qdq_nhwc_islands"
+        and node.name == "optimize_transpose_swish_qdq_nhwc_islands"
     )
     swish_invocations = [
         node
         for node in ast.walk(swish_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == wrapper_name
+        and node.func.id == owner_name
     ]
     assert len(swish_invocations) == 1
 
@@ -2231,11 +3640,12 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
         for call in runner_phase_calls
     )
 
+    orchestrator_name = "optimize_transpose_swish_qdq_nhwc_islands"
     swish_orchestrator = next(
         node
-        for node in lowerer_tree.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == "_optimize_transpose_swish_qdq_nhwc_islands"
+        and node.name == orchestrator_name
     )
     runner_invocations = [
         node
@@ -2372,6 +3782,381 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
     assert "_concat_has_quantize_transpose_tail" not in nested_names
     assert "_has_concat_closure_from_tensor" not in nested_names
     assert "_copy_shape_signature" not in nested_names
+
+    orchestrator_calls = [
+        node.func.id
+        for node in ast.walk(swish_orchestrator)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert orchestrator_calls.count(
+        "sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
+    ) == 1
+    assert orchestrator_calls.count("_prune_unused_tensors") == 1
+    assert "lower_from_onnx2tf" not in owner_path.read_text(encoding="utf-8")
+
+    wrapper_name = "_optimize_transpose_swish_qdq_nhwc_islands"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"_{orchestrator_name}_pass"
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].args[0], ast.Name)
+    assert wrapper_calls[0].args[0].id == "model_ir"
+    assert {
+        keyword.arg for keyword in wrapper_calls[0].keywords
+    } == {"min_spatial_stage", "require_concat_closure"}
+
+    closure_owner_name = (
+        "optimize_transpose_swish_residual_concat_closure_nhwc_chains"
+    )
+    closure_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == closure_owner_name
+    )
+    closure_owner_calls = [
+        node
+        for node in ast.walk(closure_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == orchestrator_name
+    ]
+    assert len(closure_owner_calls) == 1
+    closure_keywords = {
+        keyword.arg: keyword.value for keyword in closure_owner_calls[0].keywords
+    }
+    assert isinstance(closure_keywords["min_spatial_stage"], ast.Constant)
+    assert closure_keywords["min_spatial_stage"].value == 0
+    assert isinstance(closure_keywords["require_concat_closure"], ast.Constant)
+    assert closure_keywords["require_concat_closure"].value is True
+
+    closure_wrapper_name = (
+        "_optimize_transpose_swish_residual_concat_closure_nhwc_chains"
+    )
+    closure_wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == closure_wrapper_name
+    )
+    closure_wrapper_calls = [
+        node
+        for node in ast.walk(closure_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"_{closure_owner_name}_pass"
+    ]
+    assert len(closure_wrapper_calls) == 1
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node.func.id
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {wrapper_name, closure_wrapper_name}
+    ]
+    assert production_calls.count(wrapper_name) == 1
+    assert production_calls.count(closure_wrapper_name) == 1
+
+
+def test_hardswish_se_layout_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "hardswish_se_layout.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_tree = ast.parse(lowerer_source)
+    owner_name = (
+        "optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
+    )
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in owner_calls
+    assert "_read_transpose_perm" in owner_calls
+    assert "_replace_operator_input_at" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "_set_operator_outputs" in owner_calls
+    assert "_prune_unused_tensors" in owner_calls
+    assert "lower_from_onnx2tf" not in owner_source
+
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == f"_{owner_name}_pass"
+    ]
+    assert len(dispatches) == 1
+    assert isinstance(dispatches[0].args[0], ast.Name)
+    assert dispatches[0].args[0].id == "model_ir"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 2
+
+
+def test_nhwc_concat_legacy_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "nhwc_concat_legacy_layout.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_tree = ast.parse(lowerer_source)
+    owner_name = "optimize_transpose_pre_concat_nhwc_chains_legacy"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in owner_calls
+    assert "_build_tensor_producer_map" in owner_calls
+    assert "_read_transpose_perm" in owner_calls
+    assert "_replace_operator_input_at" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "_set_operator_outputs" in owner_calls
+    assert "_prune_unused_tensors" in owner_calls
+    assert "lower_from_onnx2tf" not in owner_source
+
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    dispatch = wrapper.body[0].value
+    assert isinstance(dispatch, ast.Call)
+    assert isinstance(dispatch.func, ast.Name)
+    assert dispatch.func.id == f"_{owner_name}_pass"
+    assert len(dispatch.args) == 1
+    assert isinstance(dispatch.args[0], ast.Name)
+    assert dispatch.args[0].id == "model_ir"
+
+    composite_name = "_optimize_transpose_pre_concat_nhwc_chains"
+    composite = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == composite_name
+    )
+    expected_dispatch_order = [
+        "run_nhwc_concat_layout_cleanup",
+        "run_nhwc_concat_quantized_layout_cleanup",
+        wrapper_name,
+    ]
+    composite_dispatches = [
+        node
+        for node in ast.walk(composite)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in expected_dispatch_order
+    ]
+    assert len(composite_dispatches) == len(expected_dispatch_order)
+    assert [
+        node.func.id
+        for node in sorted(composite_dispatches, key=lambda node: node.lineno)
+    ] == expected_dispatch_order
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == composite_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(composite_name) == 4
+
+
+def test_slice_prepost_layout_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "slice_prepost_layout.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    owner_name = "optimize_transpose_slice_prepost_nhwc_passthrough_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in owner_calls
+    assert "_build_tensor_producer_map" in owner_calls
+    assert "_infer_slice_output_shape_and_resolved_params" in owner_calls
+    assert "_read_transpose_perm" in owner_calls
+    assert "_replace_operator_input_at" in owner_calls
+    assert "_set_operator_outputs" in owner_calls
+    assert "_prune_unused_tensors" in owner_calls
+    assert "lower_from_onnx2tf" not in owner_source
+
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    dispatch = wrapper.body[0].value
+    assert isinstance(dispatch, ast.Call)
+    assert isinstance(dispatch.func, ast.Name)
+    assert dispatch.func.id == f"_{owner_name}_pass"
+    assert len(dispatch.args) == 1
+    assert isinstance(dispatch.args[0], ast.Name)
+    assert dispatch.args[0].id == "model_ir"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+
+
+def test_shape_extract_layout_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "shape_extract_layout.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    owner_name = "optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in owner_calls
+    assert "_clone_quantization" in owner_calls
+    assert "_read_transpose_perm" in owner_calls
+    assert "_replace_operator_input_at" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "_write_const_ints_to_tensor" in owner_calls
+    assert "_prune_unused_tensors" in owner_calls
+    assert "lower_from_onnx2tf" not in owner_source
+
+    wrapper_name = f"_{owner_name}"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    assert len(wrapper.body) == 1
+    assert isinstance(wrapper.body[0], ast.Return)
+    dispatch = wrapper.body[0].value
+    assert isinstance(dispatch, ast.Call)
+    assert isinstance(dispatch.func, ast.Name)
+    assert dispatch.func.id == f"_{owner_name}_pass"
+    assert len(dispatch.args) == 1
+    assert isinstance(dispatch.args[0], ast.Name)
+    assert dispatch.args[0].id == "model_ir"
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 3
 
 
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
@@ -2842,37 +4627,25 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_duplicate_fanout_cleanup",
         "run_quantized_prelu_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-    duplicate_include_transpose = next(
-        keyword
-        for keyword in calls["run_duplicate_fanout_cleanup"].keywords
-        if keyword.arg == "include_transpose"
     )
-    assert isinstance(duplicate_include_transpose.value, ast.Name)
-    assert duplicate_include_transpose.value.id == "include_transpose"
+    assert DUPLICATE_QUANTIZED_PRELU_PASS_IDS == expected_order
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_duplicate_quantized_prelu"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert statement.value.args[0].id == "duplicate_quantized_prelu_context"
+    assert len(statement.value.keywords) == 1
+    include_transpose = statement.value.keywords[0]
+    assert include_transpose.arg == "include_transpose"
+    assert isinstance(include_transpose.value, ast.Name)
+    assert include_transpose.value.id == "include_transpose"
 
     helper_invocations = [
         node
@@ -2881,18 +4654,9 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 1
-    for call in helper_invocations:
-        include_transpose = next(
-            keyword
-            for keyword in call.keywords
-            if keyword.arg == "include_transpose"
-        )
-        assert isinstance(include_transpose.value, ast.Name)
-        assert (
-            include_transpose.value.id
-            == "include_duplicate_transpose"
-        )
+    assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.count(helper_name) == 1
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 1
+    assert helper_invocations == []
 
 
 def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() -> None:
@@ -2911,45 +4675,29 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_transpose_gather_axis_cleanup",
-        "_run_constant_fold_cast_cleanup_pass_cluster",
+        "run_constant_input_fold_cleanup",
+        "run_redundant_cast_cleanup",
         "run_normalization_pad_layout_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-    normalization_call = calls["run_normalization_pad_layout_cleanup"]
-    include_instance = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_instance"
     )
-    include_flatten = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_flatten"
+    assert VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS == expected_order
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert (
+        statement.value.func.id
+        == "run_very_late_gather_constant_normalization"
     )
-    assert isinstance(include_instance.value, ast.Constant)
-    assert include_instance.value.value is False
-    assert isinstance(include_flatten.value, ast.Constant)
-    assert include_flatten.value.value is True
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert (
+        statement.value.args[0].id
+        == "very_late_gather_constant_normalization_context"
+    )
+    assert statement.value.keywords == []
 
     invocation_index = next(
         index
@@ -2985,58 +4733,23 @@ def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
     helper_name = "_run_constant_fold_cast_cleanup_pass_cluster"
-    helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
-    )
-    expected_order = [
+    expected_order = (
         "run_constant_input_fold_cleanup",
         "run_redundant_cast_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
+    )
+    assert CONSTANT_FOLD_CAST_PASS_IDS == expected_order
+    nested_function_names = {
+        node.name for node in lowerer.body if isinstance(node, ast.FunctionDef)
     }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-
-    helper_invocations = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == helper_name
-    ]
-    assert len(helper_invocations) == 2
-    external_scope_invocations = [
-        call
-        for call in helper_invocations
-        if any(keyword.arg == "state_scope" for keyword in call.keywords)
-    ]
-    assert len(external_scope_invocations) == 2
-    for call in external_scope_invocations:
-        scope_keyword = next(
-            keyword
-            for keyword in call.keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    lowerer_names = {
+        node.id for node in ast.walk(lowerer) if isinstance(node, ast.Name)
+    }
+    assert helper_name not in nested_function_names
+    assert "constant_fold_cast_context" not in lowerer_names
+    assert "run_constant_fold_cast" not in lowerer_names
+    assert "ConstantFoldCastContext" not in lowerer_names
+    assert _orchestrated_pass_count("run_constant_input_fold_cleanup") == 2
+    assert _orchestrated_pass_count("run_redundant_cast_cleanup") == 2
 
 
 def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
@@ -3055,34 +4768,26 @@ def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_se_fc_layout_cleanup",
         "run_transpose_gather_channel_fanout_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    )
+    assert SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS == expected_order
     assert [argument.arg for argument in helper.args.args] == [
         "target_model_ir",
         "target_layout_state",
     ]
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_se_fc_gather_channel_fanout"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Call)
+    assert isinstance(statement.value.args[0].func, ast.Name)
+    assert statement.value.args[0].func.id == "ModelIRPassContext"
+    assert statement.value.keywords == []
 
     helper_invocations = [
         node
@@ -3126,33 +4831,27 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_dual_mul_concat_layout_cleanup",
         "run_boundary_input_layout_cleanup",
         "run_pad_layout_cleanup",
         "run_layout_transpose_cleanup",
         "run_transpose_gather_channel_fanout_cleanup",
+    )
+    assert TERMINAL_BOUNDARY_LAYOUT_PASS_IDS == expected_order
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    assert len(helper_calls) == 1
+    assert helper_calls[0].func.id == "run_terminal_boundary_layout"
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "terminal_boundary_layout_context"
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -3197,26 +4896,21 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
         "run_transpose_unary_passthrough_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert tuple(expected_order) == LATE_DEQUANT_UNARY_FANOUT_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_late_dequant_unary_fanout"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "late_dequant_unary_fanout_context"
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -3264,26 +4958,24 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
         "run_singleton_maxpool_layout_cleanup",
         "run_consecutive_reshape_cleanup",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert tuple(expected_order) == TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_singleton_maxpool_reshape"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert (
+        helper_calls[0].args[0].id
+        == "terminal_singleton_maxpool_reshape_context"
+    )
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -3340,26 +5032,21 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         "run_transpose_unary_passthrough_cleanup",
         "run_maximum_zero_relu_cleanup",
     ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert tuple(expected_order) == TERMINAL_CLAMP_UNARY_RELU_PASS_IDS
+    assert [call.func.id for call in helper_calls] == [
+        "run_terminal_clamp_unary_relu"
+    ]
+    assert len(helper_calls[0].args) == 1
+    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert helper_calls[0].args[0].id == "terminal_clamp_unary_relu_context"
+    assert helper_calls[0].keywords == []
 
     invocation_index = next(
         index
@@ -3407,44 +5094,36 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    expected_order = [
+    expected_order = (
         "run_layout_transpose_cleanup",
         "run_mean_mul_add_conv_layout_cleanup",
         "run_spp_layout_cleanup",
         "run_transpose_gather_axis_cleanup",
-        "_run_constant_fold_cast_cleanup_pass_cluster",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-
-    conditional = next(
-        statement
-        for statement in helper.body
-        if isinstance(statement, ast.If)
+        *CONSTANT_FOLD_CAST_PASS_IDS,
     )
-    assert isinstance(conditional.test, ast.Name)
-    assert conditional.test.id == "include_layout_transpose"
-    assert calls["run_layout_transpose_cleanup"] in [
-        node for node in ast.walk(conditional)
-    ]
+    assert LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS == expected_order
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert (
+        statement.value.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast"
+    )
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert (
+        statement.value.args[0].id
+        == "late_layout_mean_spp_gather_constant_cast_context"
+    )
+    include_delegate = next(
+        keyword
+        for keyword in statement.value.keywords
+        if keyword.arg == "include_layout_transpose"
+    )
+    assert isinstance(include_delegate.value, ast.Name)
+    assert include_delegate.value.id == "include_layout_transpose"
 
     invocation_index = next(
         index
@@ -3501,26 +5180,15 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         "run_spp_layout_cleanup",
         "run_concat_unary_conv_layout_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        and node.func.id == "run_late_spp_concat_unary_conv"
+    ]
+    assert len(helper_calls) == 1
 
     invocation_index = next(
         index
@@ -3568,52 +5236,15 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         "run_hard_activation_passthrough_cleanup",
         "run_layout_transpose_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-
-    hard_activation_call = calls["run_hard_activation_passthrough_cleanup"]
-    expected_flags = {
-        "include_hardswish": False,
-        "include_hardsigmoid": True,
-        "include_hardsigmoid_mul": True,
-        "reverse_hardsigmoid_order": True,
-    }
-    for name, expected_value in expected_flags.items():
-        keyword = next(
-            candidate
-            for candidate in hard_activation_call.keywords
-            if candidate.arg == name
-        )
-        assert isinstance(keyword.value, ast.Constant)
-        assert keyword.value.value is expected_value
-
-    conditional = next(
-        statement
-        for statement in helper.body
-        if isinstance(statement, ast.If)
-    )
-    assert isinstance(conditional.test, ast.Name)
-    assert conditional.test.id == "include_layout_transpose"
-    assert calls["run_layout_transpose_cleanup"] in [
-        node for node in ast.walk(conditional)
+        and node.func.id == "run_late_hard_activation_layout"
     ]
+    assert len(helper_calls) == 1
 
     invocation_index = next(
         index
@@ -3670,41 +5301,15 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
         "run_normalization_pad_layout_cleanup",
         "run_mixed_attention_layout_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
-    normalization_call = calls["run_normalization_pad_layout_cleanup"]
-    include_instance = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_instance"
-    )
-    include_flatten = next(
-        keyword
-        for keyword in normalization_call.keywords
-        if keyword.arg == "include_flatten"
-    )
-    assert isinstance(include_instance.value, ast.Constant)
-    assert include_instance.value.value is False
-    assert isinstance(include_flatten.value, ast.Constant)
-    assert include_flatten.value.value is True
+        and node.func.id == "run_absolute_final_normalization_attention"
+    ]
+    assert len(helper_calls) == 1
 
     invocation_index = next(
         index
@@ -4052,7 +5657,7 @@ def test_indexed_affine_chain_fold_owner_is_bounded_and_transactional() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -4112,7 +5717,7 @@ def test_indexed_affine_prepost_layout_owner_preserves_canonical_output() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 7
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 7
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -4171,7 +5776,7 @@ def test_indexed_affine_post_add_layout_owner_is_bounded_and_separate_from_pad()
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 4
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -4257,14 +5862,15 @@ def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> 
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert layout_keyword.value.attr == "layout_state"
 
     postmul_wrapper_name = (
         "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
@@ -4556,14 +6162,15 @@ def test_indexed_sinet_dual_resize_owner_unifies_both_residual_modes() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == 1
-        layout_keyword = next(
-            keyword
-            for keyword in production_calls[0].keywords
-            if keyword.arg == "layout_state"
-        )
-        assert isinstance(layout_keyword.value, ast.Attribute)
-        assert layout_keyword.value.attr == "layout_state"
+        assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+        for production_call in production_calls:
+            layout_keyword = next(
+                keyword
+                for keyword in production_call.keywords
+                if keyword.arg == "layout_state"
+            )
+            assert isinstance(layout_keyword.value, ast.Attribute)
+            assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_sinet_shared_post_owner_is_bounded_and_transactional() -> None:
@@ -4689,7 +6296,7 @@ def test_indexed_sinet_concat_resize_owner_is_bounded_and_transactional() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -4758,14 +6365,15 @@ def test_indexed_sinet_tail_concat_owner_reuses_indexed_branch_contracts() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_sinet_softmax_mask_owner_is_bounded_and_transactional() -> None:
@@ -4824,14 +6432,15 @@ def test_indexed_sinet_softmax_mask_owner_is_bounded_and_transactional() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_sinet_mix_attention_owner_is_bounded_and_transactional() -> None:
@@ -4889,7 +6498,7 @@ def test_indexed_sinet_mix_attention_owner_is_bounded_and_transactional() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -4956,7 +6565,7 @@ def test_indexed_sinet_sa_pa_mirrorpad_owner_is_bounded_and_transactional() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -5046,7 +6655,7 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         if isinstance(node, ast.FunctionDef)
         and node.name == "_run_gate_layout_pass_cluster"
     )
-    expected_order = [
+    assert GATE_LAYOUT_PASS_IDS == (
         "run_mixed_attention_layout_cleanup",
         "run_elementwise_gate_layout_cleanup",
         "run_pad_layout_cleanup",
@@ -5055,27 +6664,30 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         "run_cost_volume_scatter_layout_cleanup",
         "run_add_concat_suffix_layout_cleanup",
         "run_dual_mul_concat_layout_cleanup",
-    ]
-    calls = {
-        node.func.id: node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
+    )
+    assert GATE_LAYOUT_REQUIRED_PASS_IDS == GATE_LAYOUT_PASS_IDS[1:]
+    assert len(helper.body) == 1
+    statement = helper.body[0]
+    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    assert statement.value.func.id == "run_gate_layout"
+    assert len(statement.value.args) == 1
+    assert isinstance(statement.value.args[0], ast.Name)
+    assert statement.value.args[0].id == "gate_layout_context"
+    assert len(statement.value.keywords) == 1
+    policy_keyword = statement.value.keywords[0]
+    assert policy_keyword.arg == "include_mixed_attention"
+    assert isinstance(policy_keyword.value, ast.Name)
+    assert policy_keyword.value.id == "include_mixed_attention"
 
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+    assert helper.args.args == []
+    assert [argument.arg for argument in helper.args.kwonlyargs] == [
+        "include_mixed_attention"
+    ]
+    assert len(helper.args.kw_defaults) == 1
+    assert isinstance(helper.args.kw_defaults[0], ast.Constant)
+    assert helper.args.kw_defaults[0].value is True
 
     helper_invocations = [
         node
@@ -5084,7 +6696,11 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_gate_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 2
+    assert (
+        len(helper_invocations)
+        + _orchestrated_pass_count("_run_gate_layout_pass_cluster")
+        == 2
+    )
     omitted_mixed_attention = [
         call
         for call in helper_invocations
@@ -5255,18 +6871,43 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
             assert scope_keyword.value.id == "state_scope"
 
     channel_helper_name = "_run_channel_shuffle_gather_layout_pass_cluster"
-    _assert_helper(
-        channel_helper_name,
-        [
-            "run_two_way_channel_shuffle_cleanup",
-            "run_nhwc_channel_shuffle_cleanup",
-            "run_nchw_channel_shuffle_cleanup",
-            "run_transpose_gather_axis_cleanup",
-            "run_layout_transpose_cleanup",
-            "run_transpose_unary_fanout_bridge_cleanup",
-            "run_transpose_unary_binary_fanout_bridge_cleanup",
-        ],
+    channel_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == channel_helper_name
     )
+    assert CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS == (
+        *CHANNEL_SHUFFLE_GATHER_LEADING_PASS_IDS,
+        *CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
+    )
+    assert CHANNEL_SHUFFLE_GATHER_PASS_IDS == (
+        *CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
+        *CHANNEL_SHUFFLE_GATHER_POST_PASS_IDS,
+    )
+    assert len(channel_helper.body) == 1
+    channel_statement = channel_helper.body[0]
+    assert isinstance(channel_statement, ast.Expr)
+    assert isinstance(channel_statement.value, ast.Call)
+    assert isinstance(channel_statement.value.func, ast.Name)
+    assert channel_statement.value.func.id == "run_channel_shuffle_gather"
+    assert len(channel_statement.value.args) == 1
+    assert isinstance(channel_statement.value.args[0], ast.Name)
+    assert channel_statement.value.args[0].id == "channel_shuffle_gather_context"
+    assert [keyword.arg for keyword in channel_statement.value.keywords] == [
+        "include_two_way_shuffle",
+        "include_nhwc_shuffle",
+        "include_post_gather_cleanup",
+    ]
+    assert [argument.arg for argument in channel_helper.args.kwonlyargs] == [
+        "include_two_way_shuffle",
+        "include_nhwc_shuffle",
+        "include_post_gather_cleanup",
+    ]
+    assert [
+        value.value
+        for value in channel_helper.args.kw_defaults
+        if isinstance(value, ast.Constant)
+    ] == [True, True, False]
     channel_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -5274,7 +6915,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == channel_helper_name
     ]
-    assert len(channel_invocations) == 3
+    assert len(channel_invocations) + _orchestrated_pass_count(channel_helper_name) == 3
     assert sum(
         any(
             keyword.arg == "include_post_gather_cleanup"
@@ -5303,15 +6944,26 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
     )
 
     unary_helper_name = "_run_transpose_unary_fanout_layout_pass_cluster"
-    _assert_helper(
-        unary_helper_name,
-        [
-            "run_layout_transpose_cleanup",
-            "run_transpose_unary_passthrough_cleanup",
-            "run_transpose_unary_fanout_bridge_cleanup",
-            "run_transpose_unary_binary_fanout_bridge_cleanup",
-        ],
+    expected_unary_order = [
+        "run_layout_transpose_cleanup",
+        "run_transpose_unary_passthrough_cleanup",
+        "run_transpose_unary_fanout_bridge_cleanup",
+        "run_transpose_unary_binary_fanout_bridge_cleanup",
+    ]
+    assert tuple(expected_unary_order) == TRANSPOSE_UNARY_FANOUT_PASS_IDS
+    unary_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == unary_helper_name
     )
+    unary_helper_calls = [
+        node
+        for node in ast.walk(unary_helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_transpose_unary_fanout"
+    ]
+    assert len(unary_helper_calls) == 1
     unary_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -5319,7 +6971,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == unary_helper_name
     ]
-    assert len(unary_invocations) == 2
+    assert len(unary_invocations) + _orchestrated_pass_count(unary_helper_name) == 2
     post_qdq_invocations = [
         call
         for call in unary_invocations
@@ -5464,26 +7116,15 @@ def test_lowerer_boundary_batchmatmul_unary_pair_reuses_pass_state_scope() -> No
         "run_boundary_input_batchmatmul_cleanup",
         "run_input_unary_passthrough_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        and node.func.id == "run_boundary_batchmatmul_unary"
+    ]
+    assert len(helper_calls) == 1
 
     helper_invocations = [
         node
@@ -5492,7 +7133,7 @@ def test_lowerer_boundary_batchmatmul_unary_pair_reuses_pass_state_scope() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 1
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 1
 
 
 def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
@@ -5515,26 +7156,15 @@ def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
         "run_channel_slice_merge_layout_cleanup",
         "run_pad_mul_layout_cleanup",
     ]
-    calls = {
-        node.func.id: node
+    assert tuple(expected_order) == CHANNEL_SLICE_PAD_MUL_PASS_IDS
+    helper_calls = [
+        node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in expected_order
-    }
-
-    assert [
-        call.func.id
-        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-    ] == expected_order
-    for name in expected_order:
-        scope_keyword = next(
-            keyword
-            for keyword in calls[name].keywords
-            if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "state_scope"
+        and node.func.id == "run_channel_slice_pad_mul"
+    ]
+    assert len(helper_calls) == 1
 
     helper_invocations = [
         node
@@ -5543,7 +7173,7 @@ def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 2
 
 
 def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
@@ -5557,52 +7187,48 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
 
-    def _helper_calls(
-        helper_name: str,
-        expected_order: list[str],
-    ) -> ast.FunctionDef:
-        helper = next(
-            node
-            for node in lowerer.body
-            if isinstance(node, ast.FunctionDef) and node.name == helper_name
-        )
-        calls = {
-            node.func.id: node
-            for node in ast.walk(helper)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in expected_order
-        }
-        assert [
-            call.func.id
-            for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
-        ] == expected_order
-        for name in expected_order:
-            scope_keyword = next(
-                keyword
-                for keyword in calls[name].keywords
-                if keyword.arg == "state_scope"
-            )
-            assert isinstance(scope_keyword.value, ast.Name)
-            assert scope_keyword.value.id == "state_scope"
-        return helper
-
     long_helper_name = "_run_singleton_reshape_layout_pass_cluster"
-    _helper_calls(
-        long_helper_name,
-        [
-            "run_layout_transpose_cleanup",
-            "run_singleton_channel_transpose_cleanup",
-            "run_duplicate_fanout_cleanup",
-            "run_singleton_reshape_layout_cleanup",
-            "run_singleton_maxpool_layout_cleanup",
-            "run_flatten_concat_reshape_cleanup",
-            "run_consecutive_reshape_cleanup",
-            "run_squeeze_reshape_identity_cleanup",
-            "run_singleton_spatial_reshape_cleanup",
-            "run_multi_branch_gate_layout_cleanup",
-        ],
+    long_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == long_helper_name
     )
+    assert SINGLETON_RESHAPE_BASE_PASS_IDS == (
+        *SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+    )
+    assert SINGLETON_RESHAPE_LAYOUT_MULTI_PASS_IDS == (
+        *SINGLETON_RESHAPE_LAYOUT_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_PASS_IDS,
+        *SINGLETON_RESHAPE_MULTI_BRANCH_PASS_IDS,
+    )
+    assert SINGLETON_RESHAPE_DUPLICATE_BASE_PASS_IDS == (
+        *SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+        *SINGLETON_RESHAPE_DUPLICATE_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+    )
+    assert SINGLETON_RESHAPE_PASS_IDS == (
+        *SINGLETON_RESHAPE_LAYOUT_PASS_IDS,
+        *SINGLETON_RESHAPE_PREFIX_PASS_IDS,
+        *SINGLETON_RESHAPE_DUPLICATE_PASS_IDS,
+        *SINGLETON_RESHAPE_BASE_TAIL_PASS_IDS,
+        *SINGLETON_RESHAPE_MULTI_BRANCH_PASS_IDS,
+    )
+    assert len(long_helper.body) == 1
+    long_statement = long_helper.body[0]
+    assert isinstance(long_statement, ast.Expr)
+    assert isinstance(long_statement.value, ast.Call)
+    assert isinstance(long_statement.value.func, ast.Name)
+    assert long_statement.value.func.id == "run_singleton_reshape"
+    assert len(long_statement.value.args) == 1
+    assert isinstance(long_statement.value.args[0], ast.Name)
+    assert long_statement.value.args[0].id == "singleton_reshape_context"
+    assert [keyword.arg for keyword in long_statement.value.keywords] == [
+        "include_layout_transpose",
+        "include_duplicate_fanout",
+        "include_multi_branch_gate",
+        "include_spatial_concat_post_transpose",
+    ]
     long_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -5643,18 +7269,30 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     ) == 1
 
     short_helper_name = "_run_singleton_consecutive_reshape_pass_cluster"
-    short_helper = _helper_calls(
-        short_helper_name,
-        [
-            "run_singleton_channel_transpose_cleanup",
-            "run_duplicate_fanout_cleanup",
-            "run_consecutive_reshape_cleanup",
-        ],
+    assert SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS == (
+        "run_singleton_channel_transpose_cleanup",
+        "run_duplicate_fanout_cleanup",
+        "run_consecutive_reshape_cleanup",
+    )
+    short_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == short_helper_name
     )
     assert [argument.arg for argument in short_helper.args.args] == [
         "target_model_ir",
         "target_layout_state",
     ]
+    assert len(short_helper.body) == 1
+    short_statement = short_helper.body[0]
+    assert isinstance(short_statement, ast.Expr)
+    assert isinstance(short_statement.value, ast.Call)
+    assert isinstance(short_statement.value.func, ast.Name)
+    assert short_statement.value.func.id == "run_singleton_consecutive_reshape"
+    assert len(short_statement.value.args) == 1
+    assert isinstance(short_statement.value.args[0], ast.Call)
+    assert isinstance(short_statement.value.args[0].func, ast.Name)
+    assert short_statement.value.args[0].func.id == "ModelIRPassContext"
     short_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -6795,7 +8433,7 @@ def test_window_reverse_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 2
     for call in production_calls:
         layout_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "layout_state"
@@ -8008,19 +9646,533 @@ def test_expand_squeeze_pre_ops_use_differential_graph_index_insertion() -> None
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    source = lowering_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    function_node = next(
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper = next(
         node
-        for node in tree.body
+        for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_replace_expand_dims_and_squeeze_with_reshape"
     )
-    function_source = ast.get_source_segment(source, function_node)
-    assert function_source is not None
-    assert "model_ir.operators =" not in function_source
-    assert "ModelIRGraphIndex(model_ir)" in function_source
-    assert "graph_index.insert_operator(" in function_source
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_replace_expand_dims_and_squeeze_with_reshape_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "expand_squeeze_reshape.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "replace_expand_dims_and_squeeze_with_reshape"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert "model_ir.operators =" not in owner_function_source
+    assert "ModelIRGraphIndex(model_ir)" in owner_function_source
+    assert "graph_index.insert_operator(" in owner_function_source
+    assert "_prune_unused_tensors(" in owner_function_source
+    assert "layout_state.sync_from_model_ir(model_ir)" in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
+def test_rank4_binary_layout_adapter_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_repair_rank4_binary_layout_mismatch_with_transpose_adapter"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 4
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_layout_adapter.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "repair_rank4_binary_layout_mismatch_with_transpose_adapter"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert "model_ir.operators.insert(" in owner_function_source
+    assert "_replace_operator_input_at(" in owner_function_source
+    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
+def test_rank4_binary_singleton_adapter_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_repair_rank4_binary_singleton_broadcast_layout_mismatch"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_repair_rank4_binary_singleton_broadcast_layout_mismatch_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 4
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_layout_adapter.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "repair_rank4_binary_singleton_broadcast_layout_mismatch"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert "np.broadcast_shapes" in owner_function_source
+    assert 'op_type="TRANSPOSE"' in owner_function_source
+    assert 'op_type="RESHAPE"' in owner_function_source
+    assert "_replace_operator_input_at(" in owner_function_source
+    assert "if repaired > 0:" in owner_function_source
+    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
+def test_rank4_channelwise_broadcast_constant_repair_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = (
+        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
+    )
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout_pass"
+    ]
+    assert len(dispatches) == 1
+    assert any(
+        keyword.arg == "graph_index"
+        for call in dispatches
+        for keyword in call.keywords
+    )
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 3
+
+    convergence = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_indexed_binary_layout_convergence"
+    )
+    convergence_calls = [
+        node
+        for node in ast.walk(convergence)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(convergence_calls) == 1
+    assert any(
+        keyword.arg == "graph_index"
+        for call in convergence_calls
+        for keyword in call.keywords
+    )
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_layout_adapter.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    assert "ModelIRGraphIndex(model_ir)" in owner_function_source
+    assert "graph_index.operator_indices_for_types(binary_ops)" in owner_function_source
+    assert "graph_index.producer(name)" in owner_function_source
+    assert "graph_index=graph_index" in owner_function_source
+    assert "_set_operator_inputs(" in owner_function_source
+    assert "lower_from_onnx2tf" not in owner_source
+
+
+def test_convpool_output_passthrough_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_optimize_convpool_output_transpose_nhwc_passthrough_chains_pass"
+    ]
+    assert len(dispatches) == 1
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "convpool_output_passthrough_compat.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "optimize_convpool_output_transpose_nhwc_passthrough_chains"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    call_names = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in call_names
+    assert "_build_tensor_producer_map" in call_names
+    assert "_set_operator_inputs" in call_names
+    assert "_set_operator_outputs" in call_names
+    assert "_replace_tensor_inputs" in call_names
+    assert "_prune_unused_tensors" in call_names
+    assert "del model_ir.operators[int(pre_idx)]" in owner_function_source
+    prevalidation_offset = owner_function_source.index(
+        "external_runtime_input_nhwc_shapes"
+    )
+    assert prevalidation_offset < owner_function_source.index(
+        "channel_last_hint_names.add(str(pre_input_name))"
+    )
+    assert prevalidation_offset < owner_function_source.index(
+        "_set_operator_inputs("
+    )
+    assert "lower_from_onnx2tf" not in owner_source
+
+    focused_path = (
+        REPO_ROOT
+        / "tests"
+        / "test_flatbuffer_direct_convpool_output_passthrough_layout.py"
+    )
+    assert focused_path.is_file()
+    giant_source = (
+        REPO_ROOT / "tests" / "test_tflite_builder_direct.py"
+    ).read_text(encoding="utf-8")
+    assert wrapper_name not in giant_source
+
+
+def test_mean_hardsigmoid_muladd_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_optimize_transpose_mean_hardsigmoid_muladd_chains"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_optimize_transpose_mean_hardsigmoid_muladd_chains_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "mean_hardsigmoid_muladd_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "optimize_transpose_mean_hardsigmoid_muladd_chains"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    call_names = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in call_names
+    assert "_build_tensor_producer_map" in call_names
+    assert "_read_const_ints_from_tensor" in call_names
+    assert "_write_const_ints_to_tensor" in call_names
+    assert "_replace_operator_input_at" in call_names
+    assert "_prune_unused_tensors" in call_names
+    assert "model_ir.operators.insert(" in owner_function_source
+    assert "del model_ir.operators[int(remove_idx)]" in owner_function_source
+    axes_validation = owner_function_source.index(
+        "rank = len(list(q0_raw_tensor.shape))"
+    )
+    public_output_guard = owner_function_source.index(
+        "if add0_out_name in model_ir.outputs:"
+    )
+    axes_write = owner_function_source.index(
+        "_write_const_ints_to_tensor(\n"
+        "                mean_axes_tensor,"
+    )
+    first_input_mutation = owner_function_source.index("_set_operator_inputs(")
+    first_metadata_mutation = owner_function_source.index(
+        "dq0_out_tensor.shape ="
+    )
+    assert public_output_guard < axes_validation
+    assert axes_validation < axes_write < first_input_mutation
+    assert axes_write < first_metadata_mutation
+    assert "lower_from_onnx2tf" not in owner_source
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+
+    focused_path = (
+        REPO_ROOT
+        / "tests"
+        / "test_flatbuffer_direct_mean_hardsigmoid_muladd_layout.py"
+    )
+    assert focused_path.is_file()
+    giant_source = (
+        REPO_ROOT / "tests" / "test_tflite_builder_direct.py"
+    ).read_text(encoding="utf-8")
+    assert wrapper_name not in giant_source
+
+
+def test_qlinear_concat_conv_has_one_module_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    wrapper_name = "_optimize_nhwc_propagation_qlinear_concat_conv"
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_optimize_nhwc_propagation_qlinear_concat_conv_pass"
+    ]
+    assert len(dispatches) == 1
+
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "qlinear_concat_conv_compat.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "optimize_nhwc_propagation_qlinear_concat_conv"
+    )
+    owner_function_source = ast.get_source_segment(owner_source, owner)
+    assert owner_function_source is not None
+    call_names = {
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" in call_names
+    assert "_build_tensor_producer_map" in call_names
+    assert "_read_transpose_perm" in call_names
+    assert "_set_operator_inputs" in call_names
+    assert "_replace_tensor_inputs" in call_names
+    assert "_prune_unused_tensors" in call_names
+    assert "del model_ir.operators[int(remove_idx)]" in owner_function_source
+    required_output_validation = owner_function_source.index(
+        "if concat_out_tensor is None or q_out_tensor is None:"
+    )
+    public_pending_tensor_guard = owner_function_source.index(
+        "str(tensor_name) in model_outputs\n"
+        "                for tensor_name in pending_tensor_shape_updates"
+    )
+    first_input_mutation = owner_function_source.index(
+        "_set_operator_inputs("
+    )
+    assert public_pending_tensor_guard < required_output_validation
+    assert required_output_validation < first_input_mutation
+    assert "lower_from_onnx2tf" not in owner_source
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+
+    focused_path = (
+        REPO_ROOT / "tests" / "test_flatbuffer_direct_qlinear_layout.py"
+    )
+    assert focused_path.is_file()
+    giant_source = (
+        REPO_ROOT / "tests" / "test_tflite_builder_direct.py"
+    ).read_text(encoding="utf-8")
+    assert wrapper_name not in giant_source
 
 
 def test_dynamic_range_quantization_uses_differential_graph_index() -> None:
@@ -8202,8 +10354,10 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         )
         if isinstance(node, ast.Name)
     }
-    assert "run_boundary_input_layout_cleanup" in lowerer_names
-    assert "run_boundary_input_batchmatmul_cleanup" in lowerer_names
+    assert "run_boundary_input_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_boundary_input_layout_cleanup") == 1
+    assert "run_boundary_input_batchmatmul_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_boundary_input_batchmatmul_cleanup") == 1
     assert "run_boundary_input_normalization_cleanup" in lowerer_names
 
     graph_helpers = {
@@ -8245,7 +10399,8 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
             node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
-    assert "run_channel_slice_merge_layout_cleanup" in lowerer_names
+    assert "run_channel_slice_merge_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_channel_slice_merge_layout_cleanup") == 1
 
     boundary_chain_functions = {
         "_optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains",
@@ -8281,8 +10436,10 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Name)
     }
-    assert "run_input_unary_passthrough_cleanup" in lowerer_names
-    assert "run_hard_activation_passthrough_cleanup" in lowerer_names
+    assert "run_input_unary_passthrough_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_input_unary_passthrough_cleanup") == 1
+    assert "run_hard_activation_passthrough_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_hard_activation_passthrough_cleanup") == 2
 
 
 def test_graph_cleanup_rewrites_have_single_owner() -> None:
@@ -8352,7 +10509,11 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         )
         if isinstance(node, ast.Name)
     }
-    assert "run_clamp_cleanup" in lowerer_names
+    assert (
+        int("run_clamp_cleanup" in lowerer_names)
+        + _orchestrated_pass_count("run_clamp_cleanup")
+        == 1
+    )
     assert "run_consecutive_reshape_cleanup" in lowerer_names
     assert "run_squeeze_reshape_identity_cleanup" in lowerer_names
 
@@ -8493,11 +10654,7 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_optimize_transpose_unary_passthrough_chains",
         "run_layout_transpose_cleanup",
         "run_trailing_output_transpose_cleanup",
-        "run_transpose_gather_axis_cleanup",
         "run_transpose_gather_channel_fanout_cleanup",
-        "run_transpose_unary_binary_fanout_bridge_cleanup",
-        "run_transpose_unary_fanout_bridge_cleanup",
-        "run_transpose_unary_passthrough_cleanup",
     }
 
 
@@ -8559,11 +10716,12 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
     ]
     assert len(imports) == 1
     assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_nchw_channel_shuffle_cleanup",
-        "run_nhwc_channel_shuffle_cleanup",
         "run_stale_nchw_channel_shuffle_repair",
-        "run_two_way_channel_shuffle_cleanup",
     }
+    for pass_id in CHANNEL_SHUFFLE_GATHER_LEADING_PASS_IDS:
+        assert _orchestrated_pass_count(pass_id) == 1
+    for pass_id in CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS:
+        assert _orchestrated_pass_count(pass_id) >= 1
 
 
 def test_mean_layout_rewrites_have_single_owner() -> None:
@@ -8606,10 +10764,8 @@ def test_mean_layout_rewrites_have_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.mean_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_mean_mul_add_conv_layout_cleanup",
-        "run_transpose_mean_passthrough_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == function_names
+    assert _orchestrated_pass_count("run_transpose_mean_passthrough_cleanup") == 1
 
 
 def test_layernorm_layout_rewrites_have_single_owner() -> None:
@@ -8702,10 +10858,8 @@ def test_terminal_mean_layout_rewrite_has_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.terminal_mean_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_terminal_mean_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert _orchestrated_pass_count("run_terminal_mean_layout_cleanup") == 1
 
 
 def test_se_layout_rewrites_have_single_owner() -> None:
@@ -8774,9 +10928,9 @@ def test_se_layout_rewrites_have_single_owner() -> None:
     ]
     assert len(imports) == 1
     assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_se_conv_layout_cleanup",
         "run_se_fc_layout_cleanup",
     }
+    assert _orchestrated_pass_count("run_se_conv_layout_cleanup") == 1
 
 
 def test_elementwise_gate_layout_rewrites_have_single_owner() -> None:
@@ -8838,9 +10992,8 @@ def test_elementwise_gate_layout_rewrites_have_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.elementwise_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_elementwise_gate_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == function_names
+    assert _orchestrated_pass_count("run_elementwise_gate_layout_cleanup") == 1
 
 
 def test_multi_branch_gate_layout_rewrite_has_single_owner() -> None:
@@ -8896,10 +11049,8 @@ def test_multi_branch_gate_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.multi_branch_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_multi_branch_gate_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert _orchestrated_pass_count("run_multi_branch_gate_layout_cleanup") == 1
 
 
 def test_complementary_gate_layout_rewrites_have_single_owner() -> None:
@@ -8961,9 +11112,8 @@ def test_complementary_gate_layout_rewrites_have_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.dual_postconv_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_dual_postconv_gate_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == function_names
+    assert _orchestrated_pass_count("run_dual_postconv_gate_layout_cleanup") == 1
 
 
 def test_ndhwc_gate_layout_rewrites_have_single_owner() -> None:
@@ -9096,7 +11246,11 @@ def test_cost_volume_scatter_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_cost_volume_scatter_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_cost_volume_scatter_layout_cleanup")
+        == 2
+    )
 
 
 def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
@@ -9150,10 +11304,7 @@ def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.add_concat_suffix_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_add_concat_suffix_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
     production_calls = [
         call
         for call in ast.walk(lowering_tree)
@@ -9169,7 +11320,11 @@ def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_add_concat_suffix_layout_cleanup"
     ]
-    assert len(runner_calls) == 1
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_add_concat_suffix_layout_cleanup")
+        == 1
+    )
 
 
 def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
@@ -9223,10 +11378,7 @@ def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.dual_mul_concat_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_dual_mul_concat_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
     production_calls = [
         call
         for call in ast.walk(lowering_tree)
@@ -9242,7 +11394,11 @@ def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_mul_concat_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_dual_mul_concat_layout_cleanup")
+        == 2
+    )
 
 
 def test_axis3_const_concat_layout_rewrite_has_single_owner() -> None:
@@ -9390,7 +11546,13 @@ def test_dequant_concat_quantize_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_dequant_concat_quantize_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count(
+            "run_dequant_concat_quantize_layout_cleanup"
+        )
+        == 2
+    )
 
 
 def test_concat_unary_conv_layout_rewrite_has_single_owner() -> None:
@@ -9464,7 +11626,11 @@ def test_concat_unary_conv_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_concat_unary_conv_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_concat_unary_conv_layout_cleanup")
+        == 2
+    )
 
 
 def test_spp_layout_rewrite_has_single_owner() -> None:
@@ -9538,7 +11704,7 @@ def test_spp_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_spp_layout_cleanup"
     ]
-    assert len(runner_calls) == 4
+    assert len(runner_calls) + _orchestrated_pass_count("run_spp_layout_cleanup") == 4
 
 
 def test_ndhwc_pre_concat_layout_rewrite_has_single_owner() -> None:
@@ -9611,7 +11777,7 @@ def test_ndhwc_pre_concat_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_ndhwc_concat_layout_cleanup"
     ]
-    assert len(runner_calls) == 2
+    assert len(runner_calls) + _orchestrated_pass_count("run_ndhwc_concat_layout_cleanup") == 2
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -9687,8 +11853,71 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and node.func.id in runner_names
     ]
 
-    assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 118
+    orchestrated_runner_names = runner_names & ORCHESTRATED_PASS_IDS
+    assert orchestrated_runner_names == {
+        "run_clamp_cleanup",
+        "run_consecutive_reshape_cleanup",
+        "run_concat_unary_conv_layout_cleanup",
+        "run_dequant_concat_quantize_layout_cleanup",
+        "run_hard_activation_passthrough_cleanup",
+        "run_layout_transpose_cleanup",
+        "run_maximum_zero_relu_cleanup",
+        "run_ndhwc_concat_layout_cleanup",
+        "run_quantized_reshape_cleanup",
+        "run_spp_layout_cleanup",
+        "run_squeeze_reshape_identity_cleanup",
+        "run_singleton_maxpool_layout_cleanup",
+        "run_trailing_output_transpose_cleanup",
+        "run_transpose_unary_passthrough_cleanup",
+        "run_transpose_unary_fanout_bridge_cleanup",
+        "run_transpose_unary_binary_fanout_bridge_cleanup",
+        "run_boundary_input_batchmatmul_cleanup",
+        "run_input_unary_passthrough_cleanup",
+        "run_channel_slice_merge_layout_cleanup",
+        "run_pad_mul_layout_cleanup",
+        "run_normalization_pad_layout_cleanup",
+        "run_mixed_attention_layout_cleanup",
+        "run_qkv_attention_prefix_cleanup",
+        "run_qkv_attention_bridge_cleanup",
+        "run_duplicate_fanout_cleanup",
+        "run_quantized_prelu_cleanup",
+        "run_constant_input_fold_cleanup",
+        "run_redundant_cast_cleanup",
+        "run_transpose_gather_axis_cleanup",
+        "run_se_fc_layout_cleanup",
+        "run_transpose_gather_channel_fanout_cleanup",
+        "run_dual_mul_concat_layout_cleanup",
+        "run_boundary_input_layout_cleanup",
+        "run_pad_layout_cleanup",
+        "run_mean_mul_add_conv_layout_cleanup",
+        "run_singleton_channel_transpose_cleanup",
+        "run_elementwise_gate_layout_cleanup",
+        "run_dual_postconv_gate_layout_cleanup",
+        "run_ndhwc_gate_layout_cleanup",
+        "run_cost_volume_scatter_layout_cleanup",
+        "run_add_concat_suffix_layout_cleanup",
+        "run_nchw_channel_shuffle_cleanup",
+        "run_nhwc_channel_shuffle_cleanup",
+        "run_two_way_channel_shuffle_cleanup",
+        "run_transpose_mean_passthrough_cleanup",
+        "run_layernorm_statistics_layout_cleanup",
+        "run_terminal_mean_layout_cleanup",
+        "run_se_conv_layout_cleanup",
+        "run_conv_attention_layout_cleanup",
+        "run_singleton_reshape_layout_cleanup",
+        "run_flatten_concat_reshape_cleanup",
+        "run_singleton_spatial_reshape_cleanup",
+        "run_multi_branch_gate_layout_cleanup",
+    }
+    direct_runner_names = {
+        call.func.id for call in calls if isinstance(call.func, ast.Name)
+    }
+    assert direct_runner_names | orchestrated_runner_names == runner_names
+    assert (
+        len(calls)
+        + sum(_orchestrated_pass_count(name) for name in runner_names)
+        == 120
+    )
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -9706,24 +11935,12 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_hard_activation_passthrough_cleanup"
     ]
-    assert len(hard_activation_calls) == 2
-    reverse_calls = [
-        call
-        for call in hard_activation_calls
-        if any(
-            keyword.arg == "reverse_hardsigmoid_order"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is True
-            for keyword in call.keywords
-        )
-    ]
-    assert len(reverse_calls) == 1
-    assert any(
-        keyword.arg == "include_hardswish"
-        and isinstance(keyword.value, ast.Constant)
-        and keyword.value.value is False
-        for keyword in reverse_calls[0].keywords
+    assert (
+        len(hard_activation_calls)
+        + _orchestrated_pass_count("run_hard_activation_passthrough_cleanup")
+        == 2
     )
+    assert hard_activation_calls == []
 
     reshape_only_duplicate_calls = [
         call
@@ -9737,7 +11954,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
             for keyword in call.keywords
         )
     ]
-    assert len(reshape_only_duplicate_calls) == 2
+    assert (
+        len(reshape_only_duplicate_calls)
+        + SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS.count(
+            "run_duplicate_fanout_cleanup"
+        )
+        + SINGLETON_RESHAPE_PASS_IDS.count("run_duplicate_fanout_cleanup")
+        == 2
+    )
 
     boundary_batchmatmul_calls = [
         call
@@ -9745,7 +11969,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_boundary_input_batchmatmul_cleanup"
     ]
-    assert len(boundary_batchmatmul_calls) == 1
+    assert (
+        len(boundary_batchmatmul_calls)
+        + _orchestrated_pass_count("run_boundary_input_batchmatmul_cleanup")
+        == 1
+    )
 
     pad_mul_calls = [
         call
@@ -9753,7 +11981,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_pad_mul_layout_cleanup"
     ]
-    assert len(pad_mul_calls) == 1
+    assert (
+        len(pad_mul_calls)
+        + _orchestrated_pass_count("run_pad_mul_layout_cleanup")
+        == 1
+    )
 
     channel_slice_merge_calls = [
         call
@@ -9761,7 +11993,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_channel_slice_merge_layout_cleanup"
     ]
-    assert len(channel_slice_merge_calls) == 1
+    assert (
+        len(channel_slice_merge_calls)
+        + _orchestrated_pass_count("run_channel_slice_merge_layout_cleanup")
+        == 1
+    )
 
     boundary_normalization_calls = [
         call
@@ -9777,7 +12013,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_quantized_prelu_cleanup"
     ]
-    assert len(quantized_prelu_calls) == 2
+    assert (
+        len(quantized_prelu_calls)
+        + _orchestrated_pass_count("run_quantized_prelu_cleanup")
+        == 2
+    )
 
     quantized_reshape_calls = [
         call
@@ -9785,7 +12025,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_quantized_reshape_cleanup"
     ]
-    assert len(quantized_reshape_calls) == 2
+    assert (
+        len(quantized_reshape_calls)
+        + _orchestrated_pass_count("run_quantized_reshape_cleanup")
+        == 2
+    )
 
     singleton_maxpool_calls = [
         call
@@ -9793,7 +12037,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_maxpool_layout_cleanup"
     ]
-    assert len(singleton_maxpool_calls) == 2
+    assert (
+        len(singleton_maxpool_calls)
+        + _orchestrated_pass_count("run_singleton_maxpool_layout_cleanup")
+        == 2
+    )
 
     singleton_reshape_calls = [
         call
@@ -9801,7 +12049,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_reshape_layout_cleanup"
     ]
-    assert len(singleton_reshape_calls) == 1
+    assert (
+        len(singleton_reshape_calls)
+        + _orchestrated_pass_count("run_singleton_reshape_layout_cleanup")
+        == 1
+    )
 
     consecutive_reshape_calls = [
         call
@@ -9809,7 +12061,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_consecutive_reshape_cleanup"
     ]
-    assert len(consecutive_reshape_calls) == 4
+    assert (
+        len(consecutive_reshape_calls)
+        + _orchestrated_pass_count("run_consecutive_reshape_cleanup")
+        == 4
+    )
 
     flatten_concat_reshape_calls = [
         call
@@ -9817,7 +12073,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_flatten_concat_reshape_cleanup"
     ]
-    assert len(flatten_concat_reshape_calls) == 1
+    assert (
+        len(flatten_concat_reshape_calls)
+        + _orchestrated_pass_count("run_flatten_concat_reshape_cleanup")
+        == 1
+    )
 
     singleton_spatial_reshape_calls = [
         call
@@ -9825,7 +12085,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_spatial_reshape_cleanup"
     ]
-    assert len(singleton_spatial_reshape_calls) == 1
+    assert (
+        len(singleton_spatial_reshape_calls)
+        + _orchestrated_pass_count("run_singleton_spatial_reshape_cleanup")
+        == 1
+    )
 
     singleton_channel_transpose_calls = [
         call
@@ -9833,7 +12097,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_channel_transpose_cleanup"
     ]
-    assert len(singleton_channel_transpose_calls) == 2
+    assert (
+        len(singleton_channel_transpose_calls)
+        + _orchestrated_pass_count("run_singleton_channel_transpose_cleanup")
+        == 2
+    )
 
     layout_transpose_calls = [
         call
@@ -9841,7 +12109,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_layout_transpose_cleanup"
     ]
-    assert len(layout_transpose_calls) == 12
+    assert (
+        len(layout_transpose_calls)
+        + _orchestrated_pass_count("run_layout_transpose_cleanup")
+        == 12
+    )
 
     transpose_gather_axis_calls = [
         call
@@ -9849,7 +12121,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_gather_axis_cleanup"
     ]
-    assert len(transpose_gather_axis_calls) == 3
+    assert (
+        len(transpose_gather_axis_calls)
+        + _orchestrated_pass_count("run_transpose_gather_axis_cleanup")
+        == 3
+    )
 
     transpose_gather_channel_fanout_calls = [
         call
@@ -9857,7 +12133,13 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_gather_channel_fanout_cleanup"
     ]
-    assert len(transpose_gather_channel_fanout_calls) == 3
+    assert (
+        len(transpose_gather_channel_fanout_calls)
+        + _orchestrated_pass_count(
+            "run_transpose_gather_channel_fanout_cleanup"
+        )
+        == 3
+    )
 
     transpose_unary_calls = [
         call
@@ -9865,7 +12147,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_passthrough_cleanup"
     ]
-    assert len(transpose_unary_calls) == 3
+    assert (
+        len(transpose_unary_calls)
+        + _orchestrated_pass_count("run_transpose_unary_passthrough_cleanup")
+        == 3
+    )
 
     transpose_unary_fanout_calls = [
         call
@@ -9873,7 +12159,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_fanout_calls) == 3
+    assert (
+        len(transpose_unary_fanout_calls)
+        + _orchestrated_pass_count("run_transpose_unary_fanout_bridge_cleanup")
+        == 3
+    )
 
     transpose_unary_binary_fanout_calls = [
         call
@@ -9881,7 +12171,13 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_binary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_binary_fanout_calls) == 2
+    assert (
+        len(transpose_unary_binary_fanout_calls)
+        + _orchestrated_pass_count(
+            "run_transpose_unary_binary_fanout_bridge_cleanup"
+        )
+        == 2
+    )
 
     trailing_output_transpose_calls = [
         call
@@ -9889,7 +12185,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_trailing_output_transpose_cleanup"
     ]
-    assert len(trailing_output_transpose_calls) == 1
+    assert (
+        len(trailing_output_transpose_calls)
+        + _orchestrated_pass_count("run_trailing_output_transpose_cleanup")
+        == 1
+    )
 
     nchw_channel_shuffle_calls = [
         call
@@ -9897,7 +12197,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_nchw_channel_shuffle_cleanup"
     ]
-    assert len(nchw_channel_shuffle_calls) == 1
+    assert (
+        len(nchw_channel_shuffle_calls)
+        + _orchestrated_pass_count("run_nchw_channel_shuffle_cleanup")
+        == 1
+    )
 
     nhwc_channel_shuffle_calls = [
         call
@@ -9905,7 +12209,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_nhwc_channel_shuffle_cleanup"
     ]
-    assert len(nhwc_channel_shuffle_calls) == 1
+    assert (
+        len(nhwc_channel_shuffle_calls)
+        + _orchestrated_pass_count("run_nhwc_channel_shuffle_cleanup")
+        == 1
+    )
 
     two_way_channel_shuffle_calls = [
         call
@@ -9913,7 +12221,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_two_way_channel_shuffle_cleanup"
     ]
-    assert len(two_way_channel_shuffle_calls) == 1
+    assert (
+        len(two_way_channel_shuffle_calls)
+        + _orchestrated_pass_count("run_two_way_channel_shuffle_cleanup")
+        == 1
+    )
 
     stale_nchw_channel_shuffle_calls = [
         call
@@ -9929,7 +12241,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_mean_passthrough_cleanup"
     ]
-    assert len(transpose_mean_calls) == 1
+    assert (
+        len(transpose_mean_calls)
+        + _orchestrated_pass_count("run_transpose_mean_passthrough_cleanup")
+        == 1
+    )
 
     mean_mul_add_conv_calls = [
         call
@@ -9937,7 +12253,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_mean_mul_add_conv_layout_cleanup"
     ]
-    assert len(mean_mul_add_conv_calls) == 2
+    assert (
+        len(mean_mul_add_conv_calls)
+        + _orchestrated_pass_count("run_mean_mul_add_conv_layout_cleanup")
+        == 2
+    )
 
     layernorm_statistics_calls = [
         call
@@ -9945,7 +12265,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_layernorm_statistics_layout_cleanup"
     ]
-    assert len(layernorm_statistics_calls) == 2
+    assert (
+        len(layernorm_statistics_calls)
+        + _orchestrated_pass_count("run_layernorm_statistics_layout_cleanup")
+        == 2
+    )
 
     terminal_mean_calls = [
         call
@@ -9953,7 +12277,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_terminal_mean_layout_cleanup"
     ]
-    assert len(terminal_mean_calls) == 1
+    assert (
+        len(terminal_mean_calls)
+        + _orchestrated_pass_count("run_terminal_mean_layout_cleanup")
+        == 1
+    )
 
     se_conv_calls = [
         call
@@ -9961,7 +12289,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_se_conv_layout_cleanup"
     ]
-    assert len(se_conv_calls) == 1
+    assert (
+        len(se_conv_calls)
+        + _orchestrated_pass_count("run_se_conv_layout_cleanup")
+        == 1
+    )
 
     se_fc_calls = [
         call
@@ -9969,7 +12301,23 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_se_fc_layout_cleanup"
     ]
-    assert len(se_fc_calls) == 3
+    assert (
+        len(se_fc_calls)
+        + _orchestrated_pass_count("run_se_fc_layout_cleanup")
+        == 3
+    )
+
+    conv_attention_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_conv_attention_layout_cleanup"
+    ]
+    assert (
+        len(conv_attention_calls)
+        + _orchestrated_pass_count("run_conv_attention_layout_cleanup")
+        == 1
+    )
 
     elementwise_gate_calls = [
         call
@@ -9977,7 +12325,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_elementwise_gate_layout_cleanup"
     ]
-    assert len(elementwise_gate_calls) == 1
+    assert (
+        len(elementwise_gate_calls)
+        + _orchestrated_pass_count("run_elementwise_gate_layout_cleanup")
+        == 1
+    )
 
     multi_branch_gate_calls = [
         call
@@ -9985,7 +12337,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_multi_branch_gate_layout_cleanup"
     ]
-    assert len(multi_branch_gate_calls) == 1
+    assert (
+        len(multi_branch_gate_calls)
+        + _orchestrated_pass_count("run_multi_branch_gate_layout_cleanup")
+        == 1
+    )
 
     dual_postconv_gate_calls = [
         call
@@ -9993,7 +12349,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_postconv_gate_layout_cleanup"
     ]
-    assert len(dual_postconv_gate_calls) == 1
+    assert (
+        len(dual_postconv_gate_calls)
+        + _orchestrated_pass_count("run_dual_postconv_gate_layout_cleanup")
+        == 1
+    )
 
     ndhwc_gate_calls = [
         call
@@ -10001,7 +12361,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_ndhwc_gate_layout_cleanup"
     ]
-    assert len(ndhwc_gate_calls) == 2
+    assert (
+        len(ndhwc_gate_calls)
+        + _orchestrated_pass_count("run_ndhwc_gate_layout_cleanup")
+        == 2
+    )
 
     cost_volume_scatter_calls = [
         call
@@ -10009,7 +12373,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_cost_volume_scatter_layout_cleanup"
     ]
-    assert len(cost_volume_scatter_calls) == 2
+    assert (
+        len(cost_volume_scatter_calls)
+        + _orchestrated_pass_count("run_cost_volume_scatter_layout_cleanup")
+        == 2
+    )
 
     add_concat_suffix_calls = [
         call
@@ -10017,7 +12385,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_add_concat_suffix_layout_cleanup"
     ]
-    assert len(add_concat_suffix_calls) == 1
+    assert (
+        len(add_concat_suffix_calls)
+        + _orchestrated_pass_count("run_add_concat_suffix_layout_cleanup")
+        == 1
+    )
 
     dual_mul_concat_calls = [
         call
@@ -10025,7 +12397,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_mul_concat_layout_cleanup"
     ]
-    assert len(dual_mul_concat_calls) == 2
+    assert (
+        len(dual_mul_concat_calls)
+        + _orchestrated_pass_count("run_dual_mul_concat_layout_cleanup")
+        == 2
+    )
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:
@@ -10201,10 +12577,13 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         )
         if isinstance(node, ast.Name)
     }
-    assert "run_conv_attention_layout_cleanup" in lowerer_names
+    assert "run_conv_attention_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_conv_attention_layout_cleanup") == 1
     assert "run_mixed_attention_layout_cleanup" in lowerer_names
-    assert "run_qkv_attention_bridge_cleanup" in lowerer_names
-    assert "run_qkv_attention_prefix_cleanup" in lowerer_names
+    assert "run_qkv_attention_bridge_cleanup" not in lowerer_names
+    assert "run_qkv_attention_prefix_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_qkv_attention_bridge_cleanup") == 1
+    assert _orchestrated_pass_count("run_qkv_attention_prefix_cleanup") == 1
     pass_source = pass_path.read_text(encoding="utf-8")
     assert "_build_tensor_consumer_map" not in pass_source
     assert "_build_tensor_producer_map" not in pass_source
@@ -10253,7 +12632,8 @@ def test_pad_layout_rewrites_have_single_owner() -> None:
     }
     assert "run_pad_layout_cleanup" in lowerer_names
     assert "run_normalization_pad_layout_cleanup" in lowerer_names
-    assert "run_pad_mul_layout_cleanup" in lowerer_names
+    assert "run_pad_mul_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_pad_mul_layout_cleanup") == 1
 
 
 def test_quantized_prelu_rewrites_have_single_owner() -> None:
@@ -10376,7 +12756,8 @@ def test_singleton_maxpool_rewrites_have_single_owner() -> None:
         for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Name)
     }
-    assert "run_singleton_maxpool_layout_cleanup" in lowerer_names
+    assert "run_singleton_maxpool_layout_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_singleton_maxpool_layout_cleanup") == 2
 
 
 def test_singleton_reshape_rewrites_have_single_owner() -> None:
@@ -10421,10 +12802,14 @@ def test_singleton_reshape_rewrites_have_single_owner() -> None:
         for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Name)
     }
-    assert "run_flatten_concat_reshape_cleanup" in lowerer_names
-    assert "run_singleton_reshape_layout_cleanup" in lowerer_names
-    assert "run_singleton_spatial_reshape_cleanup" in lowerer_names
-    assert "run_singleton_channel_transpose_cleanup" in lowerer_names
+    assert "run_flatten_concat_reshape_cleanup" not in lowerer_names
+    assert "run_singleton_reshape_layout_cleanup" not in lowerer_names
+    assert "run_singleton_spatial_reshape_cleanup" not in lowerer_names
+    assert "run_singleton_channel_transpose_cleanup" not in lowerer_names
+    assert _orchestrated_pass_count("run_flatten_concat_reshape_cleanup") == 1
+    assert _orchestrated_pass_count("run_singleton_reshape_layout_cleanup") == 1
+    assert _orchestrated_pass_count("run_singleton_spatial_reshape_cleanup") == 1
+    assert _orchestrated_pass_count("run_singleton_channel_transpose_cleanup") == 2
 
 
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:
@@ -12544,7 +14929,11 @@ def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == 2
+        assert (
+            len(production_calls)
+            + _orchestrated_pass_count(wrapper_name)
+            == 2
+        )
         for production_call in production_calls:
             layout_keyword = next(
                 keyword
@@ -12782,7 +15171,7 @@ def test_indexed_activation_passthrough_owner_is_bounded_and_transactional() -> 
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == expected_calls
+        assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == expected_calls
         for production_call in production_calls:
             layout_keyword = next(
                 keyword
@@ -12855,16 +15244,17 @@ def test_indexed_center_size_offset_owner_is_bounded_and_transactional() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_leakyrelu_passthrough_owner_is_bounded_and_transactional() -> None:
@@ -12928,16 +15318,17 @@ def test_indexed_leakyrelu_passthrough_owner_is_bounded_and_transactional() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_prelu_passthrough_owner_is_bounded_and_transactional() -> None:
@@ -12999,7 +15390,7 @@ def test_indexed_prelu_passthrough_owner_is_bounded_and_transactional() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13075,7 +15466,7 @@ def test_indexed_elementwise_concat_owner_is_bounded_and_transactional() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13145,7 +15536,7 @@ def test_indexed_singleton_gate_layout_owner_is_bounded_and_transactional() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13219,7 +15610,7 @@ def test_indexed_stridedslice_concat_owner_is_bounded_and_transactional() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13294,7 +15685,7 @@ def test_indexed_split_mixed_concat_owner_is_bounded_and_transactional() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13370,7 +15761,7 @@ def test_indexed_concat_input_adapter_owner_preserves_all_call_boundaries() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13392,10 +15783,20 @@ def test_indexed_pre_add_direct_unary_owner_precedes_compatibility_fallback() ->
         / "pre_add_direct_unary_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compatibility_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_add_layout.py"
+    )
+    compatibility_source = compatibility_path.read_text(encoding="utf-8")
+    compatibility_tree = ast.parse(compatibility_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
 
     assert "def _resolve_candidate(" in owner_source
     assert "def _resolve_branch(" in owner_source
@@ -13413,20 +15814,48 @@ def test_indexed_pre_add_direct_unary_owner_precedes_compatibility_fallback() ->
         assert model_name not in owner_source.lower()
 
     wrapper_name = "_optimize_transpose_pre_add_nhwc_chains"
-    dispatch_name = "_optimize_transpose_pre_add_direct_unary_nhwc_chains_pass"
+    compatibility_name = "optimize_transpose_pre_add_nhwc_chains"
+    compatibility_dispatch_name = (
+        "_optimize_transpose_pre_add_nhwc_chains_pass"
+    )
+    indexed_dispatch_name = (
+        "_optimize_transpose_pre_add_direct_unary_nhwc_chains_pass"
+    )
+    assert "lower_from_onnx2tf" not in compatibility_source
+    compatibility_owner = next(
+        node
+        for node in compatibility_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compatibility_name
+    )
+    first_call = next(
+        node
+        for node in ast.walk(compatibility_owner.body[1])
+        if isinstance(node, ast.Call)
+    )
+    assert isinstance(first_call.func, ast.Name)
+    assert first_call.func.id == indexed_dispatch_name
+    assert {keyword.arg for keyword in first_call.keywords} == {"layout_state"}
+    assert "_build_tensor_consumer_map" in compatibility_source
+    assert "_build_tensor_producer_map" in compatibility_source
+    assert "_prune_unused_tensors" in compatibility_source
+    assert "while True" in compatibility_source
+
     wrapper = next(
         node
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
     )
-    first_call = next(
+    wrapper_calls = [
         node
-        for node in ast.walk(wrapper.body[1])
+        for node in ast.walk(wrapper)
         if isinstance(node, ast.Call)
-    )
-    assert isinstance(first_call.func, ast.Name)
-    assert first_call.func.id == dispatch_name
-    assert {keyword.arg for keyword in first_call.keywords} == {"layout_state"}
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == compatibility_dispatch_name
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state"
+    }
 
     lowerer = next(
         node
@@ -13440,7 +15869,7 @@ def test_indexed_pre_add_direct_unary_owner_precedes_compatibility_fallback() ->
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 4
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13475,6 +15904,341 @@ def test_indexed_pre_add_direct_unary_owner_precedes_compatibility_fallback() ->
     ] == [wrapper_name]
 
 
+def test_dual_pre_add_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "dual_pre_add_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+
+    owner_name = (
+        "optimize_transpose_dual_pre_add_to_single_post_adapter_nhwc_chains"
+    )
+    wrapper_name = f"_{owner_name}"
+    dispatch_name = f"{wrapper_name}_pass"
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert sum(
+        isinstance(node, ast.FunctionDef) and node.name == owner_name
+        for node in owner_tree.body
+    ) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node for node in ast.walk(wrapper) if isinstance(node, ast.Call)
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == dispatch_name
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+
+
+def test_terminal_affine_fc_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_affine_fc_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    owner_name = "optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains"
+    wrapper_name = f"_{owner_name}"
+    dispatch_name = f"{wrapper_name}_pass"
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert sum(
+        isinstance(node, ast.FunctionDef) and node.name == owner_name
+        for node in owner_tree.body
+    ) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node for node in ast.walk(wrapper) if isinstance(node, ast.Call)
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == dispatch_name
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+
+
+def test_terminal_prelu_bmm_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_prelu_bmm_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    owner_name = (
+        "optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains"
+    )
+    wrapper_name = f"_{owner_name}"
+    dispatch_name = f"{wrapper_name}_pass"
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert sum(
+        isinstance(node, ast.FunctionDef) and node.name == owner_name
+        for node in owner_tree.body
+    ) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node for node in ast.walk(wrapper) if isinstance(node, ast.Call)
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == dispatch_name
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) == 1
+
+
+def test_residual_affine_prelu_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "residual_affine_prelu_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    owner_name = "optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
+    wrapper_name = f"_{owner_name}"
+    dispatch_name = f"{wrapper_name}_pass"
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert sum(
+        isinstance(node, ast.FunctionDef) and node.name == owner_name
+        for node in owner_tree.body
+    ) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node for node in ast.walk(wrapper) if isinstance(node, ast.Call)
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == dispatch_name
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+
+
+def test_residual_affine_fanout_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "residual_affine_fanout_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    owner_name = "optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains"
+    wrapper_name = f"_{owner_name}"
+    dispatch_name = f"{wrapper_name}_pass"
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "shared_outside_chain" in owner_source
+    assert "legacy_users" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert sum(
+        isinstance(node, ast.FunctionDef) and node.name == owner_name
+        for node in owner_tree.body
+    ) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == dispatch_name
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+
+
+def test_pre_unary_affine_fanout_optimizer_has_one_module_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_unary_affine_fanout_layout.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+
+    owner_name = "optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains"
+    wrapper_name = f"_{owner_name}"
+    dispatch_name = f"{wrapper_name}_pass"
+    assert "lower_from_onnx2tf" not in owner_source
+    assert "_build_tensor_consumer_map" in owner_source
+    assert "_build_tensor_producer_map" in owner_source
+    assert "shared_outside_chain" in owner_source
+    assert "unary_ops" in owner_source
+    assert "_prune_unused_tensors" in owner_source
+    assert "while True" in owner_source
+    assert sum(
+        isinstance(node, ast.FunctionDef) and node.name == owner_name
+        for node in owner_tree.body
+    ) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == dispatch_name
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+
+
 def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> None:
     owner_path = (
         REPO_ROOT
@@ -13484,6 +16248,15 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
         / "pre_add_mulconst_reshape_suffix_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_add_mulconst_reshape_suffix_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -13528,14 +16301,22 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
         "_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains"
     )
     dispatch_name = f"{wrapper_name}_pass"
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_build_tensor_producer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -13543,6 +16324,19 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
     assert len(dispatch_calls) == 1
     assert {keyword.arg for keyword in dispatch_calls[0].keywords} == {
         "graph_index",
+        "layout_state",
+    }
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
         "layout_state",
     }
 
@@ -13558,16 +16352,17 @@ def test_indexed_pre_add_mulconst_reshape_suffix_owner_precedes_fallback() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_pre_swish_reshape_suffix_owner_precedes_fallback() -> None:
@@ -13579,6 +16374,15 @@ def test_indexed_pre_swish_reshape_suffix_owner_precedes_fallback() -> None:
         / "pre_unary_reshape_suffix_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_unary_reshape_suffix_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -13604,14 +16408,22 @@ def test_indexed_pre_swish_reshape_suffix_owner_precedes_fallback() -> None:
     dispatch_name = (
         "_optimize_transpose_pre_swish_reshape_transpose_suffix_nhwc_chains_pass"
     )
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_build_tensor_producer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -13623,12 +16435,25 @@ def test_indexed_pre_swish_reshape_suffix_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state",
+    }
 
     lowerer = next(
         node
@@ -13642,16 +16467,17 @@ def test_indexed_pre_swish_reshape_suffix_owner_precedes_fallback() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_pre_swish_squeeze_suffix_owner_precedes_fallback() -> None:
@@ -13663,6 +16489,15 @@ def test_indexed_pre_swish_squeeze_suffix_owner_precedes_fallback() -> None:
         / "pre_unary_squeeze_suffix_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_unary_squeeze_suffix_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -13688,14 +16523,22 @@ def test_indexed_pre_swish_squeeze_suffix_owner_precedes_fallback() -> None:
     dispatch_name = (
         "_optimize_transpose_pre_swish_squeeze_transpose_suffix_nhwc_chains_pass"
     )
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_build_tensor_producer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -13707,12 +16550,25 @@ def test_indexed_pre_swish_squeeze_suffix_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state",
+    }
 
     lowerer = next(
         node
@@ -13726,19 +16582,20 @@ def test_indexed_pre_swish_squeeze_suffix_owner_precedes_fallback() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
-def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
+def test_indexed_conv_mul_affine_owner_precedes_compat_fallback() -> None:
     owner_path = (
         REPO_ROOT
         / "onnx2tf"
@@ -13747,10 +16604,20 @@ def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
         / "conv_mul_affine_fold.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "conv_mul_affine_fold_compat.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
-    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
 
     assert "def _resolve_candidate(" in owner_source
     assert "def _apply_plan(" in owner_source
@@ -13766,16 +16633,16 @@ def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
     for model_name in ("iat", "linea", "yunet", "humanseg", "osnet", "sinet"):
         assert model_name not in owner_source.lower()
 
-    wrapper_name = "_optimize_fold_conv_mul_add_affine_chains"
-    dispatch_name = "_optimize_conv_mul_affine_mul_only_chains_pass"
-    wrapper = next(
+    compat_owner_name = "optimize_fold_conv_mul_add_affine_chains"
+    compat_owner = next(
         node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
     )
+    dispatch_name = "_optimize_conv_mul_affine_mul_only_chains_pass"
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -13787,12 +16654,37 @@ def test_indexed_conv_mul_affine_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+    compat_owner_source = ast.get_source_segment(compat_source, compat_owner)
+    assert compat_owner_source is not None
+    assert "_build_tensor_consumer_map(model_ir)" in compat_owner_source
+    assert "while True:" in compat_owner_source
+    assert "del model_ir.operators[int(remove_idx)]" in compat_owner_source
+    assert "lower_from_onnx2tf" not in compat_source
+
+    wrapper_name = "_optimize_fold_conv_mul_add_affine_chains"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_fold_conv_mul_add_affine_chains_pass"
+    ]
+    assert len(wrapper_dispatches) == 1
+    assert {keyword.arg for keyword in wrapper_dispatches[0].keywords} == {
+        "enable_conv_add_only_fold",
+        "layout_state",
+    }
 
     lowerer = next(
         node
@@ -13826,6 +16718,15 @@ def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
         / "expanddims_reshape_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "expanddims_reshape_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -13849,14 +16750,21 @@ def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
         "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains"
     )
     dispatch_name = "_optimize_transpose_factorized_expanddims_nhwc_chains_pass"
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -13868,12 +16776,25 @@ def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state",
+    }
 
     lowerer = next(
         node
@@ -13887,7 +16808,7 @@ def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13909,6 +16830,15 @@ def test_indexed_flatten_hw_reshape_owner_precedes_fallback() -> None:
         / "flatten_hw_reshape_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "flatten_hw_reshape_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -13932,14 +16862,21 @@ def test_indexed_flatten_hw_reshape_owner_precedes_fallback() -> None:
         "_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains"
     )
     dispatch_name = "_optimize_transpose_flatten_hw_reshape_nhwc_chains_pass"
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -13951,12 +16888,25 @@ def test_indexed_flatten_hw_reshape_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state",
+    }
 
     lowerer = next(
         node
@@ -13970,7 +16920,7 @@ def test_indexed_flatten_hw_reshape_owner_precedes_fallback() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -13992,6 +16942,15 @@ def test_indexed_attention_qkv_reshape_owner_precedes_fallback() -> None:
         / "attention_qkv_reshape_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    compat_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "attention_qkv_reshape_compat_layout.py"
+    )
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat_tree = ast.parse(compat_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -14015,14 +16974,21 @@ def test_indexed_attention_qkv_reshape_owner_precedes_fallback() -> None:
         "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
     )
     dispatch_name = "_optimize_attention_qkv_had_reshape_transpose_chains_pass"
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    compat_owner_name = (
+        "optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains_compat"
     )
+    compat_owner = next(
+        node
+        for node in compat_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == compat_owner_name
+    )
+    assert "lower_from_onnx2tf" not in compat_source
+    assert "_build_tensor_consumer_map" in compat_source
+    assert "_prune_unused_tensors" in compat_source
+    assert "while True" in compat_source
     dispatch_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == dispatch_name
@@ -14034,12 +17000,25 @@ def test_indexed_attention_qkv_reshape_owner_precedes_fallback() -> None:
     }
     prune_calls = [
         node
-        for node in ast.walk(wrapper)
+        for node in ast.walk(compat_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_prune_unused_tensors"
     ]
     assert len(prune_calls) == 1
+
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].func, ast.Name)
+    assert wrapper_calls[0].func.id == f"{wrapper_name}_compat_pass"
+    assert {keyword.arg for keyword in wrapper_calls[0].keywords} == {
+        "layout_state",
+    }
 
     lowerer = next(
         node
@@ -14053,7 +17032,7 @@ def test_indexed_attention_qkv_reshape_owner_precedes_fallback() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -14130,7 +17109,7 @@ def test_indexed_slice_logistic_concat_reshape_tail_owner_is_transactional() -> 
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -14212,13 +17191,14 @@ def test_indexed_conv_output_passthrough_owner_is_bounded_and_transactional() ->
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == 1
-        layout_keyword = next(
-            keyword
-            for keyword in production_calls[0].keywords
-            if keyword.arg == "layout_state"
-        )
-        assert isinstance(layout_keyword.value, ast.Attribute)
-        assert isinstance(layout_keyword.value.value, ast.Name)
-        assert layout_keyword.value.value.id == "session"
-        assert layout_keyword.value.attr == "layout_state"
+        assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
+        for production_call in production_calls:
+            layout_keyword = next(
+                keyword
+                for keyword in production_call.keywords
+                if keyword.arg == "layout_state"
+            )
+            assert isinstance(layout_keyword.value, ast.Attribute)
+            assert isinstance(layout_keyword.value.value, ast.Name)
+            assert layout_keyword.value.value.id == "session"
+            assert layout_keyword.value.attr == "layout_state"

@@ -16,6 +16,9 @@ from onnx2tf.tflite_builder.passes.expanddims_reshape_layout import (
     _resolve_candidate,
     optimize_transpose_factorized_expanddims_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes.expanddims_reshape_compat_layout import (
+    optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains_compat,
+)
 
 
 _STATS_KEY = "optimized_transpose_reshape_transpose_to_expanddims_nhwc_chains"
@@ -223,6 +226,16 @@ def test_indexed_factorized_expanddims_rejects_singleton_case_a() -> None:
     }
     assert _fingerprint(model_ir) == before
 
+    compat_ir = deepcopy(model_ir)
+    wrapper_ir = deepcopy(model_ir)
+    assert optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains_compat(
+        compat_ir
+    ) == {_STATS_KEY: 1}
+    assert _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
+        wrapper_ir
+    ) == {_STATS_KEY: 1}
+    assert _fingerprint(compat_ir) == _fingerprint(wrapper_ir)
+
 
 def test_indexed_factorized_expanddims_rejects_shared_constants_atomically() -> None:
     for kwargs in ({"shared_shape": True}, {"shared_post_permutation": True}):
@@ -232,10 +245,16 @@ def test_indexed_factorized_expanddims_rejects_shared_constants_atomically() -> 
             _STATS_KEY: 0
         }
         assert _fingerprint(model_ir) == before
-        assert _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
-            model_ir
+        compat_ir = deepcopy(model_ir)
+        wrapper_ir = deepcopy(model_ir)
+        assert optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains_compat(
+            compat_ir
         ) == {_STATS_KEY: 0}
-        assert _fingerprint(model_ir) == before
+        assert _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
+            wrapper_ir
+        ) == {_STATS_KEY: 0}
+        assert _fingerprint(compat_ir) == before
+        assert _fingerprint(wrapper_ir) == before
 
 
 def test_indexed_factorized_expanddims_candidate_and_bound_are_strict() -> None:
@@ -300,11 +319,20 @@ def test_indexed_factorized_expanddims_is_deterministic() -> None:
 
 
 def test_indexed_factorized_expanddims_wrapper_cleanup_tracks_layout() -> None:
-    model_ir = _make_factorized_ir()
-    layout_state = LayoutState.from_model_ir(model_ir)
-    assert _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
-        model_ir,
-        layout_state=layout_state,
+    compat_ir = _make_factorized_ir()
+    wrapper_ir = deepcopy(compat_ir)
+    compat_layout_state = LayoutState.from_model_ir(compat_ir)
+    wrapper_layout_state = LayoutState.from_model_ir(wrapper_ir)
+    assert optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains_compat(
+        compat_ir,
+        layout_state=compat_layout_state,
     ) == {_STATS_KEY: 1}
-    assert set(model_ir.tensors) == {"x", "shape", "view", "post_perm", "z"}
-    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
+        wrapper_ir,
+        layout_state=wrapper_layout_state,
+    ) == {_STATS_KEY: 1}
+    assert _fingerprint(compat_ir) == _fingerprint(wrapper_ir)
+    assert compat_layout_state.logical == wrapper_layout_state.logical
+    assert compat_layout_state.physical == wrapper_layout_state.physical
+    assert set(wrapper_ir.tensors) == {"x", "shape", "view", "post_perm", "z"}
+    assert wrapper_layout_state.validate_against_model_ir(wrapper_ir) == []
