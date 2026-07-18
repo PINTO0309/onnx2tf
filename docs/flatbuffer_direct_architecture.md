@@ -11323,3 +11323,23 @@ one graph index for the top-level form, reuses it across the same children,
 performs the same conditional final reconciliation, and supplies the same live
 LayoutState. The retained result has no new consumer or guard, and both
 surrounding recovery boundaries remain fixed.
+
+The adjacent SiNet terminal-layout orchestrator executes three fixed children:
+shuffle-residual recovery, the injected pre-add/resize callback, and terminal
+affine/PRELU recovery. The callback deliberately has an arbitrary return type.
+`run_recovery_invocations()` already returns all three results in pass-ID order,
+but `run_sinet_terminal_layout_recovery()` and its local helper currently
+discard that tuple.
+
+There are exactly two direct calls. The first follows terminal clamp/unary/ReLU
+cleanup and precedes HardSwish-SE recovery. The very-late call follows
+`_post_terminal_indexed_shape_convergence_stats` and immediately precedes a
+separate top-level pre-add/resize recovery call. Strict characterization
+selects `_terminal_sinet_layout_recovery_results` and
+`_very_late_sinet_layout_recovery_results` as distinct targets.
+
+The contract fixes all three ordered child results including the injected
+callback result, zero-argument direct calls, exact two-call count, context
+wiring, and both boundary pairs. Propagation must not change the callback,
+execute a child twice, add a result consumer or guard, or introduce graph work,
+dependencies, or a TensorFlow import path.

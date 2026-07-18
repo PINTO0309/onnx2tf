@@ -8029,6 +8029,45 @@ occurrence, nested pre-add/resize callback, exact child order, and the following
 top-level pre-add/resize call. Commit and push only; do not create, reopen, or
 update a pull request.
 
+## SiNet terminal-layout result characterization checkpoint
+
+`run_sinet_terminal_layout_recovery()` executes three fixed invocations in
+order: shuffle-residual recovery, the injected pre-add/resize callback, and
+terminal affine/PRELU recovery. The callback intentionally accepts no
+arguments and can return any value. The generic recovery runner already
+returns all three child results, while the phase runner and local helper
+currently discard the tuple.
+
+There are exactly two zero-argument direct calls. The terminal call follows
+terminal clamp/unary/ReLU cleanup and precedes HardSwish-SE recovery. The
+very-late call follows `_post_terminal_indexed_shape_convergence_stats` and
+precedes a separate top-level pre-add/resize recovery call.
+
+A strict expected-failure contract selects
+`_terminal_sinet_layout_recovery_results` and
+`_very_late_sinet_layout_recovery_results`. It fixes the three-result order,
+arbitrary callback result, `Tuple[Any, ...]` phase/helper boundary, direct-call
+count and policies, context wiring, and both surrounding sequences.
+
+At implementation, transparently return the existing tuple through the phase
+runner and local helper, then replace only the two raw direct expressions with
+assignments. Do not change any child, the injected callback, child order,
+context, surrounding recovery calls, dependencies, diagnostics, or TensorFlow
+behavior. Do not add a result consumer or guard.
+
+Characterization validation completed sequentially under `uv`:
+
+- SiNet terminal and pre-add/resize orchestration, indexed-convergence and
+  Singleton boundaries, architecture, and pass-efficiency coverage:
+  `343 passed, 1 xfailed in 18.47s`
+
+The sole strict expected failure is the intentionally unimplemented ordered
+result propagation contract. One stale pre-add/resize boundary assertion was
+also updated to recognize the already captured Singleton result explicitly.
+Implement only the propagation contract, rerun focused and branch-changed broad
+gates sequentially, then commit and push only; do not create, reopen, or update
+a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

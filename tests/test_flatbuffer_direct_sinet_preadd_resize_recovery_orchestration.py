@@ -215,13 +215,18 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
     ]
     assert len(invocation_indexes) == 3
     observed: list[tuple[str, str]] = []
+    assigned_boundary_targets: list[str] = []
     for index in invocation_indexes:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
+            if isinstance(boundary, ast.Assign):
+                assert len(boundary.targets) == 1
+                assert isinstance(boundary.targets[0], ast.Name)
+                assigned_boundary_targets.append(boundary.targets[0].id)
         observed.append((previous.value.func.id, following.value.func.id))
 
     assert observed == [
@@ -237,6 +242,9 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
             "_reconcile_static_tensor_shapes",
             "_optimize_transpose_csp_attention_nhwc_chains",
         ),
+    ]
+    assert assigned_boundary_targets == [
+        "_post_terminal_singleton_reshape_results",
     ]
 
 
