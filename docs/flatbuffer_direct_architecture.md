@@ -12671,3 +12671,10 @@ It freezes wrapper defaults and forwarding, result schema and guarded pruning,
 direct arguments and retained dequant-unary/squeeze-unary neighbors, nested
 selection and keyword contract, sole direct occurrence, and an unconsumed
 observation-only policy.
+
+The raw late Swish wrapper call now retains its unchanged one-key dictionary as
+`_late_swish_transpose_passthrough_stats`. The target remains unconsumed and
+observation-only. Owner matching and indexed application, wrapper forwarding,
+GraphIndex/candidate and rewrite-limit handling, guarded pruning, LayoutState
+updates, layout-recovery selection, direct arguments, and call order remain
+unchanged; the counter does not steer the following passthrough owners.

@@ -201,7 +201,12 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
     )
 
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_late_swish_transpose_passthrough_stats"
+    )
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_optimize_swish_transpose_passthrough_chains"

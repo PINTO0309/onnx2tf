@@ -12075,3 +12075,32 @@ limit semantics, guarded pruning, result schema, wrapper forwarding,
 layout-recovery selection, direct arguments, call order, dependencies, public
 API, or TensorFlow behavior. Keep the target unconsumed, validate sequentially,
 commit, and push only; do not create, reopen, or update a pull request.
+
+## Late Swish passthrough direct result implementation checkpoint
+
+The raw late wrapper call now retains its unchanged one-key dictionary as
+`_late_swish_transpose_passthrough_stats`. The target remains unconsumed and
+observation-only. The layout-recovery public-owner selection remains unchanged,
+as do the retained dequant/unary-fanout predecessor and following distinct
+Squeeze/Unary/ExpandDims passthrough owner.
+
+No owner matching or indexed application logic, GraphIndex/candidate handling,
+rewrite-limit semantics, successful-plan pruning, result schema, wrapper
+forwarding, LayoutState updates, layout-recovery selection, direct arguments,
+call order, dependency, public API, or TensorFlow behavior changed. Two
+pre-existing boundary tests now recognize the assigned observation target
+without weakening their call-identity or ordering assertions. No intermediate
+test failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.59s`
+- indexed owner, layout-recovery, dequant/unary-fanout boundary, architecture,
+  pass-efficiency, and direct Swish rewrite coverage: `367 passed in 18.59s`
+- 105 branch-changed test files: `1663 passed in 31.71s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

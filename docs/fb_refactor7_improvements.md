@@ -1967,3 +1967,11 @@ wrapper forwarding, GraphIndex/candidate handling, guarded pruning, adjacent
 owners, and lack of consumers are frozen. The focused gate passes
 `366 passed, 1 xfailed in 18.67s`, the 105-file branch-changed suite passes
 `1662 passed, 1 xfailed in 31.40s`, and targeted static validation passes.
+
+The raw late Swish wrapper call now retains its unchanged dictionary as
+`_late_swish_transpose_passthrough_stats`. It remains unconsumed and
+observation-only; indexed owner behavior, wrapper forwarding,
+GraphIndex/candidate handling, guarded pruning, LayoutState updates,
+layout-recovery selection, and adjacent owners remain unchanged. The focused
+gate passes `367 passed in 18.59s`, the 105-file branch-changed suite passes
+`1663 passed in 31.71s`, and targeted static validation passes.

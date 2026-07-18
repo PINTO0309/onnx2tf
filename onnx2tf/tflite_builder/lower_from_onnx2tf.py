@@ -5238,9 +5238,11 @@ def lower_onnx_to_ir(
     )
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
-    _optimize_swish_transpose_passthrough_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_swish_transpose_passthrough_stats = (
+        _optimize_swish_transpose_passthrough_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Conv1D shim patterns can retain:
     # TRANSPOSE -> SQUEEZE -> UNARY -> EXPAND_DIMS -> TRANSPOSE.
