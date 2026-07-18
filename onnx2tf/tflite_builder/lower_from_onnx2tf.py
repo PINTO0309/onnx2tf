@@ -4559,9 +4559,11 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_slice_logistic_concat_tail_stats = (
+            _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _layout_opt_channel_shuffle_gather_results = (
             _run_channel_shuffle_gather_layout_pass_cluster(

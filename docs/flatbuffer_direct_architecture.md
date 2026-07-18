@@ -11593,3 +11593,13 @@ schema, unconditional prune, exact one-call count, arguments, option guard,
 both captured boundaries, channel-shuffle policy, independent orchestration
 selection, and absence of consumers. The dictionary must remain unconsumed;
 retention must add no guard, scan, dependency, or TensorFlow import path.
+
+The direct call now retains that unchanged one-counter dictionary as
+`_layout_opt_slice_logistic_concat_tail_stats`. It remains unconsumed because a
+zero counter does not exclude cleanup-only pruning.
+
+This is an assignment-only change. The wrapper, indexed owner, unconditional
+unused-tensor pruning, live Session LayoutState, layout-option guard, retained
+Concat input-adapter predecessor, channel-shuffle/gather successor and policy,
+independent orchestration selection, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged.

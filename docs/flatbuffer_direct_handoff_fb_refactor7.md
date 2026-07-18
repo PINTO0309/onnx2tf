@@ -8259,6 +8259,38 @@ result-retention contract. Implement only that assignment, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Slice/Logistic/Concat tail result retention implementation checkpoint
+
+The guarded direct call now retains
+`_layout_opt_slice_logistic_concat_tail_stats`. It preserves the indexed
+owner's unchanged one-counter dictionary and remains unconsumed because a zero
+counter does not exclude cleanup-only pruning.
+
+This is an assignment-only change. No consumer or guard was added. The lowerer
+wrapper, owner, one-key schema, unconditional unused-tensor pruning,
+graph-index behavior, live Session LayoutState, layout-option guard, retained
+Concat input-adapter predecessor, channel-shuffle/gather successor and policy,
+independent orchestration selection, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- Slice/Logistic/Concat tail schema and indexed-owner fixtures, unconditional
+  cleanup, layout-recovery selection, guarded direct boundary,
+  channel-shuffle/gather policy, architecture, and pass-efficiency coverage:
+  `363 passed in 18.58s`
+- branch-changed broad suite plus the same Slice/Logistic/Concat coverage:
+  `1598 passed in 27.99s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the terminal `run_concat_unary_conv_layout_cleanup()` result.
+Preserve `_terminal_concat_input_adapter_stats`, the following shape-extract
+owner, live LayoutState and diagnostics, pass order, and observation-only
+evidence rules. Commit and push only; do not create, reopen, or update a pull
+request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
