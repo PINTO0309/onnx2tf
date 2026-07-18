@@ -7813,3 +7813,37 @@ The sole strict expected failure is the intentionally unimplemented tuple
 propagation contract. Implement only the transparent returns and two direct
 assignments, rerun focused and branch-changed broad gates sequentially, then
 commit and push only; do not create, reopen, or update a pull request.
+
+## Mean/attention result propagation implementation checkpoint
+
+`run_mean_attention()` now returns the policy-selected ordered tuple from
+`run_recovery_invocations()`, and the local helper transparently returns it.
+The first direct call retains
+`_layout_pass_set_1_mean_attention_results`; the guarded terminal call retains
+`_terminal_mean_attention_results`.
+
+Both existing recovery contexts still receive the helper as an argument-free
+callback and do not branch on its result. Every selected child still runs once
+in the same policy-specific order and shared scope. Option guards, keywords,
+adjacent calls, diagnostics, dependencies, graph mutation, and TensorFlow
+behavior are unchanged; neither retained tuple has a new consumer.
+
+The first implementation gate found four expected stale AST assertions for the
+former raw helper/direct expressions. They now require the exact helper Return
+and both named assignments.
+
+Implementation validation completed sequentially under `uv`:
+
+- mean/attention policy and callback contexts, attention recovery, quantized
+  suffix, terminal boundary, architecture, and pass-efficiency coverage:
+  `330 passed in 20.05s`
+- branch-changed broad suite plus the same policy/callback coverage:
+  `1464 passed in 26.61s`
+
+These are unit, contract, and orchestration checks; this result propagation
+does not claim a new model-corpus run.
+
+At resume, audit the next raw terminal helper result after
+`_terminal_mean_attention_results`. Keep both mean/attention tuples
+observation-only and preserve their policy guards. Commit and push only; do not
+create, reopen, or update a pull request.

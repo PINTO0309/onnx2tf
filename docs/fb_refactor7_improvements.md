@@ -914,12 +914,24 @@ branch-changed broad suite passes `1456 passed in 25.15s`. Four stale AST
 contracts were updated from raw-expression assumptions to the exact return and
 assignment boundaries.
 
+Mean/attention orchestration now propagates its existing policy-selected tuple
+through `run_mean_attention()` and the local helper. The two direct primary
+calls retain `_layout_pass_set_1_mean_attention_results` and
+`_terminal_mean_attention_results`, while two callback contexts continue to
+ignore the return value.
+
+All four policy combinations, child order, shared scope, option guards, and
+callback references remain fixed. The focused gate passes `330 passed in
+20.05s`, and the branch-changed broad suite passes `1464 passed in 26.61s`.
+Four stale raw-expression contracts were updated to exact return/assignment
+boundaries.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the guarded terminal mean/attention helper result immediately
-after `_terminal_boundary_layout_results`. The existing option guard and child
-selection policy must remain fixed. The retained `_terminal_normalization_pad_stats`
-also remains observation-only because it omits cleanup-only pruning. Any change
-must preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the next raw terminal helper result after
+`_terminal_mean_attention_results`. Both mean/attention tuples must remain
+observation-only and policy guarded. The retained
+`_terminal_normalization_pad_stats` also remains observation-only because it
+omits cleanup-only pruning. Any change must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

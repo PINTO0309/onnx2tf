@@ -170,7 +170,8 @@ def test_mean_attention_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
+    assert statement.value is not None
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -305,10 +306,6 @@ def test_mean_attention_runner_preserves_all_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mean/attention results are not propagated to direct primary callers",
-)
 def test_mean_attention_propagates_policy_results_to_direct_primary_callers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -416,7 +413,12 @@ def test_mean_attention_preserves_layernorm_conv_policy_and_boundaries() -> None
     invocation_index = next(
         index
         for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == (
+            "_layout_pass_set_1_mean_attention_results"
+        )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == MEAN_ATTENTION
@@ -426,7 +428,7 @@ def test_mean_attention_preserves_layernorm_conv_policy_and_boundaries() -> None
     )
     invocation = guard.body[invocation_index]
 
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {
@@ -464,7 +466,10 @@ def test_mean_attention_preserves_terminal_base_policy_and_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_mean_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == MEAN_ATTENTION
@@ -472,7 +477,7 @@ def test_mean_attention_preserves_terminal_base_policy_and_boundaries() -> None:
     invocation = guard.body[invocation_index]
 
     assert invocation_index == 0
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {

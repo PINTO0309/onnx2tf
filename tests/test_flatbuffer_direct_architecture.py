@@ -1595,7 +1595,8 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
     )
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
+    assert statement.value is not None
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_mean_attention"

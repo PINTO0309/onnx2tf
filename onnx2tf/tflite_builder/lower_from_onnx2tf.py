@@ -4032,8 +4032,8 @@ def lower_onnx_to_ir(
         *,
         include_layernorm: bool = False,
         include_conv_attention: bool = True,
-    ) -> None:
-        run_mean_attention(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_mean_attention(
             mean_attention_context,
             include_layernorm=include_layernorm,
             include_conv_attention=include_conv_attention,
@@ -4404,7 +4404,9 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster(include_layernorm=True)
+        _layout_pass_set_1_mean_attention_results = (
+            _run_mean_attention_layout_pass_cluster(include_layernorm=True)
+        )
         _run_attention_gate_qdq_recovery_sequence()
         run_quantized_prelu_cleanup(
             model_ir,
@@ -4769,8 +4771,10 @@ def lower_onnx_to_ir(
     if optimize_layout_transpose_chains:
         # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
         # Run dedicated NHWC passthrough once more in the terminal stage.
-        _run_mean_attention_layout_pass_cluster(
-            include_conv_attention=False,
+        _terminal_mean_attention_results = (
+            _run_mean_attention_layout_pass_cluster(
+                include_conv_attention=False,
+            )
         )
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
         _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)

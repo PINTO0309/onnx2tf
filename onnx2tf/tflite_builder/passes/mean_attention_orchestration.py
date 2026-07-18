@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -114,12 +114,12 @@ def run_mean_attention(
     *,
     include_layernorm: bool = False,
     include_conv_attention: bool = True,
-) -> None:
+) -> Tuple[Dict[str, int], ...]:
     expected_pass_ids = _selected_pass_ids(
         include_layernorm=include_layernorm,
         include_conv_attention=include_conv_attention,
     )
-    run_recovery_invocations(
+    return run_recovery_invocations(
         build_mean_attention_invocations(
             context,
             include_layernorm=include_layernorm,
