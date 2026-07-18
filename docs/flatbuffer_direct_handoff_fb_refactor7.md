@@ -6276,3 +6276,47 @@ owner schema, live LayoutState contract, production occurrence, preceding
 terminal recovery, and following Swish-residual-closure boundary before adding
 characterization. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## Terminal boundary StridedSlice/QDQ/Concat result characterization checkpoint
+
+`_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks()` returns
+the stable four-counter dictionary comprising removed boundary input
+Transpose/StridedSlice blocks, rewritten boundary StridedSlices, rewritten QDQ
+Concat axes, and removed boundary post-Transposes. Its wrapper has one
+production call, which currently discards the dictionary while passing the
+live `session.layout_state`.
+
+The zero-mutation schema test fixes the exact four-key result, while existing
+owner coverage validates the nonzero counters plus supplied GraphIndex and
+LayoutState after a rewrite. A strict expected-failure orchestration contract
+requires the production result to be retained as
+`_terminal_boundary_stridedslice_qdq_concat_stats`. It fixes the preceding
+zero-argument terminal recovery call and the following model-only Swish-
+residual-closure owner.
+
+At implementation, replace only the direct expression with an assignment and
+update the existing recovery outer-boundary contract to recognize that target.
+Do not change the wrapper or pass implementation, four-key schema, rewrite
+guards, graph mutation, tensor pruning, GraphIndex/LayoutState behavior,
+callback arguments, pass order, recovery call, adjacent targets, dependencies,
+diagnostics, or TensorFlow behavior. The retained value must have no consumer
+or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused owner/schema, terminal recovery, Swish boundary orchestration,
+  architecture, and pass-efficiency gate:
+  `348 passed, 1 xfailed in 18.48s`
+- branch-changed broad suite plus boundary/channel-slice, pad-Mul, terminal
+  recovery, architecture, and pass-efficiency coverage:
+  `1393 passed, 1 xfailed in 23.94s`
+
+The sole strict expected failure in those selected gates is the intentionally
+unimplemented result-retention contract above. The separate indexed quantized-
+Swish test module currently has two pre-existing failures because it
+monkeypatches `_build_tensor_consumer_map`, which is already absent from the
+committed lowerer at `HEAD`; those stale-test failures are not caused by this
+characterization and were excluded from the gate.
+
+Implement the assignment, rerun the same gates sequentially, then commit and
+push only; do not create, reopen, or update a pull request.

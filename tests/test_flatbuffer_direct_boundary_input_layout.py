@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
+    _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks,
     _optimize_boundary_input_transpose_channel_slice_blocks,
     _optimize_internal_transpose_channel_slice_nhwc_propagation_chains,
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains,
@@ -123,3 +124,16 @@ def test_channel_slice_muladd_bridge_result_schema_is_stable() -> None:
     assert _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
         model_ir
     ) == {"optimized_transpose_channel_slice_muladd_nhwc_bridge_chains": 0}
+
+
+def test_boundary_stridedslice_qdq_concat_result_schema_is_stable() -> None:
+    model_ir = ModelIR("boundary_stridedslice_qdq_concat_result_schema")
+
+    assert _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
+        model_ir
+    ) == {
+        "removed_boundary_input_transpose_stridedslice_blocks": 0,
+        "rewritten_boundary_stridedslices": 0,
+        "rewritten_boundary_qdq_concat_axis": 0,
+        "removed_boundary_post_transposes": 0,
+    }
