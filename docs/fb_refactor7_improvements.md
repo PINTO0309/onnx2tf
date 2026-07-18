@@ -631,6 +631,18 @@ This checkpoint passes the focused boundary/internal channel-slice accounting
 gate with `341 passed in 18.70s`, plus the branch-changed broad related suite
 with `1385 passed in 24.19s`.
 
+The later model-only internal Transpose/channel-slice propagation call now
+retains the same four-counter schema as `_final_internal_channel_slice_stats`,
+while the first live-LayoutState occurrence keeps
+`_terminal_internal_channel_slice_stats`. The assignment-only orchestration
+change preserves final boundary normalization, the later model-only MulAdd-
+bridge successor, owner behavior, and the TensorFlow-free boundary. Neither
+value has a consumer.
+
+This checkpoint passes the focused boundary/internal channel-slice accounting
+gate with `342 passed in 18.84s`, plus the branch-changed broad related suite
+with `1386 passed in 23.44s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -638,8 +650,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the later raw internal Transpose/channel-slice propagation
-result, keep the first captured target fixed, and preserve its final boundary-
-normalization/model-only MulAdd-bridge boundaries. Any new mutation evidence
-must preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the later model-only Transpose/channel-slice MulAdd-bridge
+result, distinguish it from the earlier live-LayoutState occurrence, and
+preserve its captured final internal-channel-slice/terminal recovery boundaries.
+Any new mutation evidence must preserve current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.
