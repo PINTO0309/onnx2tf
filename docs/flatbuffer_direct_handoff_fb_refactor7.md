@@ -5997,3 +5997,41 @@ distinguish it from the later raw production occurrence, and fix its captured
 boundary-input channel-slice/MulAdd-bridge boundaries before adding
 characterization. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## First terminal internal channel-slice result characterization checkpoint
+
+`_optimize_internal_transpose_channel_slice_nhwc_propagation_chains()` returns
+the stable four-counter dictionary comprising removed internal Transpose/
+channel-slice stems, rewritten internal channel Slices, rewritten internal axis
+operations, and inserted internal local Transposes. It has two production
+calls. The first passes the live `session.layout_state` and currently discards
+its result; the later model-only call is also raw.
+
+The zero-mutation schema test fixes the exact four-key result, while existing
+indexed owner coverage validates a supplied GraphIndex and LayoutState after a
+rewrite. A strict expected-failure orchestration contract requires only the
+first result to be retained as `_terminal_internal_channel_slice_stats`. It
+fixes the captured `_terminal_boundary_input_channel_slice_stats` predecessor,
+the first live-LayoutState MulAdd-bridge successor, and the later raw occurrence
+between captured final boundary normalization and its model-only MulAdd bridge.
+
+At implementation, replace only the first expression with an assignment. Do
+not change the later occurrence, wrapper or pass implementation, four-key
+schema, rewrite guards, graph mutation, tensor pruning, shared GraphIndex/
+LayoutState behavior, callback arguments, pass order, adjacent targets,
+dependencies, diagnostics, or TensorFlow behavior. The retained value must
+have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused boundary/internal channel-slice owners, both occurrence boundaries,
+  boundary normalization/layout, terminal orchestration, architecture, and
+  pass-efficiency gate: `340 passed, 1 xfailed in 19.02s`
+- branch-changed broad suite plus boundary-input, channel-slice/pad-Mul,
+  terminal orchestration, architecture, and pass-efficiency coverage:
+  `1384 passed, 1 xfailed in 24.25s`
+
+The sole strict expected failure is the intentionally unimplemented first
+internal channel-slice result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.

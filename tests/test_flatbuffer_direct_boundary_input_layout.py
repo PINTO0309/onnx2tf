@@ -10,6 +10,7 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
     _optimize_boundary_input_transpose_channel_slice_blocks,
+    _optimize_internal_transpose_channel_slice_nhwc_propagation_chains,
 )
 
 
@@ -99,4 +100,17 @@ def test_boundary_input_channel_slice_result_schema_is_stable() -> None:
         "rewritten_boundary_channel_slices": 0,
         "rewritten_boundary_axis_ops": 0,
         "inserted_local_boundary_transposes": 0,
+    }
+
+
+def test_internal_channel_slice_result_schema_is_stable() -> None:
+    model_ir = ModelIR("internal_channel_slice_result_schema")
+
+    assert _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
+        model_ir
+    ) == {
+        "removed_internal_transpose_channel_slice_stems": 0,
+        "rewritten_internal_channel_slices": 0,
+        "rewritten_internal_axis_ops": 0,
+        "inserted_internal_local_transposes": 0,
     }

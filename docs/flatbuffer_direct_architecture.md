@@ -10922,6 +10922,14 @@ LayoutState. Its result is retained as
 boundary-input normalization and the first internal Transpose/channel-slice
 propagation call. The retained value has no consumer.
 
+The internal Transpose/channel-slice propagation owner also returns four
+mutation counters and has two production calls. The first receives the live
+Session LayoutState and currently discards its result between the captured
+boundary-input channel-slice dictionary and the first Transpose/channel-slice
+MulAdd bridge. The later model-only occurrence remains a distinct raw call.
+Strict characterization fixes `_terminal_internal_channel_slice_stats` as the
+first result target only.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`
