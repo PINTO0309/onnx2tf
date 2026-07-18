@@ -10995,12 +10995,11 @@ target. The captured `_very_late_instancenorm_post_bias_stats` predecessor and
 following live-LayoutState dual-statistics InstanceNorm owner remain adjacent,
 and the first, third, and nested occurrence contracts are unchanged.
 
-The still-raw first direct occurrence is the terminal result between the live-
-LayoutState residual/add-to-single-adapter and dual-statistics owners. Strict
-characterization selects only that call for a future
-`_terminal_instancenorm_residual_mul_concat_stats` assignment. The one-key
-positive-only mutation contract, retained very-late and pre-terminal targets,
-and graph-indexed nested convergence call remain fixed.
+The first direct occurrence now retains the terminal result as
+`_terminal_instancenorm_residual_mul_concat_stats` between the live-LayoutState
+residual/add-to-single-adapter and dual-statistics owners. The one-key positive-
+only mutation contract, retained very-late and pre-terminal targets, and graph-
+indexed nested convergence call remain fixed.
 
 That following indexed dual-statistics InstanceNorm residual/add/resize owner
 also has three direct production calls plus one nested convergence call. Its

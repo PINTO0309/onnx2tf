@@ -7454,3 +7454,42 @@ The sole strict expected failure is the intentionally unimplemented terminal
 InstanceNorm residual/Mul/Concat result retention contract above. Implement
 only that assignment, rerun the same gates sequentially, then commit and push
 only; do not create, reopen, or update a pull request.
+
+## Terminal InstanceNorm residual/Mul/Concat result retention implementation checkpoint
+
+The first direct production call now retains its unchanged one-counter
+dictionary as `_terminal_instancenorm_residual_mul_concat_stats`. The second
+and third retain `_very_late_instancenorm_residual_mul_concat_stats` and
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`; the nested
+convergence call continues to consume its counter with the shared graph index.
+
+This is an assignment-only orchestration change. It preserves the wrapper and
+indexed owner, one-key schema, positive-only pruning, GraphIndex/LayoutState
+behavior, residual-adapter predecessor, dual-statistics successor, all other
+occurrences, pass order, dependencies, diagnostics, and TensorFlow behavior.
+The new result has no consumer and triggers no graph work.
+
+The first implementation run found the expected stale very-late occurrence
+assertion that still required the terminal call to be `ast.Expr`. It now
+requires the exact terminal assignment. Production was unchanged by this test-
+only correction.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal and very-late cross-occurrence contracts: `2 passed in 0.62s`
+- indexed owner, concrete rewrite, terminal/direct/nested occurrence,
+  pre-terminal boundary, architecture, and pass-efficiency coverage:
+  `465 passed in 19.59s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1430 passed in 25.07s`
+
+These are unit, contract, and orchestration checks; this result-retention change
+does not claim a new model-corpus run.
+
+At resume, audit all four production occurrences of
+`_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains()`:
+three direct calls plus one nested convergence call. The first terminal direct
+result remains raw, while the very-late and pre-terminal results are retained.
+Characterize only that first call between the terminal residual/Mul/Concat
+target and the terminal boundary cluster. Commit and push only; do not create,
+reopen, or update a pull request.

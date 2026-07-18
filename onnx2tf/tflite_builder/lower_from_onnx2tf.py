@@ -4749,9 +4749,11 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_instancenorm_residual_mul_concat_stats = (
+        _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
         model_ir,

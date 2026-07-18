@@ -854,6 +854,18 @@ This checkpoint passes the focused recovery/runtime/architecture gate with
 `299 passed in 19.68s`, plus the branch-changed broad related suite with
 `1429 passed in 24.81s`.
 
+All three direct InstanceNorm residual/Mul/Concat results are now retained at
+distinct terminal, very-late, and pre-terminal targets. The new first target is
+`_terminal_instancenorm_residual_mul_concat_stats`; the nested convergence call
+continues to consume its counter with the shared GraphIndex. This assignment-
+only change adds no graph work or result consumer.
+
+The implementation gate updated the very-late cross-occurrence contract from
+the former raw terminal expression to the exact target. Those two contracts
+pass `2 passed in 0.62s`, the focused owner/orchestration gate passes
+`465 passed in 19.59s`, and the branch-changed broad related suite passes
+`1430 passed in 25.07s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -861,8 +873,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit all production occurrences of the terminal InstanceNorm
-residual/Mul/Concat owner and isolate its still-raw first direct call without
-conflating the retained very-late and pre-terminal calls or nested convergence
-call. Any change must preserve current pass order, TensorFlow-free boundary,
-dependency set, and sequential validation policy.
+unit should audit all production occurrences of the terminal dual-statistics
+InstanceNorm residual/add/resize owner and isolate its still-raw first direct
+call without conflating the retained very-late and pre-terminal calls or nested
+convergence call. Any change must preserve current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.
