@@ -4906,3 +4906,30 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented four-result
 retention contract above.
+
+## Late Concat shared-scope result implementation checkpoint
+
+The four adjacent late Concat runner results are now retained as
+`_late_concat_axis3_const_layout_stats`,
+`_late_concat_dequant_quantize_layout_stats`,
+`_late_concat_layernorm_layout_stats`, and
+`_late_concat_transpose_layout_stats`. Their stable one-, one-, two-, and
+five-counter dictionaries are preserved without projection or aggregation.
+
+The shared `late_concat_layout_state_scope`, exact callback arguments,
+transactional mutation/rollback, GraphIndex/pruning/layout synchronization,
+diagnostics, pass order, captured affine predecessor, following optimize-layout
+guard, and two other lowerer Transpose-cleanup occurrences are unchanged. No
+guard, reconciliation, scan, sort, metadata write, result consumer, dependency,
+or TensorFlow behavior changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused four-owner, shared-scope efficiency, terminal-orchestration, and
+  architecture gate: `387 passed in 17.89s`
+- expanded broad related gate: `1630 passed in 32.11s`
+
+At resume, audit both guarded production occurrences of
+`_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains()` and their
+one-counter schema before retaining their results. Commit and push only; do not
+create or update a pull request.

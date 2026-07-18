@@ -10820,10 +10820,10 @@ scope. Both boundaries remain fixed.
 
 The late Concat state scope is consumed in order by axis-3 constant-Concat,
 Dequantize/Concat/Quantize, LayerNorm-statistics, and generic Transpose-cleanup
-runners. They return stable one-, one-, two-, and five-counter dictionaries,
-respectively, but the four results are currently discarded. Strict
-characterization requires cluster-specific targets while preserving the two
-other lowerer Transpose-cleanup occurrences as expressions.
+runners. Their stable one-, one-, two-, and five-counter dictionaries are
+retained under cluster-specific targets. The shared state scope, callback
+contracts, following optimize-layout guard, and the two other lowerer
+Transpose-cleanup occurrences remain unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

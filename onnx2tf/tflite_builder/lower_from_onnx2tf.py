@@ -4843,25 +4843,31 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    run_axis3_const_concat_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_concat_layout_state_scope,
+    _late_concat_axis3_const_layout_stats = (
+        run_axis3_const_concat_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_concat_layout_state_scope,
+        )
     )
-    run_dequant_concat_quantize_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_concat_layout_state_scope,
+    _late_concat_dequant_quantize_layout_stats = (
+        run_dequant_concat_quantize_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_concat_layout_state_scope,
+        )
     )
-    run_layernorm_statistics_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_concat_layout_state_scope,
+    _late_concat_layernorm_layout_stats = (
+        run_layernorm_statistics_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_concat_layout_state_scope,
+        )
     )
-    run_layout_transpose_cleanup(
+    _late_concat_transpose_layout_stats = run_layout_transpose_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

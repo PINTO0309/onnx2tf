@@ -428,6 +428,16 @@ This checkpoint extends the expanded related gate to `1557 passed in 32.00s`;
 the focused Conv-affine, NDHWC/cost-volume, pass-efficiency, terminal-
 orchestration, and architecture gate is `373 passed in 18.53s`.
 
+The four adjacent late Concat shared-scope runners now retain their axis-3
+constant-Concat, Dequantize/Concat/Quantize, LayerNorm-statistics, and generic
+Transpose-cleanup dictionaries. The state scope, transactional execution,
+diagnostics, call order, following optimize-layout guard, and the other two
+lowerer Transpose-cleanup occurrences are unchanged.
+
+This checkpoint extends the expanded related gate to `1630 passed in 32.11s`;
+the focused four-owner, shared-scope efficiency, terminal-orchestration, and
+architecture gate is `387 passed in 17.89s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -435,7 +445,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the four late Concat layout-state-scope runner results
-immediately following this captured affine fold. Any new mutation evidence must
-preserve current pass order, shared scope, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+unit should audit the two conditional elementwise fanout-roundtrip results that
+follow late layout clusters. Any new mutation evidence must preserve their
+guards, current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

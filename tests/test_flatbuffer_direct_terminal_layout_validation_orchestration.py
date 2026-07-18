@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1556,10 +1554,6 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late Concat shared-scope runner results are discarded",
-)
 def test_primary_path_retains_late_concat_scope_results() -> None:
     body = _lowerer_body()
     scope_index = next(
