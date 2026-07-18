@@ -8542,6 +8542,40 @@ three-result retention contract. Implement only those assignments, rerun
 focused and branch-changed broad gates sequentially, then commit and push only;
 do not create, reopen, or update a pull request.
 
+## Dequantized HardSigmoid result retention implementation checkpoint
+
+The three direct calls now retain their unchanged one-counter dictionaries as
+`_terminal_dequant_hardsigmoid_bridge_stats`,
+`_post_sinet_dequant_hardsigmoid_bridge_stats`, and
+`_late_dequant_hardsigmoid_bridge_stats`. All remain unconsumed because a zero
+counter does not exclude cleanup-only pruning when Transpose operators exist.
+
+These are assignment-only changes. No consumer or guard was added. The wrapper,
+indexed owner, one-key schema, no-Transpose early return, graph-index policy,
+cleanup behavior, attention-recovery selection, terminal SiNet, post-SiNet
+cost-volume, and ConvPool/late-dequant boundaries, dependencies, diagnostics,
+and TensorFlow behavior remain unchanged. Four stale AST boundary contracts
+now require the new assigned targets.
+
+Implementation validation completed sequentially under `uv`:
+
+- dequantized HardSigmoid wrapper/schema and indexed-owner fixtures, early
+  return and cleanup semantics, attention-recovery selection, three direct
+  boundaries, adjacent SiNet/ConvPool/late-dequant orchestration, architecture,
+  and pass-efficiency coverage: `405 passed in 21.05s`
+- branch-changed broad suite plus the same three-form HardSigmoid coverage:
+  `1654 passed in 29.28s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the raw terminal
+`_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains()`
+result and every other production form of that owner. Preserve the new terminal
+dequant-HardSigmoid result, existing late HardSwish-SE evidence, SiNet recovery,
+pass order, and observation-only evidence rules. Commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

@@ -11715,3 +11715,16 @@ early return and cleanup semantics, exact three-call count, model-only
 arguments, six direct boundaries, independent orchestration selection, and
 absence of consumers. All dictionaries must remain unconsumed; retention must
 add no guard, scan, dependency, or TensorFlow import path.
+
+The three direct calls now retain their unchanged one-counter dictionaries as
+`_terminal_dequant_hardsigmoid_bridge_stats`,
+`_post_sinet_dequant_hardsigmoid_bridge_stats`, and
+`_late_dequant_hardsigmoid_bridge_stats`. All remain unconsumed because a zero
+counter does not exclude cleanup-only pruning when Transpose operators exist.
+
+These are assignment-only changes. The wrapper, indexed owner, one-key schema,
+no-Transpose early return, graph-index policy, cleanup behavior,
+attention-recovery selection, terminal SiNet, post-SiNet cost-volume, and
+ConvPool/late-dequant boundaries, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged. Four stale AST boundary contracts now require the
+new assigned targets.

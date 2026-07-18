@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -126,10 +123,6 @@ def test_dequant_hardsigmoid_schema_cleanup_and_selection_are_explicit() -> None
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the three direct dequant HardSigmoid results are not retained yet",
-)
 def test_lowerer_retains_all_dequant_hardsigmoid_results() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = [

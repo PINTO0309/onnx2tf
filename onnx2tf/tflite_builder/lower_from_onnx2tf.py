@@ -4815,7 +4815,9 @@ def lower_onnx_to_ir(
         _run_sinet_terminal_layout_recovery_sequence()
     )
     _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
-    _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    _terminal_dequant_hardsigmoid_bridge_stats = (
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    )
     # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
     _terminal_sinet_preadd_resize_results = (
         _run_sinet_preadd_resize_recovery_sequence()
@@ -4905,7 +4907,9 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    _post_sinet_dequant_hardsigmoid_bridge_stats = (
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    )
     late_ndhwc_cost_volume_state_scope = ModelIRPassStateScope(
         model_ir,
         layout_state=session.layout_state,
@@ -5109,7 +5113,9 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-    _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    _late_dequant_hardsigmoid_bridge_stats = (
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    )
     _run_late_dequant_unary_fanout_pass_cluster()
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).

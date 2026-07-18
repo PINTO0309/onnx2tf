@@ -1127,15 +1127,28 @@ branch-changed broad suite passes `1656 passed in 28.18s`. The terminal layout
 guard, no-layout safe-reduction fallback, HardSigmoid successor, dependencies,
 and TensorFlow behavior remain unchanged.
 
+All three direct dequantized HardSigmoid bridge results are now retained as
+`_terminal_dequant_hardsigmoid_bridge_stats`,
+`_post_sinet_dequant_hardsigmoid_bridge_stats`, and
+`_late_dequant_hardsigmoid_bridge_stats`. The owner can prune with a zero
+counter when Transposes exist, so all three remain observation-only.
+
+The focused indexed-owner/selection/boundary gate passes
+`405 passed in 21.05s`, and the branch-changed broad suite passes
+`1654 passed in 29.28s`. Early return, graph-index behavior, SiNet/cost-volume/
+late-dequant boundaries, dependencies, and TensorFlow behavior remain
+unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the raw
-`_optimize_transpose_dequant_hardsigmoid_quantize_bridges()` result and every
-other production form of that owner. The guarded Conv/Pool/no-layout branch,
-following late dequant/unary/fanout cluster, and cleanup evidence semantics must
-remain fixed. All retained SiNet callback results, Singleton/Reshape policies,
-three QKV result forms, and the late summary must also remain fixed.
+unit should audit the raw terminal
+`_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains()`
+result and every other production form of that owner. The new terminal
+dequant-HardSigmoid result, existing late HardSwish-SE evidence, SiNet recovery,
+and cleanup evidence semantics must remain fixed. All retained SiNet callback
+results, Singleton/Reshape policies, three QKV result forms, and the late
+summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
