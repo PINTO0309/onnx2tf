@@ -5536,3 +5536,39 @@ At resume, audit the immediately following
 LayoutState contract, production occurrences, and window-reverse/boundary-
 normalization boundaries before adding characterization. Commit and push only;
 do not create, reopen, or update a pull request.
+
+## Late indexed final convergence result characterization checkpoint
+
+`_run_indexed_final_shape_activation_convergence()` returns the existing
+aggregate mutation dictionary from indexed shape convergence, HardSwish shape
+sanitation, dynamic-Reshape resolution, static reconciliation, and activation
+fusion. It has one production call and receives the live Session LayoutState.
+Its result is currently discarded.
+
+A strict expected-failure orchestration contract requires
+`_late_final_shape_activation_convergence_stats`. It fixes the captured window-
+reverse predecessor, exact ModelIR/LayoutState callback, and following final
+boundary-input normalization call with the same LayoutState and Session
+diagnostics.
+
+At implementation, replace only the expression with an assignment. Do not
+change the aggregate schema, one-index convergence internals, conditional
+reconciliation, fusion behavior, pass order, callback arguments, neighboring
+targets, guards, dependencies, diagnostics, or TensorFlow behavior. Validate
+indexed final convergence, window-reverse/boundary-normalization boundaries,
+terminal orchestration, architecture, and broad related gates sequentially,
+then commit and push only; do not create, reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused indexed final convergence, window-reverse/boundary-normalization,
+  terminal-orchestration, architecture, and pass-efficiency gate:
+  `389 passed, 1 xfailed in 18.19s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, both window owners, final convergence, boundary normalization,
+  layout recovery, and pass-efficiency coverage:
+  `1687 passed, 1 xfailed in 24.58s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented aggregate-
+result retention contract above.

@@ -10899,6 +10899,13 @@ captured window-partition dictionary and indexed final shape/activation
 convergence. The retained value has no consumer, and the recovery-runner path
 remains unchanged.
 
+The following indexed final shape/activation convergence runner returns its
+existing aggregate mutation dictionary and receives the live Session
+LayoutState. It has one production call, whose result is currently discarded.
+Strict characterization fixes a late convergence target between the captured
+window-reverse dictionary and final boundary-input normalization with shared
+LayoutState and diagnostics.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
