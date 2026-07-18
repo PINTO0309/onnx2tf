@@ -6506,3 +6506,39 @@ result, owner schema, fixed default options, production occurrence, captured
 dequant-logistic predecessor, and following InstanceNorm-bias boundary before
 adding characterization. Commit and push only; do not create, reopen, or update
 a pull request.
+
+## Terminal Swish-QDQ-island result characterization checkpoint
+
+`_optimize_transpose_swish_qdq_nhwc_islands()` returns the stable five-counter
+dictionary comprising rewritten Swish branches, removed pre-Transposes,
+propagated NHWC metadata, rewritten Concat axes, and removed post-Transposes.
+Its wrapper exposes optional spatial-stage/closure controls and has one model-
+only production call using the defaults `min_spatial_stage=160` and
+`require_concat_closure=False`; that result is currently discarded.
+
+Existing owner tests fix the exact five-key result, phase order, option
+forwarding, wrapper equivalence, indexed mutations, metadata propagation, and
+graph result. A strict expected-failure orchestration contract requires the
+direct result to be retained as `_terminal_swish_qdq_island_stats`. It fixes
+the captured `_terminal_dequant_logistic_mul_quantize_bridge_stats` predecessor
+and the following live-LayoutState InstanceNorm post-Transpose bias owner.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the wrapper or owner, default options, five-key schema, indexed phase
+order, graph mutation, tensor pruning, callback arguments, pass order, adjacent
+targets, dependencies, diagnostics, or TensorFlow behavior. The retained value
+must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed quantized-logistic and Swish owners plus terminal orchestration,
+  architecture, and pass-efficiency gate:
+  `375 passed, 1 xfailed in 18.56s`
+- branch-changed broad suite plus indexed logistic/Swish owners, terminal
+  recovery/orchestration, architecture, and pass-efficiency coverage:
+  `1433 passed, 1 xfailed in 24.14s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+Swish-QDQ-island result retention contract above. Implement that assignment,
+rerun the same gates sequentially, then commit and push only; do not create,
+reopen, or update a pull request.

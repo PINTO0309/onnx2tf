@@ -10960,6 +10960,13 @@ retained as `_terminal_dequant_logistic_mul_quantize_bridge_stats` between the
 captured Swish-residual-closure dictionary and the model-only Swish-QDQ-island
 owner. The retained value has no consumer.
 
+The immediately following model-only Swish-QDQ-island owner returns five
+mutation counters and has one production call using its default options. Its
+result is currently discarded between the captured dequant-logistic bridge
+dictionary and the live-LayoutState InstanceNorm post-Transpose bias owner.
+Strict characterization fixes `_terminal_swish_qdq_island_stats` as its direct
+result target.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`
