@@ -1253,6 +1253,16 @@ The next unit should audit the sole direct
 `run_ndhwc_concat_layout_cleanup()` result and its independent layout-recovery
 occurrence, including schema, cleanup semantics, layout/diagnostics routing,
 and pre-Concat/strided-Slice boundaries.
+
+That sole direct NDHWC Concat result is now characterized separately from its
+layout-recovery occurrence. `_layout_opt_ndhwc_concat_stats` is the selected
+observation-only target. The one-key transactional schema, positive-only
+cleanup, exact arguments, direct-call count, independent orchestration
+selection, and pre-Concat/strided-Slice boundaries are frozen before
+implementation.
+The focused characterization gate passes
+`375 passed, 1 xfailed in 18.42s`; the sole strict xfail is the selected direct
+assignment.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

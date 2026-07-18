@@ -8882,6 +8882,31 @@ layout/diagnostics arguments, and pre-Concat/strided-Slice boundaries before
 changing the direct call. Commit and push only; do not create, reopen, or
 update a pull request.
 
+## Direct NDHWC Concat result characterization checkpoint
+
+The NDHWC Concat transactional cleanup has one direct production call after
+`_layout_opt_pre_concat_stats` plus one independent execution selected by
+layout recovery. Its runner returns one counter, and the inner owner prunes
+unused tensors only after a positive rewrite, so the dictionary completely
+describes owner mutation.
+
+A strict expected-failure contract selects `_layout_opt_ndhwc_concat_stats`
+for the direct call and requires it to remain unconsumed. It freezes the
+one-key schema, positive-only cleanup, ModelIR/layout/diagnostics routing,
+pre-Concat/strided-Slice boundaries, exact sole direct call, and independent
+layout-recovery selection.
+
+The focused schema/cleanup, NDHWC fixture, layout-recovery selection,
+pre-Concat/strided-Slice boundary, architecture, and pass-efficiency gate is
+`375 passed, 1 xfailed in 18.42s`. Ruff, Python bytecode compilation, and
+whitespace validation pass. The sole strict xfail is the selected direct
+assignment; production is unchanged at this checkpoint.
+
+At implementation, replace only the discarded direct expression with the
+selected assignment and update stale boundary targets. Do not change the
+layout-recovery occurrence in the same unit. Validate sequentially, commit,
+and push only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

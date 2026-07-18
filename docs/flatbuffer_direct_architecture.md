@@ -11855,3 +11855,15 @@ These are assignment-only changes. Indexed/quantized/legacy dispatch, the
 independent layout-recovery callback, ModelIR/layout/diagnostics routing,
 three-call multiplicity, and all boundary pairs remain unchanged. No summary,
 guard, dependency, public behavior change, or TensorFlow import path was added.
+
+The sole direct NDHWC Concat cleanup immediately after the layout-option
+pre-Concat result has one independent counterpart inside layout recovery. Its
+transactional runner returns one counter, and the inner owner prunes only
+after a positive rewrite, so the counter completely describes owner mutation.
+
+Strict characterization selects `_layout_opt_ndhwc_concat_stats` for the
+direct result and requires it to remain unconsumed. It freezes the one-key
+schema, positive-only cleanup, ModelIR/layout/diagnostics arguments,
+pre-Concat/strided-Slice boundaries, exact sole direct call, and independent
+layout-recovery selection. The orchestration occurrence is not changed by this
+retention unit.
