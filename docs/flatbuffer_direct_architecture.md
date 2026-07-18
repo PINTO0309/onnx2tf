@@ -10944,10 +10944,9 @@ value has a consumer.
 
 The sole boundary-input Transpose/StridedSlice/QDQ/Concat production call
 returns four mutation counters and receives the live Session LayoutState. Its
-result is currently discarded between the first terminal slice/Concat recovery
-sequence and the model-only Swish-residual closure. Strict characterization
-fixes `_terminal_boundary_stridedslice_qdq_concat_stats` as its direct result
-target.
+result is retained as `_terminal_boundary_stridedslice_qdq_concat_stats`
+between the first terminal slice/Concat recovery sequence and the model-only
+Swish-residual closure. The retained value has no consumer.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

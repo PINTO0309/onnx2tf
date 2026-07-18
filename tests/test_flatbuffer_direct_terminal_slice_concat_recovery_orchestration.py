@@ -225,7 +225,7 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
 
     assert len(invocation_indexes) == 2
     observed: list[
-        tuple[str | None, str, tuple[str | None, ...], str]
+        tuple[str | None, str, tuple[str | None, ...], str | None, str]
     ] = []
     for index in invocation_indexes:
         previous = lowerer.body[index - 1]
@@ -239,15 +239,22 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
         previous_call = previous.value
         assert isinstance(previous_call, ast.Call)
         assert isinstance(previous_call.func, ast.Name)
-        assert isinstance(following, ast.Expr)
-        assert isinstance(following.value, ast.Call)
-        assert isinstance(following.value.func, ast.Name)
+        assert isinstance(following, (ast.Assign, ast.Expr))
+        following_target: str | None = None
+        if isinstance(following, ast.Assign):
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            following_target = following.targets[0].id
+        following_call = following.value
+        assert isinstance(following_call, ast.Call)
+        assert isinstance(following_call.func, ast.Name)
         observed.append(
             (
                 previous_target,
                 previous_call.func.id,
                 tuple(keyword.arg for keyword in previous_call.keywords),
-                following.value.func.id,
+                following_target,
+                following_call.func.id,
             )
         )
 
@@ -256,12 +263,14 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             "_terminal_channel_slice_muladd_bridge_stats",
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             ("layout_state",),
+            "_terminal_boundary_stridedslice_qdq_concat_stats",
             "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
         ),
         (
             "_final_channel_slice_muladd_bridge_stats",
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             (),
+            None,
             "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
         ),
     ]

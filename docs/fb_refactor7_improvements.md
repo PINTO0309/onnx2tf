@@ -666,6 +666,17 @@ This checkpoint passes the focused MulAdd-bridge/recovery accounting gate with
 `347 passed in 20.85s`, plus the branch-changed broad related suite with
 `1392 passed in 24.26s`.
 
+The sole boundary-input Transpose/StridedSlice/QDQ/Concat production call now
+retains its existing four-counter dictionary as
+`_terminal_boundary_stridedslice_qdq_concat_stats`. Recovery outer-boundary
+contracts now distinguish that assignment from the later raw successor while
+preserving the live Session LayoutState, Swish-residual closure, owner behavior,
+and TensorFlow-free boundary. The retained value has no consumer.
+
+This checkpoint passes the focused boundary-StridedSlice/recovery accounting
+gate with `349 passed in 20.54s`, plus the branch-changed broad related suite
+with `1394 passed in 24.34s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -673,8 +684,9 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the sole boundary-input Transpose/StridedSlice/QDQ/Concat
-owner result immediately after the first terminal recovery sequence and
-preserve its live LayoutState/Swish-closure boundaries. Any new mutation
+unit should audit the immediately following model-only Swish-residual-closure
+owner result and its captured boundary-StridedSlice/dequant-logistic bridge
+boundaries. The two stale indexed-Swish monkeypatch tests must remain classified
+separately unless deliberately repaired in an isolated unit. Any new mutation
 evidence must preserve current pass order, TensorFlow-free boundary, dependency
 set, and sequential validation policy.

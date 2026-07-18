@@ -1751,6 +1751,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     assert len(invocation_indexes) == 2
     previous_targets = []
     previous_keyword_names = []
+    next_targets = []
     next_call_names = []
     for index in invocation_indexes:
         invocation = lowerer.body[index].value
@@ -1775,15 +1776,26 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
             [keyword.arg for keyword in previous_call.keywords]
         )
         following = lowerer.body[index + 1]
-        assert isinstance(following, ast.Expr)
-        assert isinstance(following.value, ast.Call)
-        assert isinstance(following.value.func, ast.Name)
-        next_call_names.append(following.value.func.id)
+        assert isinstance(following, (ast.Assign, ast.Expr))
+        next_target = None
+        if isinstance(following, ast.Assign):
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            next_target = following.targets[0].id
+        following_call = following.value
+        assert isinstance(following_call, ast.Call)
+        assert isinstance(following_call.func, ast.Name)
+        next_targets.append(next_target)
+        next_call_names.append(following_call.func.id)
     assert previous_targets == [
         "_terminal_channel_slice_muladd_bridge_stats",
         "_final_channel_slice_muladd_bridge_stats",
     ]
     assert previous_keyword_names == [["layout_state"], []]
+    assert next_targets == [
+        "_terminal_boundary_stridedslice_qdq_concat_stats",
+        None,
+    ]
     assert next_call_names == [
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
         "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",

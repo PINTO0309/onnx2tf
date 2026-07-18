@@ -6320,3 +6320,38 @@ characterization and were excluded from the gate.
 
 Implement the assignment, rerun the same gates sequentially, then commit and
 push only; do not create, reopen, or update a pull request.
+
+## Terminal boundary StridedSlice/QDQ/Concat result retention implementation checkpoint
+
+The sole production call now retains its existing four-counter dictionary as
+`_terminal_boundary_stridedslice_qdq_concat_stats`. This is an assignment-only
+orchestration change. The wrapper and pass implementation, result schema,
+rewrite guards, graph mutation, tensor pruning, GraphIndex/LayoutState
+behavior, callback arguments, pass order, preceding recovery call, following
+Swish-residual closure, dependencies, diagnostics, and TensorFlow behavior are
+unchanged. The retained value has no consumer and triggers no additional graph
+work.
+
+Recovery orchestration and architecture contracts now recognize the assignment
+as the first recovery invocation's successor, while the later recovery
+successor remains raw.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused owner/schema, terminal recovery, Swish boundary orchestration,
+  architecture, and pass-efficiency gate: `349 passed in 20.54s`
+- branch-changed broad suite plus boundary/channel-slice, pad-Mul, terminal
+  recovery, architecture, and pass-efficiency coverage:
+  `1394 passed in 24.34s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run. The two pre-existing stale monkeypatch
+failures in `test_flatbuffer_direct_indexed_quantized_swish_layout.py` remain a
+separate known issue and were not changed in this unit.
+
+At resume, audit the immediately following model-only
+`_optimize_transpose_swish_residual_concat_closure_nhwc_chains()` result,
+owner schema, production occurrence, captured boundary-StridedSlice
+predecessor, and following dequant-logistic bridge. Keep the stale indexed-
+Swish test issue separately classified. Commit and push only; do not create,
+reopen, or update a pull request.

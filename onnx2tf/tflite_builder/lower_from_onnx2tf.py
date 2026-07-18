@@ -4718,9 +4718,11 @@ def lower_onnx_to_ir(
         )
     )
     _run_terminal_slice_concat_layout_recovery_sequence()
-    _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_boundary_stridedslice_qdq_concat_stats = (
+        _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
     _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
