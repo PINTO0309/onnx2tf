@@ -7208,3 +7208,41 @@ binary-repair, and three singleton/consecutive dictionaries plus tensor-count
 delta. Preserve its existing predicate and characterize only a complete opt-in
 result target. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## Guarded shared-late static-shape result characterization checkpoint
+
+The shared-late static-shape reconciliation is already guarded by nine pure
+mutation-result dictionaries: boundary-signature, HardSwish, Squeeze, wrong-
+way Conv-Transpose, two binary repairs, and the three singleton/consecutive
+cluster results. A `len(model_ir.tensors) < shared_late_tensor_count` clause
+also covers cleanup-only pruning.
+
+Existing runtime fixtures independently force each dictionary positive and
+the tensor-count delta, proving that every changed outcome adds exactly one
+reconciliation over the all-zero/no-prune path. The predicate is complete and
+must not change.
+
+A strict expected-failure structural contract requires only the guarded call
+to retain `_shared_late_static_shape_stats` with
+`include_mutation_count=True`. It fixes all nine evidence names, the prune
+clause, one-statement guard body, and following
+`late_binary_repair_tensor_count` boundary. The result is observation-only and
+must have no consumer.
+
+At implementation, replace only the guarded expression with the assignment
+and opt-in keyword. Do not alter the predicate, execution count, reconciler
+fixed point, preceding owners, following tensor count, pass order,
+dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- positive-count helper, runtime nine-result/prune guard, complete reconciler,
+  terminal occurrence, singleton boundary, architecture, and pass-efficiency
+  coverage: `364 passed, 1 xfailed in 19.99s`
+- branch-changed broad suite plus the same runtime and structural coverage:
+  `1426 passed, 1 xfailed in 24.78s`
+
+The sole strict expected failure is the intentionally unimplemented guarded
+shared-late result retention contract above. Implement only that assignment
+and opt-in counter, rerun the same gates sequentially, then commit and push
+only; do not create, reopen, or update a pull request.

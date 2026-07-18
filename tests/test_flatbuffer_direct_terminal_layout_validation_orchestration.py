@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1842,6 +1844,67 @@ def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     assert isinstance(successor.targets[0], ast.Name)
     assert successor.targets[0].id == "shared_late_tensor_count"
     assert ast.unparse(successor.value) == "len(model_ir.tensors)"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="guarded shared-late shape reconciliation result is discarded",
+)
+def test_primary_path_retains_shared_late_shape_result() -> None:
+    body = _lowerer_body()
+    tensor_count_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "shared_late_tensor_count"
+    )
+    guard_index = next(
+        index
+        for index in range(tensor_count_index + 1, len(body))
+        if isinstance(body[index], ast.If)
+        and "shared_late_tensor_count" in ast.unparse(body[index].test)
+    )
+    guard = body[guard_index]
+    assert isinstance(guard, ast.If)
+    assert len(guard.body) == 1
+    assert "_stats_have_positive_count(" in ast.unparse(guard.test)
+    for target_name in (
+        "shared_boundary_signature_stats",
+        "shared_hardswish_stats",
+        "shared_squeeze_stats",
+        "shared_conv_transpose_stats",
+        "shared_binary_adapter_stats",
+        "shared_singleton_adapter_stats",
+        "shared_singleton_channel_stats",
+        "shared_duplicate_fanout_stats",
+        "shared_consecutive_reshape_stats",
+    ):
+        assert target_name in ast.unparse(guard.test)
+    assert "len(model_ir.tensors) < shared_late_tensor_count" in ast.unparse(
+        guard.test
+    )
+
+    statement = guard.body[0]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_shared_late_static_shape_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_mutation_count": "True"}
+
+    following = body[guard_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "late_binary_repair_tensor_count"
+    assert ast.unparse(following.value) == "len(model_ir.tensors)"
 
 
 def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:

@@ -11063,6 +11063,18 @@ The unconditional call now requests `include_mutation_count=True` and retains
 predecessor and following tensor-count boundary remain fixed. No new guard or
 consumer is introduced.
 
+The later shared-late reconciliation is already guarded by nine pure mutation-
+count dictionaries plus a tensor-count decrease that covers prune-only paths.
+Runtime fixtures independently prove that every positive dictionary and the
+prune delta add exactly one reconciliation over the all-zero/no-prune path.
+Its execution predicate is therefore complete and must remain unchanged.
+
+Strict characterization selects only the call inside that existing guard for
+a future `_shared_late_static_shape_stats` assignment with
+`include_mutation_count=True`. It fixes all nine evidence names, the tensor-
+count clause, following late-binary tensor-count boundary, and the absence of a
+new consumer.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`
