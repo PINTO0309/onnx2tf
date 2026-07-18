@@ -775,7 +775,7 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         previous = recovery_block.body[index - 1]
         following = recovery_block.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
         previous_call_names.append(previous.value.func.id)
@@ -788,6 +788,12 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         "_run_attention_gate_qdq_recovery_sequence",
         "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
     ]
+    full_post_boundary = recovery_block.body[invocation_indexes[1] - 1]
+    assert isinstance(full_post_boundary, ast.Assign)
+    assert isinstance(full_post_boundary.targets[0], ast.Name)
+    assert full_post_boundary.targets[0].id == (
+        "_layout_opt_channel_shuffle_gather_results"
+    )
 
 
 def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
@@ -7434,7 +7440,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
     )
     assert len(channel_helper.body) == 1
     channel_statement = channel_helper.body[0]
-    assert isinstance(channel_statement, ast.Expr)
+    assert isinstance(channel_statement, ast.Return)
     assert isinstance(channel_statement.value, ast.Call)
     assert isinstance(channel_statement.value.func, ast.Name)
     assert channel_statement.value.func.id == "run_channel_shuffle_gather"
@@ -7553,7 +7559,7 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -7564,6 +7570,10 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
             for keyword in statement.value.keywords
         )
     )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_late_channel_shuffle_gather_results"
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert isinstance(previous_boundary.targets[0], ast.Name)

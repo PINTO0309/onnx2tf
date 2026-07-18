@@ -10847,10 +10847,10 @@ unchanged.
 
 The following channel-shuffle/Gather orchestrator selects two through seven
 transactional child passes and internally receives their ordered result tuple.
-Both the public runner and local helper currently discard that tuple, as do the
-guarded full-post and unguarded late-base production invocations. Strict
-characterization requires typed raw propagation through both layers and
-phase-specific targets without aggregation.
+The public runner and local helper propagate that typed tuple unchanged. The
+guarded full-post and unguarded late-base production invocations retain it under
+phase-specific targets without aggregation. Policy selection, ordering, shared
+scope, and boundaries remain unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

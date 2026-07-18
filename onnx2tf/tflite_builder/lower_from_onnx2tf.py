@@ -4095,8 +4095,8 @@ def lower_onnx_to_ir(
         include_two_way_shuffle: bool = True,
         include_nhwc_shuffle: bool = True,
         include_post_gather_cleanup: bool = False,
-    ) -> None:
-        run_channel_shuffle_gather(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_channel_shuffle_gather(
             channel_shuffle_gather_context,
             include_two_way_shuffle=include_two_way_shuffle,
             include_nhwc_shuffle=include_nhwc_shuffle,
@@ -4557,8 +4557,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _run_channel_shuffle_gather_layout_pass_cluster(
-            include_post_gather_cleanup=True,
+        _layout_opt_channel_shuffle_gather_results = (
+            _run_channel_shuffle_gather_layout_pass_cluster(
+                include_post_gather_cleanup=True,
+            )
         )
         _run_preadd_mean_attention_recovery_sequence()
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
@@ -4896,9 +4898,11 @@ def lower_onnx_to_ir(
             model_ir
         )
     )
-    _run_channel_shuffle_gather_layout_pass_cluster(
-        include_two_way_shuffle=False,
-        include_nhwc_shuffle=False,
+    _late_channel_shuffle_gather_results = (
+        _run_channel_shuffle_gather_layout_pass_cluster(
+            include_two_way_shuffle=False,
+            include_nhwc_shuffle=False,
+        )
     )
     _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
         model_ir,

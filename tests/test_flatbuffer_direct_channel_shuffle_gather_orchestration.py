@@ -178,7 +178,7 @@ def test_channel_shuffle_gather_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -330,10 +330,6 @@ def test_channel_shuffle_gather_runner_preserves_all_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="channel-shuffle/Gather runner discards ordered results",
-)
 def test_channel_shuffle_gather_runner_returns_all_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -361,10 +357,6 @@ def test_channel_shuffle_gather_runner_returns_all_ordered_results(
         assert result == tuple({pass_id: 1} for pass_id in expected_ids)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="local helper and both production calls discard ordered results",
-)
 def test_channel_shuffle_gather_helper_propagates_and_retains_results() -> None:
     lowerer, helper = _lowerer_and_helper()
     assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
@@ -451,7 +443,7 @@ def test_channel_shuffle_gather_preserves_full_post_policy_and_boundaries() -> N
     invocation_index = next(
         index
         for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == CHANNEL_SHUFFLE_GATHER
@@ -460,7 +452,11 @@ def test_channel_shuffle_gather_preserves_full_post_policy_and_boundaries() -> N
 
     assert isinstance(guard.test, ast.Name)
     assert guard.test.id == "optimize_layout_transpose_chains"
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_layout_opt_channel_shuffle_gather_results"
+    )
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {
@@ -480,14 +476,16 @@ def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> N
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == CHANNEL_SHUFFLE_GATHER
     )
     invocation = lowerer.body[invocation_index]
 
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_late_channel_shuffle_gather_results"
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {

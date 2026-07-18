@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple, cast
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -122,19 +122,22 @@ def run_channel_shuffle_gather(
     include_two_way_shuffle: bool = True,
     include_nhwc_shuffle: bool = True,
     include_post_gather_cleanup: bool = False,
-) -> None:
+) -> Tuple[Dict[str, int], ...]:
     expected_pass_ids = _selected_pass_ids(
         include_two_way_shuffle=include_two_way_shuffle,
         include_nhwc_shuffle=include_nhwc_shuffle,
         include_post_gather_cleanup=include_post_gather_cleanup,
     )
-    run_recovery_invocations(
-        build_channel_shuffle_gather_invocations(
-            context,
-            include_two_way_shuffle=include_two_way_shuffle,
-            include_nhwc_shuffle=include_nhwc_shuffle,
-            include_post_gather_cleanup=include_post_gather_cleanup,
+    return cast(
+        Tuple[Dict[str, int], ...],
+        run_recovery_invocations(
+            build_channel_shuffle_gather_invocations(
+                context,
+                include_two_way_shuffle=include_two_way_shuffle,
+                include_nhwc_shuffle=include_nhwc_shuffle,
+                include_post_gather_cleanup=include_post_gather_cleanup,
+            ),
+            expected_pass_ids=expected_pass_ids,
+            phase_name="channel-shuffle/gather",
         ),
-        expected_pass_ids=expected_pass_ids,
-        phase_name="channel-shuffle/gather",
     )

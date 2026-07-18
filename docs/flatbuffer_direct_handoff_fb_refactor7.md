@@ -5139,3 +5139,29 @@ Characterization validation completed sequentially under `uv`:
 
 The two strict expected failures are the deliberately unimplemented runner/
 helper return propagation and the two production result assignments.
+
+## Channel-shuffle/Gather result propagation implementation checkpoint
+
+`run_channel_shuffle_gather()` now returns the existing ordered child tuple as
+`Tuple[Dict[str, int], ...]`, and the local helper propagates the same type and
+value. No child invocation, scan, copy, aggregation, or summary traversal was
+added. The guarded full-post and unguarded late-base results are retained as
+`_layout_opt_channel_shuffle_gather_results` and
+`_late_channel_shuffle_gather_results`.
+
+All eight policy combinations preserve exact selected-pass order. Shared state
+scope, layout/diagnostic arguments, transaction behavior, guard placement,
+captured NHWC-Reshape predecessor, pre-ADD/mean-attention and QKV-attention
+successors, dependencies, and TensorFlow behavior are unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused all-policy runner, helper AST, pass-efficiency, layout-recovery,
+  terminal-orchestration, and architecture gate: `348 passed in 19.69s`
+- expanded broad related gate: `1736 passed in 31.42s`
+
+At resume, audit the immediately following
+`_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains()`
+result, owner schema, live LayoutState contract, and channel-shuffle/next-owner
+boundaries before retaining evidence. Commit and push only; do not create,
+reopen, or update a pull request.

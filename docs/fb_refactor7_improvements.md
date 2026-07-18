@@ -465,6 +465,16 @@ This checkpoint extends the expanded related gate to `1734 passed in 32.13s`;
 the focused collapse-owner, channel-shuffle boundary, layout-recovery,
 terminal-orchestration, and architecture gate is `365 passed in 20.07s`.
 
+Channel-shuffle/Gather orchestration now returns the ordered two-to-seven child
+result tuple already produced by its recovery runner. The local helper
+propagates it, and the guarded full-post plus unguarded late-base calls retain
+raw tuples under phase targets. All eight policy combinations, pass order,
+shared scope, diagnostics, and boundaries remain unchanged.
+
+This checkpoint extends the expanded related gate to `1736 passed in 31.42s`;
+the focused all-policy runner, helper, pass-efficiency, layout-recovery,
+terminal-orchestration, and architecture gate is `348 passed in 19.69s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -472,7 +482,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit result propagation through the immediately following
-channel-shuffle/Gather helper and its underlying runner. Any new mutation
-evidence must preserve policy arguments, current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+unit should audit the immediately following QKV reshape/transpose recovery
+result and its live LayoutState contract. Any new mutation evidence must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.
