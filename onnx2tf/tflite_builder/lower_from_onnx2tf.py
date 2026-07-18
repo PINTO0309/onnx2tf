@@ -4478,11 +4478,15 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
     )
-    _sanitize_terminal_transpose_before_dequantize(model_ir)
-    run_terminal_quantize_dequantize_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _core_cleanup_terminal_dequant_stats = (
+        _sanitize_terminal_transpose_before_dequantize(model_ir)
+    )
+    _core_cleanup_terminal_qdq_stats = (
+        run_terminal_quantize_dequantize_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
@@ -4648,11 +4652,15 @@ def lower_onnx_to_ir(
     _set_post_progress_desc("terminal cleanup passes")
     # Recovery sweeps above can re-introduce terminal TRANSPOSE->DEQUANTIZE.
     # Run terminal sanitizers once more at the very end.
-    _sanitize_terminal_transpose_before_dequantize(model_ir)
-    run_terminal_quantize_dequantize_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_cleanup_terminal_dequant_stats = (
+        _sanitize_terminal_transpose_before_dequantize(model_ir)
+    )
+    _terminal_cleanup_terminal_qdq_stats = (
+        run_terminal_quantize_dequantize_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,

@@ -400,6 +400,15 @@ This checkpoint extends the expanded related gate to `1432 passed in 31.30s`;
 the focused indexed-fusion, graph-cleanup, terminal, architecture, and pass-
 efficiency gate is `364 passed in 18.37s`.
 
+Both terminal quantization-cleanup pairs now retain their raw Transpose/
+Dequantize sanitizer and transactional Quantize/Dequantize dictionaries under
+phase-specific targets. Pair order, callback contracts, progress boundaries,
+and Conv-affine successors are unchanged.
+
+This checkpoint extends the expanded related gate to `1480 passed in 31.26s`;
+the focused quantization-cleanup, terminal, architecture, and pass-efficiency
+gate is `359 passed in 17.79s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -408,7 +417,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should audit result propagation through
-the terminal Transpose/Dequantize sanitizer and ordered Quantize/Dequantize
-cleanup immediately after the completed core-cleanup fusion/Mul sequence. Any
-new mutation evidence must preserve current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+the two Conv-affine fold and Conv-activation fusion pairs immediately following
+the completed terminal quantization-cleanup pairs. Any new mutation evidence
+must preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

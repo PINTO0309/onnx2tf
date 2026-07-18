@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1342,10 +1340,6 @@ def test_primary_path_retains_core_cleanup_fusion_results() -> None:
     assert consecutive.targets[0].id == "_core_cleanup_consecutive_mul_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal Dequantize and Q/DQ cleanup results are discarded",
-)
 def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
     body = _lowerer_body()
     sanitizer_name = "_sanitize_terminal_transpose_before_dequantize"

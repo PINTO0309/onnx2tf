@@ -4727,3 +4727,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet four-result capture contract;
 there are no unexpected failures.
+
+## Terminal quantization-cleanup result implementation checkpoint
+
+The core-cleanup pair now retains its terminal Transpose/Dequantize sanitizer
+and exact-grid Q/DQ dictionaries as `_core_cleanup_terminal_dequant_stats` and
+`_core_cleanup_terminal_qdq_stats`. The later terminal-cleanup pair retains the
+same owner results as `_terminal_cleanup_terminal_dequant_stats` and
+`_terminal_cleanup_terminal_qdq_stats`.
+
+Both owners/schemas, pair occurrence counts and order, GraphIndex/pruning and
+transaction behavior, ModelIR/layout-state/diagnostics handoff, distinct
+preceding progress/consecutive-Mul boundaries, following Conv-affine folds,
+dependencies, and TensorFlow-free behavior are unchanged. No guard,
+reconciliation, scan, sort, metadata write, or result consumption is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- quantization cleanup, terminal orchestration, architecture, and pass
+  efficiency: `359 passed in 17.79s`
+- expanded broad related gate: `1480 passed in 31.26s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the two following
+`_optimize_fold_conv_mul_add_affine_chains()` and
+`_optimize_fuse_conv_activation_chains()` pairs. Characterize both occurrence
+schemas, the shared layout-state/Conv-ADD option contracts, and their fixed Q/DQ
+predecessors before retaining evidence. Commit and push only; do not create or
+update a pull request.

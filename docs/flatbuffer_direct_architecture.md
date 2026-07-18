@@ -10799,9 +10799,10 @@ Terminal quantization cleanup appears as two ordered pairs: once in core
 cleanup and once after late recovery sweeps. Each pair normalizes terminal
 Transpose/Dequantize boundaries, then transactionally removes exact-grid
 terminal Quantize/Dequantize pairs before Conv-affine folding. The sanitizer
-returns two counters and the runner one; all four caller results are currently
-discarded. Characterization fixes both occurrence pairs, their shared callback
-contracts, and their distinct preceding boundaries before implementation.
+returns two counters and the runner one. The core and terminal callers retain
+all four dictionaries under phase-specific targets. Both occurrence pairs,
+their shared callback contracts, distinct preceding boundaries, and Conv-
+affine successors are unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
