@@ -10394,3 +10394,39 @@ runner/helper contract. Preserve the newly retained final attention result
 that follows its second call, both distinct outer boundaries, and the
 observation-only policy. Commit and push only; do not create, reopen, or update
 a pull request.
+
+## QLinear/mean/Concat parent result characterization checkpoint
+
+`run_qlinear_mean_concat_recovery()` selects five ordered children:
+mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv, pre-quantized
+Concat cleanup, and mean/MaxPool/Concat/Conv. All five return their existing
+dictionaries. The runner and zero-argument lowerer helper currently discard
+the aggregate tuple at both direct calls.
+
+The pass-set-1 call lies between dequant-mean bridge recovery and the newly
+retained `_layout_pass_set_1_final_attention_recovery_results`. The pass-set-2
+call lies between the progress-description update and the newly retained
+`_layout_pass_set_2_layout_recovery_prefix_results`.
+
+A strict expected-failure contract instruments all five result identities and
+selects observation-only targets
+`_layout_pass_set_1_qlinear_mean_concat_results` and
+`_layout_pass_set_2_qlinear_mean_concat_results`. It freezes the shared
+`ModelIRPassContext`, runner/helper return, exact two-call count, both boundary
+pairs, and absence of consumers. Child pruning means zero counters are not
+complete evidence that no cleanup mutation occurred.
+
+Characterization validation completed sequentially under `uv`:
+
+- QLinear parent and child-owner contracts, both retained outer boundaries,
+  layout recovery, architecture, and pass-efficiency coverage:
+  `424 passed, 1 xfailed in 18.09s`
+- branch-changed broad suite: `1606 passed, 1 xfailed in 28.82s`
+
+The sole strict expected failure is the intentionally unimplemented ordered
+result propagation. At implementation, return the existing five-slot tuple
+through the runner/helper and replace only the two raw direct expressions with
+the selected assignments. Do not consume either result or change a child,
+context, pass order, surrounding retained target, summary, guard, dependency,
+public API, or TensorFlow behavior. Validate sequentially, commit, and push
+only; do not create, reopen, or update a pull request.

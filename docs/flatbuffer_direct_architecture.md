@@ -12140,3 +12140,16 @@ tuple. The three direct calls retain
 The first slot preserves the nested nineteen-slot layout result without
 normalization or copying. No child, context, ordering, cleanup timing, guard,
 summary, dependency, public API, or TensorFlow boundary changes.
+
+The QLinear/mean/Concat recovery parent selects five ordered dictionary
+results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
+pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and
+lowerer helper currently discard both pass-set result tuples.
+
+Strict characterization selects
+`_layout_pass_set_1_qlinear_mean_concat_results` and
+`_layout_pass_set_2_qlinear_mean_concat_results`. It freezes every result
+identity, the shared `ModelIRPassContext`, exact zero-argument calls,
+dequant-mean/final-attention and progress/layout-recovery boundaries, and an
+unconsumed observation-only policy. Child pruning can occur without a positive
+counter, so the parent tuple is not complete mutation evidence.

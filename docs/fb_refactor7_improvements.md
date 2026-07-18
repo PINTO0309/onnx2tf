@@ -1511,3 +1511,11 @@ passes.
 The next unit should audit both direct QLinear/mean/Concat recovery results,
 preserving the newly retained final attention result that follows the second
 call and both distinct production boundaries.
+
+That five-slot parent is now characterized with two observation-only targets:
+`_layout_pass_set_1_qlinear_mean_concat_results` and
+`_layout_pass_set_2_qlinear_mean_concat_results`. Exact result identity,
+shared context, zero-argument calls, dequant-mean/final-attention and
+progress/layout-recovery boundaries, and the unconsumed policy are frozen.
+The focused gate passes `424 passed, 1 xfailed in 18.09s`; the branch-changed
+broad gate passes `1606 passed, 1 xfailed in 28.82s`.
