@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -109,10 +106,6 @@ def test_csp_attention_result_schema_and_cleanup_semantics_are_explicit() -> Non
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the sole production CSP-attention result is not retained yet",
-)
 def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     invocations = [

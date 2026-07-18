@@ -11407,3 +11407,13 @@ The retained dictionary must remain observation-only. It must not be used as a
 guard or consumer, and retention must not add graph work, alter owner mutation
 semantics, change the SA/PA successor, add dependencies, or create a TensorFlow
 import path.
+
+The sole production call now retains its unchanged one-counter dictionary as
+`_post_cleanup_csp_attention_stats`. It remains observation-only and has no
+consumer or guard because cleanup-only pruning can occur while the rewrite
+counter is zero.
+
+This is an assignment-only change. The wrapper, indexed owner, unconditional
+prune, positive-only LayoutState synchronization, live Session LayoutState,
+captured SiNet predecessor, SA/PA successor, dependencies, diagnostics, and
+TensorFlow behavior remain unchanged.

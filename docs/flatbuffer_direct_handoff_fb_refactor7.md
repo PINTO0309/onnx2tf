@@ -8213,6 +8213,37 @@ assignment. Implement only that assignment, rerun focused and branch-changed
 broad gates sequentially, then commit and push only; do not create, reopen, or
 update a pull request.
 
+## Post-cleanup CSP-attention result retention implementation checkpoint
+
+The sole production call now retains its unchanged one-counter dictionary as
+`_post_cleanup_csp_attention_stats`. The dictionary remains observation-only
+and has no consumer or guard because the owner prunes unused tensors
+unconditionally while its counter reports rewrites only.
+
+This is an assignment-only change. The lowerer wrapper, indexed owner, one-key
+schema, unconditional prune, positive-only LayoutState synchronization, live
+Session LayoutState, captured `_post_cleanup_sinet_preadd_resize_results`
+predecessor, adjacent SA/PA MirrorPad successor, dependencies, diagnostics, and
+TensorFlow behavior remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- CSP result/schema semantics, SiNet pre-add/resize and terminal boundaries,
+  architecture, and pass-efficiency coverage: `307 passed in 19.19s`
+- concrete CSP-attention owner fixtures: `2 passed, 739 deselected in 0.59s`
+- branch-changed broad suite plus the same CSP-attention coverage:
+  `1530 passed in 26.74s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the adjacent direct
+`_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains()` result after
+`_post_cleanup_csp_attention_stats`. Preserve the same owner selections inside
+attention-recovery orchestration, the separate gate-layout boundary, live
+LayoutState wiring, and the captured BatchMatMul affine-input successor. Commit
+and push only; do not create, reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

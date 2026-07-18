@@ -1020,14 +1020,25 @@ middle callback result while remaining unconsumed. The focused gate passes
 `1534 passed in 26.35s`. Six-child order, arguments, live LayoutState wiring,
 callback identity, dependencies, and TensorFlow behavior remain unchanged.
 
+The sole post-cleanup CSP-attention result is now retained as
+`_post_cleanup_csp_attention_stats`. Its one-counter dictionary remains
+observation-only because the owner prunes unused tensors unconditionally; no
+consumer or guard was added.
+
+The focused contract gate passes `307 passed in 19.19s`, both concrete CSP
+owner fixtures pass, and the branch-changed broad suite passes
+`1530 passed in 26.74s`. The indexed owner, live LayoutState, SiNet predecessor,
+SA/PA successor, dependencies, and TensorFlow behavior remain fixed.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the post-cleanup CSP-attention result after
-`_post_cleanup_sinet_preadd_resize_results`. Its other production occurrence,
-live LayoutState wiring, and adjacent SA/PA MirrorPad propagation must remain
-fixed. All retained SiNet callback results, Singleton/Reshape policies, three
-QKV result forms, and the late summary must also remain fixed.
+unit should audit the adjacent direct SA/PA MirrorPad result after
+`_post_cleanup_csp_attention_stats`. Its attention-recovery orchestration forms,
+separate gate-layout boundary, live LayoutState wiring, and captured BatchMatMul
+affine-input successor must remain fixed. All retained SiNet callback results,
+Singleton/Reshape policies, three QKV result forms, and the late summary must
+also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

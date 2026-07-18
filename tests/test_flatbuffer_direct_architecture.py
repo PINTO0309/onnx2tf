@@ -2069,6 +2069,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert assigned_boundary_targets == [
         "_post_terminal_singleton_reshape_results",
         "_very_late_sinet_layout_recovery_results",
+        "_post_cleanup_csp_attention_stats",
     ]
 
     all_invocations = [
