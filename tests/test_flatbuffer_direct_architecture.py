@@ -794,6 +794,11 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
     assert full_post_boundary.targets[0].id == (
         "_layout_opt_channel_shuffle_gather_results"
     )
+    sa_pa_boundary = recovery_block.body[invocation_indexes[1] + 1]
+    assert isinstance(sa_pa_boundary, ast.Assign)
+    assert len(sa_pa_boundary.targets) == 1
+    assert isinstance(sa_pa_boundary.targets[0], ast.Name)
+    assert sa_pa_boundary.targets[0].id == "_layout_opt_sa_pa_mirrorpad_stats"
 
 
 def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:

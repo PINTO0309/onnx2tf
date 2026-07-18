@@ -1030,15 +1030,25 @@ owner fixtures pass, and the branch-changed broad suite passes
 `1530 passed in 26.74s`. The indexed owner, live LayoutState, SiNet predecessor,
 SA/PA successor, dependencies, and TensorFlow behavior remain fixed.
 
+The two direct SA/PA MirrorPad results are now retained as
+`_layout_opt_sa_pa_mirrorpad_stats` and
+`_post_cleanup_sa_pa_mirrorpad_stats`. Their one-counter dictionaries are
+complete owner mutation evidence but remain unconsumed in this unit.
+
+The focused owner/orchestration/boundary gate passes `357 passed in 17.70s`,
+and the branch-changed broad suite passes `1584 passed in 26.18s`. Positive-only
+pruning and LayoutState sync, attention-recovery selection, option policy,
+dependencies, and TensorFlow behavior remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the adjacent direct SA/PA MirrorPad result after
-`_post_cleanup_csp_attention_stats`. Its attention-recovery orchestration forms,
-separate gate-layout boundary, live LayoutState wiring, and captured BatchMatMul
-affine-input successor must remain fixed. All retained SiNet callback results,
-Singleton/Reshape policies, three QKV result forms, and the late summary must
-also remain fixed.
+unit should audit the post-SiNet ReLU/Split all-outputs result after
+`_post_sinet_qkv_attention_results`. Its other production forms, live
+LayoutState wiring, following ReLU/Split/Conv/Concat recovery, and captured
+Split/Conv/Concat bridge result must remain fixed. All retained SiNet callback
+results, Singleton/Reshape policies, three QKV result forms, and the late
+summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -136,10 +133,6 @@ def test_sa_pa_mirrorpad_result_schema_and_positive_cleanup_are_explicit() -> No
     assert selected_owner_names == [OWNER_NAME]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the two direct SA/PA MirrorPad results are not retained yet",
-)
 def test_lowerer_retains_both_direct_sa_pa_mirrorpad_results() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = sorted(

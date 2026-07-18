@@ -59,7 +59,7 @@ def _expression_path(node: ast.expr) -> Any:
 
 
 def _direct_call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, (ast.Assign, ast.Expr))
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     return statement.value.func.id
@@ -274,7 +274,12 @@ def test_gate_layout_preserves_direct_reduced_policy_and_boundaries() -> None:
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in invocation.value.keywords
     } == {"include_mixed_attention": False}
-    assert _direct_call_name(direct_guard.body[invocation_index - 1]) == (
+    predecessor = direct_guard.body[invocation_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_layout_opt_sa_pa_mirrorpad_stats"
+    assert _direct_call_name(predecessor) == (
         "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains"
     )
     following = direct_guard.body[invocation_index + 1]

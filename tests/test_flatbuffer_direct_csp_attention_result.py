@@ -130,6 +130,7 @@ def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
     following = lowerer.body[invocation_index + 1]
     assert _single_target(previous) == "_post_cleanup_sinet_preadd_resize_results"
     assert _call_name(previous) == "_run_sinet_preadd_resize_recovery_sequence"
+    assert _single_target(following) == "_post_cleanup_sa_pa_mirrorpad_stats"
     assert _call_name(following) == SA_PA_MIRRORPAD
     following_call = _statement_call(following)
     assert following_call is not None

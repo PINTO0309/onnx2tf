@@ -11436,3 +11436,14 @@ arguments, live LayoutState, result schema, positive-only prune/sync, option
 guard, four boundaries, direct-call count, and the independent orchestration
 selection. Both retained dictionaries must remain unconsumed in this unit so
 retention adds no guard, graph work, dependency, or TensorFlow import path.
+
+The two direct calls now retain their unchanged one-counter dictionaries as
+`_layout_opt_sa_pa_mirrorpad_stats` and
+`_post_cleanup_sa_pa_mirrorpad_stats`. Both remain unconsumed even though their
+counter is complete owner mutation evidence.
+
+These are assignment-only changes. The wrapper, indexed owner, positive-only
+pruning and LayoutState synchronization, live Session LayoutState, layout
+option guard, reduced gate-layout successor, captured CSP predecessor,
+BatchMatMul successor, attention-recovery selection, dependencies, diagnostics,
+and TensorFlow behavior remain unchanged.

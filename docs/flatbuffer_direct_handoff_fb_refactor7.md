@@ -7884,6 +7884,39 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Direct SA/PA MirrorPad result retention implementation checkpoint
+
+The layout-option call now retains `_layout_opt_sa_pa_mirrorpad_stats`, and the
+post-cleanup call retains `_post_cleanup_sa_pa_mirrorpad_stats`. Both preserve
+the indexed owner's unchanged complete one-counter mutation dictionary and
+remain unconsumed in this unit.
+
+These are assignment-only changes. No consumer or guard was added. The lowerer
+wrapper, owner, one-key schema, positive-only unused-tensor pruning and
+LayoutState synchronization, live Session LayoutState, layout option guard,
+reduced gate-layout boundary, captured CSP and BatchMatMul boundaries,
+attention-gate/QDQ owner selection, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged. A gate-layout AST helper now accepts an assigned
+predecessor while the test verifies its exact target.
+
+Implementation validation completed sequentially under `uv`:
+
+- SA/PA result/schema semantics and indexed owner fixtures, gate-layout and
+  attention-recovery orchestration, CSP and BatchMatMul boundaries,
+  architecture, and pass-efficiency coverage: `357 passed in 17.70s`
+- branch-changed broad suite plus the same SA/PA coverage:
+  `1584 passed in 26.18s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the post-SiNet
+`_optimize_transpose_relu_split_all_outputs_to_nhwc_chains()` result immediately
+after `_post_sinet_qkv_attention_results`. Preserve its other production forms,
+live LayoutState, following ReLU/Split/Conv/Concat recovery, and the already
+captured Split/Conv/Concat bridge result. Commit and push only; do not create,
+reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

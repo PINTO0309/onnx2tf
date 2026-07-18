@@ -4565,9 +4565,11 @@ def lower_onnx_to_ir(
             )
         )
         _run_preadd_mean_attention_recovery_sequence()
-        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_sa_pa_mirrorpad_stats = (
+            _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _run_gate_layout_pass_cluster(include_mixed_attention=False)
         for _ in range(2):
@@ -4852,9 +4854,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_cleanup_sa_pa_mirrorpad_stats = (
+        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _post_sinet_batchmatmul_affine_input_stats = (
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
