@@ -5272,9 +5272,11 @@ def lower_onnx_to_ir(
     # InstanceNorm(flat) bridge variant:
     # T -> SQUEEZE -> RESHAPE -> IN -> RESHAPE -> UNARY -> EXPAND -> T
     # can be rewritten in NHWC by swapping C/W at reshape boundary.
-    _optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_instancenorm_unary_stats = (
+        _optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # tencoder residual-gated branch variant:
     # dual (post-conv T->SQUEEZE) branches merge via ADD then EXPAND->T before next CONV.

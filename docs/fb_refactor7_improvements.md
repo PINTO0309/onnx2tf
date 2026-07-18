@@ -2002,3 +2002,11 @@ changing the retained Conv1D fan-out predecessor or tencoder successor. The
 focused gate passes `355 passed, 1 xfailed in 18.11s`, the 107-file branch-
 changed suite passes `1668 passed, 1 xfailed in 33.04s`, and targeted static
 validation passes.
+
+The raw late Conv1D InstanceNorm unary call now retains its unchanged
+dictionary as `_late_conv1d_instancenorm_unary_stats`. It remains unconsumed
+and observation-only; indexed owner behavior, GraphIndex/LayoutState handling,
+unconditional pruning, wrapper forwarding, and adjacent Conv1D fan-out and
+tencoder owners remain unchanged. The focused gate passes
+`356 passed in 18.37s`, the 107-file branch-changed suite passes
+`1669 passed in 32.16s`, and targeted static validation passes.

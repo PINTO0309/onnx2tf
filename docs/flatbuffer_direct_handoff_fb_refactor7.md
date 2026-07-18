@@ -12208,3 +12208,30 @@ unconditional pruning, schema, wrapper forwarding, direct arguments, call
 order, dependencies, public API, or TensorFlow behavior. Keep the target
 unconsumed, validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
+
+## Late Conv1D InstanceNorm direct result implementation checkpoint
+
+The raw direct call now retains its unchanged one-key dictionary as
+`_late_conv1d_instancenorm_unary_stats`. The target remains unconsumed and
+observation-only. The call remains between the retained Conv1D unary fan-out
+result and the distinct tencoder residual-gate owner.
+
+No matching or indexed application logic, GraphIndex or LayoutState handling,
+unconditional unused-tensor pruning, result schema, wrapper forwarding, direct
+arguments, call order, dependency, public API, or TensorFlow behavior changed.
+No pre-existing test required adjustment and no intermediate test failure
+occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.66s`
+- indexed InstanceNorm owner, retained Conv1D unary boundary, architecture,
+  pass-efficiency, and representative direct rewrite coverage:
+  `356 passed in 18.37s`
+- 107 branch-changed test files: `1669 passed in 32.16s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

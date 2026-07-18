@@ -12712,3 +12712,10 @@ characterization selects `_late_conv1d_instancenorm_unary_stats` only for that
 result. It freezes schema, wrapper defaults and forwarding, unconditional
 cleanup, exact arguments, retained Conv1D fan-out predecessor, tencoder
 successor, sole occurrence, and an unconsumed observation-only policy.
+
+The raw Conv1D InstanceNorm unary call now retains its unchanged dictionary as
+`_late_conv1d_instancenorm_unary_stats`. The target remains unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, unconditional pruning, wrapper forwarding, direct arguments, and
+neighboring Conv1D fan-out/tencoder owners remain unchanged; the counter does
+not steer later cleanup.
