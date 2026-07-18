@@ -7957,6 +7957,46 @@ nested convergence form, the terminal call's live LayoutState, and all
 following very-late recovery boundaries. Commit and push only; do not create,
 reopen, or update a pull request.
 
+## Top-level indexed shape-convergence result characterization checkpoint
+
+`_run_indexed_shape_convergence_cleanup()` builds or accepts one
+`ModelIRGraphIndex` and uses it for dead-operator pruning, the first static
+shape reconciliation, dynamic-Reshape resolution, and a conditional final
+reconciliation. Its fixed complete mutation dictionary contains
+`removed_dead_operators`, `resolved_dynamic_reshape_shapes`, and
+`reconciled_static_tensor_shapes`.
+
+There are exactly two production forms. The nested form in
+`_run_indexed_final_shape_activation_convergence()` is already retained as
+`convergence_stats`, supplies its shared graph index, and is consumed by later
+guards and the final result. The raw top-level form follows
+`_post_terminal_singleton_reshape_results`, supplies the live Session
+LayoutState, creates its own graph index, and precedes very-late SiNet terminal
+recovery.
+
+A strict expected-failure contract selects
+`_post_terminal_indexed_shape_convergence_stats` for only the top-level form.
+It fixes the three-key result schema, exact two-form count, arguments and
+keywords, existing nested consumer, captured Singleton predecessor, and SiNet
+successor.
+
+At implementation, replace only the raw top-level expression with an
+assignment. Do not change the helper, schema, graph-index reuse, conditional
+final reconciliation, nested consumer, live LayoutState, surrounding recovery
+sequence, dependencies, diagnostics, or TensorFlow behavior. Do not add a new
+consumer or guard.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed shape-convergence schema and both forms, dynamic-Reshape and indexed
+  final convergence, Singleton and SiNet boundaries, architecture, and
+  pass-efficiency coverage: `361 passed, 1 xfailed in 18.46s`
+
+The sole strict expected failure is the intentionally unimplemented top-level
+result retention contract. Implement only that assignment, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

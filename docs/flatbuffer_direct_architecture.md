@@ -11291,3 +11291,24 @@ executes exactly once in the original order through the original shared scope;
 all four policy flags and both surrounding boundaries remain unchanged. The
 retention adds no graph scan, mutation, conditional work, dependency, or
 TensorFlow import path.
+
+The following indexed shape-convergence helper builds or accepts one
+`ModelIRGraphIndex`, then runs dead-operator pruning, static-shape
+reconciliation, and dynamic-Reshape resolution against that shared index. It
+runs a final reconciliation only after one of the three preceding results is
+positive and returns the fixed complete mutation schema
+`removed_dead_operators`, `resolved_dynamic_reshape_shapes`, and
+`reconciled_static_tensor_shapes`.
+
+Two production forms exist. Final shape/activation convergence already retains
+and consumes the indexed result as `convergence_stats` while supplying its own
+graph index. The later top-level call after
+`_post_terminal_singleton_reshape_results` supplies the live Session
+LayoutState, builds its own index, discards the result, and immediately precedes
+very-late SiNet terminal recovery.
+
+Strict characterization selects
+`_post_terminal_indexed_shape_convergence_stats` for only the raw top-level
+form. It fixes the three-key schema, exact two-form count and arguments, nested
+consumer, predecessor, and successor. Retention must not add a result consumer,
+guard, graph traversal, mutation, dependency, or TensorFlow import path.
