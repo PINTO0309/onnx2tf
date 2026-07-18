@@ -11037,6 +11037,19 @@ tuple predecessor, broadcast-constant repair successor, and other occurrence
 forms remain fixed. The incomplete very-late result is observation-only and
 has no reconciliation consumer.
 
+The immediately following rank-four channelwise broadcast-constant repair
+returns one complete rewrite counter. Each count corresponds to a constant
+data/shape update or a shared-constant clone plus indexed input rewire, and the
+owner has no cleanup-only mutation. Four lowerer occurrences exist: indexed
+binary convergence consumes one result, the very-late direct call is raw, and
+the fallback and final calls retain their results for existing positive guards.
+
+Strict characterization selects only the very-late direct call for a future
+`_very_late_broadcast_repair_stats` assignment. It fixes the guarded layout-
+Transpose predecessor, immediate static-shape reconciliation successor, the
+other three occurrence forms, and the one-key schema without changing any
+existing guard.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`

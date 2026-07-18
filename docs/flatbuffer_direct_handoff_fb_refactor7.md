@@ -7050,3 +7050,42 @@ At resume, audit every production occurrence and the complete result schema of
 the very-late raw call immediately after the guarded layout-Transpose result
 without conflating the nested recovery, fallback, or final retained calls.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Very-late broadcast-constant repair result characterization checkpoint
+
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout()` returns
+the fixed one-key dictionary
+`repaired_rank4_channelwise_broadcast_constants`. Every counted mutation is a
+constant data/shape update or a shared-constant clone plus indexed operator-
+input rewire. The owner has no cleanup-only path, so the counter is complete
+mutation evidence.
+
+There are four production occurrences. Indexed binary convergence consumes its
+result with a shared GraphIndex; the very-late model-level direct call is raw;
+and the fallback and final calls retain their results for existing positive-
+count static-shape reconciliation guards.
+
+A strict expected-failure contract requires only the very-late direct result
+to be retained as `_very_late_broadcast_repair_stats`. It fixes the preceding
+guard that retains `_very_late_layout_transpose_cleanup_stats`, immediate raw
+static-shape reconciliation successor, final target, one fallback occurrence,
+and exactly one graph-indexed convergence occurrence.
+
+At implementation, replace only the very-late expression with an assignment.
+Do not change the wrapper or indexed owner, one-key schema, GraphIndex behavior,
+constant clone policy, callback arguments, existing fallback/final guards,
+adjacent reconciliation, pass order, dependencies, diagnostics, or TensorFlow
+behavior. The retained value must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- broadcast owner, indexed convergence, safety fallback, terminal occurrence,
+  architecture, and pass-efficiency coverage:
+  `376 passed, 1 xfailed in 19.84s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1424 passed, 1 xfailed in 24.94s`
+
+The sole strict expected failure is the intentionally unimplemented very-late
+broadcast-constant repair result retention contract above. Implement only that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.

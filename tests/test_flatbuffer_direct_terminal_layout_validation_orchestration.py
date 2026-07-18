@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1710,6 +1712,84 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         "_late_concat_transpose_layout_stats",
         "_very_late_layout_transpose_cleanup_stats",
     ]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="very-late broadcast-constant repair result is discarded",
+)
+def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> None:
+    body = _lowerer_body()
+    callback_name = (
+        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
+    )
+    direct_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(direct_indices) == 2
+
+    very_late_index, final_index = direct_indices
+    assert very_late_index < final_index
+    statement = body[very_late_index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_very_late_broadcast_repair_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert call.keywords == []
+
+    predecessor = body[very_late_index - 1]
+    assert isinstance(predecessor, ast.If)
+    retained_layout = [
+        nested_statement
+        for nested_statement in predecessor.body
+        if isinstance(nested_statement, ast.Assign)
+        and isinstance(nested_statement.targets[0], ast.Name)
+        and nested_statement.targets[0].id
+        == "_very_late_layout_transpose_cleanup_stats"
+    ]
+    assert len(retained_layout) == 1
+
+    successor_call = _statement_call(body[very_late_index + 1])
+    assert _call_name(successor_call) == "_reconcile_static_tensor_shapes"
+    assert successor_call is not None
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "model_ir"
+    ]
+    assert successor_call.keywords == []
+
+    final = body[final_index]
+    assert isinstance(final, ast.Assign)
+    assert isinstance(final.targets[0], ast.Name)
+    assert final.targets[0].id == "final_broadcast_repair_stats"
+
+    all_calls = [
+        node
+        for root in body
+        for node in ast.walk(root)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == callback_name
+    ]
+    assert len(all_calls) == 4
+    assert sum(
+        ast.unparse(call_node).startswith(f"{callback_name}(fallback_ir")
+        for call_node in all_calls
+    ) == 1
+    assert sum(
+        any(
+            keyword.arg == "graph_index"
+            and ast.unparse(keyword.value) == "graph_index"
+            for keyword in call_node.keywords
+        )
+        for call_node in all_calls
+    ) == 1
 
 
 def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
