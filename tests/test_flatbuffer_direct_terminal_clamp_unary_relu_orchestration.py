@@ -184,7 +184,10 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
     assert isinstance(previous.test, ast.Name)
     assert previous.test.id == "optimize_layout_transpose_chains"
     previous_call = previous.body[-1]
-    assert isinstance(previous_call, ast.Expr)
+    assert isinstance(previous_call, ast.Assign)
+    assert len(previous_call.targets) == 1
+    assert isinstance(previous_call.targets[0], ast.Name)
+    assert previous_call.targets[0].id == "_terminal_singleton_reshape_results"
     assert isinstance(previous_call.value, ast.Call)
     assert isinstance(previous_call.value.func, ast.Name)
     assert previous_call.value.func.id == "_run_singleton_reshape_layout_pass_cluster"
@@ -197,7 +200,10 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
     }
 
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_terminal_sinet_layout_recovery_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_run_sinet_terminal_layout_recovery_sequence"

@@ -245,6 +245,7 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
     ]
     assert assigned_boundary_targets == [
         "_post_terminal_singleton_reshape_results",
+        "_very_late_sinet_layout_recovery_results",
     ]
 
 

@@ -4311,8 +4311,8 @@ def lower_onnx_to_ir(
         preadd_resize_recovery=_run_sinet_preadd_resize_recovery_sequence,
     )
 
-    def _run_sinet_terminal_layout_recovery_sequence() -> None:
-        run_sinet_terminal_layout_recovery(
+    def _run_sinet_terminal_layout_recovery_sequence() -> Tuple[Any, ...]:
+        return run_sinet_terminal_layout_recovery(
             sinet_terminal_layout_recovery_context
         )
 
@@ -4803,7 +4803,9 @@ def lower_onnx_to_ir(
             )
         )
     _run_terminal_clamp_unary_relu_pass_cluster()
-    _run_sinet_terminal_layout_recovery_sequence()
+    _terminal_sinet_layout_recovery_results = (
+        _run_sinet_terminal_layout_recovery_sequence()
+    )
     _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
@@ -4825,7 +4827,9 @@ def lower_onnx_to_ir(
     )
     # Very late shape reconciliation can expose strict shuffle-residual patterns.
     # Re-run terminal transpose reducers once at absolute end.
-    _run_sinet_terminal_layout_recovery_sequence()
+    _very_late_sinet_layout_recovery_results = (
+        _run_sinet_terminal_layout_recovery_sequence()
+    )
     _run_sinet_preadd_resize_recovery_sequence()
     # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)

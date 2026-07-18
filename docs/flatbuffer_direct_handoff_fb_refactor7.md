@@ -8068,6 +8068,39 @@ Implement only the propagation contract, rerun focused and branch-changed broad
 gates sequentially, then commit and push only; do not create, reopen, or update
 a pull request.
 
+## SiNet terminal-layout result propagation implementation checkpoint
+
+`run_sinet_terminal_layout_recovery()` now returns the existing ordered
+`Tuple[Any, ...]`, and the local helper transparently forwards it. The first
+direct call retains `_terminal_sinet_layout_recovery_results`; the very-late
+call retains `_very_late_sinet_layout_recovery_results`.
+
+Both tuples are observation-only and have no consumer or guard. All three
+children still execute exactly once in their fixed order, including the
+injected pre-add/resize callback, whose return value remains arbitrary and is
+preserved as the middle element. The context, zero-argument calls, terminal
+clamp and indexed-convergence predecessors, HardSwish-SE and top-level
+pre-add/resize successors, dependencies, diagnostics, and TensorFlow behavior
+remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- SiNet terminal and pre-add/resize orchestration, terminal-clamp,
+  indexed-convergence and Singleton boundaries, remaining context composition,
+  architecture, and pass-efficiency coverage: `357 passed in 19.62s`
+- branch-changed broad suite plus the same SiNet terminal-layout coverage:
+  `1533 passed in 27.45s`
+
+These are unit, contract, and orchestration checks; this result propagation
+does not claim a new model-corpus run. Stale terminal-clamp and pre-add/resize
+boundary assertions were tightened to the exact retained targets.
+
+At resume, audit `run_sinet_preadd_resize_recovery()` and its local helper. The
+helper is both the middle callback of the two retained terminal-layout tuples
+and a direct top-level call at three boundaries. Preserve all six child pass
+IDs, callback wiring, direct-call order, and surrounding recovery sequences.
+Commit and push only; do not create, reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

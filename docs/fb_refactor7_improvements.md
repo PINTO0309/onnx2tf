@@ -997,14 +997,26 @@ the branch-changed broad suite passes `1512 passed in 26.73s`. One-index reuse,
 conditional final reconciliation, the live Session LayoutState, and both
 surrounding recovery boundaries are unchanged.
 
+SiNet terminal-layout orchestration now propagates its existing three-element
+`Tuple[Any, ...]` through the phase runner and local helper. The two direct
+calls retain `_terminal_sinet_layout_recovery_results` and
+`_very_late_sinet_layout_recovery_results`; neither tuple has a consumer.
+
+The injected pre-add/resize callback remains the middle child and its return is
+preserved without changing execution. The focused gate passes
+`357 passed in 19.62s`, and the branch-changed broad suite passes
+`1533 passed in 27.45s`. Child order, context wiring, boundaries, dependencies,
+and TensorFlow behavior remain fixed.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the first very-late SiNet terminal-layout orchestration result
-after `_post_terminal_indexed_shape_convergence_stats`. Its other production
-occurrence, nested pre-add/resize callback, child order, and following top-level
-pre-add/resize call must remain fixed. All Singleton/Reshape policies, three
-QKV result forms, and the late summary must also remain fixed.
+unit should audit `run_sinet_preadd_resize_recovery()` and its local helper.
+That helper is the middle callback of both retained terminal-layout tuples and
+also has three direct top-level calls. All six child pass IDs, callback wiring,
+direct-call order, and surrounding recovery sequences must remain fixed. All
+Singleton/Reshape policies, three QKV result forms, and the late summary must
+also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

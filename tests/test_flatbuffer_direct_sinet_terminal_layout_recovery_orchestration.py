@@ -143,7 +143,11 @@ def test_sinet_terminal_layout_recovery_is_a_straight_line_closure() -> None:
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
     }
-    assert loaded_data_names == {"sinet_terminal_layout_recovery_context"}
+    assert loaded_data_names == {
+        "Any",
+        "Tuple",
+        "sinet_terminal_layout_recovery_context",
+    }
 
 
 def test_sinet_terminal_layout_recovery_preserves_all_call_contracts() -> None:
@@ -190,13 +194,29 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_sinet_layout_recovery_results",
+            "_very_late_sinet_layout_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINET_TERMINAL
     ]
 
     assert len(invocation_indexes) == 2
+    assert [
+        lowerer.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(lowerer.body[index], ast.Assign)
+        and isinstance(lowerer.body[index].targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_layout_recovery_results",
+        "_very_late_sinet_layout_recovery_results",
+    ]
     observed: list[tuple[str, str]] = []
     assigned_boundary_targets: list[str] = []
     for index in invocation_indexes:
@@ -231,7 +251,7 @@ def test_sinet_terminal_layout_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -297,13 +317,6 @@ def test_sinet_terminal_layout_runner_preserves_instrumented_order(
     assert events == list(SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "SINet terminal-layout orchestration does not yet propagate its "
-        "ordered results to both direct callers"
-    ),
-)
 def test_sinet_terminal_layout_propagates_and_retains_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

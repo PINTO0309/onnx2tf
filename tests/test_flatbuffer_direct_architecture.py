@@ -2050,6 +2050,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     ]
     assert assigned_boundary_targets == [
         "_post_terminal_singleton_reshape_results",
+        "_very_late_sinet_layout_recovery_results",
     ]
 
     all_invocations = [
@@ -2086,7 +2087,7 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     helper_calls = [
         statement.value
         for statement in helper.body
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Return)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
@@ -2102,12 +2103,28 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_sinet_layout_recovery_results",
+            "_very_late_sinet_layout_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 2
+    assert [
+        lowerer.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(lowerer.body[index], ast.Assign)
+        and isinstance(lowerer.body[index].targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_layout_recovery_results",
+        "_very_late_sinet_layout_recovery_results",
+    ]
     previous_call_names = []
     next_call_names = []
     assigned_boundary_targets = []
@@ -2652,7 +2669,10 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     assert previous.targets[0].id == "_post_terminal_singleton_reshape_results"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_very_late_sinet_layout_recovery_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert previous.value.func.id == "_run_singleton_reshape_layout_pass_cluster"
@@ -5506,7 +5526,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         == "_run_singleton_reshape_layout_pass_cluster"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_terminal_sinet_layout_recovery_results"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (

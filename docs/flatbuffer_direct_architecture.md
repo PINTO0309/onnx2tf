@@ -11343,3 +11343,14 @@ callback result, zero-argument direct calls, exact two-call count, context
 wiring, and both boundary pairs. Propagation must not change the callback,
 execute a child twice, add a result consumer or guard, or introduce graph work,
 dependencies, or a TensorFlow import path.
+
+`run_sinet_terminal_layout_recovery()` and its local helper now transparently
+return the existing `Tuple[Any, ...]`. The first direct call retains
+`_terminal_sinet_layout_recovery_results`; the second retains
+`_very_late_sinet_layout_recovery_results`.
+
+Both tuples remain unconsumed observation data. Each child still executes
+exactly once in the original order, and the middle tuple element is exactly the
+injected pre-add/resize callback result. Context wiring, zero-argument call
+forms, indexed-convergence predecessor, terminal-clamp predecessor, both
+successors, dependencies, diagnostics, and TensorFlow behavior are unchanged.

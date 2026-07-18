@@ -113,6 +113,7 @@ def test_lowerer_retains_top_level_indexed_shape_convergence_result() -> None:
     following = lowerer.body[invocation_index + 1]
     assert _single_target(previous) == "_post_terminal_singleton_reshape_results"
     assert _call_name(previous) == "_run_singleton_reshape_layout_pass_cluster"
+    assert _single_target(following) == "_very_late_sinet_layout_recovery_results"
     assert _call_name(following) == "_run_sinet_terminal_layout_recovery_sequence"
 
     nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
