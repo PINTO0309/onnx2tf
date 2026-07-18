@@ -142,4 +142,5 @@ def test_lowerer_retains_both_relu_split_all_outputs_results() -> None:
     second_previous = lowerer.body[second_index - 1]
     second_following = lowerer.body[second_index + 1]
     assert _call_name(second_previous) == "_optimize_transpose_pre_concat_nhwc_chains"
+    assert _single_target(second_previous) == "_final_pre_concat_stats"
     assert _call_name(second_following) == SPLIT_CONV_CONCAT

@@ -11845,3 +11845,13 @@ three distinct boundary pairs, one-key schema, dispatch order, unconditional
 legacy cleanup, and independent layout-recovery callback selection. All three
 direct results must remain unconsumed; the orchestration callback form is not
 changed by this retention unit.
+
+The three direct calls now retain their unchanged one-counter dictionaries as
+`_layout_opt_pre_concat_stats`, `_final_pre_concat_stats`, and
+`_absolute_final_pre_concat_stats`. All remain unconsumed because a zero
+composite counter does not exclude unconditional legacy cleanup.
+
+These are assignment-only changes. Indexed/quantized/legacy dispatch, the
+independent layout-recovery callback, ModelIR/layout/diagnostics routing,
+three-call multiplicity, and all boundary pairs remain unchanged. No summary,
+guard, dependency, public behavior change, or TensorFlow import path was added.

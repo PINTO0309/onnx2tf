@@ -4533,10 +4533,12 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_opt_pre_concat_stats = (
+            _optimize_transpose_pre_concat_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         run_ndhwc_concat_layout_cleanup(
             model_ir,
@@ -5064,10 +5066,12 @@ def lower_onnx_to_ir(
     )
     # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
     # can recreate CONCAT(axis=1)+post-transpose wrappers.
-    _optimize_transpose_pre_concat_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _final_pre_concat_stats = (
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _terminal_relu_split_all_outputs_stats = (
         _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
@@ -5465,10 +5469,12 @@ def lower_onnx_to_ir(
     )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.
-    _optimize_transpose_pre_concat_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _absolute_final_pre_concat_stats = (
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _late_pre_layout_cluster_shape_extract_stats = (
         _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)

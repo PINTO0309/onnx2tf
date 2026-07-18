@@ -1241,6 +1241,18 @@ implementation.
 The focused characterization gate passes
 `430 passed, 1 xfailed in 19.00s`; the sole strict xfail covers the three
 selected direct assignments.
+
+The three direct calls now retain their unchanged dictionaries as
+`_layout_opt_pre_concat_stats`, `_final_pre_concat_stats`, and
+`_absolute_final_pre_concat_stats`. All remain observation-only; the
+layout-recovery callback form is unchanged. The focused implementation gate
+passes `431 passed in 19.60s`, the branch-changed broad suite passes
+`1548 passed in 29.18s`, and targeted static validation passes.
+
+The next unit should audit the sole direct
+`run_ndhwc_concat_layout_cleanup()` result and its independent layout-recovery
+occurrence, including schema, cleanup semantics, layout/diagnostics routing,
+and pre-Concat/strided-Slice boundaries.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

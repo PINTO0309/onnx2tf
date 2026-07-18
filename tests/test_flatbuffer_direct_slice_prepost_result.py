@@ -112,7 +112,8 @@ def test_final_slice_prepost_result_is_retained_observation_only() -> None:
     result_index = lowerer.body.index(result)
     assert _single_target(lowerer.body[result_index - 1]) == PREVIOUS_TARGET
     following = lowerer.body[result_index + 1]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert _single_target(following) == "_final_pre_concat_stats"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == PRE_CONCAT

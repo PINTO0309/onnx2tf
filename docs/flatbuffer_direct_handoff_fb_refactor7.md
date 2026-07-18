@@ -8846,6 +8846,42 @@ consume the layout-recovery callback result in this unit. Validate
 sequentially, commit, and push only; do not create, reopen, or update a pull
 request.
 
+## Direct pre-Concat result retention implementation checkpoint
+
+The three direct calls now retain their unchanged one-counter dictionaries as
+`_layout_opt_pre_concat_stats`, `_final_pre_concat_stats`, and
+`_absolute_final_pre_concat_stats`. All remain unconsumed because the legacy
+family can prune unused tensors while the summed rewrite counter is zero.
+
+These are assignment-only changes. Indexed/quantized-indexed/legacy dispatch,
+the independent layout-recovery callback execution, identical
+ModelIR/layout/diagnostics routing, exact three-call multiplicity, pass order,
+dependencies, public behavior, and the TensorFlow-free direct path remain
+unchanged. Adjacent Slice/ReLU-split and late-hard-activation/shape-extract
+contracts now require the assigned targets.
+
+Implementation validation completed sequentially under `uv`:
+
+- composite/schema/cleanup, float and quantized Concat fixtures,
+  layout-recovery callback, all three boundary pairs, architecture, and
+  pass-efficiency coverage: `431 passed in 19.60s`
+- branch-changed broad suite: `1548 passed in 29.18s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The first focused implementation run found two predecessor call names that the
+strict xfail had not reached; the characterization was corrected to the exact
+Slice owner and late-hard-activation summarizer before the clean results above.
+No production failure was observed. These checks do not claim a model-corpus
+run.
+
+At resume, audit the sole direct `run_ndhwc_concat_layout_cleanup()` call
+immediately after `_layout_opt_pre_concat_stats`, plus its independent
+layout-recovery orchestration occurrence. Freeze its schema, cleanup behavior,
+layout/diagnostics arguments, and pre-Concat/strided-Slice boundaries before
+changing the direct call. Commit and push only; do not create, reopen, or
+update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

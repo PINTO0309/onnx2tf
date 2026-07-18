@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 LEGACY_OWNER_PATH = (
@@ -103,10 +100,6 @@ def test_pre_concat_composite_schema_order_and_cleanup_are_explicit() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the three direct pre-Concat results are not retained yet",
-)
 def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = sorted(
@@ -148,12 +141,12 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "run_ndhwc_concat_layout_cleanup",
         ),
         (
-            None,
+            "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
             "_final_slice_prepost_passthrough_stats",
             "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains",
         ),
         (
-            None,
+            "summarize_late_hard_activation_layout_mutations",
             "_late_hard_activation_stats",
             "_optimize_transpose_shape_extract_nhwc_to_nchw_chains",
         ),

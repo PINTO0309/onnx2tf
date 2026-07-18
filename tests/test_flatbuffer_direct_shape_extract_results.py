@@ -136,6 +136,9 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
 
     late_layout_index = lowerer.body.index(direct_results[2])
     assert _call_name(lowerer.body[late_layout_index - 1]) == PRE_CONCAT
+    assert _single_target(lowerer.body[late_layout_index - 1]) == (
+        "_absolute_final_pre_concat_stats"
+    )
     assert _single_target(lowerer.body[late_layout_index + 1]) == (
         "late_layout_cluster_tensor_count"
     )
