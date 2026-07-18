@@ -6969,3 +6969,44 @@ after `_very_late_singleton_consecutive_reshape_results` without conflating the
 other helper/late occurrences or changing the
 `optimize_layout_transpose_chains` guard. Commit and push only; do not create,
 reopen, or update a pull request.
+
+## Very-late layout-Transpose cleanup result characterization checkpoint
+
+`run_layout_transpose_cleanup()` returns a fixed five-key dictionary:
+`iterations`, identity removals, inverse-pair removals, inverse-fanout branch
+removals, and consecutive-pair compositions. The four rewrite counters cover
+operator rewrites, but the underlying owner calls unused-tensor pruning
+unconditionally. A zero-counter result can therefore omit a prune-only ModelIR
+change. The dictionary must not drive a stability or scan-elision guard without
+an independently sampled tensor-count delta.
+
+The lowerer has three direct occurrences. The earlier primary layout block and
+the very-late block are guarded raw expressions; the late-Concat occurrence is
+already retained as `_late_concat_transpose_layout_stats` with its shared pass
+state scope. A strict expected-failure contract selects only the very-late
+guarded call for `_very_late_layout_transpose_cleanup_stats`.
+
+The contract fixes the `optimize_layout_transpose_chains` guard, exact live
+LayoutState and diagnostics arguments, captured
+`_very_late_singleton_consecutive_reshape_results` predecessor, following
+rank-four broadcast-constant repair, and all three occurrence forms. The new
+target is observation-only and must have no consumer or additional graph work.
+
+At implementation, replace only the expression inside that guard with an
+assignment and update the existing three-occurrence accounting assertion. Do
+not change owner pruning, result schema, arguments, state-scope behavior, guard
+condition, adjacent calls, pass order, reconciliation, dependencies,
+diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- layout-Transpose owner, late-binary integration, terminal occurrence,
+  singleton boundary, architecture, and pass-efficiency coverage:
+  `363 passed, 1 xfailed in 19.37s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1427 passed, 1 xfailed in 24.34s`
+
+The sole strict expected failure is the intentionally unimplemented very-late
+layout-Transpose cleanup result retention contract above. Implement only the
+observation assignment, rerun the same gates sequentially, then commit and push
+only; do not create, reopen, or update a pull request.

@@ -11023,6 +11023,20 @@ transpose cleanup branch, later destructuring assignment, and fallback
 expression remain fixed. The retained tuple has no consumer and introduces no
 graph work.
 
+The immediately following guarded `run_layout_transpose_cleanup()` occurrence
+returns `iterations` plus four rewrite counters. Those counters are useful
+observability but are not complete mutation evidence: the low-level owner
+prunes unused tensors unconditionally, including a zero-rewrite path, and the
+result has no prune delta. Three direct lowerer occurrences exist; the earlier
+layout block and this very-late block are guarded raw expressions, while the
+late-Concat occurrence already retains its result with a shared state scope.
+
+Strict characterization selects only the very-late guarded expression for a
+future `_very_late_layout_transpose_cleanup_stats` assignment. It fixes the
+`optimize_layout_transpose_chains` guard, captured singleton/consecutive tuple
+predecessor, broadcast-constant repair successor, other occurrence forms, and
+the rule that the incomplete result has no reconciliation consumer.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`
