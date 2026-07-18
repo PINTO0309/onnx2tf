@@ -12063,3 +12063,14 @@ shared context, zero-argument helper, exact call count, mean-attention/
 quantized-PReLU and pre-add/dequant-TransposeConv boundaries, the parent slot
 inside both retained suffix executions, and an unconsumed observation-only
 policy.
+
+The parent runner and lowerer helper now return the existing ten-slot tuple.
+Its two direct calls retain `_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results`. The attention-parent slot in
+each retained suffix tuple now contains the same nested result rather than
+`None`.
+
+All parent and suffix results remain unconsumed and observation-only. This
+propagation changes no child, callback, nested tuple identity, shared context,
+order, cleanup timing, summary, guard, dependency, public behavior, or
+TensorFlow isolation.

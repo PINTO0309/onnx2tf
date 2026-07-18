@@ -9456,6 +9456,46 @@ consumer. Preserve every child, nested result identity, shared context, order,
 and boundary. Validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
 
+## Attention-gate/QDQ parent result propagation implementation checkpoint
+
+`run_attention_gate_qdq_recovery()` and its lowerer helper now return the
+existing ten-slot tuple. The two direct calls retain
+`_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results`. Both remain unconsumed and
+observation-only.
+
+The same helper remains the child callback selected by the thirteen-slot
+layout-attention/quantized suffix. Each retained suffix result now contains the
+nested attention-parent tuple instead of `None`. Neither suffix result has a
+consumer, summary, or guard, so this evidence propagation does not alter pass
+execution.
+
+The first implementation gate exposed three stale structural contracts that
+counted return annotation names as body data or required the attention helper
+and two direct calls to remain raw expressions (`569 passed, 3 failed`). They
+now inspect body-only data and require the return plus both assignment targets.
+These were characterization adjustments, not production regressions.
+
+Implementation validation completed sequentially under `uv`:
+
+- attention parent and all children, nested unary-fanout and suffix results,
+  both direct boundaries, architecture, and pass-efficiency coverage:
+  `572 passed in 20.79s`
+- branch-changed broad suite: `1590 passed in 28.69s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The implementation adds only transparent return and assignment boundaries. It
+adds no child, summary, guard, execution-order or context change, dependency,
+public API change, or TensorFlow import path. These checks do not claim a
+model-corpus run.
+
+At resume, audit both direct
+`_run_preadd_mean_attention_recovery_sequence()` results and their distinct
+boundaries. Its parent runner still discards its ordered child tuple. Preserve
+the newly retained pass-set-2 attention result that follows the second call.
+Commit and push only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

@@ -4255,8 +4255,8 @@ def lower_onnx_to_ir(
     def _run_preadd_mean_attention_recovery_sequence() -> None:
         run_preadd_mean_attention_recovery(attention_recovery_context)
 
-    def _run_attention_gate_qdq_recovery_sequence() -> None:
-        run_attention_gate_qdq_recovery(attention_recovery_context)
+    def _run_attention_gate_qdq_recovery_sequence() -> Tuple[Any, ...]:
+        return run_attention_gate_qdq_recovery(attention_recovery_context)
 
     def _run_safe_binary_bridge_recovery_sequence() -> Tuple[Any, ...]:
         return run_safe_binary_recovery(quantized_recovery_context)
@@ -4408,7 +4408,9 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_mean_attention_results = (
             _run_mean_attention_layout_pass_cluster(include_layernorm=True)
         )
-        _run_attention_gate_qdq_recovery_sequence()
+        _layout_pass_set_1_attention_gate_qdq_results = (
+            _run_attention_gate_qdq_recovery_sequence()
+        )
         run_quantized_prelu_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -4530,7 +4532,9 @@ def lower_onnx_to_ir(
         _run_qlinear_mean_concat_recovery_sequence()
         _run_layout_recovery_prefix_pass_sequence()
         _run_preadd_mean_attention_recovery_sequence()
-        _run_attention_gate_qdq_recovery_sequence()
+        _layout_pass_set_2_attention_gate_qdq_results = (
+            _run_attention_gate_qdq_recovery_sequence()
+        )
         _optimize_dequant_transposeconv_quantize_chains(
             model_ir,
             layout_state=session.layout_state,

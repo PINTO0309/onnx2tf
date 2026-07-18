@@ -215,8 +215,8 @@ def build_attention_gate_qdq_invocations(
 
 def run_attention_gate_qdq_recovery(
     context: AttentionRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_attention_gate_qdq_invocations(context),
         expected_pass_ids=ATTENTION_GATE_QDQ_PASS_IDS,
         phase_name="attention/gate/QDQ recovery",

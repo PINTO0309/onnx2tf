@@ -179,12 +179,14 @@ def test_attention_recovery_sequences_are_straight_line_closures() -> None:
 
         called_names = {
             node.func.id
-            for node in ast.walk(helper)
+            for statement in helper.body
+            for node in ast.walk(statement)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
         loaded_data_names = {
             node.id
-            for node in ast.walk(helper)
+            for statement in helper.body
+            for node in ast.walk(statement)
             if isinstance(node, ast.Name)
             and isinstance(node.ctx, ast.Load)
             and node.id not in called_names
@@ -286,16 +288,18 @@ def test_attention_recovery_context_and_wrappers_are_explicit() -> None:
         PREADD_MEAN_ATTENTION: (
             preadd_helper,
             "run_preadd_mean_attention_recovery",
+            ast.Expr,
         ),
         ATTENTION_GATE_QDQ: (
             attention_helper,
             "run_attention_gate_qdq_recovery",
+            ast.Return,
         ),
     }
-    for helper_name, (helper, runner_name) in expected_wrappers.items():
+    for helper_name, (helper, runner_name, statement_type) in expected_wrappers.items():
         assert len(helper.body) == 1
         statement = helper.body[0]
-        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement, statement_type)
         call = statement.value
         assert isinstance(call, ast.Call)
         assert isinstance(call.func, ast.Name)
@@ -440,10 +444,6 @@ def test_attention_recovery_runners_preserve_instrumented_order(
     assert events == list(expected_ids)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="both ordered attention-gate/QDQ results are discarded",
-)
 def test_attention_gate_qdq_propagates_nested_results_to_both_direct_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1428,6 +1428,17 @@ identity, child order, shared context, two direct boundary pairs, suffix
 nesting, and the unconsumed policy are frozen before implementation. The
 focused gate passes `571 passed, 1 xfailed in 18.81s`; the strict xfail is
 parent runner/helper/two-call propagation.
+
+The parent runner/helper now return the unchanged ten-slot tuple. Direct calls
+retain `_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results`; both retained suffix tuples
+also receive the nested parent result. All remain observation-only. The focused
+implementation gate passes `572 passed in 20.79s`, the branch-changed broad
+suite passes `1590 passed in 28.69s`, and targeted static validation passes.
+
+The next unit should audit both direct pre-add/mean/attention recovery results
+and preserve the new pass-set-2 attention result immediately following the
+second call.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
