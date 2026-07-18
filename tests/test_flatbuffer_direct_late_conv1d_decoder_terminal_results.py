@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input,
@@ -161,9 +159,9 @@ def test_late_tail_schemas_wrappers_and_positive_cleanup_are_explicit() -> None:
 def test_late_tail_direct_chain_is_explicit() -> None:
     lowerer, indices = _direct_locations()
     assert indices == tuple(range(indices[0], indices[0] + len(OWNERS)))
-    for index, owner in zip(indices, OWNERS):
+    for index, owner, target in zip(indices, OWNERS, RESULT_TARGETS):
         invocation = lowerer.body[index]
-        assert isinstance(invocation, ast.Expr)
+        assert _single_target(invocation) == target
         call = _statement_call(invocation)
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -180,10 +178,6 @@ def test_late_tail_direct_chain_is_explicit() -> None:
     assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late Conv1D/decoder terminal results are discarded",
-)
 def test_late_tail_results_are_retained_for_observation() -> None:
     lowerer, indices = _direct_locations()
     assert tuple(_single_target(lowerer.body[index]) for index in indices) == (

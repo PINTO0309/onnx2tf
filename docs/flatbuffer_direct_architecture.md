@@ -12751,3 +12751,11 @@ characterization selects `_late_conv1d_batchmatmul_stats`,
 It freezes all schemas, wrapper defaults and forwarding, positive-only cleanup,
 direct arguments and adjacency between retained tencoder and pad-layout
 results, sole occurrences, and unconsumed observation-only policies.
+
+The three raw late-tail calls now retain their unchanged dictionaries as
+`_late_conv1d_batchmatmul_stats`, `_late_decoder_deconv_stats`, and
+`_late_terminal_squeeze_mean_stats`. All targets remain unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, positive-only cleanup, wrapper forwarding, direct arguments, and
+adjacency between tencoder and pad-layout results remain unchanged; the
+counters do not steer later cleanup.

@@ -2036,3 +2036,12 @@ layout results. After correcting one test-only AST attribute-call assumption,
 the focused gate passes `446 passed, 1 xfailed in 18.63s`, the 109-file branch-
 changed suite passes `1674 passed, 1 xfailed in 32.70s`, and targeted static
 validation passes.
+
+The three adjacent raw late-tail calls now retain their unchanged dictionaries
+as `_late_conv1d_batchmatmul_stats`, `_late_decoder_deconv_stats`, and
+`_late_terminal_squeeze_mean_stats`. All remain unconsumed and
+observation-only; indexed owner behavior, GraphIndex/LayoutState handling,
+positive-only cleanup, wrapper forwarding, and tencoder/pad-layout boundaries
+remain unchanged. The focused gate passes `447 passed in 18.88s`, the 109-file
+branch-changed suite passes `1675 passed in 32.85s`, and targeted static
+validation passes.

@@ -5289,23 +5289,29 @@ def lower_onnx_to_ir(
     # Conv1D tail patterns may still contain:
     # TRANSPOSE -> SQUEEZE -> UNARY* -> BATCH_MATMUL.
     # Rewire to NHWC + adjX matmul when mathematically equivalent.
-    _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_batchmatmul_stats = (
+        _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Decoder linear->deconv tails can keep:
     # BATCH_MATMUL -> ADD -> EXPAND_DIMS -> TRANSPOSE -> TRANSPOSE_CONV.
     # Transpose BATCH_MATMUL/ADD layout so TRANSPOSE before deconv is removed.
-    _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_decoder_deconv_stats = (
+        _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Decoder terminal tails can keep:
     # TRANSPOSE -> SQUEEZE -> MEAN -> SQUEEZE.
     # Remap squeeze/mean axes in NHWC and drop the transpose.
-    _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_terminal_squeeze_mean_stats = (
+        _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Very late transpose/layout rewrites can recreate PAD-adjacent NCHW wrappers.
     _very_late_pad_layout_stats = run_pad_layout_cleanup(
