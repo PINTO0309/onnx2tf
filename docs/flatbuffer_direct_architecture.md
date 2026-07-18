@@ -12308,3 +12308,9 @@ Strict characterization selects
 direct arguments, quantized-PReLU/quantized-Reshape and attention-gate/
 quantized-activation boundaries, nested suffix index/context flag, fixed
 schema, and an unconsumed observation-only policy.
+
+The two direct calls now retain their unchanged dictionaries in the selected
+targets. Both remain unconsumed and observation-only; the nested suffix route
+and cleanup/pruning behavior are unchanged. A zero counter remains insufficient
+to infer absence of mutation. No GraphIndex construction, mutation, pruning,
+call order, argument, dependency, public API, or TensorFlow boundary changed.

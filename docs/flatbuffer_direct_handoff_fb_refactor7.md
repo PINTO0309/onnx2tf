@@ -10985,3 +10985,33 @@ mutation, pruning, call order, direct arguments, nested suffix, surrounding
 calls, guard, dependency, public API, or TensorFlow behavior. Keep both results
 unconsumed, validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
+
+## Dequant-TransposeConv direct result retention implementation checkpoint
+
+The two raw lowerer expressions now retain their unchanged one-key dictionaries
+as `_layout_pass_set_1_dequant_transposeconv_quantize_stats` and
+`_layout_pass_set_2_dequant_transposeconv_quantize_stats`. Both targets remain
+unconsumed and observation-only. The layout/attention quantized suffix still
+selects the same callback with the same live LayoutState.
+
+No result schema, GraphIndex construction, mutation, pruning, call order,
+direct argument, nested suffix invocation, surrounding production call, guard,
+dependency, public API, or TensorFlow boundary changed. Candidate-missing
+pruning can still accompany a zero counter, so these retained values are not
+complete mutation evidence.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.53s`
+- indexed owner behavior, both direct boundaries, attention/quantized suffix,
+  quantized recovery, adjacent result contracts, architecture, and pass-
+  efficiency coverage: `387 passed in 18.36s`
+- branch-changed broad suite: `1623 passed in 29.53s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, re-inventory the
+remaining raw pass expressions and select the next complete owner family before
+changing another boundary. Commit and push only; do not create, reopen, or
+update a pull request.

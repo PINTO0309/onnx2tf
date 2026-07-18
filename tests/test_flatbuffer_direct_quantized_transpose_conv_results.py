@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.quantized_transpose_conv import (
     _optimize_dequant_transposeconv_quantize_chains,
@@ -114,10 +112,6 @@ def test_quantized_transpose_conv_schema_and_all_selections_are_explicit() -> No
     } == {"include_layout": "True"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="both direct quantized-TransposeConv results are discarded",
-)
 def test_direct_quantized_transpose_conv_results_are_retained_observation_only() -> None:
     lowerer = _lowerer()
     locations = _direct_locations(lowerer.body)

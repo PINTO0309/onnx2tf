@@ -1677,3 +1677,10 @@ consumers are frozen. Because candidate-missing exits can still prune unused
 tensors while returning zero, the counter is not complete mutation evidence.
 The focused gate passes `386 passed, 1 xfailed in 18.24s`; the branch-changed
 broad gate passes `1622 passed, 1 xfailed in 30.56s`.
+
+Both direct dequant-TransposeConv calls now retain their unchanged one-key
+dictionaries in the selected observation-only targets. The nested suffix call
+and its layout route are unchanged, and zero counters still must not be treated
+as proof of no mutation. The focused gate passes `387 passed in 18.36s`, the
+branch-changed broad gate passes `1623 passed in 29.53s`, and targeted static
+validation passes.
