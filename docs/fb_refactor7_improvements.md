@@ -706,6 +706,16 @@ This checkpoint passes the focused indexed logistic/Swish orchestration gate
 with `382 passed in 19.29s`, plus the branch-changed broad related suite with
 `1433 passed in 24.66s`.
 
+The sole model-only Swish-QDQ-island production call now retains its existing
+five-counter dictionary as `_terminal_swish_qdq_island_stats`. The assignment-
+only orchestration change preserves default options, indexed phase order,
+captured dequant-logistic/InstanceNorm-bias boundaries, and TensorFlow-free
+core. The retained value has no consumer.
+
+This checkpoint passes the focused indexed logistic/Swish orchestration gate
+with `376 passed in 18.74s`, plus the branch-changed broad related suite with
+`1434 passed in 24.48s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -713,7 +723,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following sole model-only Swish-QDQ-island
-result and its captured dequant-logistic/InstanceNorm-bias boundaries. Any new
-mutation evidence must preserve current pass order, TensorFlow-free boundary,
-dependency set, and sequential validation policy.
+unit should audit all production occurrences of the InstanceNorm post-
+Transpose bias owner and isolate the call immediately following the captured
+Swish-QDQ-island result without conflating loop, late, or final occurrences.
+Any new mutation evidence must preserve current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

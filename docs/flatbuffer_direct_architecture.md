@@ -10962,10 +10962,9 @@ owner. The retained value has no consumer.
 
 The immediately following model-only Swish-QDQ-island owner returns five
 mutation counters and has one production call using its default options. Its
-result is currently discarded between the captured dequant-logistic bridge
-dictionary and the live-LayoutState InstanceNorm post-Transpose bias owner.
-Strict characterization fixes `_terminal_swish_qdq_island_stats` as its direct
-result target.
+result is retained as `_terminal_swish_qdq_island_stats` between the captured
+dequant-logistic bridge dictionary and the live-LayoutState InstanceNorm post-
+Transpose bias owner. The retained value has no consumer.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

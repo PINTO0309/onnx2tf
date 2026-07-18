@@ -6542,3 +6542,32 @@ The sole strict expected failure is the intentionally unimplemented terminal
 Swish-QDQ-island result retention contract above. Implement that assignment,
 rerun the same gates sequentially, then commit and push only; do not create,
 reopen, or update a pull request.
+
+## Terminal Swish-QDQ-island result retention implementation checkpoint
+
+The sole model-only production call now retains its existing five-counter
+dictionary as `_terminal_swish_qdq_island_stats`. This is an assignment-only
+orchestration change. The wrapper and owner, default options, result schema,
+indexed phase order, graph mutation, tensor pruning, callback arguments, pass
+order, captured dequant-logistic predecessor, live-LayoutState InstanceNorm-
+bias successor, dependencies, diagnostics, and TensorFlow behavior are
+unchanged. The retained value has no consumer and triggers no additional graph
+work.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed quantized-logistic and Swish owners plus terminal orchestration,
+  architecture, and pass-efficiency gate: `376 passed in 18.74s`
+- branch-changed broad suite plus indexed logistic/Swish owners, terminal
+  recovery/orchestration, architecture, and pass-efficiency coverage:
+  `1434 passed in 24.48s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit every production occurrence of
+`_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains()`, then
+isolate the terminal call immediately following `_terminal_swish_qdq_island_stats`
+and its normalization-pad successor. Do not conflate nested convergence, late,
+or final calls. Commit and push only; do not create, reopen, or update a pull
+request.
