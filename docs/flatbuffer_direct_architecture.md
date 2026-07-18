@@ -10928,7 +10928,10 @@ Session LayoutState and retains its result as
 `_terminal_internal_channel_slice_stats` between the captured boundary-input
 channel-slice dictionary and the first Transpose/channel-slice MulAdd bridge.
 The retained value has no consumer. The later model-only occurrence remains a
-distinct raw call.
+distinct raw call whose result is currently discarded between captured final
+boundary-input normalization and the later model-only MulAdd bridge. Strict
+characterization fixes `_final_internal_channel_slice_stats` as that later
+result target.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

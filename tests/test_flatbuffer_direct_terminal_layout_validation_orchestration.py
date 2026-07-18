@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2329,6 +2331,63 @@ def test_primary_path_retains_first_terminal_internal_channel_slice_result() -> 
         ast.unparse(argument) for argument in final_successor_call.args
     ] == ["model_ir"]
     assert final_successor_call.keywords == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="final internal channel-slice result is discarded",
+)
+def test_primary_path_retains_final_internal_channel_slice_result() -> None:
+    body = _lowerer_body()
+    callback_name = (
+        "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains"
+    )
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 2
+    terminal_index, final_index = indices
+    assert terminal_index < final_index
+
+    terminal_statement = body[terminal_index]
+    assert isinstance(terminal_statement, ast.Assign)
+    assert len(terminal_statement.targets) == 1
+    assert isinstance(terminal_statement.targets[0], ast.Name)
+    assert terminal_statement.targets[0].id == (
+        "_terminal_internal_channel_slice_stats"
+    )
+
+    statement = body[final_index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_final_internal_channel_slice_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert call.keywords == []
+
+    predecessor = body[final_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_final_boundary_input_normalization_stats"
+    )
+
+    successor_call = _statement_call(body[final_index + 1])
+    assert _call_name(successor_call) == (
+        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
+    )
+    assert successor_call is not None
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "model_ir"
+    ]
+    assert successor_call.keywords == []
 
 
 def test_primary_path_retains_terminal_softmax_transpose_result() -> None:
