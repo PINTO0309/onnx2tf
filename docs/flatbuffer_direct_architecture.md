@@ -12141,6 +12141,19 @@ The first slot preserves the nested nineteen-slot layout result without
 normalization or copying. No child, context, ordering, cleanup timing, guard,
 summary, dependency, public API, or TensorFlow boundary changes.
 
+`run_layout_transpose_cleanup()` returns five integer fields: `iterations` and
+four explicit Transpose mutation counters. The lowerer has three direct
+occurrences: the raw primary pass-set-1 call, retained late-Concat call with a
+shared state scope, and retained very-late call. Late-binary recovery also owns
+one independent nested occurrence.
+
+Strict characterization selects
+`_layout_pass_set_1_layout_transpose_cleanup_stats` for only the raw primary
+call. It freezes the fixed schema, unconditional owner cleanup and LayoutState
+sync path, all occurrence counts, exact layout/diagnostics/state-scope routing,
+the duplicate-fanout-policy/initial-attention boundary, and an unconsumed
+observation-only policy.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

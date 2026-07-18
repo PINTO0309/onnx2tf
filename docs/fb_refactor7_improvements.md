@@ -1531,3 +1531,13 @@ The next unit should audit the raw primary layout-transpose cleanup result
 immediately before the newly retained initial attention result, without
 changing its other retained/nested occurrences or live layout/diagnostic
 arguments.
+
+The primary layout-transpose result is now characterized separately from the
+already retained late-ConCat and very-late calls and the independent
+late-binary nested call. Selected observation-only target is
+`_layout_pass_set_1_layout_transpose_cleanup_stats`. The fixed five-key schema,
+cleanup/LayoutState sync semantics, exact occurrence counts, live arguments,
+shared-scope difference, duplicate-fanout-policy/initial-attention boundary,
+and unconsumed policy are frozen. The focused gate passes
+`370 passed, 1 xfailed in 19.20s`; the branch-changed broad gate passes
+`1608 passed, 1 xfailed in 29.60s`.

@@ -10463,3 +10463,39 @@ Inventory its other already retained and nested occurrences, preserve the live
 LayoutState/diagnostics arguments and five-key cleanup semantics, and keep any
 new result observation-only. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Primary layout-transpose cleanup result characterization checkpoint
+
+`run_layout_transpose_cleanup()` returns the fixed five-key integer dictionary
+containing `iterations`, identity removal, inverse-pair removal, inverse-fanout
+removal, and consecutive-pair composition. Its owner prunes unused tensors and
+synchronizes a supplied LayoutState after candidate execution.
+
+There are three direct lowerer occurrences. The late-ConCat and very-late calls
+already retain `_late_concat_transpose_layout_stats` and
+`_very_late_layout_transpose_cleanup_stats`; only the primary pass-set-1 call
+is a raw expression. The late-ConCat form alone receives
+`late_concat_layout_state_scope`. Late-binary recovery has one independent
+nested call and consumes only its four mutation fields.
+
+A passing structural contract freezes the schema, all three direct forms, the
+nested selection, live LayoutState/diagnostics routing, and shared-scope
+difference. A strict expected-failure contract selects observation-only target
+`_layout_pass_set_1_layout_transpose_cleanup_stats` between
+`enable_duplicate_transpose_fanout_optimizations` and
+`_layout_pass_set_1_initial_attention_recovery_results`, with no consumer.
+
+Characterization validation completed sequentially under `uv`:
+
+- primary, late-ConCat, very-late, and nested layout-transpose contracts,
+  terminal layout orchestration, attention boundary, architecture, and
+  pass-efficiency coverage: `370 passed, 1 xfailed in 19.20s`
+- branch-changed broad suite including the new result contract:
+  `1608 passed, 1 xfailed in 29.60s`
+
+The sole strict expected failure is the intentionally unimplemented primary
+assignment. Replace only that raw expression with the selected target. Do not
+change the owner, schema, preflight, transaction, nested/retained occurrences,
+arguments, shared scope, pass order, successor, guard, dependency, public API,
+or TensorFlow behavior. Validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.
