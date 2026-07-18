@@ -11015,3 +11015,44 @@ assignment does not claim a new model-corpus run. At resume, re-inventory the
 remaining raw pass expressions and select the next complete owner family before
 changing another boundary. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Affine-chain fold direct result characterization checkpoint
+
+`optimize_fold_mul_add_mul_affine_chains()` returns the fixed one-key dictionary
+`optimized_fold_mul_add_mul_affine_chains` from an indexed owner with a default
+32-rewrite cap.
+
+The lowerer wrapper has two raw direct calls with the live LayoutState. The
+first follows retained initial-attention recovery and precedes affine pre/post
+layout cleanup; the second follows retained post-binary attention recovery and
+precedes retained attention/quantized suffix recovery. Terminal affine/Concat/
+Split recovery separately selects the public callback with the live
+LayoutState; that nested result remains consumed by the existing terminal
+mutation summary.
+
+A passing contract freezes the one-key schema, both exact direct calls, the
+nested terminal index/layout flag, and all four boundaries. A strict expected-
+failure contract selects the unconsumed observation-only direct targets
+`_layout_pass_set_1_initial_affine_chain_fold_stats` and
+`_layout_pass_set_1_post_binary_affine_chain_fold_stats` without changing the
+consumed nested form.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.56s`
+- indexed owner behavior, terminal summary/orchestration, both attention
+  boundaries, architecture, and pass-efficiency coverage:
+  `409 passed, 1 xfailed in 19.22s`
+- branch-changed broad suite including the new result contract:
+  `1624 passed, 1 xfailed in 31.32s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented two-result
+retention contract. Replace only the two raw wrapper-call expressions with the
+selected targets. Do not change the result schema, GraphIndex ownership,
+rewrite cap, candidate handling, layout synchronization, direct arguments,
+terminal selection or summary, surrounding calls, dependency, public API, or
+TensorFlow behavior. Keep both direct results unconsumed, validate
+sequentially, commit, and push only; do not create, reopen, or update a pull
+request.

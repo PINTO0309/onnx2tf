@@ -12314,3 +12314,16 @@ targets. Both remain unconsumed and observation-only; the nested suffix route
 and cleanup/pruning behavior are unchanged. A zero counter remains insufficient
 to infer absence of mutation. No GraphIndex construction, mutation, pruning,
 call order, argument, dependency, public API, or TensorFlow boundary changed.
+
+`optimize_fold_mul_add_mul_affine_chains()` exposes the fixed one-key result
+`optimized_fold_mul_add_mul_affine_chains` from an indexed owner with a default
+32-rewrite cap. The lowerer wrapper calls it twice directly. Terminal affine/
+Concat/Split recovery independently selects the public callback with the live
+LayoutState and consumes that nested result in its declared mutation summary.
+
+Strict characterization selects
+`_layout_pass_set_1_initial_affine_chain_fold_stats` and
+`_layout_pass_set_1_post_binary_affine_chain_fold_stats` for only the two
+direct results. It freezes exact arguments, initial-attention/affine-prepost and
+post-binary-attention/quantized-suffix boundaries, nested terminal index and
+layout flag, fixed schema, and an unconsumed observation-only direct policy.

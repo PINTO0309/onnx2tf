@@ -1684,3 +1684,15 @@ and its layout route are unchanged, and zero counters still must not be treated
 as proof of no mutation. The focused gate passes `387 passed in 18.36s`, the
 branch-changed broad gate passes `1623 passed in 29.53s`, and targeted static
 validation passes.
+
+The floating-point MUL/ADD/MUL affine-chain fold is now characterized as a
+fixed one-key result, a default 32-rewrite indexed owner, two direct lowerer
+calls, and one terminal-orchestration selection. The nested result remains
+consumed by the existing terminal mutation summary; only the direct results
+are selected as observation-only targets
+`_layout_pass_set_1_initial_affine_chain_fold_stats` and
+`_layout_pass_set_1_post_binary_affine_chain_fold_stats`. Exact arguments,
+both attention-adjacent boundaries, nested layout routing, and absence of
+direct consumers are frozen. The focused gate passes
+`409 passed, 1 xfailed in 19.22s`; the branch-changed broad gate passes
+`1624 passed, 1 xfailed in 31.32s`.
