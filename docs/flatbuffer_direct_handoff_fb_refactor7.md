@@ -8218,6 +8218,47 @@ channel-shuffle successor, independent orchestration selection, and
 observation-only evidence rules. Commit and push only; do not create, reopen,
 or update a pull request.
 
+## Slice/Logistic/Concat tail result characterization checkpoint
+
+The Slice/Logistic/Concat/Reshape-tail wrapper dispatches the indexed owner in
+`slice_logistic_concat_reshape_tail_layout.py` and returns the fixed one-counter
+dictionary
+`optimized_transpose_slice_logistic_concat_reshape_tail_nhwc_chains`. The owner
+unconditionally prunes unused tensors after candidate processing, so its
+rewrite counter is incomplete evidence for cleanup-only mutation and must
+remain observation-only.
+
+There is exactly one direct wrapper call. It is inside layout recovery pass-set
+2 after `_layout_opt_concat_input_adapter_stats` and before
+`_layout_opt_channel_shuffle_gather_results`, whose policy keeps post-gather
+cleanup enabled. The call receives the live Session LayoutState.
+Layout-recovery orchestration directly selects the public owner as a second,
+distinct form.
+
+A strict expected-failure contract selects
+`_layout_opt_slice_logistic_concat_tail_stats`. It fixes the wrapper, one-key
+schema, unconditional pruning, exact one-call count, model and LayoutState
+arguments, option guard, both captured boundaries, channel-shuffle policy,
+independent orchestration selection, and absence of result consumers.
+
+At implementation, replace only the raw direct expression with an assignment.
+Do not add a consumer or guard, and do not change the wrapper, owner, schema,
+unconditional pruning, graph-index behavior, live LayoutState, orchestration
+selection, surrounding calls, dependencies, diagnostics, or TensorFlow
+behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- Slice/Logistic/Concat tail schema and indexed-owner fixtures, unconditional
+  cleanup, layout-recovery selection, guarded direct boundary,
+  channel-shuffle/gather policy, architecture, and pass-efficiency coverage:
+  `362 passed, 1 xfailed in 19.11s`
+
+The sole strict expected failure is the intentionally unimplemented
+result-retention contract. Implement only that assignment, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

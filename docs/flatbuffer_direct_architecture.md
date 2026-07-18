@@ -11573,3 +11573,23 @@ unused-tensor pruning, live Session LayoutState, layout-option guard, retained
 Split/mixed pre-Concat predecessors, Slice/Logistic/Concat tail and
 Concat/unary/Conv successors, layout-recovery and safe-reduction selections,
 dependencies, diagnostics, and TensorFlow behavior remain unchanged.
+
+The guarded Slice/Logistic/Concat/Reshape-tail wrapper dispatches its indexed
+owner and returns the fixed one-counter dictionary
+`optimized_transpose_slice_logistic_concat_reshape_tail_nhwc_chains`. The owner
+unconditionally prunes unused tensors after candidate processing, so its
+rewrite counter is incomplete evidence for cleanup-only mutation and must
+remain observation-only.
+
+There is exactly one direct wrapper call. It is inside layout recovery pass-set
+2 after `_layout_opt_concat_input_adapter_stats` and before the retained
+channel-shuffle/gather tuple with post-gather cleanup enabled. It receives the
+live Session LayoutState. Layout-recovery orchestration separately selects the
+public owner.
+
+Strict characterization selects
+`_layout_opt_slice_logistic_concat_tail_stats`. It fixes the wrapper, one-key
+schema, unconditional prune, exact one-call count, arguments, option guard,
+both captured boundaries, channel-shuffle policy, independent orchestration
+selection, and absence of consumers. The dictionary must remain unconsumed;
+retention must add no guard, scan, dependency, or TensorFlow import path.
