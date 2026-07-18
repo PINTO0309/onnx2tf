@@ -10977,6 +10977,12 @@ is retained by the first, third, and fourth direct calls. The first assigns
 the two existing later targets remain distinct. The following diagnostics-
 aware normalization-pad cleanup boundary is unchanged.
 
+The remaining raw second direct InstanceNorm post-bias call is in the very-late
+block between diagnostics-aware pad-layout cleanup and the live-LayoutState
+residual/Mul/Concat owner. Strict characterization selects only that call for
+`_very_late_instancenorm_post_bias_stats`, while keeping the terminal, pre-
+terminal, absolute-final, and nested occurrence contracts fixed.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`

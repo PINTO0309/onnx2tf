@@ -6647,3 +6647,39 @@ in the very-late block. Keep `_terminal_instancenorm_post_bias_stats`,
 `_pre_terminal_affine_instancenorm_post_bias_stats`,
 `_absolute_final_instancenorm_post_bias_stats`, and the nested convergence call
 fixed. Commit and push only; do not create, reopen, or update a pull request.
+
+## Very-late InstanceNorm post-bias result characterization checkpoint
+
+The second of the four direct
+`_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains()` calls
+returns the same stable one-counter dictionary as the three already captured
+direct occurrences. It is the only remaining raw direct result; the nested
+convergence call separately consumes its counter.
+
+A strict expected-failure orchestration contract requires that second direct
+result to be retained as `_very_late_instancenorm_post_bias_stats`. It fixes the
+preceding diagnostics-aware `run_pad_layout_cleanup()` call and following live-
+LayoutState InstanceNorm residual/Mul/Concat owner, while preserving the
+terminal, pre-terminal, absolute-final, and nested occurrence contracts.
+
+At implementation, replace only the second direct expression with an
+assignment and update the existing four-direct occurrence-shape assertions.
+Do not change the other direct or nested calls, existing targets, wrapper or
+indexed owner, one-key schema, rewrite guards, positive-only pruning,
+GraphIndex/LayoutState/candidate/max-rewrite controls, callback arguments, pass
+order, adjacent targets, dependencies, diagnostics, or TensorFlow behavior.
+The retained value must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- owner rewrite, indexed Swish, all direct/nested occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency gate:
+  `386 passed, 1 xfailed in 19.35s`
+- branch-changed broad suite plus indexed Swish, all occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency coverage:
+  `1419 passed, 1 xfailed in 24.80s`
+
+The sole strict expected failure is the intentionally unimplemented very-late
+InstanceNorm post-bias result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.
