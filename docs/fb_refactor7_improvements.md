@@ -1923,3 +1923,13 @@ same explicit direct scope; gate required/full indices, nested scope identity,
 transactional owners, and lower-level pruning are unchanged. The focused gate
 passes `417 passed in 19.19s`, the 102-file branch-changed suite passes
 `1654 passed in 30.84s`, and targeted static validation passes.
+
+The very-late pad-layout runner is now characterized as a fixed three-key
+transactional result across its raw direct, gate required/full,
+terminal-boundary, and consumed norm-only fallback routes. Strict retention
+selects `_very_late_pad_layout_stats` only for the raw `model_ir` result and
+leaves `fallback_norm_stats` consumed with its existing feature flags. Schema,
+pass IDs, lower-level pruning, route indices and scopes, direct neighbors, and
+the raw result's lack of consumers are frozen. The focused gate passes
+`394 passed, 1 xfailed in 20.62s`, the 103-file branch-changed suite passes
+`1656 passed, 1 xfailed in 30.91s`, and targeted static validation passes.

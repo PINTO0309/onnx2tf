@@ -12615,3 +12615,18 @@ wrapper forwarding, exact direct arguments, retained split/Conv/Concat bridge
 predecessor, mixed-attention cleanup successor, attention selection index and
 layout-only keyword contract, sole direct occurrence, and an unconsumed
 observation-only policy.
+
+`run_pad_layout_cleanup()` exposes the fixed three-key result
+`optimized_transpose_pad_prepost_nhwc_chains`,
+`optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains`, and
+`optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains` from three
+transactional layout passes. Each underlying optimizer prunes unused tensors
+on exit, so zero rewrite counters are not complete mutation evidence.
+
+The owner is reached by one raw very-late call, gate-layout required/full
+policies, terminal-boundary layout orchestration, and a consumed norm-only
+safety fallback. Strict characterization selects `_very_late_pad_layout_stats`
+only for the raw result and leaves `fallback_norm_stats` consumed. It freezes
+the three schemas and pass IDs, route indices, state-scope forwarding, direct
+arguments and neighbors, fallback feature flags, sole direct occurrence, and
+an unconsumed observation-only policy for the raw result.

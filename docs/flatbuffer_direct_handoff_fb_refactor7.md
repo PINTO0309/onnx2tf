@@ -11898,3 +11898,47 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Very-late pad-layout direct result characterization checkpoint
+
+The very-late pad-layout runner returns three fixed counters from transactional
+layout passes with IDs `layout.pad_prepost_nhwc`,
+`layout.unary_pad_prepost_nhwc`, and
+`layout.norm_subgraph_pad_prepost_nhwc`. Each lower-level optimizer prunes
+unused tensors on exit, so a zero counter is not complete mutation evidence.
+
+Four route classes are frozen: the raw very-late direct call, gate-layout
+required/full selections at indices 1/2, terminal-boundary selection at index
+2, and the consumed norm-only safety fallback. Nested routes continue to own
+or receive their existing shared state scopes. The fallback continues to pass
+`include_pad=False`, `include_unary=False`, and `include_norm=True`, and its
+result remains consumed as `fallback_norm_stats`.
+
+Passing contracts freeze the three-key schema, all transactional pass IDs,
+lower-level cleanup, exact direct arguments, retained terminal
+Squeeze/Mean/Squeeze predecessor, InstanceNorm post-bias successor, nested
+indices and scope contracts, fallback feature flags and consumer, and the two
+raw lowerer occurrences. A strict expected-failure contract selects the
+unconsumed observation target `_very_late_pad_layout_stats` only for the raw
+`model_ir` call.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.60s`
+- direct, gate, terminal-boundary, fallback, architecture, pass-efficiency,
+  and focused Pad owner coverage: `394 passed, 1 xfailed in 20.62s`
+- 103 branch-changed test files: `1656 passed, 1 xfailed in 30.91s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The first broad invocation lost its output handle near completion and did not
+provide an authoritative exit status; the identical suite was rerun to the
+clean result above. No test assertion failed. The sole expected failure is the
+intentionally unimplemented raw direct assignment.
+
+Retain only the raw call's existing dictionary. Do not change transactional
+owner behavior or schemas, lower-level pruning, nested route selection or
+scope ownership, fallback flags or consumption, direct arguments, call order,
+dependencies, public API, or TensorFlow behavior. Keep the target unconsumed,
+validate sequentially, commit, and push only; do not create, reopen, or update
+a pull request.
