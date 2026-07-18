@@ -1704,3 +1704,15 @@ gate reported `409 passed, 1 failed` because the attention-prefix architecture
 contract still expected no successor targets. Its corrected target contract
 passes `410 passed in 20.86s`; the branch-changed broad gate passes
 `1625 passed in 30.08s`, and targeted static validation passes.
+
+The Transpose/MUL/ADD/Transpose affine pre/post owner is now characterized as
+a fixed one-key result with a default 32-rewrite cap, three lowerer calls, three
+declarative orchestration selections, and one consumed late-binary composite
+call. The final lowerer call already retains
+`_no_layout_final_affine_prepost_stats`; selected targets for the two raw forms
+are `_layout_pass_set_1_affine_prepost_stats` and
+`_no_layout_fallback_affine_prepost_stats`. Exact arguments, conditional and
+final boundaries, nested layout routes, and consumed late-binary form are
+frozen. Unconditional pruning means a zero counter is not complete mutation
+evidence. The focused gate passes `495 passed, 1 xfailed in 19.89s`; the
+branch-changed broad gate passes `1626 passed, 1 xfailed in 30.38s`.

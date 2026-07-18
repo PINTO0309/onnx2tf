@@ -11091,3 +11091,45 @@ assignment does not claim a new model-corpus run. At resume, inventory all
 direct and nested `_optimize_transpose_mul_add_const_prepost_nhwc_chains()`
 forms before changing the adjacent affine-pre/post boundary. Commit and push
 only; do not create, reopen, or update a pull request.
+
+## Affine pre/post direct result characterization checkpoint
+
+`optimize_transpose_mul_add_const_prepost_nhwc_chains()` returns the fixed
+one-key dictionary `optimized_transpose_mul_add_const_prepost_nhwc_chains` from
+an indexed owner with a default 32-rewrite cap. Candidate-missing and normal
+exits both prune unused tensors, so a zero counter is not complete mutation
+evidence.
+
+The lowerer wrapper has three calls with the live LayoutState. The initial and
+no-layout fallback calls are raw; the final no-layout call already retains
+`_no_layout_final_affine_prepost_stats`. Terminal affine/Concat/Split,
+attention/quantized suffix, and pre-add attention recovery each select the
+public callback with LayoutState. Late-binary recovery separately retains and
+consumes the same callback result inside its composite statistics.
+
+A passing contract freezes the one-key schema, all three exact lowerer calls,
+all initial/fallback/final boundaries, three declarative selection indices and
+layout flags, and the consumed late-binary form. A strict expected-failure
+contract selects `_layout_pass_set_1_affine_prepost_stats` and
+`_no_layout_fallback_affine_prepost_stats` for the two raw calls while
+preserving `_no_layout_final_affine_prepost_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.57s`
+- indexed owner, terminal/attention/suffix/late-binary routes, initial and
+  no-layout boundaries, final validation, architecture, and pass-efficiency
+  coverage: `495 passed, 1 xfailed in 19.89s`
+- branch-changed broad suite including the new result contract:
+  `1626 passed, 1 xfailed in 30.38s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented two-result
+retention contract. Replace only the initial and fallback raw expressions with
+the selected targets. Do not change the result schema, GraphIndex ownership,
+rewrite cap, candidate handling, pruning, layout synchronization, direct
+arguments or conditions, existing final target, nested selections, late-binary
+consumer, surrounding calls, dependency, public API, or TensorFlow behavior.
+Keep both new results unconsumed, validate sequentially, commit, and push only;
+do not create, reopen, or update a pull request.

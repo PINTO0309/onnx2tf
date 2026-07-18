@@ -12334,3 +12334,19 @@ result remains consumed by the same mutation summary, and its callback route is
 unchanged. No GraphIndex ownership, rewrite cap, candidate handling, layout
 synchronization, call order, dependency, public API, or TensorFlow boundary
 changed.
+
+`optimize_transpose_mul_add_const_prepost_nhwc_chains()` exposes the fixed
+one-key result `optimized_transpose_mul_add_const_prepost_nhwc_chains` with a
+default 32-rewrite cap. The lowerer calls it in the initial layout phase, the
+no-layout fallback, and the final no-layout cleanup; the final call already
+retains `_no_layout_final_affine_prepost_stats`. Terminal, attention, and
+attention/quantized orchestration select the public callback with LayoutState,
+while late-binary recovery consumes it inside its composite result. Because the
+owner prunes unused tensors even on candidate-missing exits, a zero counter is
+not complete mutation evidence.
+
+Strict characterization selects `_layout_pass_set_1_affine_prepost_stats` and
+`_no_layout_fallback_affine_prepost_stats` for the two raw direct forms. It
+freezes all three direct calls, exact arguments, initial/fallback/final
+boundaries, three declarative selections, the consumed late-binary form, fixed
+schema, and an unconsumed observation-only policy for the two new targets.
