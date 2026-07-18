@@ -12456,3 +12456,15 @@ shared-scope invocation contracts, zero-argument helper use, the guarded
 terminal elementwise-fanout/convpool-output boundary, sole occurrence, typed
 runner/helper propagation requirement, and an unconsumed observation-only
 direct policy.
+
+Terminal singleton-MaxPool/Reshape result propagation now returns the existing
+ordered two-child tuple from the runner and lowerer helper. The sole direct
+invocation retains the tuple as
+`_terminal_singleton_maxpool_reshape_results`, which remains unconsumed and
+observation-only.
+
+Both child callbacks and fixed schemas, shared `ModelIRPassStateScope`, exact
+context and arguments, child order, terminal elementwise-fanout predecessor,
+convpool-output successor, feature guards, public API, dependencies, and
+TensorFlow boundary are unchanged. The observation target is not a combined
+mutation counter and is not used to steer later lowering.

@@ -11472,3 +11472,41 @@ not change child callbacks or schemas, pass order, shared state scope, direct
 arguments, guards, surrounding calls, dependency, public API, or TensorFlow
 behavior. Keep the target unconsumed, validate sequentially, commit, and push
 only; do not create, reopen, or update a pull request.
+
+## Terminal singleton-MaxPool/Reshape result implementation checkpoint
+
+`run_terminal_singleton_maxpool_reshape()` now returns the ordered pair already
+created by `run_recovery_invocations()`. The lowerer helper returns that pair
+with the same `Tuple[Dict[str, int], ...]` contract, and the sole direct call
+retains it as `_terminal_singleton_maxpool_reshape_results`.
+
+The target remains unconsumed and observation-only. Child callbacks and fixed
+schemas, pass order, one shared `ModelIRPassStateScope`, zero-argument helper
+use, the guarded terminal elementwise-fanout predecessor, the guarded
+convpool-output successor, feature guards, dependencies, public API, and
+TensorFlow behavior are unchanged.
+
+The first dedicated implementation run reported `1 passed, 1 failed`; its
+failure was the passing characterization assertion that still froze the
+discard form. After that baseline was updated, the first focused run reported
+`394 passed, 4 failed in 19.91s`. The four failures required the old helper
+line count/`Expr` form or searched only for a direct `Expr`. A subsequent run
+reported `397 passed, 1 failed in 21.32s`; that last check counted return-type
+annotation names as captured runtime data. The contracts now inspect the typed
+`Return`, selected `Assign`, unchanged surrounding boundaries, and only the
+helper execution body for closure data. No production behavior failure was
+found.
+
+Corrected implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.58s`
+- child owners, orchestration, direct neighbors, terminal validation, shared
+  context, architecture, and pass-efficiency coverage:
+  `398 passed in 19.13s`
+- 96 branch-changed test files: `1637 passed in 30.37s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+small discarded-result boundary before modifying production code. Commit and
+push only; do not create, reopen, or update a pull request.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -57,8 +57,8 @@ def build_terminal_singleton_maxpool_reshape_invocations(
 
 def run_terminal_singleton_maxpool_reshape(
     context: TerminalSingletonMaxPoolReshapeContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Dict[str, int], ...]:
+    return run_recovery_invocations(
         build_terminal_singleton_maxpool_reshape_invocations(context),
         expected_pass_ids=TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS,
         phase_name="terminal singleton-maxpool/reshape",

@@ -114,21 +114,22 @@ def test_terminal_singleton_maxpool_reshape_result_contract_is_explicit() -> Non
     runner = _functions(ORCHESTRATION_PATH)[
         "run_terminal_singleton_maxpool_reshape"
     ]
-    assert ast.unparse(runner.returns) == "None"
+    assert ast.unparse(runner.returns) == "Tuple[Dict[str, int], ...]"
     assert len(runner.body) == 1
-    assert isinstance(runner.body[0], ast.Expr)
+    assert isinstance(runner.body[0], ast.Return)
     assert _call_name(runner.body[0]) == "run_recovery_invocations"
 
     lowerer, helper = _lowerer_and_helper()
-    assert ast.unparse(helper.returns) == "None"
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
     assert len(helper.body) == 1
-    assert isinstance(helper.body[0], ast.Expr)
+    assert isinstance(helper.body[0], ast.Return)
     assert _call_name(helper.body[0]) == "run_terminal_singleton_maxpool_reshape"
 
     observed_lowerer, index = _direct_location()
     assert observed_lowerer.name == lowerer.name
     invocation = observed_lowerer.body[index]
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
+    assert _single_target(invocation) == RESULT_TARGET
     assert _statement_call(invocation) is not None
     assert observed_lowerer.body[index - 1].__class__ is ast.If
     assert ast.unparse(observed_lowerer.body[index - 1].test) == (
@@ -146,10 +147,6 @@ def test_terminal_singleton_maxpool_reshape_result_contract_is_explicit() -> Non
     ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal singleton-MaxPool/Reshape results are discarded",
-)
 def test_terminal_singleton_maxpool_reshape_results_propagate_to_direct_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

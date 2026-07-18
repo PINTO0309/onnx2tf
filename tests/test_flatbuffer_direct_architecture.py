@@ -5518,14 +5518,14 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
         "run_singleton_maxpool_layout_cleanup",
         "run_consecutive_reshape_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    helper_statement = helper.body[0]
+    assert isinstance(helper_statement, ast.Return)
+    assert isinstance(helper_statement.value, ast.Call)
+    assert isinstance(helper_statement.value.func, ast.Name)
+    helper_calls = [helper_statement.value]
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_singleton_maxpool_reshape"
     ]
@@ -5540,10 +5540,17 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_terminal_singleton_maxpool_reshape_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)

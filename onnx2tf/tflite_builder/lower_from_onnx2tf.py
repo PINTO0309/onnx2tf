@@ -4119,8 +4119,10 @@ def lower_onnx_to_ir(
             late_dequant_unary_fanout_context
         )
 
-    def _run_terminal_singleton_maxpool_reshape_pass_pair() -> None:
-        run_terminal_singleton_maxpool_reshape(
+    def _run_terminal_singleton_maxpool_reshape_pass_pair() -> Tuple[
+        Dict[str, int], ...
+    ]:
+        return run_terminal_singleton_maxpool_reshape(
             terminal_singleton_maxpool_reshape_context
         )
 
@@ -5194,7 +5196,9 @@ def lower_onnx_to_ir(
                 model_ir
             )
         )
-    _run_terminal_singleton_maxpool_reshape_pass_pair()
+    _terminal_singleton_maxpool_reshape_results = (
+        _run_terminal_singleton_maxpool_reshape_pass_pair()
+    )
     if optimize_layout_transpose_chains:
         _terminal_convpool_output_passthrough_stats = (
             _optimize_convpool_output_transpose_nhwc_passthrough_chains(

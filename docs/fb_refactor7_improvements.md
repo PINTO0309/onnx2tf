@@ -1805,3 +1805,13 @@ schemas, zero-argument direct use, guarded elementwise-fanout/convpool-output
 boundary, and sole occurrence are frozen. The focused gate passes
 `397 passed, 1 xfailed in 19.66s`, the 96-file branch-changed suite passes
 `1636 passed, 1 xfailed in 31.81s`, and targeted static validation passes.
+
+Terminal singleton-MaxPool/Reshape recovery now propagates its existing two-
+child result tuple through the runner and helper, retaining it as the
+unconsumed observation target `_terminal_singleton_maxpool_reshape_results`.
+Child schemas and order, shared state scope, zero-argument helper use, guards,
+and terminal elementwise-fanout/convpool-output boundaries are unchanged.
+Implementation exposed only stale discard-shape and annotation-aware AST
+expectations; after correction, the focused gate passes
+`398 passed in 19.13s`, the 96-file branch-changed suite passes
+`1637 passed in 30.37s`, and targeted static validation passes.
