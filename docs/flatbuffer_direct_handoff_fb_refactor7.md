@@ -5047,3 +5047,34 @@ At resume, audit the immediately following
 `_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains()` result,
 its owner schema, and its captured predecessor/successor boundaries. Commit and
 push only; do not create, reopen, or update a pull request.
+
+## Late NHWC-Reshape collapse result characterization checkpoint
+
+The private rank-three reshape/transpose layout-shim collapse owner returns the
+stable one-counter dictionary
+`optimized_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains`. It
+accepts only `model_ir`, owns one direct production occurrence, and currently
+discards that result.
+
+A strict expected-failure orchestration contract requires
+`_late_nhwc_reshape_collapse_stats`. It fixes the captured flatten-HW
+predecessor, model-only callback contract, and following channel-shuffle/Gather
+cluster invocation with both optional shuffle families disabled.
+
+At implementation, replace only this expression with an assignment. Do not
+change the owner/schema, GraphIndex mutation/pruning, callback arguments, pass
+order, neighboring targets or cluster options, add a guard, reconciliation,
+scan, sort, metadata write, result consumer, dependency, or TensorFlow behavior.
+Validate the owner, channel-shuffle boundary, layout recovery, terminal
+orchestration, architecture, and broad related gates sequentially, then commit
+and push only; do not create, reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused collapse-owner, channel-shuffle boundary, layout-recovery, terminal-
+  orchestration, and architecture gate: `364 passed, 1 xfailed in 18.71s`
+- expanded broad related gate: `1733 passed, 1 xfailed in 33.34s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented single-
+result retention contract above.

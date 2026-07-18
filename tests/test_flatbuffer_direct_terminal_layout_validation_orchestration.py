@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1744,6 +1746,56 @@ def test_primary_path_retains_late_expanddims_and_flatten_results() -> None:
     assert _call_name(_statement_call(body[indices[1] + 1])) == (
         "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="late NHWC Reshape-collapse result is discarded",
+)
+def test_primary_path_retains_late_nhwc_reshape_collapse_result() -> None:
+    body = _lowerer_body()
+    callback_name = (
+        "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+    )
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 1
+    index = indices[0]
+
+    statement = body[index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_late_nhwc_reshape_collapse_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert call.keywords == []
+
+    predecessor = body[index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_late_flatten_hw_reshape_layout_stats"
+    )
+    successor = body[index + 1]
+    assert _call_name(_statement_call(successor)) == (
+        "_run_channel_shuffle_gather_layout_pass_cluster"
+    )
+    successor_call = _statement_call(successor)
+    assert successor_call is not None
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in successor_call.keywords
+    } == {
+        "include_two_way_shuffle": "False",
+        "include_nhwc_shuffle": "False",
+    }
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:
