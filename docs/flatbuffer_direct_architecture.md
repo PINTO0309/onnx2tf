@@ -10834,9 +10834,9 @@ callback contract and all four outer boundaries remain fixed.
 
 The next adjacent ExpandDims and flatten-HW Transpose/Reshape compatibility
 owners each return one rewrite counter, each has one production occurrence,
-and both receive the live Session LayoutState. Their results are currently
-discarded. Strict characterization fixes their order between the captured
-late-Concat fanout guard and the following NHWC-Reshape owner.
+and both receive the live Session LayoutState. Their results are retained under
+distinct late-layout targets. Their order between the captured late-Concat
+fanout guard and the following NHWC-Reshape owner remains fixed.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

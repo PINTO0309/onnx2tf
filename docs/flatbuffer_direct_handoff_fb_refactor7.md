@@ -5025,3 +5025,25 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented adjacent
 two-result retention contract above.
+
+## Late ExpandDims/flatten-HW result implementation checkpoint
+
+The two adjacent compatibility-owner dictionaries are now retained as
+`_late_expanddims_reshape_layout_stats` and
+`_late_flatten_hw_reshape_layout_stats`. Their stable one-counter schemas,
+indexed-first/fallback behavior, GraphIndex/pruning/layout synchronization,
+live Session LayoutState, exact order, and outer boundaries are unchanged.
+
+No guard, reconciliation, scan, sort, metadata write, result consumer,
+dependency, or TensorFlow behavior changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused indexed/compatibility owner, terminal-orchestration, and architecture
+  gate: `301 passed in 18.71s`
+- expanded broad related gate: `1661 passed in 32.15s`
+
+At resume, audit the immediately following
+`_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains()` result,
+its owner schema, and its captured predecessor/successor boundaries. Commit and
+push only; do not create, reopen, or update a pull request.

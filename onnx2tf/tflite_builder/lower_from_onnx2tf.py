@@ -4879,13 +4879,17 @@ def lower_onnx_to_ir(
                 model_ir
             )
         )
-    _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_expanddims_reshape_layout_stats = (
+        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_flatten_hw_reshape_layout_stats = (
+        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
     _run_channel_shuffle_gather_layout_pass_cluster(

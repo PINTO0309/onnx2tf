@@ -447,6 +447,15 @@ This checkpoint extends the expanded related gate to `1645 passed in 32.11s`;
 the focused elementwise-fanout, terminal-singleton, layout-recovery, terminal-
 orchestration, and architecture gate is `299 passed in 19.15s`.
 
+The adjacent late ExpandDims and flatten-HW Transpose/Reshape compatibility
+calls now retain their one-counter dictionaries. Their indexed-first/fallback
+behavior, live LayoutState handoff, pruning synchronization, exact adjacency,
+captured fanout predecessor, and following NHWC-Reshape owner are unchanged.
+
+This checkpoint extends the expanded related gate to `1661 passed in 32.15s`;
+the focused indexed/compatibility-owner, terminal-orchestration, and
+architecture gate is `301 passed in 18.71s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -454,7 +463,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the adjacent ExpandDims and flatten-HW Transpose/Reshape
-results following the first captured fanout occurrence. Any new mutation
+unit should audit the immediately following
+reshape/transpose/reshape/transpose-to-NHWC-Reshape result. Any new mutation
 evidence must preserve current pass order, TensorFlow-free boundary, dependency
 set, and sequential validation policy.
