@@ -12104,3 +12104,43 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Late Conv1D unary direct results characterization checkpoint
+
+Three adjacent indexed owners cover the Conv1D
+Squeeze/Unary/ExpandDims passthrough, the rank-4
+Unary/Transpose/Reshape/ExpandDims variant, and the fan-out bypass variant.
+Each returns a fixed one-key dictionary and accepts optional GraphIndex and
+LayoutState through a forwarding lowerer wrapper. Each owner prunes unused
+tensors on both the preflight-zero and normal exit paths, so zero counters are
+not complete mutation evidence.
+
+All three wrappers have exactly one raw direct call with the live LayoutState
+and no nested orchestration selection. The adjacent calls remain between the
+retained late Swish passthrough result and the distinct InstanceNorm unary
+passthrough owner.
+
+Passing contracts freeze all three fixed schemas, wrapper defaults and
+forwarding, unconditional cleanup, exact direct arguments and adjacency, and
+sole occurrences. A strict expected-failure contract selects the unconsumed
+observation targets `_late_conv1d_squeeze_unary_stats`,
+`_late_conv1d_rank4_unary_stats`, and `_late_conv1d_unary_fanout_stats`
+together.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated family result contract: `2 passed, 1 xfailed in 0.59s`
+- all three indexed owners, architecture, pass-efficiency, retained Swish
+  boundary, and representative direct rewrites:
+  `487 passed, 1 xfailed in 18.25s`
+- 106 branch-changed test files: `1665 passed, 1 xfailed in 32.70s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+No test assertion failed. The sole expected failure is the intentionally
+unimplemented group of direct assignments. Retain only the existing
+dictionaries. Do not change matching or indexed application, GraphIndex or
+LayoutState handling, unconditional pruning, schemas, wrapper forwarding,
+direct arguments, adjacency, dependencies, public API, or TensorFlow behavior.
+Keep all targets unconsumed, validate sequentially, commit, and push only; do
+not create, reopen, or update a pull request.

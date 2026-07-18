@@ -1975,3 +1975,12 @@ GraphIndex/candidate handling, guarded pruning, LayoutState updates,
 layout-recovery selection, and adjacent owners remain unchanged. The focused
 gate passes `367 passed in 18.59s`, the 105-file branch-changed suite passes
 `1663 passed in 31.71s`, and targeted static validation passes.
+
+The three adjacent late Conv1D unary owners are now characterized as fixed
+one-key results for the basic, rank-4, and fan-out forms. Each wrapper accepts
+GraphIndex and LayoutState, has one direct call, and each owner prunes unused
+tensors even when its rewrite counter is zero. Strict retention selects three
+unconsumed observation targets together without changing their adjacency
+between Swish and InstanceNorm passthrough owners. The focused gate passes
+`487 passed, 1 xfailed in 18.25s`, the 106-file branch-changed suite passes
+`1665 passed, 1 xfailed in 32.70s`, and targeted static validation passes.

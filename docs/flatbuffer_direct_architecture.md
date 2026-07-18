@@ -12678,3 +12678,17 @@ observation-only. Owner matching and indexed application, wrapper forwarding,
 GraphIndex/candidate and rewrite-limit handling, guarded pruning, LayoutState
 updates, layout-recovery selection, direct arguments, and call order remain
 unchanged; the counter does not steer the following passthrough owners.
+
+The three adjacent Conv1D unary owners cover Squeeze/Unary/ExpandDims,
+rank-4 Unary/Transpose/Reshape/ExpandDims, and fan-out bypass forms. Each
+returns one fixed counter, accepts optional GraphIndex and LayoutState through
+its forwarding wrapper, and prunes unused tensors even on the zero-rewrite
+preflight path. A zero counter is therefore not complete mutation evidence.
+
+Each wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_squeeze_unary_stats`,
+`_late_conv1d_rank4_unary_stats`, and `_late_conv1d_unary_fanout_stats`
+together. It freezes all three schemas, wrapper defaults and forwarding,
+unconditional pruning, direct arguments and adjacency between retained Swish
+and InstanceNorm passthrough boundaries, sole occurrences, and unconsumed
+observation-only policies.
