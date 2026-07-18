@@ -1950,3 +1950,11 @@ LayoutState. Strict retention selects
 positive norm-cleanup guard. The focused gate passes
 `391 passed, 1 xfailed in 19.16s`, the 104-file branch-changed suite passes
 `1659 passed, 1 xfailed in 31.12s`, and targeted static validation passes.
+
+The guarded singleton/consecutive-reshape fallback call now retains its
+unchanged tuple as `_fallback_singleton_consecutive_reshape_results`. It
+remains unconsumed and observation-only; both main-route results, shared child
+state, fallback LayoutState choice, positive norm-cleanup guard, and adjacent
+repair/reconciliation remain unchanged. The focused gate passes
+`392 passed in 19.82s`, the 104-file branch-changed suite passes
+`1660 passed in 32.15s`, and targeted static validation passes.

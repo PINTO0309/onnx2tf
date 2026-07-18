@@ -373,7 +373,12 @@ def test_singleton_consecutive_retains_very_late_main_results() -> None:
     assert len(fallback_calls) == 1
     fallback_call = fallback_calls[0]
     assert any(
-        isinstance(statement, ast.Expr) and statement.value is fallback_call
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_fallback_singleton_consecutive_reshape_results"
+        and statement.value is fallback_call
         for statement in ast.walk(lowerer)
     )
 
@@ -419,7 +424,7 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
         for node in ast.walk(lowerer)
         if isinstance(node, ast.If)
         and any(
-            isinstance(statement, ast.Expr)
+            isinstance(statement, (ast.Assign, ast.Expr))
             and isinstance(statement.value, ast.Call)
             and isinstance(statement.value.func, ast.Name)
             and statement.value.func.id == SINGLETON_CONSECUTIVE
@@ -429,10 +434,18 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
     invocation_index = next(
         index
         for index, statement in enumerate(fallback_guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, (ast.Assign, ast.Expr))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_CONSECUTIVE
+    )
+
+    invocation = fallback_guard.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_fallback_singleton_consecutive_reshape_results"
     )
 
     assert ast.unparse(fallback_guard.test) == (

@@ -12651,3 +12651,10 @@ very-late tuple remains observational. Strict characterization selects
 `fallback_ir` route. It freezes the tuple schema, pass order, shared-scope and
 duplicate-fanout flags, exact fallback guard, arguments and repair/reconcile
 neighbors, sole fallback occurrence, and an unconsumed observation-only policy.
+
+The guarded fallback call now retains its unchanged tuple as
+`_fallback_singleton_consecutive_reshape_results`. The target remains
+unconsumed and observation-only. The two main-route results, positive norm-
+cleanup guard, shared child state, disabled duplicate-fanout transpose handling,
+LayoutState choice, diagnostics, and adjacent repair/reconciliation remain
+unchanged; the retained fallback tuple does not steer later cleanup.

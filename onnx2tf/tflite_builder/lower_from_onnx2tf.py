@@ -5734,9 +5734,11 @@ def lower_onnx_to_ir(
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
             _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)
-            _run_singleton_consecutive_reshape_pass_cluster(
-                fallback_ir,
-                None,
+            _fallback_singleton_consecutive_reshape_results = (
+                _run_singleton_consecutive_reshape_pass_cluster(
+                    fallback_ir,
+                    None,
+                )
             )
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)

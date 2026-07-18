@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
@@ -112,7 +110,7 @@ def test_fallback_singleton_consecutive_schema_and_scope_are_explicit() -> None:
 def test_fallback_singleton_consecutive_guard_and_boundaries_are_explicit() -> None:
     lowerer, guard, index = _fallback_location()
     invocation = guard.body[index]
-    assert isinstance(invocation, ast.Expr)
+    assert _single_target(invocation) == RESULT_TARGET
     call = _statement_call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -137,10 +135,6 @@ def test_fallback_singleton_consecutive_guard_and_boundaries_are_explicit() -> N
     assert fallback_calls == [call]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback singleton/consecutive-reshape result is discarded",
-)
 def test_fallback_singleton_consecutive_result_is_retained_for_observation() -> None:
     lowerer, guard, index = _fallback_location()
     assert _single_target(guard.body[index]) == RESULT_TARGET

@@ -12010,3 +12010,31 @@ flags, main-route result handling, fallback guard, direct arguments, adjacent
 repair/reconciliation, dependencies, public API, or TensorFlow behavior. Keep
 the target unconsumed, validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
+
+## Fallback singleton/consecutive-reshape result implementation checkpoint
+
+The guarded `fallback_ir` call now retains its unchanged three-dictionary tuple
+as `_fallback_singleton_consecutive_reshape_results`. The target remains
+unconsumed and observation-only. The existing very-late observation tuple and
+shared-late reconciliation tuple remain unchanged.
+
+No pass order or schema, shared `ModelIRPassStateScope`, duplicate-fanout
+`include_transpose=False` contract, fallback `layout_state=None` choice,
+diagnostic forwarding, positive norm-cleanup guard, direct arguments,
+repair/reconciliation neighbors, main-route result handling, dependency,
+public API, or TensorFlow behavior changed. No intermediate test failure
+occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated fallback result contract: `3 passed in 0.54s`
+- fallback, singleton/consecutive orchestration, terminal validation,
+  architecture, pass-efficiency, and representative rewrite coverage:
+  `392 passed in 19.82s`
+- 104 branch-changed test files: `1660 passed in 32.15s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.
