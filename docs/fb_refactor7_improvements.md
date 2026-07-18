@@ -1337,6 +1337,17 @@ The next unit should audit both calls to the quantized-activation binary-bridge
 recovery helper and the runner result they currently discard, while preserving
 their distinct conditional-binary-bridge and elementwise-Concat/Conv
 successors.
+
+That nested recovery boundary is now characterized as six ordered outer
+results, with the safe-binary owner's five-key dictionary retained inside a
+one-slot nested tuple. Selected observation-only targets are
+`_layout_pass_set_1_quantized_activation_binary_results` and
+`_layout_pass_set_2_quantized_activation_binary_results`. Exact child schemas,
+shared context routing, cleanup-only zero-counter mutation, both distinct
+boundaries, and the unconsumed policy are frozen before implementation.
+The focused characterization gate passes
+`665 passed, 1 xfailed in 18.31s`; the sole strict xfail covers nested runner,
+helper, and two-call result propagation.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

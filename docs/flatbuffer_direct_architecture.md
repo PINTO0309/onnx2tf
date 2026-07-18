@@ -11943,3 +11943,23 @@ This is an assignment-only change. Optional graph index, layout state, rewrite
 bound, and candidate forwarding, the one-key schema, direct arguments,
 binary-bridge/SPP boundaries, dependencies, public behavior, and TensorFlow
 isolation remain fixed.
+
+The quantized-activation binary recovery runner selects six ordered slots:
+four dequantized activation folds, Softmax/Transpose canonicalization, and a
+nested safe-binary recovery. The nested runner itself selects one owner whose
+dictionary contains the five safe binary modes. Both phase runners currently
+discard the tuples returned by `run_recovery_invocations()`.
+
+Strict characterization requires the safe-binary runner to return its
+one-slot tuple and the outer runner to return a six-slot tuple whose last item
+is that nested tuple. It selects distinct
+`_layout_pass_set_1_quantized_activation_binary_results` and
+`_layout_pass_set_2_quantized_activation_binary_results` targets for the two
+production calls. Both must remain unconsumed: every activation/canonicalizer/
+safe-binary owner performs unused-tensor cleanup independently of its rewrite
+counter, and a zero-counter fixture proves cleanup-only mutation.
+
+The contract also freezes the shared ModelIR/layout context, exact child
+order, fixed dictionary schemas, zero-argument helper boundary, distinct
+reshape/conditional-binary and dequant-TransposeConv/elementwise-Concat
+boundaries, and absence of a new summary or guard.

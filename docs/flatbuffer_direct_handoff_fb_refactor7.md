@@ -9114,6 +9114,46 @@ policy following the first call and the retained elementwise-Concat/Conv result
 following the second call. Commit and push only; do not create, reopen, or
 update a pull request.
 
+## Quantized-activation binary result characterization checkpoint
+
+`run_quantized_activation_binary_recovery()` selects six ordered children:
+dequantized HardSigmoid, MaxPool, Softmax, and Logistic folding;
+Softmax/Transpose canonicalization; and nested safe-binary recovery. The nested
+`run_safe_binary_recovery()` selects one owner returning the five fixed safe
+binary mode counters. Both runners currently discard the tuples produced by
+`run_recovery_invocations()`, so the outer runner's sixth slot is currently
+`None`.
+
+The child schemas are frozen as five one-key dictionaries followed by one
+nested one-slot tuple containing the safe owner's five-key dictionary. Every
+child owner performs unused-tensor pruning independently of its rewrite
+counter. A dedicated fixture proves the first child can remove an unused
+tensor while returning zero, so neither production result is complete mutation
+evidence.
+
+A strict expected-failure contract requires `Tuple[Any, ...]` propagation from
+both phase runners and the lowerer helper. It selects observation-only targets
+`_layout_pass_set_1_quantized_activation_binary_results` and
+`_layout_pass_set_2_quantized_activation_binary_results`. It freezes the exact
+order, shared context arguments, nested result shape, two zero-argument calls,
+unconsumed policy, and their distinct reshape/conditional-binary and
+dequant-TransposeConv/elementwise-Concat boundaries.
+
+The focused orchestration, child schema, cleanup-only mutation, activation
+fold, canonicalization, safe-binary, both production boundaries, architecture,
+and pass-efficiency gate is `665 passed, 1 xfailed in 18.31s`. Ruff, Python
+bytecode compilation, and whitespace validation pass. The sole strict xfail is
+the ordered nested-result propagation contract; production is unchanged at
+this checkpoint.
+
+At implementation, return the existing tuples from both phase runners and the
+lowerer helper, then replace only the two discarded helper expressions with
+the selected assignments. Do not summarize or consume either result and do not
+change child owners, call order, contexts, the conditional binary-bridge
+policy, or the retained elementwise-Concat/Conv successor. Validate
+sequentially, commit, and push only; do not create, reopen, or update a pull
+request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
