@@ -5,7 +5,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -152,10 +151,6 @@ def test_flatbuffer_direct_batchmatmul_affine_transpose_input_chains() -> None:
     assert rhs_shape_vals == [1, 256, 96]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BatchMatMul affine-input results are not retained",
-)
 def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> None:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     lowerer = next(

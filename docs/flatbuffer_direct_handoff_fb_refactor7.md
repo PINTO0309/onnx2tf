@@ -7883,3 +7883,32 @@ The sole strict expected failure is the intentionally unimplemented two-result
 retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
+
+## BatchMatMul affine-input result retention implementation checkpoint
+
+The guarded terminal call now retains
+`_terminal_batchmatmul_affine_input_stats`, and the later post-SiNet call
+retains `_post_sinet_batchmatmul_affine_input_stats`. Both preserve the
+unchanged one-counter dictionary from the dedicated owner.
+
+These are assignment-only observation changes. Because the owner can prune
+unused tensors while reporting zero rewrites, neither result has a consumer or
+is used as guard evidence. The wrapper, owner, schema, unconditional pruning,
+policy guard, predecessors, shared BatchMatMul reshape/SE successor, pass order,
+dependencies, diagnostics, and TensorFlow behavior remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- affine-input owner fixture, both production boundaries, terminal
+  mean/attention, architecture, terminal result contracts, and pass-efficiency
+  coverage: `369 passed in 18.78s`
+- branch-changed broad suite plus the same two-boundary coverage:
+  `1459 passed in 25.79s`
+
+These are unit, contract, and orchestration checks; this result retention does
+not claim a new model-corpus run.
+
+At resume, audit both raw BatchMatMul reshape/SE owner calls immediately after
+the newly retained affine-input results. Preserve both surrounding sequences
+and observation-only constraints. Commit and push only; do not create, reopen,
+or update a pull request.

@@ -11203,10 +11203,10 @@ both affine inputs and `adjY` together, then prunes unused tensors
 unconditionally. Its counter is therefore stable observation data but is not
 complete evidence for cleanup-only pruning and must not guard later work.
 
-Two raw direct production calls exist. The guarded terminal occurrence follows
-`_terminal_mean_attention_results`; the post-SiNet occurrence follows SA/PA
-MirrorPad propagation. Both precede the BatchMatMul reshape/SE owner. A strict
-contract fixes future `_terminal_batchmatmul_affine_input_stats` and
-`_post_sinet_batchmatmul_affine_input_stats` targets, exact arguments, both
-predecessors, and the shared successor. Retention must remain assignment-only,
-observation-only, and add no graph traversal or consumer.
+Two direct production calls retain distinct results. The guarded terminal
+occurrence follows `_terminal_mean_attention_results` and retains
+`_terminal_batchmatmul_affine_input_stats`; the post-SiNet occurrence follows
+SA/PA MirrorPad propagation and retains
+`_post_sinet_batchmatmul_affine_input_stats`. Both precede the BatchMatMul
+reshape/SE owner. Retention is assignment-only and observation-only and adds no
+graph traversal or consumer.

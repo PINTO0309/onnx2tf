@@ -926,12 +926,22 @@ callback references remain fixed. The focused gate passes `330 passed in
 Four stale raw-expression contracts were updated to exact return/assignment
 boundaries.
 
+Both BatchMatMul affine-transpose-input results are now retained as
+`_terminal_batchmatmul_affine_input_stats` and
+`_post_sinet_batchmatmul_affine_input_stats`. The owner and its unconditional
+unused-tensor prune are unchanged, so both one-counter dictionaries remain
+observation-only and have no consumers.
+
+The focused owner/two-boundary gate passes `369 passed in 18.78s`, and the
+branch-changed broad suite passes `1459 passed in 25.79s`. No graph traversal,
+guard, dependency, or TensorFlow import path was added.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the next raw terminal helper result after
-`_terminal_mean_attention_results`. Both mean/attention tuples must remain
-observation-only and policy guarded. The retained
+unit should audit both raw BatchMatMul reshape/SE owner calls immediately after
+the captured affine-input results. Both mean/attention tuples and affine-input
+results must remain observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
 omits cleanup-only pruning. Any change must preserve current pass order,
 TensorFlow-free boundary, dependency set, and sequential validation policy.
