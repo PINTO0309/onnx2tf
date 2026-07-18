@@ -11809,3 +11809,16 @@ pad-Mul result, remaining child schemas, stable IDs, callback identity,
 arguments, order, invocation count, and both predecessor/successor pairs are
 unchanged. No summary, guard, dependency, public API change, or TensorFlow
 import path was added.
+
+Immediately after the final slice/concat result, the Slice pre/post NHWC
+passthrough owner has one production call and returns one rewrite counter. Its
+unused-tensor pruning is guarded by a positive rewrite count, so unlike the
+preceding nested recovery tuple, its raw counter completely describes owner
+mutation.
+
+Strict characterization freezes the compatibility wrapper, one-key schema,
+positive-only cleanup, exact one-call count, model-only argument, and final
+slice/concat to pre-Concat boundaries. It selects
+`_final_slice_prepost_passthrough_stats` for assignment-only retention and
+requires the value to remain unconsumed. Retention must add no guard, pass
+call, reorder, dependency, or TensorFlow import path.

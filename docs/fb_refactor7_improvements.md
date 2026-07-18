@@ -1210,6 +1210,15 @@ The next unit should audit the sole raw
 `_optimize_transpose_slice_prepost_nhwc_passthrough_chains()` result immediately
 after the final slice/concat recovery, including cleanup semantics and the
 final-slice/pre-Concat boundaries.
+
+That sole Slice pre/post result is now characterized for assignment-only
+retention as `_final_slice_prepost_passthrough_stats`. Its one counter is
+complete mutation evidence because unused-tensor cleanup runs only after a
+positive rewrite. The compatibility wrapper, exact call count, and adjacent
+final-slice/pre-Concat boundaries are frozen before implementation.
+The focused characterization gate passes
+`371 passed, 1 xfailed in 19.73s`; the sole strict xfail is the selected
+assignment.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

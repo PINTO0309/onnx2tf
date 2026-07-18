@@ -8764,6 +8764,30 @@ freeze its owner schema, cleanup behavior, final-slice/pre-Concat boundaries,
 and result consumption policy before changing production. Commit and push
 only; do not create, reopen, or update a pull request.
 
+## Final Slice pre/post result characterization checkpoint
+
+The Slice pre/post NHWC passthrough owner has one production call immediately
+after `_final_slice_concat_recovery_results`. It returns one rewrite counter
+and prunes unused tensors only when that counter is positive, so the dictionary
+fully describes mutation performed by this owner.
+
+A strict expected-failure contract freezes the compatibility wrapper, one-key
+schema, positive-only cleanup, exact one-call count, model-only argument, and
+final slice/concat to pre-Concat boundaries. It selects
+`_final_slice_prepost_passthrough_stats` for assignment-only retention and
+requires the value to remain unconsumed.
+
+The focused wrapper/owner/schema/cleanup, Slice fixture, final-slice boundary,
+terminal-layout, architecture, and pass-efficiency gate is
+`371 passed, 1 xfailed in 19.73s`. Ruff, Python bytecode compilation, and
+whitespace validation pass. The sole strict xfail is the selected result
+assignment; production is unchanged at this checkpoint.
+
+At implementation, replace only the discarded expression with the selected
+assignment and update stale boundary targets. Do not add a reconciliation
+guard in the same unit. Validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
