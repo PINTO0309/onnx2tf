@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2087,6 +2089,57 @@ def test_primary_path_retains_late_final_shape_activation_convergence_result() -
         "layout_state": "session.layout_state",
         "diagnostics": "session.diagnostics",
     }
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="final boundary-input normalization result is discarded",
+)
+def test_primary_path_retains_final_boundary_input_normalization_result() -> None:
+    body = _lowerer_body()
+    callback_name = "run_boundary_input_normalization_cleanup"
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 2
+    earlier_index, final_index = indices
+    assert earlier_index < final_index
+    assert isinstance(body[earlier_index], ast.Expr)
+
+    statement = body[final_index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_final_boundary_input_normalization_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+    predecessor = body[final_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_late_final_shape_activation_convergence_stats"
+    )
+
+    successor_call = _statement_call(body[final_index + 1])
+    assert _call_name(successor_call) == (
+        "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains"
+    )
+    assert successor_call is not None
+    assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
+    assert successor_call.keywords == []
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

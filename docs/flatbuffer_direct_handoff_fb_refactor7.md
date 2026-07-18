@@ -5603,3 +5603,42 @@ At resume, audit the immediately following final
 earlier production occurrence, and fix its convergence/internal-channel-slice
 boundaries before adding characterization. Commit and push only; do not create,
 reopen, or update a pull request.
+
+## Final boundary-input normalization result characterization checkpoint
+
+`run_boundary_input_normalization_cleanup()` returns the stable one-counter
+dictionary
+`rewritten_boundary_input_transpose_mul_sum_reshape_nhwc_chains` and has two
+production occurrences. Both receive the live Session LayoutState and
+diagnostics. The final occurrence follows indexed final convergence and
+currently discards its result; the earlier occurrence is outside this unit and
+remains a raw call.
+
+A strict expected-failure orchestration contract requires
+`_final_boundary_input_normalization_stats` only for the final occurrence. It
+fixes the captured final-convergence predecessor, exact ModelIR/LayoutState/
+diagnostics callback, and following model-only internal Transpose/channel-slice
+propagation owner. It also fixes the earlier occurrence as a distinct raw call.
+
+At implementation, replace only the final expression with an assignment. Do
+not change the earlier occurrence, owner, one-key schema, transaction or
+preflight behavior, GraphIndex/layout synchronization, pass order, callback
+arguments, neighbor targets, diagnostics, guards, dependencies, or TensorFlow
+behavior. Validate the normalization owner, both occurrence contracts,
+convergence/channel-slice boundaries, terminal orchestration, architecture, and
+broad related gates sequentially, then commit and push only; do not create,
+reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused normalization owner, both occurrence contracts, convergence/channel-
+  slice boundaries, terminal-orchestration, architecture, and pass-efficiency
+  gate: `342 passed, 1 xfailed in 18.57s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, both window owners, final convergence, boundary normalization,
+  layout recovery, and pass-efficiency coverage:
+  `1688 passed, 1 xfailed in 24.53s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented final-
+occurrence result retention contract above.

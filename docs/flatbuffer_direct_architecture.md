@@ -10906,6 +10906,13 @@ LayoutState. Its sole production result is retained as
 reverse dictionary and final boundary-input normalization with shared
 LayoutState and diagnostics. The value has no consumer and adds no graph work.
 
+`run_boundary_input_normalization_cleanup()` has two production occurrences
+and returns one rewrite counter. The final occurrence follows indexed final
+convergence and currently discards its result; the earlier occurrence remains a
+separate raw call. Strict characterization requires a final-only target before
+internal Transpose/channel-slice propagation while preserving the shared live
+LayoutState and diagnostics arguments.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
