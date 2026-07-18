@@ -12434,3 +12434,18 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 result-returning side-effect boundary before modifying production code. Commit
 and push only; do not create, reopen, or update a pull request.
+
+## Recurrent-alias regression-test import repair checkpoint
+
+The indexed recurrent-alias equivalence test still obtained its legacy
+producer and consumer scans from `lower_from_onnx2tf`. Those compatibility
+imports were removed when the remaining lowerer users migrated to indexed or
+canonical utility owners, so the test failed before exercising the shared
+recurrent-alias implementation.
+
+The legacy reference implementation and its rescan blocker now use the
+canonical `core.model_ir_utils` module. The production recurrent-alias owner,
+GraphIndex mutation path, result schema, public behavior, and dependencies are
+unchanged. The dedicated file passes `3 passed in 0.56s` sequentially under
+`uv`. The optional `tf_converter` matrix remains outside the TensorFlow-free
+core gate and is not evidence against `flatbuffer_direct`.

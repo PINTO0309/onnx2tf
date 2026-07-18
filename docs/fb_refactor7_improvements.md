@@ -2063,3 +2063,9 @@ parent arity, child order, shared scope, policy forwarding, callback ownership,
 and route positions remain unchanged. The focused gate passes
 `333 passed in 20.36s`, the 110-file branch-changed suite passes
 `1678 passed in 33.01s`, and targeted static validation passes.
+
+The indexed recurrent-alias equivalence test now uses the canonical
+`core.model_ir_utils` producer/consumer scan owner for its legacy reference and
+rescan blocker. This repairs a stale test import left after lowerer extraction
+without restoring production compatibility aliases or changing recurrent
+repair behavior. Its dedicated file passes `3 passed in 0.56s`.

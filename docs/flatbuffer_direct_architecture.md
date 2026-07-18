@@ -12778,3 +12778,9 @@ nested evidence instead of `None`; parent tuple arity, child selection and
 order, shared state scopes, duplicate-transpose policy, callback-only ownership,
 and route positions remain unchanged. No additional scan, copy, aggregation,
 or result consumer was introduced.
+
+The recurrent-alias indexed equivalence test obtains its legacy producer and
+consumer scans from `core.model_ir_utils`, which is the canonical owner after
+the lowerer compatibility imports were removed. Its monkeypatched rescan
+blocker targets that same module. No production compatibility re-export is
+reintroduced solely for a test.
