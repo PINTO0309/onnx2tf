@@ -11898,3 +11898,16 @@ This is an assignment-only change. Optional graph index, layout, rewrite bound,
 candidate forwarding, one-key schema, direct arguments, call multiplicity,
 NDHWC/split-mixed boundaries, dependencies, public behavior, and TensorFlow
 isolation remain fixed.
+
+The SPP transactional cleanup immediately before the layout-option pre-Concat
+result has one direct call and three independent runner selections in layout
+recovery, the late-layout cluster, and the late-SPP pair. Its inner owner prunes
+only after a positive rewrite, so its one counter completely describes owner
+mutation.
+
+Strict characterization selects `_layout_opt_spp_stats` for the direct result
+and requires it to remain unconsumed. It freezes the one-key schema,
+positive-only cleanup, ModelIR/layout/diagnostics arguments, sole direct call,
+elementwise-Concat/pre-Concat boundaries, and all three independent
+orchestration selections. Those orchestration result policies are not changed
+by this retention unit.

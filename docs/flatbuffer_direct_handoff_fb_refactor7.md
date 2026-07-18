@@ -8987,10 +8987,35 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a model-corpus run. At resume, audit the sole direct
 `run_spp_layout_cleanup()` call immediately before
 `_layout_opt_pre_concat_stats`, plus its independent layout-recovery
-occurrence. Freeze its transactional schema, cleanup-only mutation semantics,
+occurrence. Freeze its transactional schema, positive-only cleanup semantics,
 layout/diagnostics arguments, elementwise-Concat/pre-Concat boundaries, and
 current result policy before changing production. Commit and push only; do not
 create, reopen, or update a pull request.
+
+## Direct SPP cleanup result characterization checkpoint
+
+The SPP transactional cleanup has one direct call immediately before
+`_layout_opt_pre_concat_stats` plus three independent selections in layout
+recovery, the late-layout cluster, and the late-SPP pair. Its inner owner prunes
+unused tensors only after a positive rewrite, so the one-counter dictionary
+completely describes owner mutation.
+
+A strict expected-failure contract selects `_layout_opt_spp_stats` for the
+direct result and requires it to remain unconsumed. It freezes the one-key
+schema, positive-only cleanup, ModelIR/layout/diagnostics arguments, exact sole
+direct call, elementwise-Concat/pre-Concat boundaries, and all three
+independent orchestration selections.
+
+The focused schema/cleanup, SPP owner fixtures, three orchestration selections,
+elementwise-Concat/pre-Concat boundaries, architecture, and pass-efficiency
+gate is `363 passed, 1 xfailed in 18.83s`. Ruff, Python bytecode compilation,
+and whitespace validation pass. The sole strict xfail is the selected direct
+assignment; production is unchanged at this checkpoint.
+
+At implementation, replace only the discarded direct expression with the
+selected assignment and update stale boundary targets. Do not change any
+orchestration result policy in the same unit. Validate sequentially, commit,
+and push only; do not create, reopen, or update a pull request.
 
 ## Singleton/Reshape result characterization checkpoint
 

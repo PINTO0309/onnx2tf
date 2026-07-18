@@ -1293,8 +1293,18 @@ suite passes `1554 passed in 29.49s`, and targeted static validation passes.
 
 The next unit should audit the sole direct SPP layout-cleanup result and its
 independent layout-recovery occurrence, including transactional schema,
-cleanup-only mutations, layout/diagnostics routing, and elementwise-Concat/
+positive-only cleanup, layout/diagnostics routing, and elementwise-Concat/
 pre-Concat boundaries.
+
+The SPP runner is now characterized with one direct call and three independent
+orchestration selections. `_layout_opt_spp_stats` is the selected direct
+target. Its one-key schema, positive-only cleanup, layout/diagnostics routing,
+direct-call count, elementwise-Concat/pre-Concat boundaries, and existing
+layout-recovery/late-layout/late-SPP result policies are frozen before
+implementation.
+The focused characterization gate passes
+`363 passed, 1 xfailed in 18.83s`; the sole strict xfail is the selected direct
+assignment.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
