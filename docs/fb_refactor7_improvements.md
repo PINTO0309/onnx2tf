@@ -1647,3 +1647,13 @@ observation-only; the nested duplicate-fanout selection and shared state scope
 are unchanged. The focused gate passes `326 passed in 17.98s`, the branch-
 changed broad gate passes `1619 passed in 29.96s`, and targeted static
 validation passes.
+
+The quantized-Reshape cleanup is now characterized as one transactional pass
+with a fixed `folded_dequant_reshape_quantize_chains` result, one direct
+lowerer call, and one nested quantized-suffix selection. The selected
+observation-only direct target is
+`_layout_pass_set_1_quantized_reshape_stats`; exact arguments, the dequant-
+TransposeConv/quantized-activation boundary, nested layout/diagnostics routing,
+and absence of a consumer are frozen. The focused gate passes
+`314 passed, 1 xfailed in 18.59s`; the branch-changed broad gate passes
+`1620 passed, 1 xfailed in 29.58s`.

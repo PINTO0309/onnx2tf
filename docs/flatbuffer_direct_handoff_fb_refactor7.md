@@ -10879,3 +10879,38 @@ assignment does not claim a new model-corpus run. At resume, audit the direct
 `run_quantized_reshape_cleanup()` result together with its nested quantized-
 suffix selection before changing that boundary. Commit and push only; do not
 create, reopen, or update a pull request.
+
+## Quantized-Reshape direct result characterization checkpoint
+
+`run_quantized_reshape_cleanup()` returns the fixed one-key dictionary
+`folded_dequant_reshape_quantize_chains` from one transactional layout pass.
+
+The lowerer has one raw direct call with the live LayoutState and diagnostics,
+after `_optimize_dequant_transposeconv_quantize_chains` and before
+`_layout_pass_set_1_quantized_activation_binary_results`. The layout/attention
+quantized suffix separately selects the same callback at its fixed index with
+the same live LayoutState and diagnostics.
+
+A passing contract freezes the one-key schema, exact direct arguments, sole
+direct occurrence, nested suffix index/context flags, and both boundary calls.
+A strict expected-failure contract selects the unconsumed observation-only
+target `_layout_pass_set_1_quantized_reshape_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.56s`
+- quantized-Reshape owner, quantized suffix and activation boundaries,
+  quantized-PReLU predecessor, architecture, and pass-efficiency coverage:
+  `314 passed, 1 xfailed in 18.59s`
+- branch-changed broad suite including the new result contract:
+  `1620 passed, 1 xfailed in 29.58s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct-result
+retention contract. Replace only the raw direct expression with
+`_layout_pass_set_1_quantized_reshape_stats`. Do not change the result schema,
+pass selection/order, preflight, transaction, direct arguments, nested suffix,
+surrounding calls, guard, dependency, public API, or TensorFlow behavior. Keep
+the result unconsumed, validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.

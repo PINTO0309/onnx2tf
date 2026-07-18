@@ -12277,3 +12277,14 @@ The direct call now retains that dictionary as
 observation-only. No pass implementation, selection, ordering, transaction,
 preflight, shared state scope, nested invocation, live context, surrounding
 call, dependency, public API, or TensorFlow boundary changed.
+
+`run_quantized_reshape_cleanup()` exposes the fixed one-key result
+`folded_dequant_reshape_quantize_chains` from one transactional layout pass.
+The lowerer selects it once directly; the attention/quantized suffix selects it
+once through `_model_invocation` with the live LayoutState and diagnostics.
+
+Strict characterization selects
+`_layout_pass_set_1_quantized_reshape_stats` for the direct result. It freezes
+the exact direct arguments, dequant-TransposeConv/quantized-activation
+boundaries, nested suffix index and context flags, fixed result schema, and an
+unconsumed observation-only policy.
