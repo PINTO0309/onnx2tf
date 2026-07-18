@@ -6442,3 +6442,38 @@ At resume, audit the sole
 schema, production occurrence, captured Swish-closure predecessor, and
 following Swish-QDQ-island boundary before adding characterization. Commit and
 push only; do not create, reopen, or update a pull request.
+
+## Terminal dequant-logistic bridge result characterization checkpoint
+
+`_optimize_transpose_dequant_logistic_mul_quantize_bridges()` returns the
+stable one-counter dictionary
+`removed_transpose_dequant_logistic_mul_quantize_bridges`. Its indexed owner
+accepts an optional GraphIndex, and its wrapper has one model-only production
+call whose result is currently discarded.
+
+Existing owner tests fix the exact one-key result, one-refresh behavior,
+supplied-index currentness, protected/no-op graphs, and graph equivalence. A
+strict expected-failure orchestration contract requires the direct result to be
+retained as `_terminal_dequant_logistic_mul_quantize_bridge_stats`. It fixes
+the captured `_terminal_swish_residual_concat_closure_stats` predecessor and
+the following model-only Swish-QDQ-island owner.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the wrapper or indexed owner, optional GraphIndex contract, one-key
+schema, rewrite guards, graph mutation, tensor pruning, callback arguments,
+pass order, adjacent targets, dependencies, diagnostics, or TensorFlow
+behavior. The retained value must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed quantized-logistic and Swish owners plus terminal recovery/
+  orchestration, architecture, and pass-efficiency gate:
+  `381 passed, 1 xfailed in 18.65s`
+- branch-changed broad suite plus both indexed owners, terminal recovery/
+  orchestration, architecture, and pass-efficiency coverage:
+  `1432 passed, 1 xfailed in 24.24s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+dequant-logistic bridge result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.
