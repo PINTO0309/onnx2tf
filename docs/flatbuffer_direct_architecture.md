@@ -11728,3 +11728,17 @@ attention-recovery selection, terminal SiNet, post-SiNet cost-volume, and
 ConvPool/late-dequant boundaries, dependencies, diagnostics, and TensorFlow
 behavior remain unchanged. Four stale AST boundary contracts now require the
 new assigned targets.
+
+The adjacent HardSwish-SE layout owner has exactly two production forms. The
+absolute-terminal form already captures a starting tensor count and merges the
+owner's one rewrite counter with `pruned_unused_tensors`; the earlier form,
+immediately after terminal SiNet recovery, still discards its raw result. The
+owner invokes unused-tensor pruning unconditionally, so a zero rewrite counter
+does not prove ModelIR stability.
+
+Strict characterization freezes the wrapper and one-key schema, unconditional
+cleanup, exact two-call count, the existing prune-aware late form, and the
+terminal-SiNet/dequant-HardSigmoid boundaries. It selects
+`_terminal_sinet_hardswish_se_stats` for the earlier raw result and requires it
+to remain unconsumed. Retention must add no mutation guard, dependency, pass
+call, reorder, or TensorFlow import path.

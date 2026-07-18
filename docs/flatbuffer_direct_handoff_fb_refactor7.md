@@ -8576,6 +8576,34 @@ dequant-HardSigmoid result, existing late HardSwish-SE evidence, SiNet recovery,
 pass order, and observation-only evidence rules. Commit and push only; do not
 create, reopen, or update a pull request.
 
+## Terminal-SiNet HardSwish-SE result characterization checkpoint
+
+The HardSwish-SE layout owner has exactly two production forms. The later
+absolute-terminal form already captures a starting tensor count and merges the
+owner's unchanged one-counter dictionary with an exact net
+`pruned_unused_tensors` count. The earlier call immediately after terminal
+SiNet recovery still discards its raw result. Because the owner invokes
+unused-tensor pruning unconditionally, zero rewrites can coexist with cleanup
+mutation.
+
+A strict expected-failure contract now freezes the wrapper and one-key schema,
+unconditional cleanup, exact two-call count, existing prune-aware late form,
+model-only arguments, and terminal-SiNet/dequant-HardSigmoid boundaries. It
+selects `_terminal_sinet_hardswish_se_stats` for assignment-only retention of
+the earlier raw dictionary and requires the result to remain unconsumed.
+
+The focused wrapper/owner, both production forms, adjacent SiNet/dequant and
+late-hard-activation orchestration, architecture, and pass-efficiency gate is
+`323 passed, 1 xfailed in 17.83s`. Ruff, Python bytecode compilation, and
+whitespace validation pass. The sole strict xfail is the selected earlier
+result assignment; production is unchanged at this checkpoint.
+
+At implementation, replace only the discarded earlier call with the selected
+assignment. Update only the boundary contracts made stale by that assignment,
+then run focused and branch-changed broad gates sequentially. Do not use the
+raw zero counter as a stability guard. Commit and push only; do not create,
+reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

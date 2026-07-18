@@ -1142,13 +1142,17 @@ unchanged.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the raw terminal
+unit is the raw terminal-SiNet
 `_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains()`
-result and every other production form of that owner. The new terminal
+result. The owner has exactly two production forms; the later form already
+retains prune-aware evidence, while the earlier discarded result is now
+characterized for observation-only assignment. The new terminal
 dequant-HardSigmoid result, existing late HardSwish-SE evidence, SiNet recovery,
 and cleanup evidence semantics must remain fixed. All retained SiNet callback
 results, Singleton/Reshape policies, three QKV result forms, and the late
 summary must also remain fixed.
+The focused characterization gate passes `323 passed, 1 xfailed in 17.83s`;
+the sole strict xfail is the selected earlier result assignment.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
