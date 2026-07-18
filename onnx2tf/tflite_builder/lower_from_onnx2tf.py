@@ -4301,8 +4301,8 @@ def lower_onnx_to_ir(
             terminal_affine_concat_split_recovery_context
         )
 
-    def _run_sinet_preadd_resize_recovery_sequence() -> None:
-        run_sinet_preadd_resize_recovery(
+    def _run_sinet_preadd_resize_recovery_sequence() -> Tuple[Dict[str, int], ...]:
+        return run_sinet_preadd_resize_recovery(
             sinet_preadd_resize_recovery_context
         )
 
@@ -4809,7 +4809,9 @@ def lower_onnx_to_ir(
     _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
-    _run_sinet_preadd_resize_recovery_sequence()
+    _terminal_sinet_preadd_resize_results = (
+        _run_sinet_preadd_resize_recovery_sequence()
+    )
     # Apply singleton transpose->reshape rewrite regardless of layout-opt mode.
     # This is required for fallback relowering (optimize_layout_transpose_chains=False)
     # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
@@ -4830,7 +4832,9 @@ def lower_onnx_to_ir(
     _very_late_sinet_layout_recovery_results = (
         _run_sinet_terminal_layout_recovery_sequence()
     )
-    _run_sinet_preadd_resize_recovery_sequence()
+    _very_late_sinet_preadd_resize_results = (
+        _run_sinet_preadd_resize_recovery_sequence()
+    )
     # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
@@ -4838,7 +4842,9 @@ def lower_onnx_to_ir(
     _reconcile_static_tensor_shapes(model_ir)
     # Dead-op pruning can unblock strict locality guards in this recovery.
     # Its pre-Add/PRELU rewrites can recreate SiNet dual-resize adapters.
-    _run_sinet_preadd_resize_recovery_sequence()
+    _post_cleanup_sinet_preadd_resize_results = (
+        _run_sinet_preadd_resize_recovery_sequence()
+    )
     # Late SiNet rewrites can recreate SA/PA MIRROR_PAD NCHW<->NHWC bridges.
     _optimize_transpose_csp_attention_nhwc_chains(
         model_ir,

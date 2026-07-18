@@ -1971,7 +1971,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     helper_calls = [
         statement.value
         for statement in helper.body
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Return)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
@@ -2013,12 +2013,30 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_sinet_preadd_resize_results",
+            "_very_late_sinet_preadd_resize_results",
+            "_post_cleanup_sinet_preadd_resize_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 3
+    assert [
+        lowerer.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(lowerer.body[index], ast.Assign)
+        and isinstance(lowerer.body[index].targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_preadd_resize_results",
+        "_very_late_sinet_preadd_resize_results",
+        "_post_cleanup_sinet_preadd_resize_results",
+    ]
     previous_call_names = []
     next_call_names = []
     assigned_boundary_targets = []
@@ -2154,6 +2172,7 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     ]
     assert assigned_boundary_targets == [
         "_post_terminal_indexed_shape_convergence_stats",
+        "_very_late_sinet_preadd_resize_results",
     ]
 
 

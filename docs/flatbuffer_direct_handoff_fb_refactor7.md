@@ -8143,6 +8143,39 @@ propagation contract. Implement only that contract, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## SiNet pre-add/resize result propagation implementation checkpoint
+
+`run_sinet_preadd_resize_recovery()` now returns its existing ordered
+six-dictionary tuple, and the local helper transparently forwards it. The three
+direct calls retain `_terminal_sinet_preadd_resize_results`,
+`_very_late_sinet_preadd_resize_results`, and
+`_post_cleanup_sinet_preadd_resize_results`.
+
+All direct tuples are observation-only and have no consumer or guard. The same
+helper remains the middle callback of both retained terminal-layout tuples;
+their middle element is now the six-dictionary tuple instead of discarded
+`None`, but both outer tuples remain unconsumed. All six children still execute
+exactly once with unchanged pass IDs, arguments, and live LayoutState wiring.
+Callback identity, direct-call order, surrounding recovery sequences,
+dependencies, diagnostics, and TensorFlow behavior remain fixed.
+
+Implementation validation completed sequentially under `uv`:
+
+- SiNet pre-add/resize and terminal-layout orchestration, remaining context
+  composition, indexed-convergence and Singleton boundaries, architecture, and
+  pass-efficiency coverage: `351 passed in 18.37s`
+- branch-changed broad suite plus the same SiNet pre-add/resize coverage:
+  `1534 passed in 26.35s`
+
+These are unit, contract, and orchestration checks; this result propagation
+does not claim a new model-corpus run.
+
+At resume, audit the post-cleanup
+`_optimize_transpose_csp_attention_nhwc_chains()` result immediately after
+`_post_cleanup_sinet_preadd_resize_results`. Preserve its other production
+occurrence, live LayoutState wiring, and adjacent SA/PA MirrorPad propagation.
+Commit and push only; do not create, reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

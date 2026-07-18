@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.passes.recovery_orchestration import (
@@ -102,8 +102,8 @@ def build_sinet_preadd_resize_recovery_invocations(
 
 def run_sinet_preadd_resize_recovery(
     context: SINetPreaddResizeRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Dict[str, int], ...]:
+    return run_recovery_invocations(
         build_sinet_preadd_resize_recovery_invocations(context),
         expected_pass_ids=SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
         phase_name="SINet pre-add/resize recovery",

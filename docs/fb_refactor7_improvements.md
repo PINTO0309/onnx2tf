@@ -1008,15 +1008,26 @@ preserved without changing execution. The focused gate passes
 `1533 passed in 27.45s`. Child order, context wiring, boundaries, dependencies,
 and TensorFlow behavior remain fixed.
 
+SiNet pre-add/resize orchestration now returns its ordered six-dictionary tuple
+through the phase runner and local helper. The three direct calls retain
+`_terminal_sinet_preadd_resize_results`,
+`_very_late_sinet_preadd_resize_results`, and
+`_post_cleanup_sinet_preadd_resize_results`; none has a consumer.
+
+Both retained terminal-layout tuples now carry that six-result tuple as their
+middle callback result while remaining unconsumed. The focused gate passes
+`351 passed in 18.37s`, and the branch-changed broad suite passes
+`1534 passed in 26.35s`. Six-child order, arguments, live LayoutState wiring,
+callback identity, dependencies, and TensorFlow behavior remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit `run_sinet_preadd_resize_recovery()` and its local helper.
-That helper is the middle callback of both retained terminal-layout tuples and
-also has three direct top-level calls. All six child pass IDs, callback wiring,
-direct-call order, and surrounding recovery sequences must remain fixed. All
-Singleton/Reshape policies, three QKV result forms, and the late summary must
-also remain fixed.
+unit should audit the post-cleanup CSP-attention result after
+`_post_cleanup_sinet_preadd_resize_results`. Its other production occurrence,
+live LayoutState wiring, and adjacent SA/PA MirrorPad propagation must remain
+fixed. All retained SiNet callback results, Singleton/Reshape policies, three
+QKV result forms, and the late summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

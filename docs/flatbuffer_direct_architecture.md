@@ -11375,3 +11375,16 @@ arguments, live LayoutState wiring, callback identity, direct-call count,
 three targets, and all boundary pairs. Propagation must not add a consumer or
 guard, execute a child twice, alter terminal-layout child order, or add graph
 work, dependencies, or a TensorFlow import path.
+
+`run_sinet_preadd_resize_recovery()` and its local helper now transparently
+return the existing ordered six-dictionary tuple. The three direct calls retain
+`_terminal_sinet_preadd_resize_results`,
+`_very_late_sinet_preadd_resize_results`, and
+`_post_cleanup_sinet_preadd_resize_results`.
+
+All three direct tuples remain unconsumed. The same helper remains the middle
+callback of both terminal-layout tuples, which now retain the six-dictionary
+tuple instead of the previously discarded `None`; those outer tuples are also
+unconsumed. Each child still executes exactly once with unchanged arguments and
+LayoutState, and no consumer, guard, scan, dependency, or TensorFlow import path
+was added.
