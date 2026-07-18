@@ -5198,3 +5198,29 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented single-
 result retention contract above.
+
+## Late attention-QKV Reshape result retention implementation checkpoint
+
+The sole production call now retains the existing one-counter dictionary as
+`_late_attention_qkv_reshape_stats`. This is an assignment-only orchestration
+change: the compatibility/indexed owner, return schema, fallback behavior,
+GraphIndex and pruning behavior, live Session LayoutState argument, pass order,
+guards, neighboring calls, dependencies, and TensorFlow behavior are unchanged.
+The retained value has no consumer and triggers no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused indexed/compatibility owner, channel-shuffle/layout-recovery
+  boundaries, terminal-orchestration, and architecture gate:
+  `326 passed in 19.68s`
+- branch-changed broad related suite plus indexed QKV, layout recovery, and
+  pass-efficiency coverage: `1379 passed in 23.78s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately following
+`_optimize_attention_gather_transpose_reshape_cleanup_chains()` result, owner
+schema, production occurrences, and QKV/Gather-axis0 boundaries before adding
+characterization. Commit and push only; do not create, reopen, or update a pull
+request.

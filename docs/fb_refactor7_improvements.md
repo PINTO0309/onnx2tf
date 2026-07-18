@@ -475,6 +475,17 @@ This checkpoint extends the expanded related gate to `1736 passed in 31.42s`;
 the focused all-policy runner, helper, pass-efficiency, layout-recovery,
 terminal-orchestration, and architecture gate is `348 passed in 19.69s`.
 
+The immediately following attention-QKV Reshape/Transpose compatibility call
+now retains its existing one-counter dictionary as
+`_late_attention_qkv_reshape_stats`. Indexed-first/fallback behavior, the live
+Session LayoutState, exact pass order, channel-shuffle predecessor, cleanup
+successor, and TensorFlow-free boundary are unchanged. The value has no
+consumer and therefore introduces no additional graph traversal or mutation.
+
+This checkpoint passes the focused QKV owner and orchestration gate with
+`326 passed in 19.68s`, plus the branch-changed broad related suite with
+`1379 passed in 23.78s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -482,7 +493,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following QKV reshape/transpose recovery
-result and its live LayoutState contract. Any new mutation evidence must
+unit should audit the immediately following attention Gather/Transpose/Reshape
+cleanup result and its boundary contract. Any new mutation evidence must
 preserve current pass order, TensorFlow-free boundary, dependency set, and
 sequential validation policy.

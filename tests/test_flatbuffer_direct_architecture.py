@@ -7587,7 +7587,9 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_late_attention_qkv_reshape_stats"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (

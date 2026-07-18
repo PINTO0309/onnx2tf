@@ -4904,9 +4904,11 @@ def lower_onnx_to_ir(
             include_nhwc_shuffle=False,
         )
     )
-    _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_attention_qkv_reshape_stats = (
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
     _optimize_gather_axis0_singleton_to_reshape_input_chains(

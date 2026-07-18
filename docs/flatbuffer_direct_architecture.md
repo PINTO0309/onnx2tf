@@ -10854,9 +10854,10 @@ scope, and boundaries remain unchanged.
 
 The following attention-QKV Reshape/Transpose compatibility owner returns one
 rewrite counter, has one direct production occurrence, and receives the live
-Session LayoutState. Its result is currently discarded. Strict characterization
-fixes a late attention-QKV target between the captured base-only
+Session LayoutState. Its result is retained as
+`_late_attention_qkv_reshape_stats` between the captured base-only
 channel-shuffle/Gather tuple and attention Gather/Transpose/Reshape cleanup.
+The value has no consumer, so result retention adds no graph work or policy.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
