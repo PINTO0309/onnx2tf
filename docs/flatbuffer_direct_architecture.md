@@ -10928,6 +10928,13 @@ orchestrators, while its sole direct production result is retained as
 ArgMax owner and captured terminal Softmax dictionary. The retained value has
 no consumer, and orchestrated selections are unchanged.
 
+The preceding terminal ArgMax owner returns the one-counter dictionary
+`optimized_transpose_pre_argmax_nhwc_terminal_chains` from its sole production
+call. That direct result is currently discarded between captured terminal
+Conv-activation cleanup and captured Gather-channel-fanout cleanup. Strict
+characterization fixes `_terminal_pre_argmax_stats` as the direct result target
+without changing its live Session LayoutState input.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

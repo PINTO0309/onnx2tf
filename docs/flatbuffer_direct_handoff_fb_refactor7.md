@@ -5864,3 +5864,38 @@ At resume, audit the immediately preceding
 live LayoutState contract, production occurrences, and Conv-activation/Gather-
 fanout boundaries before adding characterization. Commit and push only; do not
 create, reopen, or update a pull request.
+
+## Terminal pre-ArgMax result characterization checkpoint
+
+`_optimize_transpose_pre_argmax_nhwc_terminal_chains()` returns the stable
+one-counter dictionary
+`optimized_transpose_pre_argmax_nhwc_terminal_chains`. Its wrapper has one
+production call, which currently discards that dictionary while passing the
+live `session.layout_state`.
+
+A strict expected-failure orchestration contract requires that direct result to
+be retained as `_terminal_pre_argmax_stats`. It also fixes the captured
+`_terminal_cleanup_conv_activation_stats` predecessor and captured
+`_terminal_transpose_gather_channel_fanout_stats` successor.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the wrapper or pass implementation, one-key result schema,
+transaction/preflight guards, graph mutation, tensor pruning, shared state,
+GraphIndex/layout synchronization, callback arguments, pass order, adjacent
+targets, dependencies, or TensorFlow behavior. The retained value must have no
+consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused Conv-activation, terminal ArgMax, Gather-channel-fanout, terminal
+  Softmax, terminal orchestration, architecture, and pass-efficiency gate:
+  `416 passed, 1 xfailed in 18.72s`
+- branch-changed broad related suite plus activation fusion, attention/Gather,
+  preprojection, window/final convergence, boundary normalization, terminal
+  ArgMax/Softmax, Gather fanout, layout recovery, and pass-efficiency coverage:
+  `1763 passed, 1 xfailed in 24.64s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+pre-ArgMax result retention contract above. Implement that assignment, rerun
+the same gates sequentially, then commit and push only; do not create, reopen,
+or update a pull request.
