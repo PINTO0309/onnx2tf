@@ -12825,3 +12825,16 @@ dead-op pruning and static-shape reconciliation; LayoutState is forwarded only
 where the legacy pair used it. The three phase calls retain their selected
 dictionaries without consumers. No additional pass, scan after pruning,
 summary, fixed-point loop, or control dependency is introduced.
+
+Exact rank-four binary layout repair and singleton-broadcast repair form the
+same ordered pair at four pipeline boundaries. Their owners currently scan the
+operator list and mutate it directly; three pairs retain separate results and
+fallback discards both.
+
+Strict characterization selects optional GraphIndex/LayoutState contracts for
+both owners and one `run_indexed_binary_layout_adapter_cleanup()` runner. The
+runner must create one index, preserve exact-before-singleton behavior and both
+unchanged dictionaries, and leave the three existing guard consumers intact.
+Fallback gains only two unconsumed observation targets. Candidate guards,
+adapter metadata, quantization cloning, zero-rewrite pruning, and direct call
+arguments are fixed equivalence requirements.

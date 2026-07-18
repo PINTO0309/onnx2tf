@@ -12586,3 +12586,42 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result-returning side-effect boundary before modifying production code.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Indexed binary-adapter result characterization checkpoint
+
+The exact rank-four layout adapter and singleton-broadcast adapter run as an
+adjacent ordered pair at four boundaries: shared late cleanup, late binary
+repair, fallback relowering, and final placeholder-MatMul repair. The first,
+second, and fourth pairs retain separate dictionaries for existing guards;
+fallback discards both. Each owner currently rescans `model_ir.operators`,
+inserts operators directly into the list, and has no GraphIndex parameter.
+
+Passing contracts freeze both result schemas, compatibility wrappers, all four
+pair locations, arguments, order, existing result targets, and fallback's raw
+form. A combined fixture freezes one exact Transpose adapter plus one singleton
+Reshape adapter. A strict expected-failure contract requires both owners to
+accept optional GraphIndex/LayoutState, apply insertions and input replacement
+through one live index, and expose
+`run_indexed_binary_layout_adapter_cleanup()`. The runner must return the two
+unchanged dictionaries in order, construct the index once, preserve the exact
+legacy mutation, keep every existing guard input unchanged, and add only
+`_fallback_binary_adapter_stats` plus
+`_fallback_singleton_adapter_stats` as unconsumed fallback evidence.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated indexed binary-adapter contract: `2 passed, 1 xfailed in 0.54s`
+- binary adapter, fallback/singleton orchestration, indexed convergence, late
+  binary recovery, core, architecture, pass efficiency, and two direct helper
+  cases: `423 passed, 1 xfailed in 18.38s`
+- 116 branch-changed test files: `1706 passed, 1 xfailed in 31.82s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally absent indexed owner contract,
+runner, and fallback result targets. Preserve candidate guards, adapter tensor
+names and metadata, quantization cloning, exact-before-singleton order,
+zero-rewrite pruning behavior, result schemas and consumers, direct arguments,
+dependencies, public API, and TensorFlow behavior. Do not add another pass or
+summary consumer. Validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.

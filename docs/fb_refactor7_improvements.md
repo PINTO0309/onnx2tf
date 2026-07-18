@@ -2101,3 +2101,11 @@ dictionaries without consumers and adds no dynamic reshape or fixed-point
 retry. Mutation equivalence and one-index construction are explicit tests. The
 focused gate passes `391 passed in 19.96s`, the 115-file branch-changed suite
 passes `1704 passed in 31.70s`, and targeted static validation passes.
+
+The four repeated exact/singleton rank-four binary-adapter pairs are now
+characterized for one shared GraphIndex runner. Strict equivalence freezes both
+schemas, graph/tensor mutations, quantization, owner order, existing guard
+inputs, direct arguments, one-index construction, and two unconsumed fallback
+targets. The focused gate passes `423 passed, 1 xfailed in 18.38s`, the
+116-file branch-changed suite passes `1706 passed, 1 xfailed in 31.82s`, and
+targeted static validation passes.
