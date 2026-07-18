@@ -2118,3 +2118,13 @@ unchanged; fallback only retains two unconsumed observations. The dedicated
 contract passes `3 passed in 0.55s`, the focused gate passes
 `424 passed in 19.25s`, the 116-file branch-changed suite passes
 `1707 passed in 33.42s`, and targeted static validation passes.
+
+The post-cleanup full regression gate ran all 379 active managed Tier 0-4
+models with TFLite and native PyTorch, strictly sequentially. Every model
+completed below 600 seconds, no converter process used SWAP, and the
+authoritative `fb-refactor6` comparison has zero component, classification,
+exit-state, strict-pass, or normalized-signature differences. Overall wall
+time increased 1.945% in this single run, while all tier totals and medians
+remained within +10%. No branch-specific regression or corrective source
+change was identified. See
+`docs/flatbuffer_direct_tier0_4_full_regression_2026-07-18.md`.

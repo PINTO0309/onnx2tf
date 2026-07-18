@@ -12690,3 +12690,26 @@ immediately after `_terminal_expand_squeeze_stats` in
 phase boundary, and whether an existing live index can be reused before
 selecting any implementation. Continue to commit and push coherent units only;
 do not create, reopen, or update a pull request.
+
+## Tier 0-4 full regression checkpoint after indexed binary cleanup
+
+At converter checkpoint `0bf1bab4`, all 379 active managed Tier 0-4 models ran
+strictly sequentially with TFLite and the native PyTorch package. All completed
+below 600 seconds and used zero converter-process-tree SWAP. Against the
+authoritative `fb-refactor6` result, combined classifications, TFLite and
+PyTorch pass states, exit states, strict-pass states, component counts, and
+normalized failure signatures are identical. The sole exact max-abs change is
+the nondeterministic `randnlike4.onnx` PyTorch known failure decreasing from
+1.828334451 to 1.811047643 without a classification change.
+
+No branch-specific regression was found, so no converter fix was applied. The
+full evidence and timing tables are recorded in
+`docs/flatbuffer_direct_tier0_4_full_regression_2026-07-18.md`; the condensed
+379-entry result is
+`docs/baselines/flatbuffer_direct_tier0_4_tflite_native_pytorch_fb7_0bf1bab4.json`.
+The run cleanup removed 48.109 GiB of reproducible artifacts after persistence.
+The remaining uniquely named run directory and both temporary helper scripts
+were removed after evidence validation; no temporary path owned by this run
+remains. After this evidence is committed and pushed, resume the previously
+selected terminal static-shape reconciliation characterization; do not create,
+reopen, or update a pull request.
