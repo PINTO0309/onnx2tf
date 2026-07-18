@@ -1993,3 +1993,12 @@ GraphIndex/LayoutState handling, unconditional pruning, wrappers, adjacency,
 and the following InstanceNorm owner remain unchanged. The focused gate passes
 `488 passed in 19.05s`, the 106-file branch-changed suite passes
 `1666 passed in 32.03s`, and targeted static validation passes.
+
+The late Conv1D InstanceNorm unary passthrough owner is now characterized as a
+fixed one-key direct result. Its GraphIndex/LayoutState wrapper has one raw
+call, and the owner prunes unused tensors even on its zero preflight path.
+Strict retention selects `_late_conv1d_instancenorm_unary_stats` without
+changing the retained Conv1D fan-out predecessor or tencoder successor. The
+focused gate passes `355 passed, 1 xfailed in 18.11s`, the 107-file branch-
+changed suite passes `1668 passed, 1 xfailed in 33.04s`, and targeted static
+validation passes.

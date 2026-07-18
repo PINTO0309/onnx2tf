@@ -12700,3 +12700,15 @@ observation-only. Indexed matching and application, GraphIndex/LayoutState
 handling, unconditional pruning, wrapper forwarding, direct arguments,
 adjacency, and following owner behavior remain unchanged; the counters do not
 steer later cleanup.
+
+The Conv1D InstanceNorm unary passthrough owner returns the fixed one-key result
+`optimized_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains`
+through a GraphIndex/LayoutState-aware wrapper. It prunes unused tensors on
+both preflight-zero and normal exits, so a zero counter is not complete
+mutation evidence.
+
+The wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_instancenorm_unary_stats` only for that
+result. It freezes schema, wrapper defaults and forwarding, unconditional
+cleanup, exact arguments, retained Conv1D fan-out predecessor, tencoder
+successor, sole occurrence, and an unconsumed observation-only policy.

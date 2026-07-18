@@ -12171,3 +12171,40 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Late Conv1D InstanceNorm direct result characterization checkpoint
+
+The indexed Conv1D InstanceNorm unary passthrough owner returns the fixed
+one-key dictionary
+`optimized_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains`.
+Its forwarding lowerer wrapper accepts optional GraphIndex and LayoutState.
+The owner prunes unused tensors on both preflight-zero and normal exit paths,
+so a zero counter is not complete mutation evidence.
+
+The wrapper has exactly one raw direct call with the live LayoutState and no
+nested orchestration selection. It remains between the retained Conv1D unary
+fan-out result and the distinct tencoder residual-gate owner.
+
+Passing contracts freeze the fixed schema, wrapper defaults and forwarding,
+unconditional cleanup, exact direct arguments and neighbors, and sole
+occurrence. A strict expected-failure contract selects the unconsumed
+observation target `_late_conv1d_instancenorm_unary_stats` only for the raw
+direct result.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.58s`
+- indexed InstanceNorm owner, retained Conv1D unary boundary, architecture,
+  pass-efficiency, and representative direct rewrite coverage:
+  `355 passed, 1 xfailed in 18.11s`
+- 107 branch-changed test files: `1668 passed, 1 xfailed in 33.04s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+No test assertion failed. The sole expected failure is the intentionally
+unimplemented direct assignment. Retain only the existing dictionary. Do not
+change matching or indexed application, GraphIndex or LayoutState handling,
+unconditional pruning, schema, wrapper forwarding, direct arguments, call
+order, dependencies, public API, or TensorFlow behavior. Keep the target
+unconsumed, validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.
