@@ -665,7 +665,7 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
 
     outer_guard = body[restore_index + 3]
     assert isinstance(outer_guard, ast.If)
-    assert len(outer_guard.body) == 7
+    assert len(outer_guard.body) == 6
 
     first_reconciliation = outer_guard.body[0]
     assert isinstance(first_reconciliation, ast.Assign)
@@ -695,18 +695,27 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
     assert outer_guard.body[2].targets[0].id == (
         "final_placeholder_binary_tensor_count"
     )
-    assert isinstance(outer_guard.body[3], ast.Assign)
-    assert isinstance(outer_guard.body[3].targets[0], ast.Name)
-    assert outer_guard.body[3].targets[0].id == (
-        "final_placeholder_exact_binary_stats"
-    )
-    assert isinstance(outer_guard.body[4], ast.Assign)
-    assert isinstance(outer_guard.body[4].targets[0], ast.Name)
-    assert outer_guard.body[4].targets[0].id == (
-        "final_placeholder_singleton_binary_stats"
+    binary_adapter = outer_guard.body[3]
+    assert isinstance(binary_adapter, ast.Assign)
+    assert len(binary_adapter.targets) == 1
+    binary_adapter_targets = binary_adapter.targets[0]
+    assert isinstance(binary_adapter_targets, ast.Tuple)
+    assert [
+        target.id
+        for target in binary_adapter_targets.elts
+        if isinstance(target, ast.Name)
+    ] == [
+        "final_placeholder_exact_binary_stats",
+        "final_placeholder_singleton_binary_stats",
+    ]
+    assert isinstance(binary_adapter.value, ast.Call)
+    assert isinstance(binary_adapter.value.func, ast.Name)
+    assert (
+        binary_adapter.value.func.id
+        == "run_indexed_binary_layout_adapter_cleanup"
     )
 
-    binary_guard = outer_guard.body[5]
+    binary_guard = outer_guard.body[4]
     assert isinstance(binary_guard, ast.If)
     assert ast.unparse(binary_guard.test) == (
         "_stats_have_positive_count(final_placeholder_reconcile_stats, "

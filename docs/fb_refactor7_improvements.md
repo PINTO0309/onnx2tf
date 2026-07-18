@@ -2109,3 +2109,12 @@ inputs, direct arguments, one-index construction, and two unconsumed fallback
 targets. The focused gate passes `423 passed, 1 xfailed in 18.38s`, the
 116-file branch-changed suite passes `1706 passed, 1 xfailed in 31.82s`, and
 targeted static validation passes.
+
+The indexed binary-adapter runner is now implemented at all four selected
+boundaries. Exact and singleton owners share one `ModelIRGraphIndex`, use
+indexed candidate and mutation APIs, and forward `LayoutState` to pruning.
+Both original result dictionaries and all existing guard consumers remain
+unchanged; fallback only retains two unconsumed observations. The dedicated
+contract passes `3 passed in 0.55s`, the focused gate passes
+`424 passed in 19.25s`, the 116-file branch-changed suite passes
+`1707 passed in 33.42s`, and targeted static validation passes.

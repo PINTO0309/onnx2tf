@@ -9405,10 +9405,7 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
     sanitizer_name = "_sanitize_static_shape_signature_consistency"
-    repair_names = (
-        "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
-        "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
-    )
+    runner_name = "run_indexed_binary_layout_adapter_cleanup"
     expected_counters = {
         "sanitized_static_shape_signature_consistency",
         "inserted_rank4_binary_layout_fix_transpose",
@@ -9432,14 +9429,21 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
     assert isinstance(count_assignment.value.func, ast.Name)
     assert count_assignment.value.func.id == "len"
 
-    for offset, repair_name in enumerate(repair_names, start=1):
-        repair_assignment = lowerer.body[sanitizer_index + offset]
-        assert isinstance(repair_assignment, ast.Assign)
-        assert isinstance(repair_assignment.value, ast.Call)
-        assert isinstance(repair_assignment.value.func, ast.Name)
-        assert repair_assignment.value.func.id == repair_name
+    repair_assignment = lowerer.body[sanitizer_index + 1]
+    assert isinstance(repair_assignment, ast.Assign)
+    assert len(repair_assignment.targets) == 1
+    repair_targets = repair_assignment.targets[0]
+    assert isinstance(repair_targets, ast.Tuple)
+    assert [
+        target.id
+        for target in repair_targets.elts
+        if isinstance(target, ast.Name)
+    ] == ["late_binary_adapter_stats", "late_singleton_adapter_stats"]
+    assert isinstance(repair_assignment.value, ast.Call)
+    assert isinstance(repair_assignment.value.func, ast.Name)
+    assert repair_assignment.value.func.id == runner_name
 
-    guard = lowerer.body[sanitizer_index + 3]
+    guard = lowerer.body[sanitizer_index + 2]
     assert isinstance(guard, ast.If)
     assert guard.orelse == []
     get_calls = [
@@ -9525,40 +9529,24 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
 
     outer_guard = lowerer.body[restore_index + 3]
     assert isinstance(outer_guard, ast.If)
-    assert len(outer_guard.body) == 7
-    expected_assignments = [
-        (
-            result_names[0],
-            "_reconcile_static_tensor_shapes",
-        ),
-        (
-            "final_placeholder_binary_tensor_count",
-            "len",
-        ),
-        (
-            "final_placeholder_exact_binary_stats",
-            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
-        ),
-        (
-            "final_placeholder_singleton_binary_stats",
-            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
-        ),
-    ]
+    assert len(outer_guard.body) == 6
     legacy_projection = outer_guard.body[1]
     assert isinstance(legacy_projection, ast.Assign)
     assert isinstance(legacy_projection.targets[0], ast.Name)
     assert legacy_projection.targets[0].id == "final_placeholder_reconcile_stats"
     assert isinstance(legacy_projection.value, ast.Dict)
 
-    for statement, (target_name, call_name) in zip(
+    for statement, target_name, call_name in (
         (
             outer_guard.body[0],
-            outer_guard.body[2],
-            outer_guard.body[3],
-            outer_guard.body[4],
+            result_names[0],
+            "_reconcile_static_tensor_shapes",
         ),
-        expected_assignments,
-        strict=True,
+        (
+            outer_guard.body[2],
+            "final_placeholder_binary_tensor_count",
+            "len",
+        ),
     ):
         assert isinstance(statement, ast.Assign)
         assert len(statement.targets) == 1
@@ -9568,6 +9556,25 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
         assert isinstance(statement.value.func, ast.Name)
         assert statement.value.func.id == call_name
 
+    binary_assignment = outer_guard.body[3]
+    assert isinstance(binary_assignment, ast.Assign)
+    assert len(binary_assignment.targets) == 1
+    binary_targets = binary_assignment.targets[0]
+    assert isinstance(binary_targets, ast.Tuple)
+    assert [
+        target.id
+        for target in binary_targets.elts
+        if isinstance(target, ast.Name)
+    ] == [
+        "final_placeholder_exact_binary_stats",
+        "final_placeholder_singleton_binary_stats",
+    ]
+    assert isinstance(binary_assignment.value, ast.Call)
+    assert isinstance(binary_assignment.value.func, ast.Name)
+    assert binary_assignment.value.func.id == (
+        "run_indexed_binary_layout_adapter_cleanup"
+    )
+
     first_reconcile = outer_guard.body[0]
     assert isinstance(first_reconcile, ast.Assign)
     assert {
@@ -9575,7 +9582,7 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
         for keyword in first_reconcile.value.keywords
     } == {"include_mutation_count": "True"}
 
-    reconcile_guard = outer_guard.body[5]
+    reconcile_guard = outer_guard.body[4]
     assert isinstance(reconcile_guard, ast.If)
     assert ast.unparse(reconcile_guard.test) == (
         "_stats_have_positive_count(final_placeholder_reconcile_stats, "
@@ -9596,7 +9603,7 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
         for keyword in reconcile.value.keywords
     } == {"include_mutation_count": "True"}
 
-    topology_sort = outer_guard.body[6]
+    topology_sort = outer_guard.body[5]
     assert isinstance(topology_sort, ast.Expr)
     assert isinstance(topology_sort.value, ast.Call)
     assert isinstance(topology_sort.value.func, ast.Name)
@@ -9618,9 +9625,8 @@ def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
         "_sanitize_hardswish_tensor_shapes",
         "_sanitize_squeeze_axes_with_static_input_shapes",
         "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
-        "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
-        "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
     )
+    adapter_runner_name = "run_indexed_binary_layout_adapter_cleanup"
     cluster_name = "_run_singleton_consecutive_reshape_pass_cluster"
     first_owner_index = next(
         index
@@ -9651,8 +9657,26 @@ def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
         assert isinstance(assignment.targets[0], ast.Name)
         result_names.append(assignment.targets[0].id)
 
-    cluster_assignment = lowerer.body[
+    adapter_assignment = lowerer.body[
         first_owner_index + len(direct_owner_names)
+    ]
+    assert isinstance(adapter_assignment, ast.Assign)
+    assert isinstance(adapter_assignment.value, ast.Call)
+    assert isinstance(adapter_assignment.value.func, ast.Name)
+    assert adapter_assignment.value.func.id == adapter_runner_name
+    assert len(adapter_assignment.targets) == 1
+    adapter_targets = adapter_assignment.targets[0]
+    assert isinstance(adapter_targets, ast.Tuple)
+    assert len(adapter_targets.elts) == 2
+    assert all(isinstance(target, ast.Name) for target in adapter_targets.elts)
+    result_names.extend(
+        target.id
+        for target in adapter_targets.elts
+        if isinstance(target, ast.Name)
+    )
+
+    cluster_assignment = lowerer.body[
+        first_owner_index + len(direct_owner_names) + 1
     ]
     assert isinstance(cluster_assignment, ast.Assign)
     assert isinstance(cluster_assignment.value, ast.Call)
@@ -9669,7 +9693,7 @@ def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
         if isinstance(target, ast.Name)
     )
 
-    guard = lowerer.body[first_owner_index + len(direct_owner_names) + 1]
+    guard = lowerer.body[first_owner_index + len(direct_owner_names) + 2]
     assert isinstance(guard, ast.If)
     assert guard.orelse == []
     mutation_calls = [
@@ -11100,7 +11124,7 @@ def test_rank4_binary_layout_adapter_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert production_calls == []
 
     owner_path = (
         REPO_ROOT
@@ -11120,9 +11144,14 @@ def test_rank4_binary_layout_adapter_has_one_module_owner() -> None:
     )
     owner_function_source = ast.get_source_segment(owner_source, owner)
     assert owner_function_source is not None
-    assert "model_ir.operators.insert(" in owner_function_source
+    assert "model_ir.operators.insert(" not in owner_function_source
+    assert "graph_index.insert_operator(" in owner_function_source
     assert "_replace_operator_input_at(" in owner_function_source
-    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    assert "graph_index=graph_index" in owner_function_source
+    assert (
+        "_prune_unused_tensors(model_ir, layout_state=layout_state)"
+        in owner_function_source
+    )
     assert "lower_from_onnx2tf" not in owner_source
 
 
@@ -11160,7 +11189,7 @@ def test_rank4_binary_singleton_adapter_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert production_calls == []
 
     owner_path = (
         REPO_ROOT
@@ -11183,9 +11212,15 @@ def test_rank4_binary_singleton_adapter_has_one_module_owner() -> None:
     assert "np.broadcast_shapes" in owner_function_source
     assert 'op_type="TRANSPOSE"' in owner_function_source
     assert 'op_type="RESHAPE"' in owner_function_source
+    assert "model_ir.operators.insert(" not in owner_function_source
+    assert "graph_index.insert_operator(" in owner_function_source
     assert "_replace_operator_input_at(" in owner_function_source
+    assert "graph_index=graph_index" in owner_function_source
     assert "if repaired > 0:" in owner_function_source
-    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    assert (
+        "_prune_unused_tensors(model_ir, layout_state=layout_state)"
+        in owner_function_source
+    )
     assert "lower_from_onnx2tf" not in owner_source
 
 

@@ -405,7 +405,7 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     assert first_following.test.id == "optimize_layout_transpose_chains"
 
     assert _statement_call_name(lowerer.body[second_index - 1]) == (
-        "_repair_rank4_binary_singleton_broadcast_layout_mismatch"
+        "run_indexed_binary_layout_adapter_cleanup"
     )
     second_following = lowerer.body[second_index + 1]
     assert isinstance(second_following, ast.If)
@@ -452,8 +452,8 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
         "int(fallback_norm_stats.get("
         "'optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains', 0)) > 0"
     )
-    assert _direct_call_name(fallback_guard.body[invocation_index - 1]) == (
-        "_repair_rank4_binary_singleton_broadcast_layout_mismatch"
+    assert _statement_call_name(fallback_guard.body[invocation_index - 1]) == (
+        "run_indexed_binary_layout_adapter_cleanup"
     )
     assert _direct_call_name(fallback_guard.body[invocation_index + 1]) == (
         "_reconcile_static_tensor_shapes"

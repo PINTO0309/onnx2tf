@@ -286,6 +286,7 @@ from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     repair_rank4_channelwise_broadcast_constants_to_runtime_layout as _repair_rank4_channelwise_broadcast_constants_to_runtime_layout_pass,
     repair_rank4_binary_layout_mismatch_with_transpose_adapter as _repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass,
     repair_rank4_binary_singleton_broadcast_layout_mismatch as _repair_rank4_binary_singleton_broadcast_layout_mismatch_pass,
+    run_indexed_binary_layout_adapter_cleanup,
 )
 from onnx2tf.tflite_builder.passes.conv_output_passthrough_layout import (
     optimize_transposeconv_output_channel1_terminal_transpose_chains as _optimize_transposeconv_output_channel1_terminal_transpose_chains_pass,
@@ -1071,15 +1072,29 @@ def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
     )
 
 
-def _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir: ModelIR) -> Dict[str, int]:
+def _repair_rank4_binary_layout_mismatch_with_transpose_adapter(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     return _repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass(
-        model_ir
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
     )
 
 
-def _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir: ModelIR) -> Dict[str, int]:
+def _repair_rank4_binary_singleton_broadcast_layout_mismatch(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     return _repair_rank4_binary_singleton_broadcast_layout_mismatch_pass(
-        model_ir
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
     )
 
 
@@ -5391,11 +5406,8 @@ def lower_onnx_to_ir(
     shared_conv_transpose_stats = (
         _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
     )
-    shared_binary_adapter_stats = (
-        _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-    )
-    shared_singleton_adapter_stats = (
-        _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
+    shared_binary_adapter_stats, shared_singleton_adapter_stats = (
+        run_indexed_binary_layout_adapter_cleanup(model_ir)
     )
     (
         shared_singleton_channel_stats,
@@ -5424,11 +5436,8 @@ def lower_onnx_to_ir(
     late_signature_stats = _sanitize_static_shape_signature_consistency(
         model_ir
     )
-    late_binary_adapter_stats = (
-        _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-    )
-    late_singleton_adapter_stats = (
-        _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
+    late_binary_adapter_stats, late_singleton_adapter_stats = (
+        run_indexed_binary_layout_adapter_cleanup(model_ir)
     )
     if (
         int(
@@ -5767,8 +5776,10 @@ def lower_onnx_to_ir(
             ),
         }
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
-            _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
-            _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)
+            (
+                _fallback_binary_adapter_stats,
+                _fallback_singleton_adapter_stats,
+            ) = run_indexed_binary_layout_adapter_cleanup(fallback_ir)
             _fallback_singleton_consecutive_reshape_results = (
                 _run_singleton_consecutive_reshape_pass_cluster(
                     fallback_ir,
@@ -6186,14 +6197,10 @@ def lower_onnx_to_ir(
             )
         }
         final_placeholder_binary_tensor_count = len(model_ir.tensors)
-        final_placeholder_exact_binary_stats = (
-            _repair_rank4_binary_layout_mismatch_with_transpose_adapter(
-                model_ir
-            )
-        )
-        final_placeholder_singleton_binary_stats = (
-            _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-        )
+        (
+            final_placeholder_exact_binary_stats,
+            final_placeholder_singleton_binary_stats,
+        ) = run_indexed_binary_layout_adapter_cleanup(model_ir)
         if _stats_have_positive_count(
             final_placeholder_reconcile_stats,
             final_placeholder_exact_binary_stats,

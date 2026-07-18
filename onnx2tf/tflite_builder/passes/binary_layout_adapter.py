@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -12,11 +12,15 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
 )
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
 def repair_rank4_binary_layout_mismatch_with_transpose_adapter(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """Insert an input-1 adapter for exact rank-four NHWC/NCHW mismatch."""
 
@@ -24,6 +28,11 @@ def repair_rank4_binary_layout_mismatch_with_transpose_adapter(
     binary_ops = {"ADD", "MUL", "SUB", "DIV", "MAXIMUM", "MINIMUM"}
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     perm_nhwc_to_nchw = [0, 3, 1, 2]
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
 
     def _make_unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -35,7 +44,8 @@ def repair_rank4_binary_layout_mismatch_with_transpose_adapter(
 
     while True:
         changed = False
-        for op_idx, op in enumerate(model_ir.operators):
+        for op_idx in graph_index.operator_indices_for_types(binary_ops):
+            op = model_ir.operators[int(op_idx)]
             op_type = str(op.op_type)
             if (
                 op_type not in binary_ops
@@ -88,7 +98,7 @@ def repair_rank4_binary_layout_mismatch_with_transpose_adapter(
                 is_variable=False,
                 quantization=_clone_quantization(t1.quantization),
             )
-            model_ir.operators.insert(
+            graph_index.insert_operator(
                 int(op_idx),
                 OperatorIR(
                     op_type="TRANSPOSE",
@@ -101,6 +111,7 @@ def repair_rank4_binary_layout_mismatch_with_transpose_adapter(
                 op=op,
                 input_index=1,
                 new_input_name=adapted_name,
+                graph_index=graph_index,
             )
             inserted += 1
             changed = True
@@ -109,18 +120,26 @@ def repair_rank4_binary_layout_mismatch_with_transpose_adapter(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"inserted_rank4_binary_layout_fix_transpose": int(inserted)}
 
 
 def repair_rank4_binary_singleton_broadcast_layout_mismatch(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """Repair a singleton-channel NCHW/NHWC rank-four binary mismatch."""
 
     repaired = 0
     binary_ops = {"ADD", "MUL", "SUB", "DIV", "MAXIMUM", "MINIMUM"}
     perm_nhwc_to_nchw = [0, 3, 1, 2]
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
 
     def _make_unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -132,7 +151,8 @@ def repair_rank4_binary_singleton_broadcast_layout_mismatch(
 
     while True:
         changed = False
-        for op_idx, op in enumerate(model_ir.operators):
+        for op_idx in graph_index.operator_indices_for_types(binary_ops):
+            op = model_ir.operators[int(op_idx)]
             if (
                 str(op.op_type) not in binary_ops
                 or len(op.inputs) != 2
@@ -197,7 +217,7 @@ def repair_rank4_binary_singleton_broadcast_layout_mismatch(
                     is_variable=False,
                     quantization=_clone_quantization(source_tensor.quantization),
                 )
-                model_ir.operators.insert(
+                graph_index.insert_operator(
                     int(op_idx),
                     OperatorIR(
                         op_type="TRANSPOSE",
@@ -210,6 +230,7 @@ def repair_rank4_binary_singleton_broadcast_layout_mismatch(
                     op=op,
                     input_index=int(input_index),
                     new_input_name=str(adapted_name),
+                    graph_index=graph_index,
                 )
 
             def _insert_reshape_adapter(
@@ -241,7 +262,7 @@ def repair_rank4_binary_singleton_broadcast_layout_mismatch(
                     is_variable=False,
                     quantization=_clone_quantization(source_tensor.quantization),
                 )
-                model_ir.operators.insert(
+                graph_index.insert_operator(
                     int(op_idx),
                     OperatorIR(
                         op_type="RESHAPE",
@@ -257,6 +278,7 @@ def repair_rank4_binary_singleton_broadcast_layout_mismatch(
                     op=op,
                     input_index=int(input_index),
                     new_input_name=str(adapted_name),
+                    graph_index=graph_index,
                 )
 
             if (
@@ -328,12 +350,39 @@ def repair_rank4_binary_singleton_broadcast_layout_mismatch(
             break
 
     if repaired > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {
         "repaired_rank4_binary_singleton_broadcast_layout_mismatch": int(
             repaired
         )
     }
+
+
+def run_indexed_binary_layout_adapter_cleanup(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Tuple[Dict[str, int], Dict[str, int]]:
+    """Run exact and singleton rank-four adapters with one graph index."""
+
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
+    return (
+        repair_rank4_binary_layout_mismatch_with_transpose_adapter(
+            model_ir,
+            graph_index=graph_index,
+            layout_state=layout_state,
+        ),
+        repair_rank4_binary_singleton_broadcast_layout_mismatch(
+            model_ir,
+            graph_index=graph_index,
+            layout_state=layout_state,
+        ),
+    )
 
 
 def repair_rank4_channelwise_broadcast_constants_to_runtime_layout(

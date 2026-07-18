@@ -4,8 +4,6 @@ import ast
 import copy
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -17,12 +15,10 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_rank4_binary_layout_mismatch_with_transpose_adapter,
     _repair_rank4_binary_singleton_broadcast_layout_mismatch,
 )
-from onnx2tf.tflite_builder.passes import (
-    binary_layout_adapter as binary_layout_adapter_module,
-)
 from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     repair_rank4_binary_layout_mismatch_with_transpose_adapter,
     repair_rank4_binary_singleton_broadcast_layout_mismatch,
+    run_indexed_binary_layout_adapter_cleanup,
 )
 from onnx2tf.tflite_builder.passes.split_all_outputs_layout import _freeze
 
@@ -223,7 +219,7 @@ def _snapshot(model_ir: ModelIR) -> tuple[object, ...]:
     )
 
 
-def test_binary_adapter_owner_schemas_and_raw_pairs_are_explicit() -> None:
+def test_binary_adapter_owner_schemas_and_indexed_contracts_are_explicit() -> None:
     assert repair_rank4_binary_layout_mismatch_with_transpose_adapter(
         ModelIR("exact_schema")
     ) == RESULT_SCHEMA[0]
@@ -235,31 +231,32 @@ def test_binary_adapter_owner_schemas_and_raw_pairs_are_explicit() -> None:
     for owner_name in (EXACT_OWNER, SINGLETON_OWNER):
         owner = owner_functions[owner_name]
         assert [argument.arg for argument in owner.args.args] == ["model_ir"]
-        assert owner.args.kwonlyargs == []
+        assert [argument.arg for argument in owner.args.kwonlyargs] == [
+            "graph_index",
+            "layout_state",
+        ]
+        assert [ast.unparse(default) for default in owner.args.kw_defaults] == [
+            "None",
+            "None",
+        ]
 
     lowerer = _lowerer()
-    pairs = _raw_pair_locations(lowerer)
-    assert len(pairs) == 4
+    assert _raw_pair_locations(lowerer) == []
+    locations = _runner_locations(lowerer)
+    assert len(locations) == 4
     assert tuple(
-        (
-            _assignment_targets(block[index]),
-            _assignment_targets(block[index + 1]),
-        )
-        for block, index in pairs
-    ) == (
-        ((EXPECTED_PAIR_TARGETS[0][0],), (EXPECTED_PAIR_TARGETS[0][1],)),
-        ((EXPECTED_PAIR_TARGETS[1][0],), (EXPECTED_PAIR_TARGETS[1][1],)),
-        ((), ()),
-        ((EXPECTED_PAIR_TARGETS[3][0],), (EXPECTED_PAIR_TARGETS[3][1],)),
-    )
-    for (block, index), model_argument in zip(pairs, EXPECTED_MODEL_ARGUMENTS):
-        for statement in (block[index], block[index + 1]):
-            call = _statement_call(statement)
-            assert call is not None
-            assert [ast.unparse(argument) for argument in call.args] == [
-                model_argument
-            ]
-            assert call.keywords == []
+        _assignment_targets(block[index]) for block, index in locations
+    ) == EXPECTED_PAIR_TARGETS
+    for (block, index), model_argument in zip(
+        locations,
+        EXPECTED_MODEL_ARGUMENTS,
+    ):
+        call = _statement_call(block[index])
+        assert call is not None
+        assert [ast.unparse(argument) for argument in call.args] == [
+            model_argument
+        ]
+        assert call.keywords == []
 
 
 def test_binary_adapter_compatibility_wrappers_preserve_current_contract() -> None:
@@ -275,14 +272,9 @@ def test_binary_adapter_compatibility_wrappers_preserve_current_contract() -> No
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="binary adapter owners rebuild graph state and four pairs are duplicated",
-)
 def test_indexed_binary_adapter_runner_reuses_one_index_and_retains_results(
     monkeypatch,
 ) -> None:
-    runner = getattr(binary_layout_adapter_module, RUNNER)
     owner_functions = _functions(OWNER_PATH)
     for owner_name in (EXACT_OWNER, SINGLETON_OWNER):
         owner = owner_functions[owner_name]
@@ -318,7 +310,7 @@ def test_indexed_binary_adapter_runner_reuses_one_index_and_retains_results(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    actual_results = runner(actual_ir)
+    actual_results = run_indexed_binary_layout_adapter_cleanup(actual_ir)
 
     assert expected_results == (
         {"inserted_rank4_binary_layout_fix_transpose": 1},

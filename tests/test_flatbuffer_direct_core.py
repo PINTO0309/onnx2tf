@@ -1759,8 +1759,7 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
     original_reconcile = lowering_module._reconcile_static_tensor_shapes
     reconcile_count = 0
     signature_invocations = 0
-    exact_invocations = 0
-    singleton_invocations = 0
+    adapter_invocations = 0
 
     def counted_reconcile(model_ir, *args, **kwargs):
         nonlocal reconcile_count
@@ -1782,11 +1781,10 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
 
     def run_with_outcome(outcome: str) -> int:
         nonlocal reconcile_count
-        nonlocal signature_invocations, exact_invocations, singleton_invocations
+        nonlocal signature_invocations, adapter_invocations
         reconcile_count = 0
         signature_invocations = 0
-        exact_invocations = 0
-        singleton_invocations = 0
+        adapter_invocations = 0
 
         def signature_result(*args, **kwargs):
             nonlocal signature_invocations
@@ -1797,26 +1795,24 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
                 )
             }
 
-        def exact_result(model_ir, *args, **kwargs):
-            nonlocal exact_invocations
-            exact_invocations += 1
-            is_late_boundary = exact_invocations == 2
+        def adapter_result(model_ir, *args, **kwargs):
+            nonlocal adapter_invocations
+            adapter_invocations += 1
+            is_late_boundary = adapter_invocations == 2
             if is_late_boundary and outcome == "prune":
                 assert model_ir.tensors.pop(probe_name, None) is not None
-            return {
-                exact_counter: int(
-                    is_late_boundary and outcome == "exact"
-                )
-            }
-
-        def singleton_result(*args, **kwargs):
-            nonlocal singleton_invocations
-            singleton_invocations += 1
-            return {
-                singleton_counter: int(
-                    singleton_invocations == 2 and outcome == "singleton"
-                )
-            }
+            return (
+                {
+                    exact_counter: int(
+                        is_late_boundary and outcome == "exact"
+                    )
+                },
+                {
+                    singleton_counter: int(
+                        is_late_boundary and outcome == "singleton"
+                    )
+                },
+            )
 
         monkeypatch.setattr(
             lowering_module,
@@ -1825,21 +1821,15 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
         )
         monkeypatch.setattr(
             lowering_module,
-            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
-            exact_result,
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
-            singleton_result,
+            "run_indexed_binary_layout_adapter_cleanup",
+            adapter_result,
         )
         lower_onnx_to_ir(
             _add_onnx_model(),
             output_file_name=f"late_binary_reconcile_{outcome}",
         )
         assert signature_invocations == 2
-        assert exact_invocations >= 2
-        assert singleton_invocations >= 2
+        assert adapter_invocations >= 2
         return reconcile_count
 
     unchanged_count = run_with_outcome("unchanged")
@@ -1860,17 +1850,15 @@ def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
     reconcile_count = 0
     restore_seen = False
     reconciles_after_restore = 0
-    exact_after_restore = 0
-    singleton_after_restore = 0
+    adapter_after_restore = 0
 
     def run_with_outcome(outcome: str) -> int:
         nonlocal reconcile_count, restore_seen, reconciles_after_restore
-        nonlocal exact_after_restore, singleton_after_restore
+        nonlocal adapter_after_restore
         reconcile_count = 0
         restore_seen = False
         reconciles_after_restore = 0
-        exact_after_restore = 0
-        singleton_after_restore = 0
+        adapter_after_restore = 0
 
         def restore_result(*args, **kwargs):
             nonlocal restore_seen
@@ -1893,26 +1881,22 @@ def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
                     return {**result, first_counter: 1}
             return result
 
-        def exact_result(model_ir, *args, **kwargs):
-            nonlocal exact_after_restore
+        def adapter_result(model_ir, *args, **kwargs):
+            nonlocal adapter_after_restore
             if not restore_seen:
-                return {exact_counter: 0}
-            exact_after_restore += 1
-            is_target = exact_after_restore == 1
+                return ({exact_counter: 0}, {singleton_counter: 0})
+            adapter_after_restore += 1
+            is_target = adapter_after_restore == 1
             if is_target and outcome == "prune":
                 assert model_ir.tensors.pop(probe_name, None) is not None
-            return {exact_counter: int(is_target and outcome == "exact")}
-
-        def singleton_result(*args, **kwargs):
-            nonlocal singleton_after_restore
-            if not restore_seen:
-                return {singleton_counter: 0}
-            singleton_after_restore += 1
-            return {
-                singleton_counter: int(
-                    singleton_after_restore == 1 and outcome == "singleton"
-                ),
-            }
+            return (
+                {exact_counter: int(is_target and outcome == "exact")},
+                {
+                    singleton_counter: int(
+                        is_target and outcome == "singleton"
+                    ),
+                },
+            )
 
         monkeypatch.setattr(
             lowering_module,
@@ -1926,13 +1910,8 @@ def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
         )
         monkeypatch.setattr(
             lowering_module,
-            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
-            exact_result,
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
-            singleton_result,
+            "run_indexed_binary_layout_adapter_cleanup",
+            adapter_result,
         )
 
         lower_onnx_to_ir(
@@ -1940,8 +1919,7 @@ def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
             output_file_name=f"placeholder_matmul_repair_{outcome}",
         )
         assert restore_seen is True
-        assert exact_after_restore == 1
-        assert singleton_after_restore == 1
+        assert adapter_after_restore == 1
         return reconcile_count
 
     unchanged_count = run_with_outcome("unchanged")
@@ -1995,8 +1973,7 @@ def test_shared_late_reconciliation_uses_all_results_and_pruning(
             "hardswish": 0,
             "squeeze": 0,
             "wrongway": 0,
-            "exact": 0,
-            "singleton": 0,
+            "adapter": 0,
             "cluster": 0,
         }
 
@@ -2017,6 +1994,16 @@ def test_shared_late_reconciliation_uses_all_results_and_pruning(
                 {"singleton_channel": int(is_target and outcome == "cluster_1")},
                 {"duplicate_fanout": int(is_target and outcome == "cluster_2")},
                 {"consecutive_reshape": int(is_target and outcome == "cluster_3")},
+            )
+
+        def adapter_result(model_ir, *args, **kwargs):
+            invocations["adapter"] += 1
+            is_target = invocations["adapter"] == 1
+            if is_target and outcome == "prune":
+                assert model_ir.tensors.pop(probe_name, None) is not None
+            return (
+                {"exact": int(is_target and outcome == "exact")},
+                {"singleton": int(is_target and outcome == "singleton")},
             )
 
         monkeypatch.setattr(
@@ -2041,13 +2028,8 @@ def test_shared_late_reconciliation_uses_all_results_and_pruning(
         )
         monkeypatch.setattr(
             lowering_module,
-            "_repair_rank4_binary_layout_mismatch_with_transpose_adapter",
-            direct_result("exact", "exact"),
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "_repair_rank4_binary_singleton_broadcast_layout_mismatch",
-            direct_result("singleton", "singleton"),
+            "run_indexed_binary_layout_adapter_cleanup",
+            adapter_result,
         )
         monkeypatch.setattr(
             lowering_module,

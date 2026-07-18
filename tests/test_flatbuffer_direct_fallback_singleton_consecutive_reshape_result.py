@@ -118,9 +118,19 @@ def test_fallback_singleton_consecutive_guard_and_boundaries_are_explicit() -> N
         "None",
     ]
     assert call.keywords == []
-    assert _call_name(guard.body[index - 1]) == (
-        "_repair_rank4_binary_singleton_broadcast_layout_mismatch"
-    )
+    previous = guard.body[index - 1]
+    assert _call_name(previous) == "run_indexed_binary_layout_adapter_cleanup"
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Tuple)
+    assert [
+        element.id
+        for element in previous.targets[0].elts
+        if isinstance(element, ast.Name)
+    ] == [
+        "_fallback_binary_adapter_stats",
+        "_fallback_singleton_adapter_stats",
+    ]
     assert _call_name(guard.body[index + 1]) == "_reconcile_static_tensor_shapes"
 
     fallback_calls = [

@@ -12625,3 +12625,68 @@ zero-rewrite pruning behavior, result schemas and consumers, direct arguments,
 dependencies, public API, and TensorFlow behavior. Do not add another pass or
 summary consumer. Validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
+
+## Indexed binary-adapter implementation and pause checkpoint
+
+The exact rank-four binary layout adapter and singleton-broadcast adapter now
+accept optional `ModelIRGraphIndex` and `LayoutState` objects. Both owners use
+indexed operator candidate lookup, indexed operator insertion, and indexed
+input replacement. Existing pruning semantics are preserved, with the live
+layout state forwarded when available.
+
+`run_indexed_binary_layout_adapter_cleanup()` creates or accepts one graph
+index, invokes the exact adapter before the singleton adapter, and returns both
+unchanged result dictionaries in that order. The four repeated lowerer pairs
+now call this runner. The shared-late, late-binary, and final-placeholder
+consumers retain the same two result variables and guard inputs. Fallback adds
+only `_fallback_binary_adapter_stats` and
+`_fallback_singleton_adapter_stats`; both are unconsumed observation targets.
+No candidate guard, mutation, adapter metadata, quantization clone, pass order,
+control-flow condition, public API, dependency, or TensorFlow boundary changed.
+
+The checkpoint change set contains:
+
+- `onnx2tf/tflite_builder/passes/binary_layout_adapter.py`
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
+- `tests/test_flatbuffer_direct_indexed_binary_adapter_results.py`
+- `tests/test_flatbuffer_direct_fallback_singleton_consecutive_reshape_result.py`
+- `tests/test_flatbuffer_direct_singleton_consecutive_reshape_orchestration.py`
+- `tests/test_flatbuffer_direct_core.py`
+- `tests/test_flatbuffer_direct_architecture.py`
+- `tests/test_flatbuffer_direct_terminal_layout_validation_orchestration.py`
+- `docs/flatbuffer_direct_architecture.md`
+- `docs/fb_refactor7_improvements.md`
+- this handoff document
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated indexed binary-adapter contract: `3 passed in 0.55s`
+- focused binary-adapter, fallback/singleton orchestration, indexed
+  convergence, late recovery, core, architecture, pass-efficiency, and direct
+  helper suite: `424 passed in 19.25s`
+- 116 branch-changed test files: `1707 passed in 33.42s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The first broad run found one stale structural expectation in
+`test_flatbuffer_direct_terminal_layout_validation_orchestration.py`: it still
+expected the final-placeholder pair as two assignments and seven statements.
+The test was updated to require the runner's ordered tuple assignment and the
+unchanged downstream guard; the rerun passed. There are no known failing tests
+in this checkpoint. No model-corpus conversion or inference run was claimed
+for this local structural refactor.
+
+The wider `flatbuffer_direct` Goal remains unfinished. In particular, this
+checkpoint does not complete the planned ConversionRequest/ConversionSession,
+fixed phase/pass manager, unified lowering registry, ModelIR exporter
+separation, complete layout centralization, quantization/split refresh,
+PyTorch-family refresh, optional-TensorFlow boundary completion, or all-tier
+final regression and performance gates.
+
+The first task after an explicit Goal resume is to characterize, without yet
+changing behavior, the raw `_reconcile_static_tensor_shapes(model_ir)` result
+immediately after `_terminal_expand_squeeze_stats` in
+`lower_from_onnx2tf.py`. Inventory its schema, mutation semantics, surrounding
+phase boundary, and whether an existing live index can be reused before
+selecting any implementation. Continue to commit and push coherent units only;
+do not create, reopen, or update a pull request.

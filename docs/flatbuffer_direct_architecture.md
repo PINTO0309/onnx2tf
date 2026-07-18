@@ -12838,3 +12838,12 @@ unchanged dictionaries, and leave the three existing guard consumers intact.
 Fallback gains only two unconsumed observation targets. Candidate guards,
 adapter metadata, quantization cloning, zero-rewrite pruning, and direct call
 arguments are fixed equivalence requirements.
+
+The indexed binary-adapter contract is now implemented. Both owners perform
+candidate lookup, operator insertion, and input replacement through one live
+`ModelIRGraphIndex`, while accepting the current `LayoutState` for pruning.
+The shared runner executes only the exact adapter followed by the singleton
+adapter and returns their two unchanged dictionaries. All four pipeline pairs
+use the runner; existing guard consumers remain unchanged and fallback's two
+results remain unconsumed. No additional pass, retry, summary, or control
+dependency was introduced.
