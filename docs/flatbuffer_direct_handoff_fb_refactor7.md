@@ -6414,3 +6414,31 @@ The sole strict expected failure is the intentionally unimplemented terminal
 Swish-residual closure result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Terminal Swish-residual closure result retention implementation checkpoint
+
+The sole model-only production call now retains its existing four-counter
+dictionary as `_terminal_swish_residual_concat_closure_stats`. This is an
+assignment-only orchestration change. The wrapper and owner implementation,
+fixed options, result schema, indexed phase order, graph mutation, tensor
+pruning, callback arguments, pass order, captured boundary-StridedSlice
+predecessor, dequant-logistic bridge successor, dependencies, diagnostics, and
+TensorFlow behavior are unchanged. The retained value has no consumer and
+triggers no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- complete indexed quantized-Swish owner plus terminal recovery/orchestration,
+  architecture, and pass-efficiency gate: `365 passed in 19.09s`
+- branch-changed broad suite plus the complete indexed quantized-Swish owner,
+  terminal recovery/orchestration, architecture, and pass-efficiency coverage:
+  `1416 passed in 24.00s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the sole
+`_optimize_transpose_dequant_logistic_mul_quantize_bridges()` result, owner
+schema, production occurrence, captured Swish-closure predecessor, and
+following Swish-QDQ-island boundary before adding characterization. Commit and
+push only; do not create, reopen, or update a pull request.

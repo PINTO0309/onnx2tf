@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2581,10 +2579,6 @@ def test_primary_path_retains_terminal_boundary_stridedslice_result() -> None:
     assert successor_call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal Swish-residual closure result is discarded",
-)
 def test_primary_path_retains_terminal_swish_residual_closure_result() -> None:
     body = _lowerer_body()
     callback_name = (

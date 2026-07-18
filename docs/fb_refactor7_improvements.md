@@ -684,6 +684,17 @@ currentness, mutation-counter, metadata, and fixed-point checks. The complete
 owner module passes `21 passed in 0.53s`; the related terminal orchestration,
 architecture, and pass-efficiency gate passes `364 passed in 18.52s`.
 
+The sole model-only Swish-residual-closure production call now retains its
+existing four-counter dictionary as
+`_terminal_swish_residual_concat_closure_stats`. The assignment-only
+orchestration change preserves fixed owner options, indexed phase order,
+captured boundary-StridedSlice/dequant-logistic boundaries, and the TensorFlow-
+free core. The retained value has no consumer.
+
+This checkpoint passes the focused indexed-Swish/orchestration gate with
+`365 passed in 19.09s`, plus the branch-changed broad related suite with
+`1416 passed in 24.00s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -691,9 +702,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following model-only Swish-residual-closure
-owner result and its captured boundary-StridedSlice/dequant-logistic bridge
-boundaries. The two stale indexed-Swish monkeypatch tests are repaired in an
-isolated test-only unit by checking the actual owner module's indexed contract.
-Any new mutation evidence must preserve current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+unit should audit the immediately following sole model-only dequant-logistic-
+Mul-quantize bridge result and its captured Swish-closure/Swish-QDQ-island
+boundaries. Any new mutation evidence must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

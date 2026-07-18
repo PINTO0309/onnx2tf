@@ -10949,11 +10949,10 @@ between the first terminal slice/Concat recovery sequence and the model-only
 Swish-residual closure. The retained value has no consumer.
 
 The immediately following model-only Swish-residual-closure owner returns four
-mutation counters and has one production call. Its result is currently
-discarded between the captured boundary StridedSlice/QDQ/Concat dictionary and
-the model-only dequant-logistic-Mul-quantize bridge. Strict characterization
-fixes `_terminal_swish_residual_concat_closure_stats` as its direct result
-target.
+mutation counters and has one production call. Its result is retained as
+`_terminal_swish_residual_concat_closure_stats` between the
+captured boundary StridedSlice/QDQ/Concat dictionary and the model-only
+dequant-logistic-Mul-quantize bridge. The retained value has no consumer.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
