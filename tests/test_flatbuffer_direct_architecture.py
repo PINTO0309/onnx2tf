@@ -1211,37 +1211,43 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_mean_maxpool_concat_conv_chains",
     )
     assert QLINEAR_MEAN_CONCAT_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_qlinear_mean_concat_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "qlinear_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_qlinear_mean_concat_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "qlinear_recovery_context"
+    assert helper_call.keywords == []
 
-    boundaries = []
+    boundaries: list[tuple[ast.stmt, ast.stmt]] = []
+    targets: list[str] = []
     for statement in lowerer.body:
         if not isinstance(statement, ast.If):
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == helper_name
             ):
                 continue
+            targets.append(candidate.targets[0].id)
             boundaries.append(
                 (statement.body[index - 1], statement.body[index + 1])
             )
     assert len(boundaries) == 2
+    assert targets == [
+        "_layout_pass_set_1_qlinear_mean_concat_results",
+        "_layout_pass_set_2_qlinear_mean_concat_results",
+    ]
     assert [boundary[0].value.func.id for boundary in boundaries] == [
         "_optimize_transpose_dequantize_mean_quantize_bridges",
         "_set_post_progress_desc",

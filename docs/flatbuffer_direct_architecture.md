@@ -12153,3 +12153,11 @@ identity, the shared `ModelIRPassContext`, exact zero-argument calls,
 dequant-mean/final-attention and progress/layout-recovery boundaries, and an
 unconsumed observation-only policy. Child pruning can occur without a positive
 counter, so the parent tuple is not complete mutation evidence.
+
+The QLinear runner and lowerer helper now return the unchanged five-slot
+tuple. The two direct calls retain
+`_layout_pass_set_1_qlinear_mean_concat_results` and
+`_layout_pass_set_2_qlinear_mean_concat_results`; both remain unconsumed and
+observation-only. Their newly retained final-attention and layout-recovery
+successors are unchanged. No child, context, pass order, cleanup timing, guard,
+summary, dependency, public API, or TensorFlow boundary changes.

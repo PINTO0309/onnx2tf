@@ -10430,3 +10430,36 @@ the selected assignments. Do not consume either result or change a child,
 context, pass order, surrounding retained target, summary, guard, dependency,
 public API, or TensorFlow behavior. Validate sequentially, commit, and push
 only; do not create, reopen, or update a pull request.
+
+## QLinear/mean/Concat parent result propagation implementation checkpoint
+
+`run_qlinear_mean_concat_recovery()` and its zero-argument lowerer helper now
+return the existing five-slot tuple. The pass-set-1 call retains
+`_layout_pass_set_1_qlinear_mean_concat_results`; the pass-set-2 call retains
+`_layout_pass_set_2_qlinear_mean_concat_results`.
+
+Both tuples are unconsumed and observation-only. The first remains between
+dequant-mean recovery and `_layout_pass_set_1_final_attention_recovery_results`;
+the second remains between the progress update and
+`_layout_pass_set_2_layout_recovery_prefix_results`. No consumer, guard,
+summary, graph scan, tuple copy, child invocation, context, pass order, cleanup
+timing, dependency, public API, or TensorFlow import path was added.
+
+Implementation validation completed sequentially under `uv`:
+
+- QLinear parent and child-owner contracts, both retained outer boundaries,
+  layout recovery, architecture, and pass-efficiency coverage:
+  `425 passed in 19.97s`
+- branch-changed broad suite: `1607 passed in 29.54s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+propagation does not claim a new model-corpus run.
+
+At resume, audit the raw primary `run_layout_transpose_cleanup()` result
+immediately before `_layout_pass_set_1_initial_attention_recovery_results`.
+Inventory its other already retained and nested occurrences, preserve the live
+LayoutState/diagnostics arguments and five-key cleanup semantics, and keep any
+new result observation-only. Commit and push only; do not create, reopen, or
+update a pull request.

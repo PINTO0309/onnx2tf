@@ -1519,3 +1519,15 @@ shared context, zero-argument calls, dequant-mean/final-attention and
 progress/layout-recovery boundaries, and the unconsumed policy are frozen.
 The focused gate passes `424 passed, 1 xfailed in 18.09s`; the branch-changed
 broad gate passes `1606 passed, 1 xfailed in 28.82s`.
+
+The QLinear runner/helper now return the unchanged five-slot tuple. Its two
+direct calls retain `_layout_pass_set_1_qlinear_mean_concat_results` and
+`_layout_pass_set_2_qlinear_mean_concat_results`, both unconsumed and
+observation-only. The focused implementation gate passes
+`425 passed in 19.97s`, the branch-changed broad suite passes
+`1607 passed in 29.54s`, and targeted static validation passes.
+
+The next unit should audit the raw primary layout-transpose cleanup result
+immediately before the newly retained initial attention result, without
+changing its other retained/nested occurrences or live layout/diagnostic
+arguments.

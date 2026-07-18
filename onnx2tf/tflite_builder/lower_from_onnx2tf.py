@@ -4267,8 +4267,8 @@ def lower_onnx_to_ir(
             quantized_recovery_context
         )
 
-    def _run_qlinear_mean_concat_recovery_sequence() -> None:
-        run_qlinear_mean_concat_recovery(qlinear_recovery_context)
+    def _run_qlinear_mean_concat_recovery_sequence() -> Tuple[Any, ...]:
+        return run_qlinear_mean_concat_recovery(qlinear_recovery_context)
 
     layout_attention_quantized_suffix_context = (
         LayoutAttentionQuantizedSuffixContext(
@@ -4458,7 +4458,9 @@ def lower_onnx_to_ir(
             _run_safe_binary_bridge_recovery_sequence()
         )
         _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
-        _run_qlinear_mean_concat_recovery_sequence()
+        _layout_pass_set_1_qlinear_mean_concat_results = (
+            _run_qlinear_mean_concat_recovery_sequence()
+        )
         _layout_pass_set_1_final_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()
         )
@@ -4535,7 +4537,9 @@ def lower_onnx_to_ir(
         # Final recovery sweep:
         # some transpose-binary patterns become shape-safe only after static
         # metadata reconciliation, so run bridge passes once more.
-        _run_qlinear_mean_concat_recovery_sequence()
+        _layout_pass_set_2_qlinear_mean_concat_results = (
+            _run_qlinear_mean_concat_recovery_sequence()
+        )
         _layout_pass_set_2_layout_recovery_prefix_results = (
             _run_layout_recovery_prefix_pass_sequence()
         )

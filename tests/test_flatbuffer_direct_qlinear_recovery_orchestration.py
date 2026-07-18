@@ -128,12 +128,15 @@ def test_qlinear_recovery_sequence_is_a_straight_line_closure() -> None:
 
     called_names = {
         node.func.id
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        for statement in helper.body
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
     }
     loaded_data_names = {
         node.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
@@ -173,12 +176,7 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
         if not isinstance(statement, ast.If):
             continue
         for index, candidate in enumerate(statement.body):
-            if not (
-                isinstance(candidate, ast.Expr)
-                and isinstance(candidate.value, ast.Call)
-                and isinstance(candidate.value.func, ast.Name)
-                and candidate.value.func.id == QLINEAR_MEAN_CONCAT
-            ):
+            if _direct_call_name(candidate) != QLINEAR_MEAN_CONCAT:
                 continue
             previous = statement.body[index - 1]
             following = statement.body[index + 1]
@@ -189,6 +187,8 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
             assert isinstance(following.value, ast.Call)
             assert isinstance(following.value.func, ast.Name)
             boundaries.append((previous.value.func.id, following.value.func.id))
+
+            assert _single_target(candidate) in RESULT_TARGETS
 
             if following.value.func.id == (
                 "_run_layout_recovery_prefix_pass_sequence"
@@ -214,9 +214,10 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
 
 def test_qlinear_recovery_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -269,10 +270,6 @@ def test_qlinear_recovery_runner_preserves_instrumented_order(
     assert events == list(QLINEAR_MEAN_CONCAT_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="both ordered QLinear mean/Concat results are discarded",
-)
 def test_qlinear_recovery_propagates_both_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
