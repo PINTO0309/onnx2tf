@@ -5077,10 +5077,12 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    run_concat_unary_conv_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_concat_unary_conv_stats = (
+        run_concat_unary_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:

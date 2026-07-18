@@ -1096,14 +1096,26 @@ The focused indexed-owner/orchestration/policy gate passes
 input-adapter predecessor, channel-shuffle policy, dependencies, and TensorFlow
 behavior remain unchanged.
 
+The terminal Concat/unary/Conv cleanup result is now retained as
+`_terminal_concat_unary_conv_stats`. Its transactional one-counter dictionary
+remains observation-only, while diagnostics continue to record changed and
+precondition-skipped outcomes.
+
+The focused runner/transaction/boundary gate passes `401 passed in 20.06s`, and
+the branch-changed broad suite passes `1585 passed in 28.42s`. Positive-only
+pruning and LayoutState sync, preflight/default details, live diagnostics,
+dependencies, and TensorFlow behavior remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the terminal `run_concat_unary_conv_layout_cleanup()` result.
-Its live LayoutState and diagnostics wiring, newly retained Concat input-adapter
-predecessor, following shape-extract owner, and cleanup evidence semantics must
-remain fixed. All retained SiNet callback results, Singleton/Reshape policies,
-three QKV result forms, and the late summary must also remain fixed.
+unit should audit the raw terminal
+`_optimize_transpose_shape_extract_nhwc_to_nchw_chains()` result and every other
+production form of that owner. The newly retained Concat/unary/Conv predecessor,
+following terminal layout guard, existing retained shape-extract results, and
+cleanup evidence semantics must remain fixed. All retained SiNet callback
+results, Singleton/Reshape policies, three QKV result forms, and the late
+summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

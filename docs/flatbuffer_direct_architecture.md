@@ -11620,3 +11620,13 @@ the one-key schema, transactional PassSpec, preflight/default details, positive-
 only prune and layout sync, exact one-call count, arguments, both boundaries,
 and absence of consumers. The dictionary must remain unconsumed; retention must
 add no guard, scan, dependency, or TensorFlow import path.
+
+The production call now retains that unchanged one-counter dictionary as
+`_terminal_concat_unary_conv_stats`. It remains unconsumed; diagnostics continue
+to record changed and skipped outcomes independently of the retained value.
+
+This is an assignment-only change. The runner, owner, one-key schema,
+transactional PassSpec, preflight/default details, positive-only pruning and
+LayoutState sync, live Session LayoutState and diagnostics, retained Concat
+input-adapter predecessor, shape-extract successor, dependencies, and
+TensorFlow behavior remain unchanged.

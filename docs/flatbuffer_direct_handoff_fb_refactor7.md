@@ -8328,6 +8328,39 @@ result-retention contract. Implement only that assignment, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Terminal Concat/unary/Conv result retention implementation checkpoint
+
+The production call now retains `_terminal_concat_unary_conv_stats`. It
+preserves the runner's unchanged one-counter dictionary and remains unconsumed;
+diagnostics continue to record changed and skipped outcomes independently of
+the retained value.
+
+This is an assignment-only change. No consumer or guard was added. The runner,
+owner, one-key schema, transactional PassSpec, preflight/default details,
+positive-only unused-tensor pruning and LayoutState synchronization, live
+Session LayoutState and diagnostics, retained Concat input-adapter predecessor,
+shape-extract successor, dependencies, and TensorFlow behavior remain
+unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- Concat/unary/Conv runner and owner fixtures, transactional/preflight schema,
+  diagnostics, positive-only cleanup and layout sync, terminal result boundary,
+  Concat input-adapter and shape-extract neighbors, architecture,
+  pass-efficiency, and terminal-layout coverage: `401 passed in 20.06s`
+- branch-changed broad suite plus the same Concat/unary/Conv coverage:
+  `1585 passed in 28.42s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the raw terminal
+`_optimize_transpose_shape_extract_nhwc_to_nchw_chains()` result and every other
+production form of that owner. Preserve `_terminal_concat_unary_conv_stats`,
+the following terminal layout-option guard, existing retained shape-extract
+results, pass order, and observation-only evidence rules. Commit and push only;
+do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

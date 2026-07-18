@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -138,10 +135,6 @@ def test_concat_unary_conv_runner_schema_and_mutation_contract_are_explicit() ->
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal Concat/unary/Conv result is not retained yet",
-)
 def test_lowerer_retains_terminal_concat_unary_conv_result() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = [
