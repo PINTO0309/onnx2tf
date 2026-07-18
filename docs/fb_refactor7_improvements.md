@@ -819,6 +819,20 @@ pass `2 passed in 0.64s`, the focused reconciliation/owner gate passes
 `357 passed in 19.30s`, and the branch-changed broad related suite passes
 `1430 passed in 25.27s`.
 
+The existing shared-late reconciliation predicate remains unchanged over nine
+mutation dictionaries plus its tensor-count decrease. When that guard fires,
+the reconciliation now requests the complete mutation counter and retains
+`_shared_late_static_shape_stats`. Runtime fixtures still prove one additional
+scan for every positive dictionary and prune-only outcome; the retained result
+has no consumer.
+
+The implementation gate updated the matching architecture contract from a raw
+expression to the exact assignment. A similar late-binary guard remains a raw
+expression and was explicitly rechecked after applying the update with
+function-scoped context. The three structural contracts pass
+`3 passed in 2.22s`, the focused gate passes `365 passed in 18.89s`, and the
+branch-changed broad related suite passes `1427 passed in 24.69s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -826,8 +840,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the guarded shared-late `_reconcile_static_tensor_shapes()`
-call after the nine mutation dictionaries and tensor-count delta. Its execution
-guard must remain unchanged; only the complete opt-in result may be retained.
-Any change must preserve current pass order, TensorFlow-free boundary,
-dependency set, and sequential validation policy.
+unit should audit the guarded late-binary `_reconcile_static_tensor_shapes()`
+call after signature sanitization and two binary repairs plus its tensor-count
+delta. Its execution guard must remain unchanged; only the complete opt-in
+result may be retained. Any change must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.

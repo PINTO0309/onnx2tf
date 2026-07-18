@@ -7246,3 +7246,42 @@ The sole strict expected failure is the intentionally unimplemented guarded
 shared-late result retention contract above. Implement only that assignment
 and opt-in counter, rerun the same gates sequentially, then commit and push
 only; do not create, reopen, or update a pull request.
+
+## Guarded shared-late static-shape result retention implementation checkpoint
+
+The existing shared-late predicate remains unchanged over nine pure mutation-
+result dictionaries plus the tensor-count decrease that covers prune-only
+cleanup. When the guard fires, its reconciliation now requests
+`include_mutation_count=True` and retains
+`_shared_late_static_shape_stats`. The complete result has no consumer.
+
+This change preserves execution count, predicate order and names, reconciler
+fixed point, preceding owners, following `late_binary_repair_tensor_count`,
+pass order, dependencies, diagnostics, and TensorFlow behavior. Runtime tests
+continue to force each positive dictionary and the prune delta independently.
+
+The first implementation run found the expected stale architecture assertion
+that required the guard body to be `ast.Expr`. During its correction, a
+structurally similar late-binary assertion was initially selected; that hunk
+was restored immediately, and the update was reapplied with the shared-late
+test function as context. The final targeted gate explicitly verifies the
+unchanged late-binary expression and the new shared-late assignment.
+
+Implementation validation completed sequentially under `uv`:
+
+- late-binary raw contract, shared-late assignment contract, and terminal
+  result contract: `3 passed in 2.22s`
+- positive-count helper, runtime nine-result/prune guard, complete reconciler,
+  terminal occurrence, singleton boundary, architecture, and pass-efficiency
+  coverage: `365 passed in 18.89s`
+- branch-changed broad suite plus the same runtime and structural coverage:
+  `1427 passed in 24.69s`
+
+These are unit, contract, runtime-orchestration, and architecture checks; this
+result-retention change does not claim a new model-corpus run.
+
+At resume, audit the guarded late-binary `_reconcile_static_tensor_shapes()`
+call after `late_signature_stats`, `late_binary_adapter_stats`, and
+`late_singleton_adapter_stats` plus `late_binary_repair_tensor_count`.
+Preserve its existing predicate and characterize only a complete opt-in result
+target. Commit and push only; do not create, reopen, or update a pull request.

@@ -11069,11 +11069,10 @@ Runtime fixtures independently prove that every positive dictionary and the
 prune delta add exactly one reconciliation over the all-zero/no-prune path.
 Its execution predicate is therefore complete and must remain unchanged.
 
-Strict characterization selects only the call inside that existing guard for
-a future `_shared_late_static_shape_stats` assignment with
-`include_mutation_count=True`. It fixes all nine evidence names, the tensor-
-count clause, following late-binary tensor-count boundary, and the absence of a
-new consumer.
+The call inside that existing guard now retains
+`_shared_late_static_shape_stats` with `include_mutation_count=True`. All nine
+evidence names, the tensor-count clause, following late-binary tensor-count
+boundary, and the absence of a new consumer remain fixed.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
