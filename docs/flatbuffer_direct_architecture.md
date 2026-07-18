@@ -12507,3 +12507,13 @@ wrapper contract, exact direct argument, retained very-late SINet predecessor,
 residual-affine-fan-out successor, both declarative selection indices and
 model-only contracts, sole direct occurrence, and an unconsumed observation-
 only policy.
+
+The very-late raw residual affine/PReLU call now retains its unchanged one-key
+dictionary as `_very_late_residual_affine_prelu_stats`. The target remains
+unconsumed and observation-only. Both model-only declarative selections and
+their parent result tuples are unchanged.
+
+No owner logic, unconditional pruning, schema, wrapper, direct argument,
+surrounding call order, nested route, dependency, public API, or TensorFlow
+boundary changed. In particular, the observation counter is not used to infer
+whether unconditional cleanup mutated tensor storage.

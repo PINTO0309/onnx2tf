@@ -1842,3 +1842,12 @@ schema and cleanup, exact direct argument and neighbors, both nested indices,
 and absence of a consumer are frozen. The focused gate passes
 `284 passed, 1 xfailed in 18.07s`, the 98-file branch-changed suite passes
 `1641 passed, 1 xfailed in 30.68s`, and targeted static validation passes.
+
+The very-late residual affine/PReLU call now retains its unchanged dictionary
+as `_very_late_residual_affine_prelu_stats`. It remains unconsumed and
+observation-only; both model-only declarative selections and unconditional
+owner pruning are unchanged. The initial focused run exposed two stale
+boundary-target lists (`283 passed, 2 failed`); after adding the observation
+target, the focused gate passes `285 passed in 20.05s`, the 98-file branch-
+changed suite passes `1642 passed in 31.33s`, and targeted static validation
+passes.

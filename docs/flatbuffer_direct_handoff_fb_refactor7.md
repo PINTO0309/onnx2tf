@@ -11607,3 +11607,34 @@ nested selections, call order, direct arguments, adjacent calls, dependencies,
 public API, or TensorFlow behavior. Keep the target unconsumed, validate
 sequentially, commit, and push only; do not create, reopen, or update a pull
 request.
+
+## Residual affine/PReLU direct result implementation checkpoint
+
+The very-late raw call now retains its unchanged one-key dictionary as
+`_very_late_residual_affine_prelu_stats`. The target remains unconsumed and
+observation-only. The two model-only declarative selections and their parent
+result tuples are unchanged.
+
+No owner behavior, unconditional pruning, schema, wrapper, direct argument,
+call order, adjacent owner, nested route, dependency, public API, or TensorFlow
+behavior changed. A zero counter remains insufficient to prove no tensor
+cleanup mutation.
+
+The first focused implementation run reported `283 passed, 2 failed in
+18.80s`. Both failures already recognized the unchanged neighboring call names
+but omitted the newly assigned observation target from their explicit boundary-
+target lists. Those lists now include the target without weakening call-order
+or neighbor assertions. No production behavior failure was found.
+
+Corrected implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.56s`
+- owner behavior, direct wrapper, adjacent fan-out owner, both nested routes,
+  architecture, and focused direct rewrite coverage: `285 passed in 20.05s`
+- 98 branch-changed test files: `1642 passed in 31.33s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

@@ -285,6 +285,7 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
         "_terminal_dequant_hardsigmoid_bridge_stats",
         "_post_terminal_singleton_reshape_results",
         "_very_late_sinet_layout_recovery_results",
+        "_very_late_residual_affine_prelu_stats",
         "_post_cleanup_csp_attention_stats",
     ]
 

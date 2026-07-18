@@ -4941,7 +4941,9 @@ def lower_onnx_to_ir(
         _run_sinet_preadd_resize_recovery_sequence()
     )
     # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
-    _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+    _very_late_residual_affine_prelu_stats = (
+        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+    )
     _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
     _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
