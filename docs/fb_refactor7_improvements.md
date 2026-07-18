@@ -508,6 +508,17 @@ This checkpoint passes the focused Gather/cleanup/preprojection orchestration
 gate with `496 passed in 18.93s`, plus the branch-changed broad related suite
 with `1581 passed in 24.33s`.
 
+The direct late attention-preprojection Reshape-to-BatchMatMul rank-lift call
+now retains its existing one-counter dictionary as
+`_late_attention_preproj_ranklift_stats`. The separate recovery-runner
+selection, model-only owner, GraphIndex/pruning behavior, Gather-axis0
+predecessor, live-LayoutState window-partition successor, and TensorFlow-free
+boundary are unchanged. The value has no consumer or additional graph work.
+
+This checkpoint passes the focused preprojection/Gather/window-partition
+orchestration gate with `451 passed in 18.88s`, plus the branch-changed broad
+related suite with `1633 passed in 24.31s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -515,7 +526,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following attention-preprojection
-Reshape-to-BatchMatMul rank-lift result and its Gather/window-partition
-boundaries. Any new mutation evidence must preserve current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+unit should audit the immediately following window-partition
+Reshape/Transpose-to-SpaceToDepth result, its live LayoutState contract, and its
+preprojection/window-reverse boundaries. Any new mutation evidence must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

@@ -4919,7 +4919,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
+    _late_attention_preproj_ranklift_stats = (
+        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
+    )
     _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
         model_ir,
         layout_state=session.layout_state,

@@ -5381,3 +5381,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented direct
 late-result retention contract above.
+
+## Late attention preprojection result retention implementation checkpoint
+
+The sole direct late production call now retains the existing one-counter
+dictionary as `_late_attention_preproj_ranklift_stats`. This is an assignment-
+only orchestration change. The owner and schema, separate recovery-runner
+selection and captured results, GraphIndex/pruning behavior, callback
+arguments, pass order, Gather-axis0 predecessor, live-LayoutState window-
+partition successor, dependencies, and TensorFlow behavior are unchanged. The
+value has no consumer and triggers no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused preprojection owner, Gather/window-partition boundaries, layout
+  recovery, terminal-orchestration, and architecture gate:
+  `451 passed in 18.88s`
+- branch-changed broad related suite plus cleanup, indexed QKV/Gather-axis0,
+  preprojection, window partition, layout recovery, and pass-efficiency
+  coverage: `1633 passed in 24.31s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately following
+`_optimize_window_partition_reshape_transpose_to_space_to_depth_chains()`
+result, owner schema, live LayoutState contract, production occurrences, and
+preprojection/window-reverse boundaries before adding characterization. Commit
+and push only; do not create, reopen, or update a pull request.
