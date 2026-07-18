@@ -1749,6 +1749,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 2
+    previous_targets = []
     previous_keyword_names = []
     next_call_names = []
     for index in invocation_indexes:
@@ -1756,21 +1757,29 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         assert invocation.args == []
         assert invocation.keywords == []
         previous = lowerer.body[index - 1]
-        assert isinstance(previous, ast.Expr)
-        assert isinstance(previous.value, ast.Call)
-        assert isinstance(previous.value.func, ast.Name)
+        assert isinstance(previous, (ast.Assign, ast.Expr))
+        previous_target = None
+        if isinstance(previous, ast.Assign):
+            assert len(previous.targets) == 1
+            assert isinstance(previous.targets[0], ast.Name)
+            previous_target = previous.targets[0].id
+        previous_call = previous.value
+        assert isinstance(previous_call, ast.Call)
+        assert isinstance(previous_call.func, ast.Name)
         assert (
-            previous.value.func.id
+            previous_call.func.id
             == "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
         )
+        previous_targets.append(previous_target)
         previous_keyword_names.append(
-            [keyword.arg for keyword in previous.value.keywords]
+            [keyword.arg for keyword in previous_call.keywords]
         )
         following = lowerer.body[index + 1]
         assert isinstance(following, ast.Expr)
         assert isinstance(following.value, ast.Call)
         assert isinstance(following.value.func, ast.Name)
         next_call_names.append(following.value.func.id)
+    assert previous_targets == [None, "_final_channel_slice_muladd_bridge_stats"]
     assert previous_keyword_names == [["layout_state"], []]
     assert next_call_names == [
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",

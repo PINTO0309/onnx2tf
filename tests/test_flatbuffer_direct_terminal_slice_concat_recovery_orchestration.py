@@ -224,31 +224,42 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
     ]
 
     assert len(invocation_indexes) == 2
-    observed: list[tuple[str, tuple[str | None, ...], str]] = []
+    observed: list[
+        tuple[str | None, str, tuple[str | None, ...], str]
+    ] = []
     for index in invocation_indexes:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
-        assert isinstance(previous, ast.Expr)
-        assert isinstance(previous.value, ast.Call)
-        assert isinstance(previous.value.func, ast.Name)
+        assert isinstance(previous, (ast.Assign, ast.Expr))
+        previous_target: str | None = None
+        if isinstance(previous, ast.Assign):
+            assert len(previous.targets) == 1
+            assert isinstance(previous.targets[0], ast.Name)
+            previous_target = previous.targets[0].id
+        previous_call = previous.value
+        assert isinstance(previous_call, ast.Call)
+        assert isinstance(previous_call.func, ast.Name)
         assert isinstance(following, ast.Expr)
         assert isinstance(following.value, ast.Call)
         assert isinstance(following.value.func, ast.Name)
         observed.append(
             (
-                previous.value.func.id,
-                tuple(keyword.arg for keyword in previous.value.keywords),
+                previous_target,
+                previous_call.func.id,
+                tuple(keyword.arg for keyword in previous_call.keywords),
                 following.value.func.id,
             )
         )
 
     assert observed == [
         (
+            None,
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             ("layout_state",),
             "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
         ),
         (
+            "_final_channel_slice_muladd_bridge_stats",
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             (),
             "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",

@@ -6169,3 +6169,39 @@ The sole strict expected failure is the intentionally unimplemented final
 channel-slice MulAdd-bridge result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Final channel-slice MulAdd-bridge result retention implementation checkpoint
+
+Only the later model-only production call now retains its existing one-counter
+dictionary as `_final_channel_slice_muladd_bridge_stats`. The first live-
+LayoutState occurrence remains raw. This is an assignment-only orchestration
+change. The wrapper and pass implementation, result schema, rewrite guards,
+graph mutation, tensor pruning, GraphIndex/LayoutState behavior, callback
+arguments, pass order, captured final internal-channel-slice predecessor, both
+terminal recovery calls, first occurrence and boundaries, dependencies,
+diagnostics, and TensorFlow behavior are unchanged. The retained value has no
+consumer and triggers no additional graph work.
+
+Recovery orchestration and architecture contracts now distinguish the first
+raw expression from the later `_final_channel_slice_muladd_bridge_stats`
+assignment while preserving both zero-argument recovery invocations and their
+successors.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused MulAdd-bridge owner, both terminal recovery boundaries, schema,
+  terminal orchestration, architecture, and pass-efficiency gate:
+  `346 passed in 20.08s`
+- branch-changed broad suite plus boundary/channel-slice, pad-Mul, both terminal
+  recovery sequences, architecture, and pass-efficiency coverage:
+  `1391 passed in 24.78s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the first raw live-LayoutState
+`_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains()` result, keep
+`_final_channel_slice_muladd_bridge_stats` fixed for the later occurrence, and
+preserve its captured terminal internal-channel-slice/recovery boundaries
+before adding characterization. Commit and push only; do not create, reopen,
+or update a pull request.

@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2390,10 +2388,6 @@ def test_primary_path_retains_final_internal_channel_slice_result() -> None:
     assert successor_call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final channel-slice MulAdd-bridge result is discarded",
-)
 def test_primary_path_retains_final_channel_slice_muladd_bridge_result() -> None:
     body = _lowerer_body()
     callback_name = (
