@@ -12204,6 +12204,17 @@ dequant-HardSigmoid predecessor, retained cost-volume affine successor,
 required/full nested indices and shared-scope contracts, sole direct
 occurrences, and an unconsumed observation-only policy for both targets.
 
+The adjacent late direct calls now retain their unchanged dictionaries as
+`_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats`. Both targets remain unconsumed and
+observation-only, and the direct calls continue to share the same explicit
+state scope.
+
+No transactional owner logic, schemas, lower-level pruning, direct or nested
+state-scope ownership, arguments, required/full gate indices, neighboring
+retained results, call order, dependency, public API, or TensorFlow boundary
+changed. Neither target is used as complete mutation evidence.
+
 The primary call now retains its unchanged dictionary as
 `_layout_pass_set_1_layout_transpose_cleanup_stats`. All three direct lowerer
 occurrences are therefore explicit assignments, while the late-binary nested

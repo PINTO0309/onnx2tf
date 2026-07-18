@@ -11871,3 +11871,30 @@ owners or schemas, underlying pruning, shared scope, nested selection, direct
 arguments, call order, dependencies, public API, or TensorFlow behavior. Keep
 both targets unconsumed, validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
+
+## Late NDHWC/cost-volume direct results implementation checkpoint
+
+The adjacent late calls now retain their unchanged dictionaries as
+`_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats`. Both targets remain unconsumed and
+observation-only. The calls remain adjacent and continue to share the existing
+`late_ndhwc_cost_volume_state_scope`.
+
+No transactional owner behavior, fixed schema, lower-level pruning, shared
+scope, direct ModelIR/LayoutState/diagnostics arguments, gate required/full
+selection or scope identity, retained predecessor/successor, call order,
+dependency, public API, or TensorFlow behavior changed. No intermediate test
+failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated pair contract: `3 passed in 0.57s`
+- both owners, gate orchestration, direct neighbors, terminal validation,
+  architecture, and pass-efficiency coverage: `417 passed in 19.19s`
+- 102 branch-changed test files: `1654 passed in 30.84s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

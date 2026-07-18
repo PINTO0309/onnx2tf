@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -219,8 +217,8 @@ def test_late_ndhwc_cost_volume_direct_pair_boundary_is_explicit() -> None:
     lowerer, scope_index = _scope_location()
     ndhwc = lowerer.body[scope_index + 1]
     cost_volume = lowerer.body[scope_index + 2]
-    assert isinstance(ndhwc, ast.Expr)
-    assert isinstance(cost_volume, ast.Expr)
+    assert _single_target(ndhwc) == NDHWC_TARGET
+    assert _single_target(cost_volume) == COST_VOLUME_TARGET
     assert _call_name(ndhwc) == NDHWC_OWNER
     assert _call_name(cost_volume) == COST_VOLUME_OWNER
     for statement in (ndhwc, cost_volume):
@@ -246,10 +244,6 @@ def test_late_ndhwc_cost_volume_direct_pair_boundary_is_explicit() -> None:
         ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late NDHWC/cost-volume direct results are discarded",
-)
 def test_late_ndhwc_cost_volume_direct_results_are_retained_for_observation() -> None:
     lowerer, scope_index = _scope_location()
     assert _single_target(lowerer.body[scope_index + 1]) == NDHWC_TARGET

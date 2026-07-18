@@ -1915,3 +1915,11 @@ absence of consumers are frozen. After correcting one test-only loop-generated
 PassSpec assumption, the focused gate passes
 `416 passed, 1 xfailed in 19.41s`, the 102-file branch-changed suite passes
 `1653 passed, 1 xfailed in 31.98s`, and targeted static validation passes.
+
+The adjacent late NDHWC gate and cost-volume scatter calls now retain their
+unchanged dictionaries as `_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats`. Both remain unconsumed and share the
+same explicit direct scope; gate required/full indices, nested scope identity,
+transactional owners, and lower-level pruning are unchanged. The focused gate
+passes `417 passed in 19.19s`, the 102-file branch-changed suite passes
+`1654 passed in 30.84s`, and targeted static validation passes.

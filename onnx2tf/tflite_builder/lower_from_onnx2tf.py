@@ -5017,17 +5017,21 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    run_ndhwc_gate_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_ndhwc_cost_volume_state_scope,
+    _late_ndhwc_gate_layout_stats = (
+        run_ndhwc_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_ndhwc_cost_volume_state_scope,
+        )
     )
-    run_cost_volume_scatter_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_ndhwc_cost_volume_state_scope,
+    _late_cost_volume_scatter_layout_stats = (
+        run_cost_volume_scatter_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_ndhwc_cost_volume_state_scope,
+        )
     )
     _late_cost_volume_conv_affine_stats = (
         _optimize_fold_conv_mul_add_affine_chains(
