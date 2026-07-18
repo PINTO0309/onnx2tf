@@ -1795,3 +1795,13 @@ expectations (`335 passed, 3 failed`), which were updated from discarded
 expressions to the typed `Return`/selected `Assign` contract. The corrected
 focused gate passes `338 passed in 20.10s`, the 95-file branch-changed suite
 passes `1635 passed in 30.60s`, and targeted static validation passes.
+
+Terminal singleton-MaxPool/Reshape recovery is now characterized as two fixed-
+schema child results sharing one `ModelIRPassStateScope`. The recovery engine
+already constructs their ordered tuple, while the runner, helper, and sole
+direct call currently discard it. Strict propagation selects the unconsumed
+observation target `_terminal_singleton_maxpool_reshape_results`; child order,
+schemas, zero-argument direct use, guarded elementwise-fanout/convpool-output
+boundary, and sole occurrence are frozen. The focused gate passes
+`397 passed, 1 xfailed in 19.66s`, the 96-file branch-changed suite passes
+`1636 passed, 1 xfailed in 31.81s`, and targeted static validation passes.

@@ -11435,3 +11435,40 @@ These are unit, contract, orchestration, and changed-suite checks; this
 observation-only propagation does not claim a new model-corpus run. At resume,
 inventory the next raw pass-result boundary before selecting a new target.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Terminal singleton-MaxPool/Reshape result characterization checkpoint
+
+The terminal singleton-MaxPool/Reshape runner owns two ordered children:
+singleton-MaxPool layout cleanup and consecutive-Reshape cleanup. Both use one
+shared `ModelIRPassStateScope` and the same ModelIR, LayoutState, diagnostics,
+and keyword contract. On an empty graph their fixed schemas contain the two
+singleton-MaxPool counters and three Reshape counters respectively.
+
+The recovery engine already creates the ordered child-result tuple, but the
+runner and lowerer helper return `None`, and the sole zero-argument direct call
+is an expression. That call remains between the guarded retained terminal
+elementwise-fanout result and the guarded retained convpool-output result.
+
+A passing contract freezes both child IDs and schemas, current runner/helper
+discard form, exact direct boundary, sole occurrence, and shared orchestration
+contract. A strict expected-failure contract verifies synthetic ordered child
+results and selects the unconsumed observation target
+`_terminal_singleton_maxpool_reshape_results`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.60s`
+- child owners, orchestration, direct neighbors, terminal validation, shared
+  context, architecture, and pass-efficiency coverage:
+  `397 passed, 1 xfailed in 19.66s`
+- 96 branch-changed test files: `1636 passed, 1 xfailed in 31.81s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented three-boundary
+propagation contract. Return the existing tuple from the runner and helper,
+retain it at the direct call, and update only stale structural contracts. Do
+not change child callbacks or schemas, pass order, shared state scope, direct
+arguments, guards, surrounding calls, dependency, public API, or TensorFlow
+behavior. Keep the target unconsumed, validate sequentially, commit, and push
+only; do not create, reopen, or update a pull request.

@@ -12441,3 +12441,18 @@ child callback contracts, direct policy argument, SA/PA-MirrorPad predecessor,
 two-iteration normalization successor, public API, dependencies, and
 TensorFlow boundary are unchanged. The retained direct tuple is
 observation-only and is not interpreted as mutation evidence.
+
+Terminal singleton-MaxPool/Reshape orchestration has two ordered children:
+singleton-MaxPool layout cleanup followed by consecutive-Reshape cleanup. Both
+receive the same model, LayoutState, diagnostics, and one shared
+`ModelIRPassStateScope`. Their fixed result dictionaries contain two and three
+integer counters respectively. `run_recovery_invocations()` already constructs
+the ordered pair, while the runner, lowerer helper, and sole direct call
+currently discard it.
+
+Strict characterization selects
+`_terminal_singleton_maxpool_reshape_results`. It freezes both child schemas,
+shared-scope invocation contracts, zero-argument helper use, the guarded
+terminal elementwise-fanout/convpool-output boundary, sole occurrence, typed
+runner/helper propagation requirement, and an unconsumed observation-only
+direct policy.
