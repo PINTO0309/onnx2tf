@@ -10702,3 +10702,41 @@ routing, later consumed form, convergence guard, surrounding calls,
 dependency, public API, or TensorFlow behavior. Keep the direct result
 unconsumed, validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
+
+## InstanceNorm pre/post result retention implementation checkpoint
+
+The direct pass-set-1 call now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_instancenorm_prepost_stats`. It remains between
+`_layout_pass_set_1_final_attention_recovery_results` and direct
+`run_squeeze_reshape_identity_cleanup()`.
+
+The target is unconsumed and observation-only. The later two-iteration form is
+unchanged: it still receives `normalization_graph_index`, extracts the counter,
+and contributes to the existing convergence break. No dispatcher, owner order,
+rewrite cap, schema, GraphIndex/LayoutState routing, convergence guard, pass
+order, dependency, public API, or TensorFlow import path changed.
+
+The first focused implementation run exposed one stale architecture assertion
+that required the third attention-prefix successor to remain a raw expression
+(`536 passed, 1 failed`). It now requires the same call identity on the new
+InstanceNorm target. This was a structural contract update, not a production
+regression.
+
+Implementation validation completed sequentially under `uv`:
+
+- four InstanceNorm owner families, direct and consumed-loop forms, final
+  attention boundary, architecture, and pass-efficiency coverage:
+  `537 passed in 20.50s`
+- branch-changed broad suite: `1615 passed in 28.89s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run.
+
+At resume, audit the direct `run_squeeze_reshape_identity_cleanup()` result
+immediately after `_layout_pass_set_1_instancenorm_prepost_stats` and inventory
+all other direct or orchestration-selected policy forms before changing it.
+Preserve `include_unary_passthrough=True`, live LayoutState/diagnostics, and the
+following final suffix boundary. Commit and push only; do not create, reopen,
+or update a pull request.

@@ -12210,6 +12210,13 @@ freezes the four-owner dispatch and schema, direct live LayoutState argument,
 later shared GraphIndex consumer, exact call count, final-attention/
 squeeze-cleanup boundary, and an unconsumed observation-only policy.
 
+The direct pass-set-1 call now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_instancenorm_prepost_stats`. The target remains unconsumed;
+the later two-iteration form still consumes its counter with the shared
+normalization GraphIndex. No dispatcher, owner order, rewrite cap, schema,
+GraphIndex/LayoutState routing, convergence guard, pass order, dependency,
+public API, or TensorFlow boundary changes.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

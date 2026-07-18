@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER = "_optimize_transpose_instancenorm_prepost_nhwc_chains"
@@ -122,10 +119,6 @@ def test_instancenorm_prepost_schema_dispatch_and_both_forms_are_explicit() -> N
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the direct InstanceNorm pre/post result is discarded",
-)
 def test_direct_instancenorm_prepost_result_is_retained_observation_only() -> None:
     lowerer = _functions()["lower_onnx_to_ir"]
     layout_guard = next(

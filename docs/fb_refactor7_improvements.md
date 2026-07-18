@@ -1599,3 +1599,14 @@ loop `.get()` expression, final-attention/squeeze-cleanup boundary, and
 unconsumed direct policy are frozen. The focused gate passes
 `536 passed, 1 xfailed in 18.21s`; the branch-changed broad gate passes
 `1614 passed, 1 xfailed in 29.38s`.
+
+The direct pass-set-1 call now retains
+`_layout_pass_set_1_instancenorm_prepost_stats`; the later convergence consumer
+is unchanged. One stale raw-successor architecture assertion was updated after
+the initial `536 passed, 1 failed` gate. The corrected focused gate passes
+`537 passed in 20.50s`, the branch-changed broad suite passes
+`1615 passed in 28.89s`, and targeted static validation passes.
+
+The next unit should audit the direct squeeze/unary/Reshape identity cleanup
+result and all of that runner's other policy-selected occurrences before
+changing its boundary.

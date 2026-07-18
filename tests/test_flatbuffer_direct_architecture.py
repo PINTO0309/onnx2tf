@@ -702,19 +702,32 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         "_layout_pass_set_1_final_attention_recovery_results",
     ]
     next_call_names = []
+    next_targets = []
     for index in invocation_indexes:
         invocation = layout_recovery.body[index].value
         assert invocation.args == []
         assert invocation.keywords == []
         following = layout_recovery.body[index + 1]
-        assert isinstance(following, ast.Expr)
+        assert isinstance(following, (ast.Assign, ast.Expr))
         assert isinstance(following.value, ast.Call)
         assert isinstance(following.value.func, ast.Name)
         next_call_names.append(following.value.func.id)
+        next_targets.append(
+            following.targets[0].id
+            if isinstance(following, ast.Assign)
+            and len(following.targets) == 1
+            and isinstance(following.targets[0], ast.Name)
+            else None
+        )
     assert next_call_names == [
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_transpose_instancenorm_prepost_nhwc_chains",
+    ]
+    assert next_targets == [
+        None,
+        None,
+        "_layout_pass_set_1_instancenorm_prepost_stats",
     ]
 
 
