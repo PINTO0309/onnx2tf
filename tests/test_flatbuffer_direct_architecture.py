@@ -1060,20 +1060,17 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         "_run_safe_binary_bridge_recovery_pass",
     )
 
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_safe_binary_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "quantized_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_safe_binary_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "quantized_recovery_context"
+    assert helper_call.keywords == []
 
     compatibility_dispatchers = {
         "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe":
@@ -1116,21 +1113,31 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == helper_name
             ):
                 continue
             direct_boundaries.append(
-                (statement.body[index - 1], statement.body[index + 1])
+                (
+                    candidate.targets[0].id,
+                    statement.body[index - 1],
+                    statement.body[index + 1],
+                )
             )
     assert len(direct_boundaries) == 2
-    assert [boundary[0].value.func.id for boundary in direct_boundaries] == [
+    assert [boundary[0] for boundary in direct_boundaries] == [
+        "_layout_pass_set_1_safe_binary_results",
+        "_layout_pass_set_1_final_safe_binary_results",
+    ]
+    assert [boundary[1].value.func.id for boundary in direct_boundaries] == [
         "_run_layout_attention_quantized_recovery_suffix",
         "_run_transpose_unary_fanout_layout_pass_cluster",
     ]
-    assert [boundary[1].value.func.id for boundary in direct_boundaries] == [
+    assert [boundary[2].value.func.id for boundary in direct_boundaries] == [
         "_optimize_transpose_dequantize_mean_quantize_bridges",
         "_advance_post_progress",
     ]
@@ -7809,7 +7816,12 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
         == "_run_layout_attention_quantized_recovery_suffix"
     )
     next_boundary = layout_recovery.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == (
+        "_layout_pass_set_1_final_safe_binary_results"
+    )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (

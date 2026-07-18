@@ -236,6 +236,7 @@ def test_layout_attention_quantized_suffix_invocations_preserve_option() -> None
 def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     boundaries: list[tuple[str, str]] = []
+    following_targets: list[str | None] = []
     for statement in lowerer.body:
         if not isinstance(statement, ast.If):
             continue
@@ -252,10 +253,17 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
             assert isinstance(previous, ast.Expr)
             assert isinstance(previous.value, ast.Call)
             assert isinstance(previous.value.func, ast.Name)
-            assert isinstance(following, ast.Expr)
+            assert isinstance(following, (ast.Assign, ast.Expr))
             assert isinstance(following.value, ast.Call)
             assert isinstance(following.value.func, ast.Name)
             boundaries.append((previous.value.func.id, following.value.func.id))
+            following_targets.append(
+                following.targets[0].id
+                if isinstance(following, ast.Assign)
+                and len(following.targets) == 1
+                and isinstance(following.targets[0], ast.Name)
+                else None
+            )
 
     assert boundaries == [
         (
@@ -266,6 +274,10 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
             "run_squeeze_reshape_identity_cleanup",
             "_run_transpose_unary_fanout_layout_pass_cluster",
         ),
+    ]
+    assert following_targets == [
+        "_layout_pass_set_1_safe_binary_results",
+        None,
     ]
 
 

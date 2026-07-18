@@ -4258,8 +4258,8 @@ def lower_onnx_to_ir(
     def _run_attention_gate_qdq_recovery_sequence() -> None:
         run_attention_gate_qdq_recovery(attention_recovery_context)
 
-    def _run_safe_binary_bridge_recovery_sequence() -> None:
-        run_safe_binary_recovery(quantized_recovery_context)
+    def _run_safe_binary_bridge_recovery_sequence() -> Tuple[Any, ...]:
+        return run_safe_binary_recovery(quantized_recovery_context)
 
     def _run_quantized_activation_binary_bridge_recovery_sequence(
     ) -> Tuple[Any, ...]:
@@ -4446,7 +4446,9 @@ def lower_onnx_to_ir(
         _run_layout_attention_quantized_recovery_suffix(
             include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
         )
-        _run_safe_binary_bridge_recovery_sequence()
+        _layout_pass_set_1_safe_binary_results = (
+            _run_safe_binary_bridge_recovery_sequence()
+        )
         _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
         _run_qlinear_mean_concat_recovery_sequence()
         _run_layout_reshape_attention_recovery_prefix()
@@ -4467,7 +4469,9 @@ def lower_onnx_to_ir(
             include_layout_transpose=True,
             include_unary_passthrough=False,
         )
-        _run_safe_binary_bridge_recovery_sequence()
+        _layout_pass_set_1_final_safe_binary_results = (
+            _run_safe_binary_bridge_recovery_sequence()
+        )
         _advance_post_progress()
     _set_post_progress_desc("core cleanup passes")
     _core_cleanup_pseudo_leakyrelu_stats = (

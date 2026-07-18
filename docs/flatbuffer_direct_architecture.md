@@ -11988,3 +11988,13 @@ must remain unconsumed because the five-mode owner prunes unused tensors even
 when all rewrite counters are zero. The contract freezes the helper return
 boundary, exact two-call count, zero arguments, one-slot/five-key schema,
 distinct predecessor/successor pairs, and absence of a summary or guard.
+
+The separate lowerer helper now transparently returns the existing one-slot
+tuple. Its two direct calls retain `_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_final_safe_binary_results`, respectively. Both remain
+unconsumed and observation-only.
+
+This propagation changes no safe-binary phase, five-key dictionary schema,
+cleanup timing, shared context, nested quantized-activation invocation,
+layout-attention or unary-fanout policy, progress boundary, dependency, public
+behavior, or TensorFlow isolation.

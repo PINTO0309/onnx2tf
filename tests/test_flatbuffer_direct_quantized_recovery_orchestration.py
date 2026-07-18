@@ -239,7 +239,7 @@ def test_quantized_recovery_context_and_wrappers_are_explicit() -> None:
     lowerer, safe_helper = _lowerer_and_helper(SAFE_BINARY)
     _, quantized_helper = _lowerer_and_helper(QUANTIZED_ACTIVATION_BINARY)
     expected_wrappers = {
-        SAFE_BINARY: (safe_helper, "run_safe_binary_recovery", ast.Expr),
+        SAFE_BINARY: (safe_helper, "run_safe_binary_recovery", ast.Return),
         QUANTIZED_ACTIVATION_BINARY: (
             quantized_helper,
             "run_quantized_activation_binary_recovery",
@@ -469,10 +469,6 @@ def test_quantized_activation_binary_propagates_nested_results_to_both_calls(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="both independent direct safe-binary results are discarded",
-)
 def test_safe_binary_helper_propagates_and_retains_both_direct_results() -> None:
     orchestration_functions = {
         node.name: node

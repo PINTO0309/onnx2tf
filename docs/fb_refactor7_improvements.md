@@ -1369,6 +1369,16 @@ the unconsumed policy are frozen before implementation. The corrected focused
 gate passes `410 passed, 1 xfailed in 18.93s`; the strict xfail is the selected
 two-call retention contract. The branch-changed broad characterization gate
 passes `1570 passed, 1 xfailed in 29.04s`.
+
+The safe-binary lowerer helper now returns its unchanged one-slot tuple, and
+the two direct calls retain `_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_final_safe_binary_results`. Both remain observation-only.
+The focused implementation gate passes `411 passed in 20.67s`, the
+branch-changed broad suite passes `1571 passed in 29.20s`, and targeted static
+validation passes.
+
+The next unit should audit both layout-attention/quantized suffix calls and the
+ordered runner results they currently discard.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

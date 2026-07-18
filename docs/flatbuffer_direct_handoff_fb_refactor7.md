@@ -9229,6 +9229,42 @@ propagated nested call, owner, schema, order, contexts, or adjacent policies.
 Validate sequentially, commit, and push only; do not create, reopen, or update
 a pull request.
 
+## Direct safe-binary result retention implementation checkpoint
+
+The lowerer safe-binary helper now transparently returns the one-slot tuple
+already exposed by `run_safe_binary_recovery()`. Its first direct call retains
+`_layout_pass_set_1_safe_binary_results`; its final pass-set call retains
+`_layout_pass_set_1_final_safe_binary_results`. Both results remain unconsumed
+and observation-only because all-zero mode counters do not exclude the owner's
+unconditional prune.
+
+The first implementation gate exposed four stale structural boundaries that
+required raw safe-binary expressions after the layout-attention suffix and
+Transpose/unary-fanout cluster (`407 passed, 4 failed`). Each now requires the
+appropriate assignment target and the same unchanged RHS helper call. These
+were characterization adjustments, not production regressions.
+
+Implementation validation completed sequentially under `uv`:
+
+- safe-binary owner and helper, nested quantized recovery, layout-attention
+  suffix, Transpose/unary-fanout, both result boundaries, architecture, and
+  pass-efficiency coverage: `411 passed in 20.67s`
+- branch-changed broad suite: `1571 passed in 29.20s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The implementation changes only helper return and two assignments. It adds no
+summary, guard, child invocation, pass-order change, dependency, public API
+change, or TensorFlow import path. These checks do not claim a model-corpus
+run.
+
+At resume, audit the two direct
+`_run_layout_attention_quantized_recovery_suffix()` calls immediately before
+the new first safe-binary result and the Transpose/unary-fanout cluster. Freeze
+the phase runner's ordered result contract, policy argument, and both distinct
+boundaries before changing production. Commit and push only; do not create,
+reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

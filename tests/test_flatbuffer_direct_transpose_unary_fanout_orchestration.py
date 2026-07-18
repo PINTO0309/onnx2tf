@@ -316,11 +316,18 @@ def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> No
     )
     previous = parent.body[direct_index - 1]
     following = parent.body[direct_index + 1]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
+    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == "_run_layout_attention_quantized_recovery_suffix"
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_layout_pass_set_1_final_safe_binary_results"
+    )
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_run_safe_binary_bridge_recovery_sequence"
 
     callback_index = ATTENTION_GATE_QDQ_PASS_IDS.index(TRANSPOSE_UNARY_FANOUT)
