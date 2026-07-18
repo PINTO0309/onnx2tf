@@ -12493,3 +12493,17 @@ All fixed child schemas and callbacks, pass order, one shared
 dequant-HardSigmoid predecessor, swish-transpose successor, public API,
 dependencies, and TensorFlow boundary are unchanged. The result tuple does not
 control later lowering or claim complete mutation evidence.
+
+`optimize_transpose_pre_add_mul_add_prelu_nhwc_chains()` exposes the fixed
+one-key result `optimized_transpose_pre_add_mul_add_prelu_nhwc_chains`. The
+lowerer calls its wrapper once directly, while pre-Add/mean-attention and SINet
+pre-Add/resize orchestration each select the public model-only owner once. The
+owner always prunes unused tensors on exit, so a zero counter is not complete
+mutation evidence.
+
+Strict characterization selects `_very_late_residual_affine_prelu_stats` for
+only the direct result. It freezes the owner schema and unconditional cleanup,
+wrapper contract, exact direct argument, retained very-late SINet predecessor,
+residual-affine-fan-out successor, both declarative selection indices and
+model-only contracts, sole direct occurrence, and an unconsumed observation-
+only policy.

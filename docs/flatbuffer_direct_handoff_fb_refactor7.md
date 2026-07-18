@@ -11571,3 +11571,39 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 small discarded-result boundary before modifying production code. Commit and
 push only; do not create, reopen, or update a pull request.
+
+## Residual affine/PReLU direct result characterization checkpoint
+
+The extracted residual affine/PReLU owner returns the fixed one-key dictionary
+`optimized_transpose_pre_add_mul_add_prelu_nhwc_chains`. It unconditionally
+prunes unused tensors before returning, so its zero counter cannot prove that
+the graph was not mutated.
+
+The lowerer has one raw direct wrapper call. Pre-Add/mean-attention selects the
+public owner at index 1, and SINet pre-Add/resize recovery selects it at index
+0; both declarative forms are model-only and remain consumed by their parent
+result tuples. The raw direct call is between the retained
+`_very_late_sinet_preadd_resize_results` tuple and the residual-affine-fan-out
+owner.
+
+Passing contracts freeze the owner schema and unconditional cleanup, wrapper,
+exact direct call and neighbors, sole direct occurrence, and both nested
+selection indices and empty keyword contracts. A strict expected-failure
+contract selects the unconsumed observation target
+`_very_late_residual_affine_prelu_stats` only for the raw direct result.
+
+Characterization validation completed sequentially under `uv`:
+
+- owner behavior, direct wrapper, adjacent fan-out owner, both nested routes,
+  architecture, and focused direct rewrite coverage:
+  `284 passed, 1 xfailed in 18.07s`
+- 98 branch-changed test files: `1641 passed, 1 xfailed in 30.68s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct assignment.
+Retain only the existing dictionary. Do not change owner cleanup or schema,
+nested selections, call order, direct arguments, adjacent calls, dependencies,
+public API, or TensorFlow behavior. Keep the target unconsumed, validate
+sequentially, commit, and push only; do not create, reopen, or update a pull
+request.

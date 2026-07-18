@@ -1833,3 +1833,12 @@ order, shared state scope, zero-argument helper use, and the retained dequant-
 HardSigmoid/raw-swish boundary are unchanged. The focused gate passes
 `377 passed in 21.25s`, the 97-file branch-changed suite passes
 `1639 passed in 31.71s`, and targeted static validation passes.
+
+The residual affine/PReLU owner is now characterized as a fixed one-key result
+with unconditional unused-tensor pruning, one raw direct wrapper call, and two
+model-only declarative selections. Strict retention selects
+`_very_late_residual_affine_prelu_stats` only for the direct result; the owner
+schema and cleanup, exact direct argument and neighbors, both nested indices,
+and absence of a consumer are frozen. The focused gate passes
+`284 passed, 1 xfailed in 18.07s`, the 98-file branch-changed suite passes
+`1641 passed, 1 xfailed in 30.68s`, and targeted static validation passes.
