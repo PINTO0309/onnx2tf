@@ -11765,3 +11765,40 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Mixed-attention layout direct result characterization checkpoint
+
+The mixed-attention layout runner returns the fixed one-key dictionary
+`optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains` from a
+transactional layout pass. Its underlying optimizer prunes unused tensors on
+exit, so a zero rewrite counter is not complete mutation evidence.
+
+Three routes are frozen: the raw post-SINet direct call, gate-layout full-policy
+index 0, and absolute-final normalization/attention index 1. The reduced gate
+policy intentionally excludes this child. Both nested routes receive their
+parent's shared state scope. The raw call remains between retained
+`_post_sinet_mix_attention_stats` and
+`_post_sinet_dequant_hardsigmoid_bridge_stats` and does not pass a scope.
+
+Passing contracts freeze the fixed schema, transactional pass ID, all direct
+arguments and neighbors, nested indices and shared-scope contracts, reduced-
+policy exclusion, and sole direct occurrence. A strict expected-failure
+contract selects the unconsumed observation target
+`_post_sinet_mixed_attention_layout_stats` only for the raw call.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.68s`
+- gate and absolute-final orchestration, indexed SINet and dequant neighbors,
+  architecture, pass efficiency, and focused owner behavior:
+  `320 passed, 1 xfailed in 21.01s`
+- 101 branch-changed test files: `1650 passed, 1 xfailed in 35.95s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct assignment.
+Retain only the existing dictionary. Do not change transactional owner logic,
+schema, underlying pruning, state-scope ownership, full/reduced selection,
+direct arguments, call order, dependencies, public API, or TensorFlow behavior.
+Keep the target unconsumed, validate sequentially, commit, and push only; do
+not create, reopen, or update a pull request.

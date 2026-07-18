@@ -12164,6 +12164,21 @@ guarded pruning, LayoutState synchronization, schema, wrapper forwarding,
 direct arguments, call order, nested route, dependency, public API, or
 TensorFlow boundary changed.
 
+`run_mixed_attention_layout_cleanup()` exposes the fixed one-key result
+`optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains` through a
+transactional ModelIR pass. The lowerer calls it once directly. Gate-layout
+full policy selects it at index 0, reduced policy excludes it, and absolute-
+final normalization/attention selects it at index 1. Both nested routes share
+their parent `ModelIRPassStateScope`. The underlying optimizer prunes unused
+tensors on exit, so zero is not complete mutation evidence.
+
+Strict characterization selects `_post_sinet_mixed_attention_layout_stats`
+only for the raw direct result. It freezes the schema, pass ID and transactional
+contract, direct ModelIR/LayoutState/diagnostics arguments, retained indexed
+SINet predecessor, dequant-HardSigmoid successor, both nested indices and
+shared-scope keyword contracts, reduced-policy exclusion, sole direct
+occurrence, and an unconsumed observation-only policy.
+
 The primary call now retains its unchanged dictionary as
 `_layout_pass_set_1_layout_transpose_cleanup_stats`. All three direct lowerer
 occurrences are therefore explicit assignments, while the late-binary nested

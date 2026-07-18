@@ -1885,3 +1885,14 @@ the indexed owner, layout-aware attention selection, and following distinct
 mixed-attention cleanup are unchanged. The focused gate passes
 `376 passed in 18.76s`, the 100-file branch-changed suite passes
 `1648 passed in 31.83s`, and targeted static validation passes.
+
+The transactional mixed-attention layout runner is now characterized as a
+fixed one-key result with one raw direct call, gate-layout full-policy index 0,
+and absolute-final normalization/attention index 1; reduced gate policy
+excludes it. Strict retention selects
+`_post_sinet_mixed_attention_layout_stats` only for the direct result. Schema,
+pass ID, underlying cleanup, direct arguments and indexed-SINet/dequant
+neighbors, shared-scope nested contracts, and absence of a consumer are frozen.
+The focused gate passes `320 passed, 1 xfailed in 21.01s`, the 101-file branch-
+changed suite passes `1650 passed, 1 xfailed in 35.95s`, and targeted static
+validation passes.
