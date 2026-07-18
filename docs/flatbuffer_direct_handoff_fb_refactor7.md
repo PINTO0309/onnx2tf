@@ -9190,6 +9190,45 @@ but the lowerer helper still discards it. Preserve the layout-attention/
 dequantized-Mean and unary-fanout/progress boundaries. Commit and push only; do
 not create, reopen, or update a pull request.
 
+## Direct safe-binary results characterization checkpoint
+
+The one-slot tuple returned by `run_safe_binary_recovery()` is also reached by
+two independent zero-argument lowerer-helper calls outside the nested
+quantized-activation recovery. The first follows the layout-attention/
+quantized suffix and precedes the dequantized-Mean/Quantize bridge. The second
+follows the Transpose/unary fanout cluster and immediately precedes pass-set
+progress advancement. The lowerer helper currently discards both results.
+
+A strict expected-failure contract selects
+`_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_final_safe_binary_results`. It requires transparent helper
+return, exact two-call assignment, unchanged zero arguments, the existing
+one-slot/five-key schema, both boundary pairs, and an unconsumed
+observation-only policy. The five-mode owner prunes unconditionally, so zero
+counters cannot serve as complete mutation evidence.
+
+The first focused run also detected that the previous implementation
+checkpoint's final multiline formatting changed the quantized helper's fixed
+line count from four to five after its last pytest run
+(`409 passed, 1 failed, 1 xfailed`). The stale line-count expectation is now
+five; this corrects structural coverage and does not change production.
+
+The corrected focused safe-binary owner, nested quantized recovery,
+layout-attention suffix, unary-fanout, both direct boundaries, architecture,
+and pass-efficiency gate is `410 passed, 1 xfailed in 18.93s`. The sole strict
+xfail is the two direct-result assignments. Production is otherwise unchanged
+at this checkpoint. The branch-changed broad suite also restores a clean
+characterization state at `1570 passed, 1 xfailed in 29.04s`; the same selected
+assignment contract is its only xfail. Targeted Ruff, Python bytecode
+compilation, and whitespace validation pass.
+
+At implementation, return the existing safe-binary tuple from the lowerer
+helper and replace only the two discarded direct expressions with the selected
+assignments. Do not add a consumer or guard and do not alter the already
+propagated nested call, owner, schema, order, contexts, or adjacent policies.
+Validate sequentially, commit, and push only; do not create, reopen, or update
+a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

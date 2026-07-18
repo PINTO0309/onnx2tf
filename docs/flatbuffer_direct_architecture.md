@@ -11974,3 +11974,17 @@ Both results remain unconsumed and observation-only. This propagation changes
 no child owner, schema, cleanup timing, call order, context, conditional
 binary-bridge policy, elementwise-Concat/Conv successor, dependency, public
 behavior, or TensorFlow import boundary.
+
+The one-slot safe-binary runner is also called through a separate zero-argument
+lowerer helper twice outside the nested quantized-activation sequence. The
+first call follows the layout-attention/quantized suffix and precedes the
+dequantized-Mean/Quantize bridge; the second follows the Transpose/unary fanout
+cluster and precedes the pass-set progress boundary. That helper still discards
+the tuple now exposed by the phase runner.
+
+Strict characterization selects `_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_final_safe_binary_results` for those two direct calls. Both
+must remain unconsumed because the five-mode owner prunes unused tensors even
+when all rewrite counters are zero. The contract freezes the helper return
+boundary, exact two-call count, zero arguments, one-slot/five-key schema,
+distinct predecessor/successor pairs, and absence of a summary or guard.
