@@ -5059,7 +5059,9 @@ def lower_onnx_to_ir(
     _final_slice_concat_recovery_results = (
         _run_terminal_slice_concat_layout_recovery_sequence()
     )
-    _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
+    _final_slice_prepost_passthrough_stats = (
+        _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
+    )
     # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
     # can recreate CONCAT(axis=1)+post-transpose wrappers.
     _optimize_transpose_pre_concat_nhwc_chains(

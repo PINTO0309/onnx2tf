@@ -8788,6 +8788,36 @@ assignment and update stale boundary targets. Do not add a reconciliation
 guard in the same unit. Validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
 
+## Final Slice pre/post result retention implementation checkpoint
+
+The sole production call now retains its unchanged one-counter dictionary as
+`_final_slice_prepost_passthrough_stats`. The value remains unconsumed in this
+unit even though its positive-only cleanup makes it complete owner mutation
+evidence.
+
+This is an assignment-only production change. The compatibility wrapper,
+owner implementation and schema, cleanup guard, exact call count, model-only
+argument, final slice/concat predecessor, pre-Concat successor, dependencies,
+public behavior, and TensorFlow-free direct path are unchanged. Two stale
+boundary target expectations now require the assigned result.
+
+Implementation validation completed sequentially under `uv`:
+
+- wrapper/owner/schema/cleanup, Slice fixtures, final-slice boundary,
+  terminal-layout, architecture, and pass-efficiency coverage:
+  `372 passed in 22.41s`
+- branch-changed broad suite: `1545 passed in 28.53s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, audit all three
+production forms of `_optimize_transpose_pre_concat_nhwc_chains()`, beginning
+with the call immediately after `_final_slice_prepost_passthrough_stats`.
+Freeze each distinct boundary, shared layout/diagnostics arguments, owner
+schema and cleanup behavior, and existing result policies before changing
+production. Commit and push only; do not create, reopen, or update a pull
+request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

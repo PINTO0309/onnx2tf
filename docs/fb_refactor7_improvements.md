@@ -1219,6 +1219,17 @@ final-slice/pre-Concat boundaries are frozen before implementation.
 The focused characterization gate passes
 `371 passed, 1 xfailed in 19.73s`; the sole strict xfail is the selected
 assignment.
+
+The sole production call now retains its unchanged dictionary as
+`_final_slice_prepost_passthrough_stats`, without adding a consumer or guard.
+The focused implementation gate passes `372 passed in 22.41s`, the
+branch-changed broad suite passes `1545 passed in 28.53s`, and targeted static
+validation passes.
+
+The next unit should audit all three production forms of
+`_optimize_transpose_pre_concat_nhwc_chains()`, including distinct boundaries,
+layout/diagnostics routing, owner schema, cleanup behavior, and current result
+policies before changing any call.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

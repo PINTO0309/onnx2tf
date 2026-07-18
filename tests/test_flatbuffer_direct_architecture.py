@@ -1805,7 +1805,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     assert previous_keyword_names == [["layout_state"], []]
     assert next_targets == [
         "_terminal_boundary_stridedslice_qdq_concat_stats",
-        None,
+        "_final_slice_prepost_passthrough_stats",
     ]
     assert next_call_names == [
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",

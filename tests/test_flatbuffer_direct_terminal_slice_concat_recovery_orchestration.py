@@ -367,7 +367,7 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             "_final_channel_slice_muladd_bridge_stats",
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             (),
-            None,
+            "_final_slice_prepost_passthrough_stats",
             "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
         ),
     ]

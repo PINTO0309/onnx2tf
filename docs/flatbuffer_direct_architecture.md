@@ -11822,3 +11822,12 @@ slice/concat to pre-Concat boundaries. It selects
 `_final_slice_prepost_passthrough_stats` for assignment-only retention and
 requires the value to remain unconsumed. Retention must add no guard, pass
 call, reorder, dependency, or TensorFlow import path.
+
+The sole production call now retains its unchanged one-counter dictionary as
+`_final_slice_prepost_passthrough_stats`. It remains unconsumed in this unit.
+The wrapper, owner, positive-only cleanup, call count, model-only argument,
+final slice/concat predecessor, and pre-Concat successor are unchanged.
+
+This assignment adds no mutation guard or control flow. Pass execution,
+dependencies, diagnostics, public behavior, and the TensorFlow-free direct path
+remain fixed; only two stale boundary target expectations changed.
