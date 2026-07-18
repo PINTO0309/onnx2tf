@@ -12637,3 +12637,17 @@ observation-only. The consumed norm-only safety fallback, all nested route
 selection and state-scope contracts, transactional owners, underlying pruning,
 schemas, direct arguments, and call order remain unchanged; the counters do
 not steer later cleanup.
+
+`run_singleton_consecutive_reshape()` returns a fixed three-dictionary tuple
+from singleton-channel transpose, duplicate-fanout, and consecutive-reshape
+cleanup. Its three child invocations share one `ModelIRPassStateScope`; the
+fallback route intentionally uses no LayoutState while retaining the lowerer's
+diagnostics.
+
+The lowerer has two assigned main routes and one raw fallback route. The
+shared-late tuple participates in reconciliation decisions, whereas the earlier
+very-late tuple remains observational. Strict characterization selects
+`_fallback_singleton_consecutive_reshape_results` only for the guarded
+`fallback_ir` route. It freezes the tuple schema, pass order, shared-scope and
+duplicate-fanout flags, exact fallback guard, arguments and repair/reconcile
+neighbors, sole fallback occurrence, and an unconsumed observation-only policy.

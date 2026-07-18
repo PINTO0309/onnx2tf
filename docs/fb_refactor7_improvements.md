@@ -1940,3 +1940,13 @@ the consumed norm-only fallback, nested route indices and scopes,
 transactional owners, schemas, and lower-level pruning remain unchanged. The
 focused gate passes `395 passed in 19.98s`, the 103-file branch-changed suite
 passes `1657 passed in 32.02s`, and targeted static validation passes.
+
+The remaining raw singleton/consecutive-reshape fallback result is now
+characterized as the same fixed three-dictionary tuple used by its two assigned
+main routes. Its three child passes share one state scope, duplicate-fanout
+keeps transpose handling disabled, and the fallback intentionally has no
+LayoutState. Strict retention selects
+`_fallback_singleton_consecutive_reshape_results` only inside the existing
+positive norm-cleanup guard. The focused gate passes
+`391 passed, 1 xfailed in 19.16s`, the 104-file branch-changed suite passes
+`1659 passed, 1 xfailed in 31.12s`, and targeted static validation passes.

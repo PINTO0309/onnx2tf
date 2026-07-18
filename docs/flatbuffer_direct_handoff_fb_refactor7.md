@@ -11969,3 +11969,44 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Fallback singleton/consecutive-reshape result characterization checkpoint
+
+The singleton/consecutive-reshape runner returns a fixed three-dictionary tuple
+from `run_singleton_channel_transpose_cleanup`,
+`run_duplicate_fanout_cleanup`, and `run_consecutive_reshape_cleanup`. The
+three invocations share one `ModelIRPassStateScope`; duplicate-fanout keeps
+`include_transpose=False`. The fallback route intentionally constructs its
+context with `layout_state=None` while forwarding the lowerer's diagnostics.
+
+All three lowerer routes are frozen. The earlier very-late `model_ir` tuple is
+already retained for observation. The later shared-late `model_ir` tuple is
+unpacked and consumed by the reconciliation guard. The remaining `fallback_ir`
+call is raw and runs only when the norm-subgraph Pad cleanup counter is
+positive. It remains between singleton-broadcast adapter repair and static
+shape reconciliation.
+
+Passing contracts freeze the pass IDs and tuple schema, shared state scope,
+duplicate-fanout flag, all three target forms, exact fallback guard and
+arguments, repair/reconcile neighbors, and sole fallback occurrence. A strict
+expected-failure contract selects the unconsumed observation target
+`_fallback_singleton_consecutive_reshape_results` only for the guarded
+fallback call.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated fallback result contract: `2 passed, 1 xfailed in 0.57s`
+- fallback, singleton/consecutive orchestration, terminal validation,
+  architecture, pass-efficiency, and representative rewrite coverage:
+  `391 passed, 1 xfailed in 19.16s`
+- 104 branch-changed test files: `1659 passed, 1 xfailed in 31.12s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+No test assertion failed. The sole expected failure is the intentionally
+unimplemented fallback assignment. Retain only the existing tuple. Do not
+change pass order or schemas, shared state-scope ownership, duplicate-fanout
+flags, main-route result handling, fallback guard, direct arguments, adjacent
+repair/reconciliation, dependencies, public API, or TensorFlow behavior. Keep
+the target unconsumed, validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.
