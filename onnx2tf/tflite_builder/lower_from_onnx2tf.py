@@ -4426,10 +4426,12 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        run_quantized_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_1_quantized_reshape_stats = (
+            run_quantized_reshape_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         _layout_pass_set_1_quantized_activation_binary_results = (
             _run_quantized_activation_binary_bridge_recovery_sequence()

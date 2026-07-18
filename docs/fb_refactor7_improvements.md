@@ -1657,3 +1657,12 @@ TransposeConv/quantized-activation boundary, nested layout/diagnostics routing,
 and absence of a consumer are frozen. The focused gate passes
 `314 passed, 1 xfailed in 18.59s`; the branch-changed broad gate passes
 `1620 passed, 1 xfailed in 29.58s`.
+
+The direct quantized-Reshape call now retains its unchanged one-key dictionary
+as `_layout_pass_set_1_quantized_reshape_stats`. The initial focused gate
+reported `314 passed, 1 failed` because an activation-recovery architecture
+contract still required its predecessor to be a raw expression. That contract
+now accepts either direct-call statement form while preserving the exact call
+identity. The corrected focused gate passes `315 passed in 20.48s`, the branch-
+changed broad gate passes `1621 passed in 30.14s`, and targeted static
+validation passes.

@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.quantized_reshape import (
     run_quantized_reshape_cleanup,
@@ -116,10 +114,6 @@ def test_quantized_reshape_result_schema_and_all_selections_are_explicit() -> No
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the direct quantized-Reshape result is discarded",
-)
 def test_direct_quantized_reshape_result_is_retained_observation_only() -> None:
     lowerer = _lowerer()
     locations = _direct_locations(lowerer.body)

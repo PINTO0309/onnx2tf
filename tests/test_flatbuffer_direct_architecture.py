@@ -1019,7 +1019,7 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
     ]
     previous_call_names = []
     for _, previous, _ in direct_boundaries:
-        assert isinstance(previous, ast.Expr)
+        assert isinstance(previous, (ast.Assign, ast.Expr))
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
         previous_call_names.append(previous.value.func.id)

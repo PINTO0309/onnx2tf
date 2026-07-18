@@ -10914,3 +10914,36 @@ pass selection/order, preflight, transaction, direct arguments, nested suffix,
 surrounding calls, guard, dependency, public API, or TensorFlow behavior. Keep
 the result unconsumed, validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
+
+## Quantized-Reshape direct result retention implementation checkpoint
+
+The sole raw lowerer call now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_quantized_reshape_stats`. The target remains unconsumed and
+observation-only. The layout/attention quantized suffix still selects the same
+callback with the same live LayoutState and diagnostics.
+
+No result schema, pass implementation, selection or order, preflight,
+transaction boundary, direct argument, nested suffix invocation, surrounding
+production call, guard, dependency, public API, or TensorFlow boundary changed.
+
+The initial focused implementation gate reported `314 passed, 1 failed`: the
+quantized-activation architecture test still required its cleanup predecessor
+to be an `ast.Expr`. It now accepts either direct-call statement form and
+continues to assert the exact predecessor call. This was a stale structural
+contract, not a production regression.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.55s`
+- quantized-Reshape owner, quantized suffix and activation boundaries,
+  quantized-PReLU predecessor, architecture, and pass-efficiency coverage:
+  `315 passed in 20.48s`
+- branch-changed broad suite: `1621 passed in 30.14s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, inventory all
+direct and nested `_optimize_dequant_transposeconv_quantize_chains()` results
+before changing that adjacent boundary. Commit and push only; do not create,
+reopen, or update a pull request.

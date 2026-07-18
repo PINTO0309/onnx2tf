@@ -12288,3 +12288,10 @@ Strict characterization selects
 the exact direct arguments, dequant-TransposeConv/quantized-activation
 boundaries, nested suffix index and context flags, fixed result schema, and an
 unconsumed observation-only policy.
+
+The direct call now retains the same one-key dictionary as
+`_layout_pass_set_1_quantized_reshape_stats`. The target remains unconsumed and
+observation-only. The activation-recovery predecessor contract accepts either
+direct-call statement form while preserving the exact cleanup call. No pass
+implementation, selection, ordering, transaction, preflight, nested suffix,
+live context, dependency, public API, or TensorFlow boundary changed.
