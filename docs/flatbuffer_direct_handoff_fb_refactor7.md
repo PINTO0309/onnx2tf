@@ -4630,3 +4630,37 @@ At resume, audit the immediately preceding
 Characterize their schemas, occurrence counts, and fixed progress/consecutive-
 Mul boundaries before retaining evidence. Commit and push only; do not create
 or update a pull request.
+
+## Core-cleanup pseudo-LeakyReLU/YOLO result characterization checkpoint
+
+The primary core-cleanup phase begins with guarded pseudo-LeakyReLU fusion,
+followed by YOLO decode `Mul(x,x)` plus anchor-constant folding. Each owner has
+one direct lowerer occurrence and returns a stable one-counter dictionary. The
+pseudo-LeakyReLU owner uses an indexed topology/fan-out proof; the YOLO owner
+prevalidates finite constants and shared-input/consumer boundaries. Both caller
+results are currently discarded.
+
+A strict expected-failure orchestration contract requires assigning the raw
+results to `_core_cleanup_pseudo_leakyrelu_stats` and
+`_core_cleanup_yolo_decode_stats`. It fixes the `core cleanup passes` progress
+boundary, pseudo→YOLO order, exact arguments, and the following captured
+`_core_cleanup_consecutive_mul_stats` boundary.
+
+At implementation, replace only these two expressions with assignments. Do not
+change either owner/schema, add GraphIndex/layout arguments, alter any matcher,
+guard, pruning, add a reconciliation, scan, sort, dependency, metadata write,
+or result consumer, reorder the core cleanup, or affect TensorFlow behavior.
+Validate indexed pseudo-LeakyReLU, indexed YOLO constant folding, graph cleanup,
+terminal orchestration, architecture, pass efficiency, and broad related gates
+sequentially, then commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed pseudo-LeakyReLU, indexed YOLO folding, graph cleanup, terminal
+  orchestration, architecture, and pass efficiency:
+  `363 passed, 1 xfailed in 18.51s`
+- expanded broad related gate: `1431 passed, 1 xfailed in 31.17s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet two-result capture contract;
+there are no unexpected failures.

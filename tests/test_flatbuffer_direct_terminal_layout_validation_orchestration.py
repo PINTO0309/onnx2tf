@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1288,6 +1290,60 @@ def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
     assert isinstance(final, ast.Assign)
     assert isinstance(final.targets[0], ast.Name)
     assert final.targets[0].id == "_final_precision_consecutive_mul_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="core-cleanup pseudo-LeakyReLU and YOLO results are discarded",
+)
+def test_primary_path_retains_core_cleanup_fusion_results() -> None:
+    body = _lowerer_body()
+    pseudo_name = "_optimize_fuse_pseudo_leakyrelu_chains"
+    yolo_name = "_optimize_yolo_decode_mul_square_anchor_chains"
+    consecutive_name = "run_consecutive_mul_constants_cleanup"
+    pseudo_index = _call_index(body, pseudo_name)
+    yolo_index = _call_index(body, yolo_name, start=pseudo_index + 1)
+    consecutive_index = _call_index(
+        body,
+        consecutive_name,
+        start=yolo_index + 1,
+    )
+    assert yolo_index == pseudo_index + 1
+    assert consecutive_index == yolo_index + 1
+
+    expected = (
+        (
+            pseudo_index,
+            "_core_cleanup_pseudo_leakyrelu_stats",
+            pseudo_name,
+        ),
+        (
+            yolo_index,
+            "_core_cleanup_yolo_decode_stats",
+            yolo_name,
+        ),
+    )
+    for index, target_name, function_name in expected:
+        statement = body[index]
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        call = statement.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == function_name
+        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+        assert call.keywords == []
+
+    progress = body[pseudo_index - 1]
+    assert ast.unparse(progress) == (
+        "_set_post_progress_desc('core cleanup passes')"
+    )
+    consecutive = body[consecutive_index]
+    assert isinstance(consecutive, ast.Assign)
+    assert isinstance(consecutive.targets[0], ast.Name)
+    assert consecutive.targets[0].id == "_core_cleanup_consecutive_mul_stats"
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

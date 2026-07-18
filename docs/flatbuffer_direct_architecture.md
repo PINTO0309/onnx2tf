@@ -10788,6 +10788,13 @@ now retained as `_core_cleanup_consecutive_mul_stats`, so all three production
 occurrences of the owner retain mutation evidence. Both adjacent cleanup
 boundaries remain unchanged.
 
+The two immediately preceding core-cleanup owners fuse guarded pseudo-LeakyReLU
+subgraphs and fold YOLO decode `Mul(x,x)` plus anchor multiplication. Each has a
+single direct lowerer occurrence and returns a stable one-counter dictionary;
+both results are currently discarded. Characterization fixes the core-progress
+boundary, their exact order, and the captured consecutive-Mul successor before
+implementation.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
