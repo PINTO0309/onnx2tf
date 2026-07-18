@@ -4437,11 +4437,13 @@ def lower_onnx_to_ir(
                 model_ir,
                 layout_state=session.layout_state,
             )
-        run_duplicate_fanout_cleanup(
-            model_ir,
-            include_transpose=enable_duplicate_transpose_fanout_optimizations,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_1_duplicate_fanout_stats = (
+            run_duplicate_fanout_cleanup(
+                model_ir,
+                include_transpose=enable_duplicate_transpose_fanout_optimizations,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _layout_pass_set_1_post_binary_attention_recovery_results = (

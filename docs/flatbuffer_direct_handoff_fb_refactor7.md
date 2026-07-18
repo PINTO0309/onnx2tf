@@ -10569,3 +10569,35 @@ nested occurrence, live context, pass order, surrounding boundary, guard,
 dependency, public API, or TensorFlow behavior. Keep the result unconsumed,
 validate sequentially, commit, and push only; do not create, reopen, or update
 a pull request.
+
+## Primary duplicate-fanout cleanup result retention implementation checkpoint
+
+The sole direct call now retains its unchanged policy-dependent dictionary as
+`_layout_pass_set_1_duplicate_fanout_stats`. It remains after the conditional
+binary-bridge block and before
+`_layout_pass_set_1_post_binary_attention_recovery_results`.
+
+The target is unconsumed and observation-only. `not has_qdq_ops` still controls
+whether the Transpose pass and its second result field are present; the live
+LayoutState and diagnostics are unchanged. The three independent orchestration
+selections retain their own policy and shared-state routing. No schema,
+preflight, transaction, pass selection, nested occurrence, context, order,
+guard, dependency, public API, or TensorFlow import path changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- duplicate-fanout owner and policy schemas, three nested selections, direct
+  boundary, graph cleanup, Singleton orchestration, architecture, and
+  pass-efficiency coverage: `379 passed in 18.50s`
+- branch-changed broad suite: `1611 passed in 29.45s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run.
+
+At resume, audit the raw direct
+`_optimize_transpose_dequantize_mean_quantize_bridges()` result immediately
+before `_layout_pass_set_1_qlinear_mean_concat_results`. Preserve its owner
+schema, cleanup semantics, sole production occurrence, and QLinear boundary.
+Commit and push only; do not create, reopen, or update a pull request.

@@ -12174,6 +12174,13 @@ pass IDs, all nested selections, the exact QDQ-dependent argument and live
 LayoutState/diagnostics, the binary-bridge/post-binary-attention boundary, and
 an unconsumed observation-only policy.
 
+The sole direct call now retains its policy-dependent dictionary as
+`_layout_pass_set_1_duplicate_fanout_stats`. The target remains unconsumed, and
+the QDQ-derived `include_transpose` value continues to control only the
+existing owner. No schema, pass selection, preflight, transaction, nested
+occurrence, live context, ordering, guard, dependency, public API, or
+TensorFlow boundary changes.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

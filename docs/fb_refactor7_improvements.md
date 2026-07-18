@@ -1562,3 +1562,13 @@ conditional binary-bridge/post-binary-attention boundary, and unconsumed
 contract are frozen. The focused gate passes
 `378 passed, 1 xfailed in 18.47s`; the branch-changed broad gate passes
 `1610 passed, 1 xfailed in 28.74s`.
+
+The sole direct call now retains
+`_layout_pass_set_1_duplicate_fanout_stats`, which remains unconsumed and
+observation-only. The QDQ-derived schema/policy and all nested selections are
+unchanged. The focused implementation gate passes
+`379 passed in 18.50s`, the branch-changed broad suite passes
+`1611 passed in 29.45s`, and targeted static validation passes.
+
+The next unit should audit the raw dequantize/mean/quantize bridge result before
+the newly retained pass-set-1 QLinear parent result.

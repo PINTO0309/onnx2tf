@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_duplicate_fanout_cleanup,
@@ -103,10 +101,6 @@ def test_duplicate_fanout_policy_schema_and_selections_are_explicit() -> None:
         assert len(selections) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the primary duplicate-fanout cleanup result is discarded",
-)
 def test_primary_duplicate_fanout_result_is_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(
