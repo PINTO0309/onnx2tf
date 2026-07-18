@@ -12192,6 +12192,12 @@ Strict characterization selects
 schema and unconditional pruning paths, sole exact call, retained safe-binary/
 QLinear boundaries, and an unconsumed observation-only policy.
 
+The sole direct call now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_dequant_mean_quantize_stats`. It remains unconsumed because
+the counter omits cleanup-only pruning. No wrapper, owner, schema, graph-index
+allocation, prune path, pass order, adjacent retained result, guard,
+dependency, public API, or TensorFlow boundary changes.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

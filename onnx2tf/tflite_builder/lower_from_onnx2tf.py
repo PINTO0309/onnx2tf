@@ -4461,7 +4461,9 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_safe_binary_results = (
             _run_safe_binary_bridge_recovery_sequence()
         )
-        _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
+        _layout_pass_set_1_dequant_mean_quantize_stats = (
+            _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
+        )
         _layout_pass_set_1_qlinear_mean_concat_results = (
             _run_qlinear_mean_concat_recovery_sequence()
         )

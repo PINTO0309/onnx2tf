@@ -1580,3 +1580,12 @@ Wrapper forwarding, early and final prune paths, sole exact call,
 safe-binary/QLinear boundaries, and unconsumed policy are frozen. The focused
 gate passes `357 passed, 1 xfailed in 17.88s`; the branch-changed broad gate
 passes `1612 passed, 1 xfailed in 29.37s`.
+
+The sole call now retains `_layout_pass_set_1_dequant_mean_quantize_stats`,
+which remains unconsumed and observation-only because its counter omits
+cleanup-only pruning. The focused implementation gate passes
+`358 passed in 18.10s`, the branch-changed broad suite passes
+`1613 passed in 29.32s`, and targeted static validation passes.
+
+The next unit should audit both InstanceNorm pre/post NHWC recovery occurrences
+and their distinct direct/conditional boundaries.

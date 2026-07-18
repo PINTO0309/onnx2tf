@@ -10634,3 +10634,35 @@ change the wrapper, owner, schema, graph-index allocation, cleanup, pass order,
 surrounding results, guard, dependency, public API, or TensorFlow behavior.
 Keep the value unconsumed, validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
+
+## Dequantize/mean/quantize bridge result retention implementation checkpoint
+
+The sole production call now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_dequant_mean_quantize_stats`. It remains between
+`_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_qlinear_mean_concat_results`.
+
+The target is unconsumed and observation-only because a zero rewrite counter
+does not exclude the owner's cleanup-only pruning. No wrapper, owner, schema,
+graph-index allocation, early/final prune path, pass order, surrounding
+retained result, guard, dependency, public API, or TensorFlow import path
+changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- bridge owner fixtures, wrapper/schema/prune contract, safe-binary and QLinear
+  boundaries, architecture, and pass-efficiency coverage:
+  `358 passed in 18.10s`
+- branch-changed broad suite: `1613 passed in 29.32s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run.
+
+At resume, audit both production occurrences of
+`_optimize_transpose_instancenorm_prepost_nhwc_chains()`, including the direct
+call after `_layout_pass_set_1_final_attention_recovery_results` and the later
+conditional form. Preserve their distinct arguments, guards, and surrounding
+boundaries. Commit and push only; do not create, reopen, or update a pull
+request.

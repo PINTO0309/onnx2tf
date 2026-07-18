@@ -180,7 +180,7 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
                 continue
             previous = statement.body[index - 1]
             following = statement.body[index + 1]
-            assert isinstance(previous, ast.Expr)
+            assert isinstance(previous, (ast.Assign, ast.Expr))
             assert isinstance(previous.value, ast.Call)
             assert isinstance(previous.value.func, ast.Name)
             assert isinstance(following, (ast.Assign, ast.Expr))
@@ -189,6 +189,13 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
             boundaries.append((previous.value.func.id, following.value.func.id))
 
             assert _single_target(candidate) in RESULT_TARGETS
+
+            if previous.value.func.id == (
+                "_optimize_transpose_dequantize_mean_quantize_bridges"
+            ):
+                assert _single_target(previous) == (
+                    "_layout_pass_set_1_dequant_mean_quantize_stats"
+                )
 
             if following.value.func.id == (
                 "_run_layout_recovery_prefix_pass_sequence"
