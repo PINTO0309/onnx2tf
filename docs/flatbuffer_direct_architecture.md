@@ -11603,3 +11603,20 @@ unused-tensor pruning, live Session LayoutState, layout-option guard, retained
 Concat input-adapter predecessor, channel-shuffle/gather successor and policy,
 independent orchestration selection, dependencies, diagnostics, and TensorFlow
 behavior remain unchanged.
+
+The terminal Concat/unary/Conv runner executes one transactional layout pass
+and returns the fixed one-counter dictionary
+`optimized_transpose_concat_unary_fanout_conv_nhwc_chains`. A positive owner
+rewrite prunes unused tensors and synchronizes LayoutState; precondition misses
+skip graph-state construction and return zero. Diagnostics record either
+outcome, so the retained dictionary remains observation-only.
+
+There is exactly one production call. It follows
+`_terminal_concat_input_adapter_stats`, precedes the raw shape-extract owner,
+and receives the live Session LayoutState and diagnostics collection.
+
+Strict characterization selects `_terminal_concat_unary_conv_stats`. It fixes
+the one-key schema, transactional PassSpec, preflight/default details, positive-
+only prune and layout sync, exact one-call count, arguments, both boundaries,
+and absence of consumers. The dictionary must remain unconsumed; retention must
+add no guard, scan, dependency, or TensorFlow import path.

@@ -8291,6 +8291,43 @@ owner, live LayoutState and diagnostics, pass order, and observation-only
 evidence rules. Commit and push only; do not create, reopen, or update a pull
 request.
 
+## Terminal Concat/unary/Conv result characterization checkpoint
+
+`run_concat_unary_conv_layout_cleanup()` executes one transactional layout
+PassSpec and returns the fixed one-counter dictionary
+`optimized_transpose_concat_unary_fanout_conv_nhwc_chains`. A positive owner
+rewrite prunes unused tensors and synchronizes LayoutState; precondition misses
+avoid graph-state construction and return zero. Diagnostics record either
+outcome, so the result remains observation-only.
+
+There is exactly one production call. It follows
+`_terminal_concat_input_adapter_stats`, precedes the raw shape-extract owner,
+and receives the live Session LayoutState and diagnostics collection.
+
+A strict expected-failure contract selects
+`_terminal_concat_unary_conv_stats`. It fixes the one-key result schema,
+transactional PassSpec, preflight/default details, positive-only prune and
+layout sync, exact one-call count, model/LayoutState/diagnostics arguments,
+both boundaries, and absence of result consumers.
+
+At implementation, replace only the raw expression with an assignment. Do not
+add a consumer or guard, and do not change the runner, owner, schema,
+transactional/preflight behavior, cleanup, layout sync, diagnostics,
+surrounding calls, dependencies, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- Concat/unary/Conv runner and owner fixtures, transactional/preflight schema,
+  diagnostics, positive-only cleanup and layout sync, terminal result boundary,
+  Concat input-adapter and shape-extract neighbors, architecture,
+  pass-efficiency, and terminal-layout coverage:
+  `400 passed, 1 xfailed in 18.79s`
+
+The sole strict expected failure is the intentionally unimplemented
+result-retention contract. Implement only that assignment, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
