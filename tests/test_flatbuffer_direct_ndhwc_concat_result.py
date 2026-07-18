@@ -134,7 +134,10 @@ def test_direct_ndhwc_concat_result_is_retained_observation_only() -> None:
     result_index = body.index(result)
     assert _single_target(body[result_index - 1]) == PREVIOUS_TARGET
     following = body[result_index + 1]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert _single_target(following) == (
+        "_layout_opt_stridedslice_pre_concat_stats"
+    )
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == FOLLOWING

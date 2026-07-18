@@ -1284,6 +1284,17 @@ frozen before implementation.
 The focused characterization gate passes
 `360 passed, 1 xfailed in 18.98s`; the sole strict xfail is the selected direct
 assignment.
+
+The sole direct call now retains its unchanged dictionary as
+`_layout_opt_stridedslice_pre_concat_stats`; it remains observation-only, and
+the public-owner layout-recovery occurrence is unchanged. The focused
+implementation gate passes `361 passed in 18.38s`, the branch-changed broad
+suite passes `1554 passed in 29.49s`, and targeted static validation passes.
+
+The next unit should audit the sole direct SPP layout-cleanup result and its
+independent layout-recovery occurrence, including transactional schema,
+cleanup-only mutations, layout/diagnostics routing, and elementwise-Concat/
+pre-Concat boundaries.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

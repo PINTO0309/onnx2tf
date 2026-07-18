@@ -4547,9 +4547,11 @@ def lower_onnx_to_ir(
                 diagnostics=session.diagnostics,
             )
         )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_stridedslice_pre_concat_stats = (
+            _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _layout_opt_split_mixed_pre_concat_stats = (
             _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(

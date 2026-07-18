@@ -8962,6 +8962,36 @@ layout-recovery occurrence or use the zero counter as a guard. Validate
 sequentially, commit, and push only; do not create, reopen, or update a pull
 request.
 
+## Direct indexed strided-Slice pre-Concat result retention checkpoint
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_stridedslice_pre_concat_stats`. It remains unconsumed because the
+owner's unconditional unused-tensor pruning permits cleanup-only mutation with
+zero rewrites. The independent public-owner layout-recovery occurrence remains
+unchanged.
+
+This is an assignment-only production change. Optional graph-index/layout/
+bound/candidate forwarding, one-key schema, direct ModelIR/layout arguments,
+exact call multiplicity, NDHWC/split-mixed boundaries, pass order,
+dependencies, public behavior, and TensorFlow-free direct path remain fixed.
+
+Implementation validation completed sequentially under `uv`:
+
+- wrapper/schema/zero-prune fixture, indexed owner suite, NDHWC/split-mixed
+  boundaries, layout-recovery selection, architecture, and pass-efficiency
+  coverage: `361 passed in 18.38s`
+- branch-changed broad suite: `1554 passed in 29.49s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a model-corpus run. At resume, audit the sole direct
+`run_spp_layout_cleanup()` call immediately before
+`_layout_opt_pre_concat_stats`, plus its independent layout-recovery
+occurrence. Freeze its transactional schema, cleanup-only mutation semantics,
+layout/diagnostics arguments, elementwise-Concat/pre-Concat boundaries, and
+current result policy before changing production. Commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

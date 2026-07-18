@@ -11888,3 +11888,13 @@ wrapper's optional graph-index/layout/bound/candidate forwarding, one-key
 schema, unconditional cleanup, sole direct call, model/layout arguments,
 NDHWC/split-mixed boundaries, and independent orchestration selection. The
 layout-recovery occurrence is not changed by this retention unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_stridedslice_pre_concat_stats`. It remains unconsumed because the
+owner's unconditional prune can mutate ModelIR while the counter is zero. The
+public-owner layout-recovery occurrence remains unchanged.
+
+This is an assignment-only change. Optional graph index, layout, rewrite bound,
+candidate forwarding, one-key schema, direct arguments, call multiplicity,
+NDHWC/split-mixed boundaries, dependencies, public behavior, and TensorFlow
+isolation remain fixed.

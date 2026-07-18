@@ -198,6 +198,9 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
     assert _call_name(layout_guard.body[guarded_index - 1]) == (
         STRIDED_SLICE_PRE_CONCAT
     )
+    assert _single_target(layout_guard.body[guarded_index - 1]) == (
+        "_layout_opt_stridedslice_pre_concat_stats"
+    )
     assert _call_name(layout_guard.body[guarded_index + 1]) == INPUT_PRE_CONCAT
 
     terminal_previous = lowerer.body[terminal_index - 1]

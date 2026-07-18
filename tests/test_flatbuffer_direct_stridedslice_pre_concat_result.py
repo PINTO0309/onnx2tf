@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes.stridedslice_concat_layout import (
     optimize_transpose_stridedslice_pre_concat_nhwc_chains,
@@ -137,10 +135,6 @@ def test_stridedslice_pre_concat_zero_counter_can_prune_unused_tensor() -> None:
     assert "unused" not in model_ir.tensors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the sole direct indexed strided-Slice pre-Concat result is not retained yet",
-)
 def test_direct_stridedslice_pre_concat_result_is_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(
