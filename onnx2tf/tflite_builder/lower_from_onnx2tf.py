@@ -4779,7 +4779,9 @@ def lower_onnx_to_ir(
         _terminal_batchmatmul_affine_input_stats = (
             _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
         )
-        _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
+        _terminal_batchmatmul_reshape_se_stats = (
+            _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
+        )
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
         _run_qkv_attention_layout_pass_cluster()
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
@@ -4833,7 +4835,9 @@ def lower_onnx_to_ir(
     _post_sinet_batchmatmul_affine_input_stats = (
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
     )
-    _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
+    _post_sinet_batchmatmul_reshape_se_stats = (
+        _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
+    )
     _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
     _run_qkv_attention_layout_pass_cluster()
     _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(

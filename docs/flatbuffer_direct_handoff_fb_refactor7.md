@@ -7884,6 +7884,36 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## BatchMatMul reshape/SE result retention implementation checkpoint
+
+The guarded terminal call now retains
+`_terminal_batchmatmul_reshape_se_stats`, and the post-SiNet call retains
+`_post_sinet_batchmatmul_reshape_se_stats`. Both preserve the dedicated owner's
+unchanged one-counter dictionary.
+
+These are assignment-only observation changes. Because the owner can prune
+unused tensors while reporting zero rewrites, neither result is consumed or
+used as guard evidence. The wrapper, owner, schema, unconditional pruning,
+captured affine-input predecessors, shared adj-flags successor, option guard,
+pass order, dependencies, diagnostics, and TensorFlow behavior remain
+unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- reshape/SE and affine-input owner fixtures, both production boundaries,
+  architecture, terminal result contracts, and pass-efficiency coverage:
+  `356 passed in 19.80s`
+- branch-changed broad suite plus the same two-boundary coverage:
+  `1461 passed in 25.43s`
+
+These are unit, contract, and orchestration checks; this result retention does
+not claim a new model-corpus run.
+
+At resume, audit both raw BatchMatMul transpose-input-to-adj-flags owner calls
+immediately after the newly retained reshape/SE results. Preserve the two
+surrounding sequences and observation-only evidence rules. Commit and push
+only; do not create, reopen, or update a pull request.
+
 ## BatchMatMul affine-input result retention implementation checkpoint
 
 The guarded terminal call now retains

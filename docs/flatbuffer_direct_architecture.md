@@ -11217,9 +11217,8 @@ matched BATCH_MATMUL/RESHAPE/SE island atomically, then unconditionally prunes
 unused tensors. Its rewrite counter is not complete evidence for cleanup-only
 pruning and remains observation-only.
 
-Two raw direct occurrences follow the captured terminal and post-SiNet
-affine-input results and precede the same adj-flags owner. A strict contract
-fixes future `_terminal_batchmatmul_reshape_se_stats` and
-`_post_sinet_batchmatmul_reshape_se_stats` targets, exact model arguments,
-both captured predecessors, and the shared successor. Retention must add no
-guard, consumer, or graph traversal.
+Two direct occurrences follow the captured terminal and post-SiNet affine-input
+results and retain `_terminal_batchmatmul_reshape_se_stats` and
+`_post_sinet_batchmatmul_reshape_se_stats`, respectively. Both precede the same
+adj-flags owner. The retained values have no guard or consumer and add no graph
+traversal.

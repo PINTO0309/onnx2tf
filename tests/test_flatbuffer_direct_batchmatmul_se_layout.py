@@ -5,7 +5,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -163,10 +162,6 @@ def test_flatbuffer_direct_batchmatmul_reshape_se_nhwc_chains() -> None:
     assert list(relu_op.inputs) == ["y_nhwc"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BatchMatMul reshape/SE results are not retained",
-)
 def test_batchmatmul_reshape_se_results_are_retained_at_both_boundaries() -> None:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     lowerer = next(

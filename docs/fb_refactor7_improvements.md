@@ -936,12 +936,23 @@ The focused owner/two-boundary gate passes `369 passed in 18.78s`, and the
 branch-changed broad suite passes `1459 passed in 25.79s`. No graph traversal,
 guard, dependency, or TensorFlow import path was added.
 
+Both adjacent BatchMatMul reshape/SE results are now retained as
+`_terminal_batchmatmul_reshape_se_stats` and
+`_post_sinet_batchmatmul_reshape_se_stats`. Their one-counter dictionaries
+remain observation-only because the owner can prune while reporting zero; no
+consumers or guards were added.
+
+The focused reshape/SE and affine-input gate passes `356 passed in 19.80s`, and
+the branch-changed broad suite passes `1461 passed in 25.43s`. Both adj-flags
+successors and surrounding option policy remain fixed.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit both raw BatchMatMul reshape/SE owner calls immediately after
-the captured affine-input results. Both mean/attention tuples and affine-input
-results must remain observation-only and policy guarded. The retained
+unit should audit both raw BatchMatMul transpose-input-to-adj-flags owner calls
+immediately after the captured reshape/SE results. Mean/attention tuples and
+the preceding BatchMatMul results must remain observation-only and policy
+guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
 omits cleanup-only pruning. Any change must preserve current pass order,
 TensorFlow-free boundary, dependency set, and sequential validation policy.
