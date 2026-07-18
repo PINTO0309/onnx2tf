@@ -7847,3 +7847,39 @@ At resume, audit the next raw terminal helper result after
 `_terminal_mean_attention_results`. Keep both mean/attention tuples
 observation-only and preserve their policy guards. Commit and push only; do not
 create, reopen, or update a pull request.
+
+## BatchMatMul affine-input result characterization checkpoint
+
+`_optimize_batchmatmul_affine_transpose_input_chains()` dispatches one dedicated
+owner and returns the fixed one-counter dictionary
+`optimized_batchmatmul_affine_transpose_input_chains`. The owner unconditionally
+prunes unused tensors after candidate processing, so a zero counter can still
+coexist with cleanup-only mutation. Its result must remain observation-only and
+must not be used as complete guard evidence.
+
+There are exactly two raw direct production calls. The guarded terminal call
+follows `_terminal_mean_attention_results`; the later post-SiNet call follows
+SA/PA MirrorPad propagation. Both immediately precede
+`_optimize_batchmatmul_reshape_se_nhwc_chains()`.
+
+A strict expected-failure contract selects distinct
+`_terminal_batchmatmul_affine_input_stats` and
+`_post_sinet_batchmatmul_affine_input_stats` targets. It fixes the two-call
+count, model argument, empty keyword sets, policy guard, predecessors, and
+shared successor.
+
+At implementation, replace only the two raw expressions with assignments. Do
+not add a guard or consumer and do not change the wrapper, owner, one-key
+schema, unconditional pruning, adjacent owners, option guard, pass order,
+dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- affine-input owner fixture, both production boundaries, terminal
+  mean/attention, architecture, terminal result contracts, and pass-efficiency
+  coverage: `368 passed, 1 xfailed in 18.86s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import ast
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -11,6 +14,26 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.batchmatmul_affine_input_layout import (
     optimize_batchmatmul_affine_transpose_input_chains,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+
+
+def _statement_call(statement: ast.stmt) -> ast.Call | None:
+    if isinstance(statement, (ast.Assign, ast.Expr)) and isinstance(
+        statement.value,
+        ast.Call,
+    ):
+        return statement.value
+    return None
+
+
+def _call_name(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if call is None or not isinstance(call.func, ast.Name):
+        return None
+    return call.func.id
 
 
 def _fingerprint(model_ir: ModelIR) -> tuple[object, ...]:
@@ -127,3 +150,79 @@ def test_flatbuffer_direct_batchmatmul_affine_transpose_input_chains() -> None:
     rhs_shape_vals = np.asarray(model_ir.tensors["rhs_shape"].data, dtype=np.int32).reshape(-1).tolist()
     assert lhs_shape_vals == [1, 64, 96]
     assert rhs_shape_vals == [1, 256, 96]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="BatchMatMul affine-input results are not retained",
+)
+def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> None:
+    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    callback_name = "_optimize_batchmatmul_affine_transpose_input_chains"
+    all_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == callback_name
+    ]
+    assert len(all_calls) == 2
+
+    terminal_guard = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == "optimize_layout_transpose_chains"
+        and any(
+            isinstance(node, ast.Name)
+            and node.id == "_terminal_mean_attention_results"
+            for node in ast.walk(statement)
+        )
+    )
+    terminal_index = next(
+        index
+        for index, statement in enumerate(terminal_guard.body)
+        if _call_name(statement) == callback_name
+    )
+    terminal = terminal_guard.body[terminal_index]
+    assert isinstance(terminal, ast.Assign)
+    assert len(terminal.targets) == 1
+    assert isinstance(terminal.targets[0], ast.Name)
+    assert terminal.targets[0].id == "_terminal_batchmatmul_affine_input_stats"
+    assert terminal_index > 0
+    predecessor = terminal_guard.body[terminal_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_terminal_mean_attention_results"
+    assert _call_name(terminal_guard.body[terminal_index + 1]) == (
+        "_optimize_batchmatmul_reshape_se_nhwc_chains"
+    )
+
+    post_sinet_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if _call_name(statement) == callback_name
+    )
+    post_sinet = lowerer.body[post_sinet_index]
+    assert isinstance(post_sinet, ast.Assign)
+    assert len(post_sinet.targets) == 1
+    assert isinstance(post_sinet.targets[0], ast.Name)
+    assert post_sinet.targets[0].id == "_post_sinet_batchmatmul_affine_input_stats"
+    assert _call_name(lowerer.body[post_sinet_index - 1]) == (
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains"
+    )
+    assert _call_name(lowerer.body[post_sinet_index + 1]) == (
+        "_optimize_batchmatmul_reshape_se_nhwc_chains"
+    )
+
+    for statement in (terminal, post_sinet):
+        call = _statement_call(statement)
+        assert call is not None
+        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+        assert call.keywords == []

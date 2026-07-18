@@ -11196,3 +11196,17 @@ without branching on it. The direct calls retain distinct
 `_layout_pass_set_1_mean_attention_results` and
 `_terminal_mean_attention_results` tuples. All four policy matrices, callback
 references, shared scope, option guards, and adjacent calls remain fixed.
+
+The BatchMatMul affine-transpose-input owner returns the fixed one-counter
+`optimized_batchmatmul_affine_transpose_input_chains` dictionary. It rewrites
+both affine inputs and `adjY` together, then prunes unused tensors
+unconditionally. Its counter is therefore stable observation data but is not
+complete evidence for cleanup-only pruning and must not guard later work.
+
+Two raw direct production calls exist. The guarded terminal occurrence follows
+`_terminal_mean_attention_results`; the post-SiNet occurrence follows SA/PA
+MirrorPad propagation. Both precede the BatchMatMul reshape/SE owner. A strict
+contract fixes future `_terminal_batchmatmul_affine_input_stats` and
+`_post_sinet_batchmatmul_affine_input_stats` targets, exact arguments, both
+predecessors, and the shared successor. Retention must remain assignment-only,
+observation-only, and add no graph traversal or consumer.
