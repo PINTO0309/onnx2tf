@@ -11388,3 +11388,22 @@ tuple instead of the previously discarded `None`; those outer tuples are also
 unconsumed. Each child still executes exactly once with unchanged arguments and
 LayoutState, and no consumer, guard, scan, dependency, or TensorFlow import path
 was added.
+
+The following CSP-attention wrapper dispatches one indexed owner and returns
+the fixed one-counter dictionary
+`optimized_transpose_csp_attention_nhwc_chains`. The owner rewrites matched
+islands through its graph index, then prunes unused tensors unconditionally and
+synchronizes LayoutState only after a positive rewrite. The counter is therefore
+stable observation data but is not complete evidence for cleanup-only pruning.
+
+There is exactly one production call, after
+`_post_cleanup_sinet_preadd_resize_results` and before SA/PA MirrorPad
+propagation. It receives the live Session LayoutState and no external graph
+index. Strict characterization selects `_post_cleanup_csp_attention_stats` as
+its sole retention target and fixes the wrapper, one-key schema, unconditional
+prune, positive-only layout sync, arguments, and both boundaries.
+
+The retained dictionary must remain observation-only. It must not be used as a
+guard or consumer, and retention must not add graph work, alter owner mutation
+semantics, change the SA/PA successor, add dependencies, or create a TensorFlow
+import path.

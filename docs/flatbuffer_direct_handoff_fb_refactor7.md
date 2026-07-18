@@ -8176,6 +8176,43 @@ At resume, audit the post-cleanup
 occurrence, live LayoutState wiring, and adjacent SA/PA MirrorPad propagation.
 Commit and push only; do not create, reopen, or update a pull request.
 
+## Post-cleanup CSP-attention result characterization checkpoint
+
+The audit corrects the preceding resume note: CSP-attention has exactly one
+production call, not multiple occurrences. Its lowerer wrapper dispatches the
+single indexed owner and returns the fixed one-counter dictionary
+`optimized_transpose_csp_attention_nhwc_chains`.
+
+The owner performs indexed transactional-style rewrites, then calls
+unused-tensor pruning unconditionally. LayoutState synchronization is guarded
+by a positive rewrite count. The counter therefore remains stable observation
+data but is incomplete evidence for cleanup-only pruning and must not control
+later work.
+
+The sole call follows `_post_cleanup_sinet_preadd_resize_results`, receives the
+live Session LayoutState, and immediately precedes SA/PA MirrorPad propagation.
+A strict expected-failure contract selects
+`_post_cleanup_csp_attention_stats`. It fixes the one-call count, model and
+LayoutState arguments, one-key schema, unconditional prune, positive-only
+layout sync, captured predecessor, and SA/PA successor.
+
+At implementation, replace only the raw production expression with an
+assignment. Do not add a consumer or guard, and do not change the wrapper,
+owner, schema, graph-index behavior, pruning, layout sync, surrounding
+sequence, dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- CSP result/schema semantics, SiNet pre-add/resize and terminal boundaries,
+  architecture, and pass-efficiency coverage:
+  `306 passed, 1 xfailed in 17.78s`
+- concrete CSP-attention owner fixtures: `2 passed, 739 deselected in 0.61s`
+
+The sole strict expected failure is the intentionally unimplemented retention
+assignment. Implement only that assignment, rerun focused and branch-changed
+broad gates sequentially, then commit and push only; do not create, reopen, or
+update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains
