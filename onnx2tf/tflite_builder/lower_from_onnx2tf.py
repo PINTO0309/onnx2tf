@@ -4084,8 +4084,8 @@ def lower_onnx_to_ir(
     def _run_gate_layout_pass_cluster(
         *,
         include_mixed_attention: bool = True,
-    ) -> None:
-        run_gate_layout(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_gate_layout(
             gate_layout_context,
             include_mixed_attention=include_mixed_attention,
         )
@@ -4656,7 +4656,9 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        _run_gate_layout_pass_cluster(include_mixed_attention=False)
+        _layout_opt_gate_layout_results = _run_gate_layout_pass_cluster(
+            include_mixed_attention=False
+        )
         for _ in range(2):
             normalization_graph_index = ModelIRGraphIndex(model_ir)
             rewritten_instnorm = int(

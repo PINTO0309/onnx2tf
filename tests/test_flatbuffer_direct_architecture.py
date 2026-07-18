@@ -7419,9 +7419,10 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         "run_dual_mul_concat_layout_cleanup",
     )
     assert GATE_LAYOUT_REQUIRED_PASS_IDS == GATE_LAYOUT_PASS_IDS[1:]
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_gate_layout"

@@ -126,10 +126,6 @@ def test_gate_layout_result_policy_and_direct_boundary_are_explicit() -> None:
     ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gate-layout runner, helper, and direct call discard child results",
-)
 def test_gate_layout_results_propagate_to_the_direct_observation_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

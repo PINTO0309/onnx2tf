@@ -11401,3 +11401,37 @@ policy order or selection, shared state scope, direct arguments, full callback,
 normalization loop, surrounding calls, dependency, public API, or TensorFlow
 behavior. Keep the direct result unconsumed, validate sequentially, commit, and
 push only; do not create, reopen, or update a pull request.
+
+## Gate-layout result propagation implementation checkpoint
+
+`run_gate_layout()` now returns the ordered tuple already produced by
+`run_recovery_invocations()`. The lowerer helper returns that tuple with the
+same `Tuple[Dict[str, int], ...]` contract, and the reduced direct invocation
+retains it as `_layout_opt_gate_layout_results`.
+
+The retained direct tuple remains unconsumed and observation-only. Full and
+reduced child selection, child order, the shared `ModelIRPassStateScope`, the
+argument-free full-policy attention callback, reduced direct arguments,
+SA/PA-MirrorPad predecessor, normalization-loop successor, dependencies,
+public API, and TensorFlow behavior are unchanged.
+
+The first focused implementation run reported `335 passed, 3 failed in
+18.27s`. All three failures were stale structural assertions that still
+required the helper/direct calls to discard results as `Expr` statements; no
+production behavior failure was found. Those contracts now require the typed
+helper `Return` and the selected direct `Assign`.
+
+Corrected implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.57s`
+- gate orchestration, full attention callback, reduced direct boundary,
+  SA/PA-MirrorPad owner, callback composition, architecture, and pass-
+  efficiency coverage: `338 passed in 20.10s`
+- 95 branch-changed test files: `1635 passed in 30.60s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, orchestration, and changed-suite checks; this
+observation-only propagation does not claim a new model-corpus run. At resume,
+inventory the next raw pass-result boundary before selecting a new target.
+Commit and push only; do not create, reopen, or update a pull request.

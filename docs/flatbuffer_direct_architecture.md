@@ -12428,3 +12428,16 @@ Strict characterization selects
 freezes the exact model-only call, affine-pre/post/mean-affine boundary, both
 declarative selection indices and empty keyword contracts, fixed schema, and an
 unconsumed observation-only policy.
+
+Gate-layout result propagation now preserves the ordered child-result tuple
+already produced by the shared recovery engine. `run_gate_layout()` returns the
+full eight-result tuple or reduced seven-result tuple unchanged, and the lowerer
+helper exposes the same typed return contract. The reduced direct call retains
+its tuple as `_layout_opt_gate_layout_results` without consuming it.
+
+The full-policy helper remains the same argument-free attention-recovery
+callback. Pass selection and order, the single shared `ModelIRPassStateScope`,
+child callback contracts, direct policy argument, SA/PA-MirrorPad predecessor,
+two-iteration normalization successor, public API, dependencies, and
+TensorFlow boundary are unchanged. The retained direct tuple is
+observation-only and is not interpreted as mutation evidence.

@@ -1785,3 +1785,13 @@ helper signature, shared scope, SA/PA-mirrorpad/normalization-loop boundary,
 and unconsumed direct target are frozen. The focused gate passes
 `337 passed, 1 xfailed in 17.88s`; the branch-changed broad gate passes
 `1634 passed, 1 xfailed in 30.47s`.
+
+Gate-layout recovery now propagates its existing ordered child-result tuple
+through the runner and lowerer helper, retaining the reduced tuple as the
+unconsumed observation target `_layout_opt_gate_layout_results`. Full/reduced
+selection, child order, shared state scope, attention callback, and direct
+boundaries are unchanged. The initial focused run exposed three stale AST
+expectations (`335 passed, 3 failed`), which were updated from discarded
+expressions to the typed `Return`/selected `Assign` contract. The corrected
+focused gate passes `338 passed in 20.10s`, the 95-file branch-changed suite
+passes `1635 passed in 30.60s`, and targeted static validation passes.

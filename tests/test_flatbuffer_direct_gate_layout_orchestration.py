@@ -109,6 +109,7 @@ def test_gate_layout_context_and_delegate_are_explicit() -> None:
     assert helper.args.defaults == []
     assert helper.args.vararg is None
     assert helper.args.kwarg is None
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
     assert len(helper.body) == 1
     assert not any(
         isinstance(
@@ -134,7 +135,7 @@ def test_gate_layout_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -248,7 +249,7 @@ def test_gate_layout_preserves_direct_reduced_policy_and_boundaries() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.If)
         and any(
-            isinstance(candidate, ast.Expr)
+            isinstance(candidate, ast.Assign)
             and isinstance(candidate.value, ast.Call)
             and isinstance(candidate.value.func, ast.Name)
             and candidate.value.func.id == GATE_LAYOUT
@@ -258,7 +259,7 @@ def test_gate_layout_preserves_direct_reduced_policy_and_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(direct_guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == GATE_LAYOUT
@@ -267,7 +268,10 @@ def test_gate_layout_preserves_direct_reduced_policy_and_boundaries() -> None:
 
     assert isinstance(direct_guard.test, ast.Name)
     assert direct_guard.test.id == "optimize_layout_transpose_chains"
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_layout_opt_gate_layout_results"
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {
