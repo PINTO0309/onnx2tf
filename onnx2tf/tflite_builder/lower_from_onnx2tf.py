@@ -4922,9 +4922,11 @@ def lower_onnx_to_ir(
     _late_attention_preproj_ranklift_stats = (
         _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
     )
-    _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_window_partition_stats = (
+        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
         model_ir,

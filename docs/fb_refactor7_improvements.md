@@ -519,6 +519,17 @@ This checkpoint passes the focused preprojection/Gather/window-partition
 orchestration gate with `451 passed in 18.88s`, plus the branch-changed broad
 related suite with `1633 passed in 24.31s`.
 
+The direct late window-partition Reshape/Transpose-to-SpaceToDepth call now
+retains its existing one-counter dictionary as `_late_window_partition_stats`.
+The separate recovery-runner selection, indexed GraphIndex behavior, live
+Session LayoutState, preprojection predecessor, window-reverse successor, and
+TensorFlow-free boundary are unchanged. The value has no consumer and adds no
+traversal or mutation.
+
+This checkpoint passes the focused window-owner orchestration gate with
+`415 passed in 18.79s`, plus the branch-changed broad related suite with
+`1634 passed in 25.07s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -526,8 +537,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following window-partition
-Reshape/Transpose-to-SpaceToDepth result, its live LayoutState contract, and its
-preprojection/window-reverse boundaries. Any new mutation evidence must
+unit should audit the immediately following window-reverse
+Reshape/Transpose-to-DepthToSpace result, its live LayoutState contract, and its
+window-partition/final-convergence boundaries. Any new mutation evidence must
 preserve current pass order, TensorFlow-free boundary, dependency set, and
 sequential validation policy.
