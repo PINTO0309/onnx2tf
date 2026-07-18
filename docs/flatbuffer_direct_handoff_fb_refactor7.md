@@ -6683,3 +6683,44 @@ The sole strict expected failure is the intentionally unimplemented very-late
 InstanceNorm post-bias result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Very-late InstanceNorm post-bias result retention implementation checkpoint
+
+The second of the four direct production calls now retains its unchanged one-
+counter dictionary as `_very_late_instancenorm_post_bias_stats`. All direct
+occurrences therefore have distinct observation points:
+`_terminal_instancenorm_post_bias_stats`,
+`_very_late_instancenorm_post_bias_stats`,
+`_pre_terminal_affine_instancenorm_post_bias_stats`, and
+`_absolute_final_instancenorm_post_bias_stats`. The nested convergence call
+continues to consume its counter internally.
+
+This is an assignment-only orchestration change. It preserves the wrapper and
+indexed owner, one-key result schema, rewrite guards, positive-only pruning,
+GraphIndex/LayoutState/candidate/max-rewrite controls, callback arguments,
+pass order, diagnostics-aware pad-layout predecessor, live-LayoutState
+residual/Mul/Concat successor, existing direct targets, nested call,
+dependencies, diagnostics, and TensorFlow behavior. The new retained value has
+no consumer and triggers no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- owner rewrite, indexed Swish, all direct/nested occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency gate:
+  `387 passed in 20.17s`
+- branch-changed broad suite plus indexed Swish, all occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency coverage:
+  `1420 passed in 23.78s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit all production occurrences of
+`_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains()`.
+There are three direct calls plus one nested convergence call: the first
+terminal and second very-late direct results are raw, the third is retained as
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`, and the nested
+call consumes its counter. Characterize the very-late direct call adjacent to
+`_very_late_instancenorm_post_bias_stats` without conflating those other
+occurrences. Commit and push only; do not create, reopen, or update a pull
+request.

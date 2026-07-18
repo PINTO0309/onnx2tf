@@ -5096,9 +5096,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
         model_ir,

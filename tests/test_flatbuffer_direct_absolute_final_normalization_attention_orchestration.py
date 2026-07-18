@@ -295,7 +295,10 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert direct_statements[0].targets[0].id == (
         "_terminal_instancenorm_post_bias_stats"
     )
-    assert isinstance(direct_statements[1], ast.Expr)
+    assert isinstance(direct_statements[1], ast.Assign)
+    second_target = direct_statements[1].targets[0]
+    assert isinstance(second_target, ast.Name)
+    assert second_target.id == "_very_late_instancenorm_post_bias_stats"
     assert isinstance(direct_statements[2], ast.Assign)
     third_target = direct_statements[2].targets[0]
     assert isinstance(third_target, ast.Name)

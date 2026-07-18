@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2767,7 +2765,11 @@ def test_primary_path_retains_terminal_instancenorm_post_bias_result() -> None:
         "diagnostics": "session.diagnostics",
     }
 
-    assert isinstance(body[very_late_index], ast.Expr)
+    very_late = body[very_late_index]
+    assert isinstance(very_late, ast.Assign)
+    assert len(very_late.targets) == 1
+    assert isinstance(very_late.targets[0], ast.Name)
+    assert very_late.targets[0].id == "_very_late_instancenorm_post_bias_stats"
 
     staged = body[staged_index]
     assert isinstance(staged, ast.Assign)
@@ -2786,10 +2788,6 @@ def test_primary_path_retains_terminal_instancenorm_post_bias_result() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late InstanceNorm post-bias result is discarded",
-)
 def test_primary_path_retains_very_late_instancenorm_post_bias_result() -> None:
     body = _lowerer_body()
     callback_name = (
