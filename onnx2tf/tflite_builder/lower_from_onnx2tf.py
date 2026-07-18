@@ -4553,9 +4553,11 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_concat_input_adapter_stats = (
+            _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
             model_ir,
@@ -5067,9 +5069,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_concat_input_adapter_stats = (
+        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     run_concat_unary_conv_layout_cleanup(
         model_ir,

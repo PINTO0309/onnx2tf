@@ -8182,6 +8182,42 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Concat input-adapter result retention implementation checkpoint
+
+The layout-option call now retains
+`_layout_opt_concat_input_adapter_stats`, and the terminal call retains
+`_terminal_concat_input_adapter_stats`. Both preserve the indexed owner's
+unchanged one-counter dictionary and remain unconsumed because a zero counter
+does not exclude cleanup-only pruning.
+
+These are assignment-only changes. No consumer or guard was added. The lowerer
+wrapper, owner, one-key schema, unconditional unused-tensor pruning,
+graph-index behavior, live Session LayoutState, layout-option guard, retained
+Split/mixed pre-Concat predecessors, Slice/Logistic/Concat tail and
+Concat/unary/Conv successors, layout-recovery and safe-reduction selections,
+dependencies, diagnostics, and TensorFlow behavior remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- Concat input-adapter schema and indexed-owner fixtures, unconditional cleanup,
+  layout-recovery and safe-reduction selections, both direct boundaries,
+  adjacent Split/mixed and Slice/Logistic/Concat owners, terminal
+  Concat/unary/Conv cleanup, architecture, and pass-efficiency coverage:
+  `406 passed in 18.66s`
+- branch-changed broad suite plus the same Concat input-adapter coverage:
+  `1663 passed in 27.31s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the guarded
+`_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains()` result
+and every other production form of that owner. Preserve the newly retained
+Concat input-adapter dictionaries, layout option policy, live LayoutState,
+channel-shuffle successor, independent orchestration selection, and
+observation-only evidence rules. Commit and push only; do not create, reopen,
+or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

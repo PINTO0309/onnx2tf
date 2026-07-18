@@ -1073,16 +1073,28 @@ The focused indexed-owner/orchestration/boundary gate passes
 positive-only pruning, live LayoutState, dependencies, and TensorFlow behavior
 remain unchanged.
 
+Both direct Concat input-adapter results are now retained as
+`_layout_opt_concat_input_adapter_stats` and
+`_terminal_concat_input_adapter_stats`. Their owner prunes unused tensors
+unconditionally, so both one-counter dictionaries remain observation-only and
+have no consumers.
+
+The focused indexed-owner/selection/boundary gate passes
+`406 passed in 18.66s`, and the branch-changed broad suite passes
+`1663 passed in 27.31s`. The option guard, public-owner orchestration and
+private-wrapper safe-reduction selections, live LayoutState, dependencies, and
+TensorFlow behavior remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit both direct
-`_optimize_transpose_input_chains_pre_concat_to_single_post_adapter()` results
-and its independent layout-recovery orchestration selection. Its live
-LayoutState wiring, the newly retained Split/mixed pre-Concat predecessors,
-option guard, and adjacent layout owners must remain fixed. All retained SiNet
-callback results, Singleton/Reshape policies, three QKV result forms, and the
-late summary must also remain fixed.
+unit should audit the guarded
+`_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains()` result
+and every other production form of that owner. Its live LayoutState wiring,
+the newly retained Concat input-adapter predecessor, option guard,
+channel-shuffle successor, and independent orchestration selection must remain
+fixed. All retained SiNet callback results, Singleton/Reshape policies, three
+QKV result forms, and the late summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

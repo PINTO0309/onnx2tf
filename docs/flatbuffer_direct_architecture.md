@@ -11562,3 +11562,14 @@ wrapper, one-key schema, unconditional prune, exact two-call count, arguments,
 option guard, four boundaries, both independent selections, and absence of
 consumers. Both dictionaries must remain unconsumed; retention must add no
 guard, scan, dependency, or TensorFlow import path.
+
+The two direct calls now retain those unchanged one-counter dictionaries as
+`_layout_opt_concat_input_adapter_stats` and
+`_terminal_concat_input_adapter_stats`. Both remain unconsumed because a zero
+counter does not exclude cleanup-only pruning.
+
+These are assignment-only changes. The wrapper, indexed owner, unconditional
+unused-tensor pruning, live Session LayoutState, layout-option guard, retained
+Split/mixed pre-Concat predecessors, Slice/Logistic/Concat tail and
+Concat/unary/Conv successors, layout-recovery and safe-reduction selections,
+dependencies, diagnostics, and TensorFlow behavior remain unchanged.
