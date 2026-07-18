@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1899,6 +1901,69 @@ def test_primary_path_retains_shared_late_shape_result() -> None:
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "late_binary_repair_tensor_count"
     assert ast.unparse(following.value) == "len(model_ir.tensors)"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="guarded late-binary shape reconciliation result is discarded",
+)
+def test_primary_path_retains_late_binary_repair_shape_result() -> None:
+    body = _lowerer_body()
+    tensor_count_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_binary_repair_tensor_count"
+    )
+    guard_index = next(
+        index
+        for index in range(tensor_count_index + 1, len(body))
+        if isinstance(body[index], ast.If)
+        and "late_binary_repair_tensor_count" in ast.unparse(body[index].test)
+    )
+    guard = body[guard_index]
+    assert isinstance(guard, ast.If)
+    assert len(guard.body) == 1
+    guard_source = ast.unparse(guard.test)
+    for evidence_name in (
+        "late_signature_stats",
+        "late_binary_adapter_stats",
+        "late_singleton_adapter_stats",
+        "late_binary_repair_tensor_count",
+    ):
+        assert evidence_name in guard_source
+    for counter_name in (
+        "sanitized_static_shape_signature_consistency",
+        "inserted_rank4_binary_layout_fix_transpose",
+        "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
+    ):
+        assert counter_name in guard_source
+    assert "len(model_ir.tensors) < late_binary_repair_tensor_count" in guard_source
+
+    statement = guard.body[0]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == (
+        "_late_binary_repair_static_shape_stats"
+    )
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_mutation_count": "True"}
+
+    following = body[guard_index + 1]
+    assert isinstance(following, ast.If)
+    assert "optimize_layout_transpose_chains" in ast.unparse(following.test)
+    assert "apply_safe_transpose_reduction_lite_on_no_layout_opt" in ast.unparse(
+        following.test
+    )
 
 
 def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:

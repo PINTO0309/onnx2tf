@@ -7285,3 +7285,39 @@ call after `late_signature_stats`, `late_binary_adapter_stats`, and
 `late_singleton_adapter_stats` plus `late_binary_repair_tensor_count`.
 Preserve its existing predicate and characterize only a complete opt-in result
 target. Commit and push only; do not create, reopen, or update a pull request.
+
+## Guarded late-binary static-shape result characterization checkpoint
+
+The late-binary static-shape reconciliation is already guarded by three
+mutation counters: static shape-signature sanitization, rank-four binary layout
+adapter insertion, and singleton broadcast repair. A
+`len(model_ir.tensors) < late_binary_repair_tensor_count` clause covers
+cleanup-only pruning.
+
+The existing runtime fixture forces each positive counter and the tensor-count
+delta independently, proving that every changed outcome adds one reconciliation
+over the stable path. The predicate and execution count must remain unchanged.
+
+A strict expected-failure contract requires only the guard body to retain
+`_late_binary_repair_static_shape_stats` with
+`include_mutation_count=True`. It fixes all result and counter names, the prune
+clause, one-statement body, and following optional late-binary layout-recovery
+guard. The complete result must have no consumer.
+
+At implementation, replace only the guarded expression with that assignment
+and opt-in keyword. Do not alter the predicate, reconciler fixed point,
+preceding repairs, following option guard, pass order, dependencies,
+diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- runtime counter/prune guard, complete reconciler, terminal occurrence,
+  architecture, and pass-efficiency coverage:
+  `352 passed, 1 xfailed in 20.24s`
+- branch-changed broad suite plus the same runtime and structural coverage:
+  `1427 passed, 1 xfailed in 24.79s`
+
+The sole strict expected failure is the intentionally unimplemented guarded
+late-binary result retention contract above. Implement only that assignment
+and opt-in counter, rerun the same gates sequentially, then commit and push
+only; do not create, reopen, or update a pull request.

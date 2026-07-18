@@ -11074,6 +11074,17 @@ The call inside that existing guard now retains
 evidence names, the tensor-count clause, following late-binary tensor-count
 boundary, and the absence of a new consumer remain fixed.
 
+The next late-binary reconciliation is also already guarded by complete
+evidence: static-signature sanitization, rank-four binary adapter insertion,
+singleton broadcast repair, and a tensor-count decrease that covers prune-only
+cleanup. Its runtime fixture independently exercises every counter and the
+prune path while preserving the all-zero skip.
+
+Strict characterization keeps that predicate unchanged and selects only its
+body for a future `_late_binary_repair_static_shape_stats` assignment with
+`include_mutation_count=True`. It fixes the following optional late-binary
+layout-recovery guard and introduces no result consumer.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`
