@@ -176,8 +176,8 @@ def build_terminal_slice_concat_recovery_invocations(
 
 def run_terminal_slice_concat_recovery(
     context: TerminalSliceConcatRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_terminal_slice_concat_recovery_invocations(context),
         expected_pass_ids=TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
         phase_name="terminal slice/concat recovery",

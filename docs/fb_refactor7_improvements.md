@@ -1197,6 +1197,19 @@ the selected observation-only targets are
 The focused characterization gate passes
 `465 passed, 1 xfailed in 20.37s`; the sole strict xfail covers the missing
 two-layer propagation and both assignments.
+
+Both runner layers now propagate the unchanged fourteen-slot nested tuple, and
+the two production calls retain it as
+`_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`. Both remain observation-only. The
+focused implementation gate passes `466 passed in 20.96s`, the branch-changed
+broad suite passes `1543 passed in 27.94s`, and targeted static validation
+passes.
+
+The next unit should audit the sole raw
+`_optimize_transpose_slice_prepost_nhwc_passthrough_chains()` result immediately
+after the final slice/concat recovery, including cleanup semantics and the
+final-slice/pre-Concat boundaries.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

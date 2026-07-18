@@ -157,12 +157,14 @@ def test_terminal_slice_concat_recovery_is_a_straight_line_closure() -> None:
 
     called_names = {
         node.func.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     loaded_data_names = {
         node.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
@@ -311,7 +313,8 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and _single_target(statement) in RESULT_TARGETS
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == TERMINAL_SLICE_CONCAT
@@ -374,7 +377,7 @@ def test_terminal_slice_concat_recovery_context_and_wrapper_are_explicit() -> No
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -452,10 +455,6 @@ def test_terminal_slice_concat_recovery_runner_preserves_instrumented_order(
     assert events == list(TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="both terminal slice/concat runner layers discard both production results",
-)
 def test_terminal_slice_concat_propagates_and_retains_both_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

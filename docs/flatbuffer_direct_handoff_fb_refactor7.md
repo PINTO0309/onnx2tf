@@ -8733,6 +8733,37 @@ order remain fixed. At implementation, add only two returns and two production
 assignments, update stale structural expectations, validate sequentially,
 commit, and push only. Do not create, reopen, or update a pull request.
 
+## Terminal slice/concat result propagation implementation checkpoint
+
+The orchestration runner and lowerer delegate now return the shared executor's
+unchanged fourteen-slot nested tuple. The two production calls retain it as
+`_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`. Both remain unconsumed: cleanup-only
+mutation and the final non-mutating `iterations` metric are observation, not a
+control condition.
+
+These are return- and assignment-only changes. Every child schema, stable ID,
+callback identity, ModelIR/layout/diagnostics argument, pass order, exact
+two-call multiplicity, and both predecessor/successor pairs are unchanged. No
+summary, mutation guard, dependency, public behavior change, or TensorFlow
+import path was added.
+
+Implementation validation completed sequentially under `uv`:
+
+- fourteen-slot schemas/cleanup, ordered propagation, channel-slice child,
+  both boundary pairs, terminal-layout, architecture, and pass-efficiency
+  coverage: `466 passed in 20.96s`
+- branch-changed broad suite: `1543 passed in 27.94s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, audit the raw
+`_optimize_transpose_slice_prepost_nhwc_passthrough_chains()` call immediately
+after `_final_slice_concat_recovery_results`. It has one production form;
+freeze its owner schema, cleanup behavior, final-slice/pre-Concat boundaries,
+and result consumption policy before changing production. Commit and push
+only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

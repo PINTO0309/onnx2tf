@@ -11796,3 +11796,16 @@ zero raw counters cannot serve as a general stability guard. The selected
 targets are `_terminal_slice_concat_recovery_results` and
 `_final_slice_concat_recovery_results`; both nested tuples must remain
 unconsumed when propagated.
+
+Both runner layers now return the shared executor's unchanged fourteen-slot
+nested tuple. The two existing production calls retain it as
+`_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`; neither result is consumed. This keeps
+cleanup-only mutation and non-mutating `iterations` as observation rather than
+control policy.
+
+These are return- and assignment-only changes. The nested channel-slice/
+pad-Mul result, remaining child schemas, stable IDs, callback identity,
+arguments, order, invocation count, and both predecessor/successor pairs are
+unchanged. No summary, guard, dependency, public API change, or TensorFlow
+import path was added.

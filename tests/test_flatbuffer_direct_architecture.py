@@ -1728,13 +1728,11 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         "run_layout_transpose_cleanup",
     )
     assert TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    helper_calls = [helper.body[0].value]
+    assert isinstance(helper_calls[0], ast.Call)
+    assert isinstance(helper_calls[0].func, ast.Name)
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_slice_concat_recovery"
     ]
@@ -1749,7 +1747,14 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_slice_concat_recovery_results",
+            "_final_slice_concat_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name

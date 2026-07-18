@@ -4291,8 +4291,8 @@ def lower_onnx_to_ir(
             include_duplicate_transpose=include_duplicate_transpose,
         )
 
-    def _run_terminal_slice_concat_layout_recovery_sequence() -> None:
-        run_terminal_slice_concat_recovery(
+    def _run_terminal_slice_concat_layout_recovery_sequence() -> Tuple[Any, ...]:
+        return run_terminal_slice_concat_recovery(
             terminal_slice_concat_recovery_context
         )
 
@@ -4727,7 +4727,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _run_terminal_slice_concat_layout_recovery_sequence()
+    _terminal_slice_concat_recovery_results = (
+        _run_terminal_slice_concat_layout_recovery_sequence()
+    )
     _terminal_boundary_stridedslice_qdq_concat_stats = (
         _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             model_ir,
@@ -5054,7 +5056,9 @@ def lower_onnx_to_ir(
     _final_channel_slice_muladd_bridge_stats = (
         _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
     )
-    _run_terminal_slice_concat_layout_recovery_sequence()
+    _final_slice_concat_recovery_results = (
+        _run_terminal_slice_concat_layout_recovery_sequence()
+    )
     _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
     # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
     # can recreate CONCAT(axis=1)+post-transpose wrappers.
