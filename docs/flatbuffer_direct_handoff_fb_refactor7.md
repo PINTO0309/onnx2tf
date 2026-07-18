@@ -7988,6 +7988,46 @@ the following captured Split/Conv/Concat bridge result, live LayoutState,
 surrounding pass order, and observation-only evidence rules. Commit and push
 only; do not create, reopen, or update a pull request.
 
+## ReLU/Split/Conv/Concat result characterization checkpoint
+
+The adjacent ReLU/Split/Conv/ReLU/Concat post-transpose wrapper dispatches the
+second indexed owner in `split_all_outputs_layout.py` and returns the fixed
+one-counter dictionary
+`optimized_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains`.
+The owner counts only successful complete plan applications and calls
+unused-tensor pruning only when at least one rewrite succeeded. Its counter
+therefore covers all owner mutation paths.
+
+There are exactly two raw direct calls. Each follows one of the newly retained
+ReLU/Split all-output dictionaries and receives the live Session LayoutState.
+The post-SiNet call precedes the retained Split/Conv/Concat bridge result; the
+terminal call precedes mixed pre-Concat adapter recovery.
+
+A strict expected-failure contract selects
+`_post_sinet_relu_split_conv_concat_stats` and
+`_terminal_relu_split_conv_concat_stats`. It fixes the two-call count, model
+and LayoutState arguments, lowerer wrapper, one-key schema, positive-only
+pruning, both captured predecessors, both successors, and absence of result
+consumers.
+
+At implementation, replace only the two raw direct expressions with
+assignments. Do not add a consumer or guard, and do not change the wrapper,
+owner, schema, pruning, graph-index behavior, live LayoutState, surrounding
+calls, dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- ReLU/Split/Conv/Concat result/schema semantics, the preceding ReLU/Split
+  owner fixtures, QKV and Split/Conv/Concat boundaries, architecture, and
+  pass-efficiency coverage: `388 passed, 1 xfailed in 18.66s`
+- concrete ReLU/Split/Conv/Concat rewrite fixture:
+  `1 passed, 740 deselected in 0.61s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

@@ -11477,3 +11477,23 @@ counting, positive-only unused-tensor pruning, live Session LayoutState,
 post-SiNet QKV and terminal pre-Concat predecessors, shared
 ReLU/Split/Conv/Concat successor, dependencies, diagnostics, and TensorFlow
 behavior remain unchanged.
+
+The adjacent ReLU/Split/Conv/ReLU/Concat post-transpose wrapper dispatches a
+second indexed owner from the same module and returns the fixed one-counter
+dictionary
+`optimized_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains`.
+The owner counts only successful complete plan applications and prunes unused
+tensors only inside its positive rewrite guard, so the counter covers every
+owner mutation path.
+
+There are exactly two direct calls. Each immediately follows one of the newly
+retained ReLU/Split all-output results and receives the live Session
+LayoutState. The post-SiNet call precedes the retained Split/Conv/Concat bridge
+result; the terminal call precedes mixed pre-Concat adapter recovery.
+
+Strict characterization selects `_post_sinet_relu_split_conv_concat_stats` and
+`_terminal_relu_split_conv_concat_stats`. It fixes the two-call count, wrapper,
+one-key schema, positive-only prune, arguments, both captured predecessors,
+both successors, and absence of result consumers. Both dictionaries must
+remain unconsumed in this unit; retention must add no guard, scan, dependency,
+or TensorFlow import path.
