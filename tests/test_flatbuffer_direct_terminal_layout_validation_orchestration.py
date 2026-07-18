@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2102,7 +2100,12 @@ def test_primary_path_retains_final_boundary_input_normalization_result() -> Non
     assert len(indices) == 2
     earlier_index, final_index = indices
     assert earlier_index < final_index
-    assert isinstance(body[earlier_index], ast.Expr)
+    earlier_statement = body[earlier_index]
+    assert isinstance(earlier_statement, ast.Assign)
+    assert isinstance(earlier_statement.targets[0], ast.Name)
+    assert earlier_statement.targets[0].id == (
+        "_terminal_boundary_input_normalization_stats"
+    )
 
     statement = body[final_index]
     assert isinstance(statement, ast.Assign)
@@ -2138,10 +2141,6 @@ def test_primary_path_retains_final_boundary_input_normalization_result() -> Non
     assert successor_call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal boundary-input normalization result is discarded",
-)
 def test_primary_path_retains_terminal_boundary_input_normalization_result() -> None:
     body = _lowerer_body()
     callback_name = "run_boundary_input_normalization_cleanup"

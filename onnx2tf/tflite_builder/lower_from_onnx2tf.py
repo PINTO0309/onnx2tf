@@ -4686,10 +4686,12 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    run_boundary_input_normalization_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_boundary_input_normalization_stats = (
+        run_boundary_input_normalization_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _optimize_boundary_input_transpose_channel_slice_blocks(
         model_ir,

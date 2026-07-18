@@ -5706,3 +5706,33 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented terminal-
 occurrence result retention contract above.
+
+## Terminal boundary-input normalization result retention implementation checkpoint
+
+The earlier production call now retains the existing one-counter dictionary as
+`_terminal_boundary_input_normalization_stats`; the already captured final call
+keeps `_final_boundary_input_normalization_stats`. This is an assignment-only
+orchestration change. The owner and schema, transaction/preflight behavior,
+GraphIndex/layout synchronization, callback arguments, diagnostics, pass order,
+terminal Softmax predecessor, boundary channel-slice successor, final target,
+dependencies, and TensorFlow behavior are unchanged. Neither value has a
+consumer or triggers additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused normalization owner, terminal Softmax and boundary channel-slice
+  neighbors, both occurrence contracts, terminal-orchestration, architecture,
+  and pass-efficiency gate: `360 passed in 18.72s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, window/final convergence, boundary normalization, terminal
+  Softmax, layout recovery, and pass-efficiency coverage:
+  `1719 passed in 24.61s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately preceding
+`_optimize_terminal_softmax_transpose_after_nhwc_propagation()` result, owner
+schema, live LayoutState contract, production occurrences, and Gather-fanout/
+boundary-normalization boundaries before adding characterization. Commit and
+push only; do not create, reopen, or update a pull request.
