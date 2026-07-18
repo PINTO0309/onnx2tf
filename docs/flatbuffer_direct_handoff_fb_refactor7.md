@@ -5967,3 +5967,33 @@ The sole strict expected failure is the intentionally unimplemented terminal
 boundary-input channel-slice result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Terminal boundary-input channel-slice result retention implementation checkpoint
+
+The sole production call now retains its existing four-counter dictionary as
+`_terminal_boundary_input_channel_slice_stats`. This is an assignment-only
+orchestration change. The wrapper and pass implementation, result schema,
+rewrite guards, graph mutation, tensor pruning, shared GraphIndex/LayoutState
+behavior, callback arguments, pass order, captured boundary-normalization
+predecessor, first internal channel-slice successor, dependencies, diagnostics,
+and TensorFlow behavior are unchanged. The value has no consumer and triggers
+no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused boundary-input channel-slice owner, internal channel-slice successor,
+  boundary normalization/layout, terminal orchestration, architecture, and
+  pass-efficiency gate: `339 passed in 19.11s`
+- branch-changed broad suite plus boundary-input, channel-slice/pad-Mul,
+  terminal orchestration, architecture, and pass-efficiency coverage:
+  `1383 passed in 24.43s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately following first
+`_optimize_internal_transpose_channel_slice_nhwc_propagation_chains()` result,
+distinguish it from the later raw production occurrence, and fix its captured
+boundary-input channel-slice/MulAdd-bridge boundaries before adding
+characterization. Commit and push only; do not create, reopen, or update a pull
+request.

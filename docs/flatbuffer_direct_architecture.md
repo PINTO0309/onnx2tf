@@ -10917,10 +10917,10 @@ LayoutState and diagnostics arguments.
 
 The immediately following boundary-input Transpose/channel-slice owner returns
 four mutation counters and has one production call with the live Session
-LayoutState. Its result is currently discarded before the first internal
-Transpose/channel-slice propagation call. Strict characterization fixes
-`_terminal_boundary_input_channel_slice_stats` as its direct result target and
-preserves the captured normalization predecessor.
+LayoutState. Its result is retained as
+`_terminal_boundary_input_channel_slice_stats` between captured terminal
+boundary-input normalization and the first internal Transpose/channel-slice
+propagation call. The retained value has no consumer.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
