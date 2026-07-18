@@ -1757,3 +1757,13 @@ unconsumed and observation-only; both model-only attention selections and the
 owner's pruning behavior are unchanged. The focused gate passes
 `329 passed in 18.61s`, the branch-changed broad gate passes
 `1631 passed in 30.12s`, and targeted static validation passes.
+
+The indexed transpose/binary bridge owner is now characterized as a fixed
+two-key result with a default 32-rewrite cap and one guarded lowerer call. The
+selected observation-only target is
+`_layout_pass_set_1_transpose_binary_bridge_stats`; exact arguments, feature
+guard, no-else policy, quantized-activation/duplicate-fanout boundaries, sole
+owner occurrence, and absence of a consumer are frozen. Pruning on zero-cap and
+normal exits means zero counters are not complete mutation evidence. The
+focused gate passes `346 passed, 1 xfailed in 17.89s`; the branch-changed broad
+gate passes `1632 passed, 1 xfailed in 30.34s`.

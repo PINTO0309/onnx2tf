@@ -12256,6 +12256,19 @@ unconditional pruning is unchanged. No producer/consumer-map construction,
 constant or axis handling, call order, dependency, public API, or TensorFlow
 boundary changed.
 
+`optimize_transpose_binary_bridges()` exposes the fixed two-key result
+`removed_transpose_binary_bridges` and
+`removed_transpose_binary_asymmetric_bridges` from an indexed owner with a
+default 32-rewrite cap. The lowerer selects it once under
+`enable_transpose_binary_bridge_optimizations`, with the live LayoutState and
+no else path. Both zero-cap and normal exits prune unused tensors, so zero
+counters are not complete mutation evidence.
+
+Strict characterization selects
+`_layout_pass_set_1_transpose_binary_bridge_stats`. It freezes the exact call,
+feature guard, no-else policy, quantized-activation/duplicate-fanout boundaries,
+sole occurrence, fixed schema, and an unconsumed observation-only policy.
+
 The three direct calls now retain the same two-key results in those selected
 targets. Their arguments, ordering, nested policy selections, live context,
 normalization convergence logic, and surrounding calls remain unchanged. The

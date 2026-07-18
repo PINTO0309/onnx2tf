@@ -11296,3 +11296,40 @@ assignment does not claim a new model-corpus run. At resume, re-inventory the
 remaining raw pass expressions and select the next complete owner family before
 changing another boundary. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Transpose-binary bridge direct result characterization checkpoint
+
+`optimize_transpose_binary_bridges()` returns the fixed two-key dictionary
+`removed_transpose_binary_bridges` and
+`removed_transpose_binary_asymmetric_bridges` from an indexed owner with a
+default 32-rewrite cap. Zero-cap and normal exits prune unused tensors, so zero
+counters are not complete mutation evidence.
+
+The lowerer wrapper has one raw call under
+`enable_transpose_binary_bridge_optimizations`, with the live LayoutState and
+no else path. The guard lies between retained quantized-activation recovery and
+duplicate-fanout statistics. No nested selection of this owner exists.
+
+A passing contract freezes the two-key schema, exact direct call, feature
+guard, no-else policy, sole owner occurrence, and both retained-target
+boundaries. A strict expected-failure contract selects the unconsumed
+observation-only target `_layout_pass_set_1_transpose_binary_bridge_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.60s`
+- indexed owner and recovery behavior, quantized-activation and duplicate-
+  fanout boundaries, architecture, and pass-efficiency coverage:
+  `346 passed, 1 xfailed in 17.89s`
+- branch-changed broad suite including the new result contract:
+  `1632 passed, 1 xfailed in 30.34s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented guarded-result
+retention contract. Replace only the raw guarded expression with the selected
+target. Do not change the result schema, GraphIndex ownership, rewrite cap,
+candidate handling, pruning, layout synchronization, feature guard, direct
+arguments, surrounding calls, dependency, public API, or TensorFlow behavior.
+Keep the result unconsumed, validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.
