@@ -7416,3 +7416,41 @@ result remains raw, while the very-late and pre-terminal results are retained.
 Characterize only that first direct call and its residual-adapter predecessor
 and dual-statistics successor. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Terminal InstanceNorm residual/Mul/Concat result characterization checkpoint
+
+`_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains()` has
+three direct production calls plus one nested convergence call. Its fixed one-
+counter result is complete mutation evidence because unused-tensor pruning and
+LayoutState synchronization occur only after a positive rewrite.
+
+The first terminal direct result remains raw. The second and third are retained
+as `_very_late_instancenorm_residual_mul_concat_stats` and
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`; the nested call
+consumes its counter with `residual_graph_index`.
+
+A strict expected-failure contract selects only the first direct result for
+`_terminal_instancenorm_residual_mul_concat_stats`. It fixes the preceding
+live-LayoutState residual/add-to-single-adapter owner, following live-
+LayoutState dual-statistics owner, both retained later targets, and exactly one
+graph-indexed nested occurrence.
+
+At implementation, replace only the first direct expression with an
+assignment and update the existing three-direct occurrence accounting. Do not
+change the wrapper or owner, one-key schema, positive-only pruning, GraphIndex/
+LayoutState behavior, other occurrence forms, adjacent calls, pass order,
+dependencies, diagnostics, or TensorFlow behavior. The retained value must
+have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed owner, concrete rewrite, terminal/direct/nested occurrence,
+  pre-terminal boundary, architecture, and pass-efficiency coverage:
+  `464 passed, 1 xfailed in 20.07s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1429 passed, 1 xfailed in 24.83s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+InstanceNorm residual/Mul/Concat result retention contract above. Implement
+only that assignment, rerun the same gates sequentially, then commit and push
+only; do not create, reopen, or update a pull request.
