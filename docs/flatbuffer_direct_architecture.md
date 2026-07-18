@@ -11210,3 +11210,16 @@ SA/PA MirrorPad propagation and retains
 `_post_sinet_batchmatmul_affine_input_stats`. Both precede the BatchMatMul
 reshape/SE owner. Retention is assignment-only and observation-only and adds no
 graph traversal or consumer.
+
+The adjacent BatchMatMul reshape/SE owner returns the fixed one-counter
+`optimized_batchmatmul_reshape_se_nhwc_chains` dictionary. It converts the
+matched BATCH_MATMUL/RESHAPE/SE island atomically, then unconditionally prunes
+unused tensors. Its rewrite counter is not complete evidence for cleanup-only
+pruning and remains observation-only.
+
+Two raw direct occurrences follow the captured terminal and post-SiNet
+affine-input results and precede the same adj-flags owner. A strict contract
+fixes future `_terminal_batchmatmul_reshape_se_stats` and
+`_post_sinet_batchmatmul_reshape_se_stats` targets, exact model arguments,
+both captured predecessors, and the shared successor. Retention must add no
+guard, consumer, or graph traversal.

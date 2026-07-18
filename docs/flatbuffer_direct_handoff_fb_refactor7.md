@@ -7912,3 +7912,38 @@ At resume, audit both raw BatchMatMul reshape/SE owner calls immediately after
 the newly retained affine-input results. Preserve both surrounding sequences
 and observation-only constraints. Commit and push only; do not create, reopen,
 or update a pull request.
+
+## BatchMatMul reshape/SE result characterization checkpoint
+
+`_optimize_batchmatmul_reshape_se_nhwc_chains()` dispatches one dedicated owner
+and returns the fixed one-counter dictionary
+`optimized_batchmatmul_reshape_se_nhwc_chains`. The owner unconditionally
+prunes unused tensors after candidate processing, so its counter is incomplete
+evidence for cleanup-only mutation and must remain observation-only.
+
+There are exactly two raw direct production calls. They follow
+`_terminal_batchmatmul_affine_input_stats` and
+`_post_sinet_batchmatmul_affine_input_stats`, respectively, and both
+immediately precede `_optimize_batchmatmul_transpose_input_to_adj_flags()`.
+
+A strict expected-failure contract selects distinct
+`_terminal_batchmatmul_reshape_se_stats` and
+`_post_sinet_batchmatmul_reshape_se_stats` targets. It fixes the two-call count,
+model argument, empty keywords, both captured predecessors, the terminal
+option guard, and shared adj-flags successor.
+
+At implementation, replace only the two raw expressions with assignments. Do
+not add a guard or consumer and do not change the wrapper, owner, one-key
+schema, unconditional pruning, surrounding sequences, option guard, pass
+order, dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- reshape/SE and affine-input owner fixtures, both production boundaries,
+  architecture, terminal result contracts, and pass-efficiency coverage:
+  `355 passed, 1 xfailed in 19.62s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
