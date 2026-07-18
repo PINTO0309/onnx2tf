@@ -11508,3 +11508,24 @@ counting, positive-only unused-tensor pruning, live Session LayoutState,
 captured ReLU/Split all-output predecessors, Split/Conv/Concat bridge and mixed
 pre-Concat successors, dependencies, diagnostics, and TensorFlow behavior
 remain unchanged.
+
+The Split/mixed pre-Concat adapter wrapper dispatches its indexed owner and
+returns the fixed one-counter dictionary
+`optimized_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains`.
+The owner counts only successful complete plan applications and prunes unused
+tensors only inside its positive rewrite guard, so the counter covers every
+owner mutation path.
+
+There are exactly two direct wrapper calls: one inside layout recovery pass-set
+2 and one terminal call. Both receive the live Session LayoutState and precede
+the same Concat input-adapter owner. The guarded call follows StridedSlice
+pre-Concat recovery; the terminal call follows the retained
+ReLU/Split/Conv/Concat result. Layout-recovery orchestration separately selects
+the public owner and must remain unchanged.
+
+Strict characterization selects `_layout_opt_split_mixed_pre_concat_stats` and
+`_terminal_split_mixed_pre_concat_stats` for only the direct wrapper forms. It
+fixes the wrapper, one-key schema, positive-only prune, exact two-call count,
+arguments, option guard, four boundaries, independent orchestration selection,
+and absence of consumers. Both dictionaries must remain unconsumed in this
+unit; retention must add no guard, scan, dependency, or TensorFlow import path.

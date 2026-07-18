@@ -8063,6 +8063,47 @@ retained ReLU/Split/Conv/Concat dictionaries, the post-SiNet bridge sequence,
 live LayoutState, pass order, and observation-only evidence rules. Commit and
 push only; do not create, reopen, or update a pull request.
 
+## Split/mixed pre-Concat result characterization checkpoint
+
+The Split/mixed pre-Concat adapter wrapper dispatches the indexed owner in
+`split_mixed_concat_layout.py` and returns the fixed one-counter dictionary
+`optimized_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains`.
+The owner counts only successful complete plan applications and calls
+unused-tensor pruning only after a positive rewrite. Its counter therefore
+covers all owner mutation paths.
+
+There are exactly two direct wrapper calls. The first is inside layout recovery
+pass-set 2 between StridedSlice pre-Concat recovery and Concat input-adapter
+recovery. The terminal call follows `_terminal_relu_split_conv_concat_stats`
+and precedes the same input-adapter owner. Both receive the live Session
+LayoutState. Layout-recovery orchestration directly selects the public owner as
+a third, distinct form.
+
+A strict expected-failure contract selects
+`_layout_opt_split_mixed_pre_concat_stats` and
+`_terminal_split_mixed_pre_concat_stats` for only the direct wrapper calls. It
+fixes the wrapper, one-key schema, positive-only pruning, exact two-call count,
+model and LayoutState arguments, option guard, four boundaries, independent
+orchestration selection, and absence of result consumers.
+
+At implementation, replace only the two raw direct expressions with
+assignments. Do not add a consumer or guard, and do not change the wrapper,
+owner, schema, pruning, graph-index behavior, live LayoutState, orchestration
+selection, surrounding calls, dependencies, diagnostics, or TensorFlow
+behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- Split/mixed pre-Concat schema and indexed-owner fixtures, layout-recovery
+  orchestration, both direct boundaries, adjacent StridedSlice and Concat
+  input-adapter owners, architecture, and pass-efficiency coverage:
+  `407 passed, 1 xfailed in 18.76s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
