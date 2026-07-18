@@ -7793,7 +7793,11 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
     invocation_index = next(
         index
         for index, statement in enumerate(layout_recovery.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_layout_pass_set_1_transpose_unary_fanout_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name

@@ -12038,3 +12038,13 @@ direct call between the final suffix and final safe-binary results. The target
 must remain unconsumed. The same helper remains the attention-gate/QDQ callback;
 its newly exposed tuple will occupy that parent's existing callback slot, but
 the parent currently discards its own result and has no summary or guard.
+
+The runner and helper now return the active three-dictionary tuple for both
+policies. The sole post-QDQ direct call retains
+`_layout_pass_set_1_transpose_unary_fanout_results` between the final suffix
+and final safe-binary results. It remains unconsumed and observation-only.
+
+The attention-gate/QDQ callback slot now contains the default-policy tuple
+instead of `None`, but its parent still discards the enclosing result. No child
+owner, active pass-ID order, policy, shared scope, cleanup timing, summary,
+guard, dependency, public behavior, or TensorFlow boundary changed.

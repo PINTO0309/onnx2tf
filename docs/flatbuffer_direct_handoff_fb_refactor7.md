@@ -9376,6 +9376,48 @@ and both adjacent retained results. Do not add a summary, guard, or consumer.
 Validate sequentially, commit, and push only; do not create, reopen, or update
 a pull request.
 
+## Transpose/unary-fanout result propagation implementation checkpoint
+
+`run_transpose_unary_fanout()` and its lowerer helper now return the active
+three-dictionary tuple for both policy variants. The sole post-QDQ direct call
+retains `_layout_pass_set_1_transpose_unary_fanout_results` between
+`_layout_pass_set_1_final_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_safe_binary_results`. It remains unconsumed and
+observation-only.
+
+The default-policy callback registered in `AttentionRecoveryContext` now
+returns its three-dictionary tuple into the parent's existing callback slot
+instead of `None`. The attention-gate/QDQ parent continues to discard its
+enclosing result and has no summary, guard, or consumer, so runtime pass
+behavior is unchanged.
+
+The first implementation gate exposed three stale structural contracts that
+required the sole direct helper call to remain a raw expression or the final
+suffix successor to remain uncaptured (`368 passed, 3 failed`). They now
+require the new target and unchanged RHS/policy. These were characterization
+adjustments, not production regressions.
+
+Implementation validation completed sequentially under `uv`:
+
+- both Transpose/unary-fanout policy variants, attention callback, suffix and
+  safe-binary boundaries, architecture, and pass-efficiency coverage:
+  `371 passed in 20.83s`
+- branch-changed broad suite: `1589 passed in 28.35s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The implementation adds only transparent returns and one direct assignment.
+It adds no pass invocation, summary, guard, order/policy change, dependency,
+public API change, or TensorFlow import path. These checks do not claim a
+model-corpus run.
+
+At resume, audit the parent
+`_run_attention_gate_qdq_recovery_sequence()` result contract now that its
+Transpose/unary-fanout callback slot is populated. Inventory every direct
+parent invocation and preserve their distinct boundaries before changing the
+parent runner or helper. Commit and push only; do not create, reopen, or update
+a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

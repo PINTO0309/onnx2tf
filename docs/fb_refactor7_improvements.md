@@ -1409,6 +1409,16 @@ policy arguments, callback identity, final-suffix/final-safe-binary boundaries,
 and the unconsumed policy are frozen before implementation. The focused gate
 passes `370 passed, 1 xfailed in 18.07s`; the strict xfail is transparent
 runner/helper/direct propagation.
+
+The runner and helper now return the active three-dictionary tuple. The direct
+post-QDQ call retains `_layout_pass_set_1_transpose_unary_fanout_results`; the
+attention-gate/QDQ callback now contributes its default-policy tuple to the
+parent's still-discarded result. The focused implementation gate passes
+`371 passed in 20.83s`, the branch-changed broad suite passes
+`1589 passed in 28.35s`, and targeted static validation passes.
+
+The next unit should audit every direct attention-gate/QDQ parent result now
+that its Transpose/unary-fanout callback slot is populated.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

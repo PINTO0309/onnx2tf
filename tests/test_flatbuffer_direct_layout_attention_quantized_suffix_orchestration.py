@@ -315,7 +315,7 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
     assert result_targets == list(RESULT_TARGETS)
     assert following_targets == [
         "_layout_pass_set_1_safe_binary_results",
-        None,
+        "_layout_pass_set_1_transpose_unary_fanout_results",
     ]
 
 

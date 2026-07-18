@@ -151,7 +151,7 @@ def test_transpose_unary_fanout_signature_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -333,7 +333,10 @@ def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> No
     direct_index = next(
         index
         for index, statement in enumerate(parent.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == RESULT_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == TRANSPOSE_UNARY_FANOUT
@@ -368,10 +371,6 @@ def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> No
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the direct Transpose/unary-fanout result is discarded",
-)
 def test_transpose_unary_fanout_returns_both_variants_and_retains_direct_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

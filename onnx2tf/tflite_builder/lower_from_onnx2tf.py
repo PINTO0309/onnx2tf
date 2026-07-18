@@ -4107,8 +4107,8 @@ def lower_onnx_to_ir(
         *,
         include_layout_transpose: bool = False,
         include_unary_passthrough: bool = True,
-    ) -> None:
-        run_transpose_unary_fanout(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_transpose_unary_fanout(
             transpose_unary_fanout_context,
             include_layout_transpose=include_layout_transpose,
             include_unary_passthrough=include_unary_passthrough,
@@ -4469,9 +4469,11 @@ def lower_onnx_to_ir(
                 include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
             )
         )
-        _run_transpose_unary_fanout_layout_pass_cluster(
-            include_layout_transpose=True,
-            include_unary_passthrough=False,
+        _layout_pass_set_1_transpose_unary_fanout_results = (
+            _run_transpose_unary_fanout_layout_pass_cluster(
+                include_layout_transpose=True,
+                include_unary_passthrough=False,
+            )
         )
         _layout_pass_set_1_final_safe_binary_results = (
             _run_safe_binary_bridge_recovery_sequence()
