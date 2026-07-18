@@ -4291,3 +4291,33 @@ Characterization validation completed sequentially under `uv`:
 
 The two strict xfails are the deliberately unmet runner-return and lowerer-
 capture contracts; there are no unexpected failures.
+
+## Absolute-final normalization/attention result implementation checkpoint
+
+`run_absolute_final_normalization_attention()` now returns the ordered tuple
+already produced by `run_recovery_invocations()`. The lowerer helper returns
+that same tuple, and the primary path retains it as
+`_absolute_final_normalization_attention_results`. The tuple contains the
+flattened-global-normalization Pad result followed by the mixed-attention
+MirrorPad result in the existing declared pass-ID order.
+
+The two owners, callback arguments, shared `ModelIRPassStateScope`, diagnostics,
+pass IDs, execution order, previous InstanceNorm post-bias assignment, and
+following dynamic rank-one assignment are unchanged. No summarizer, guard,
+reconciliation, pass invocation, graph traversal, metadata write, or dependency
+is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- pair owner, pass-efficiency, architecture, and terminal orchestration:
+  `317 passed in 20.12s`
+- expanded broad related gate: `1268 passed in 31.17s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the discarded dictionaries from
+`_realign_dynamic_boundary_shape_signature_map()` and
+`_sanitize_static_shape_signature_consistency()` immediately before the
+absolute-final affine/normalization/attention sequence. Characterize their
+exact mutation schemas and adjacent ordering before retaining any result. Keep
+all existing final owners fixed. Commit and push only; do not create or update
+a pull request.

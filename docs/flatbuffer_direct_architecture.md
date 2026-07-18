@@ -10738,10 +10738,11 @@ operations are unchanged; no guard, reconciliation, or traversal is added.
 The immediately preceding absolute-final normalization/attention pair is a
 two-pass recovery orchestration over one shared pass-state scope. Both owners
 return stable mutation dictionaries and the common recovery runner returns
-them as an ordered tuple, but the orchestration runner, lowerer helper, and
-primary caller currently discard that tuple. Characterization fixes those
-three propagation boundaries and the adjacent post-bias/dynamic-rank-one order
-before any implementation change.
+them as an ordered tuple. The pair-specific runner and lowerer helper now return
+that tuple, and the primary caller retains it as
+`_absolute_final_normalization_attention_results`. The adjacent post-bias and
+dynamic-rank-one assignments remain fixed; no summarizer, guard,
+reconciliation, or traversal is added.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

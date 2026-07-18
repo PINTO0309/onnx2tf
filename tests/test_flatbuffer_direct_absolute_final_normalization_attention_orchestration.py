@@ -181,14 +181,23 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_normalization_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
     )
 
     previous = lowerer.body[invocation_index - 1]
+    invocation = lowerer.body[invocation_index]
     following = lowerer.body[invocation_index + 1]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
@@ -216,7 +225,11 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     normalization_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_normalization_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
@@ -255,7 +268,11 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
         "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
     )
     following = lowerer.body[normalization_index]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_absolute_final_normalization_attention_results"
+    )
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
@@ -357,7 +374,7 @@ def test_absolute_final_normalization_attention_context_and_wrapper_are_explicit
 ):
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -405,10 +422,6 @@ def test_absolute_final_normalization_attention_runner_preserves_order(
     assert events == list(ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="absolute-final normalization/attention runner discards pass results",
-)
 def test_absolute_final_normalization_attention_runner_returns_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -441,10 +454,6 @@ def test_absolute_final_normalization_attention_runner_returns_ordered_results(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="lowerer discards absolute-final normalization/attention results",
-)
 def test_absolute_final_normalization_attention_lowerer_captures_results() -> None:
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1

@@ -4152,8 +4152,8 @@ def lower_onnx_to_ir(
             include_layout_transpose=include_layout_transpose,
         )
 
-    def _run_absolute_final_normalization_attention_pass_pair() -> None:
-        run_absolute_final_normalization_attention(
+    def _run_absolute_final_normalization_attention_pass_pair() -> Tuple[Dict[str, int], ...]:
+        return run_absolute_final_normalization_attention(
             absolute_final_normalization_attention_context
         )
 
@@ -5693,7 +5693,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _run_absolute_final_normalization_attention_pass_pair()
+    _absolute_final_normalization_attention_results = (
+        _run_absolute_final_normalization_attention_pass_pair()
+    )
     _absolute_final_dynamic_rank1_stats = (
         _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
             model_ir,

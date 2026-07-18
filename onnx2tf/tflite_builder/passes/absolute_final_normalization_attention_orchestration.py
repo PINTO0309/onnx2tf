@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -61,8 +61,8 @@ def build_absolute_final_normalization_attention_invocations(
 
 def run_absolute_final_normalization_attention(
     context: AbsoluteFinalNormalizationAttentionContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Dict[str, int], ...]:
+    return run_recovery_invocations(
         build_absolute_final_normalization_attention_invocations(context),
         expected_pass_ids=ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
         phase_name="absolute-final normalization/attention",

@@ -5684,7 +5684,11 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_normalization_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name

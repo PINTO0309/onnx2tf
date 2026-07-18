@@ -336,6 +336,16 @@ This checkpoint extends the expanded related gate to `1257 passed in 30.51s`;
 the focused dynamic-Reshape, terminal-orchestration, architecture, and
 occurrence gate is `311 passed in 18.45s`.
 
+The immediately preceding absolute-final normalization/attention pair now
+propagates its two ordered mutation dictionaries through the orchestration
+runner and lowerer helper into one primary-path result assignment. This reuses
+the existing shared recovery result tuple and adds no pass execution, scan,
+guard, reconciliation, or summary traversal.
+
+This checkpoint extends the expanded related gate to `1268 passed in 31.17s`;
+the focused pair-owner, pass-efficiency, architecture, and terminal-
+orchestration gate is `317 passed in 20.12s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -344,7 +354,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should audit result propagation through
-`_run_absolute_final_normalization_attention_pass_pair()` and its orchestration
-boundary immediately before the completed absolute-final dynamic rank-one
-rewrite. Any new mutation evidence must preserve current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+the final boundary-signature restore calls immediately before the completed
+absolute-final affine/normalization/attention sequence. Any new mutation
+evidence must preserve current pass order, TensorFlow-free boundary, dependency
+set, and sequential validation policy.
