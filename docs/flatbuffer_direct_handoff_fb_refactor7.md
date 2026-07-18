@@ -11056,3 +11056,38 @@ terminal selection or summary, surrounding calls, dependency, public API, or
 TensorFlow behavior. Keep both direct results unconsumed, validate
 sequentially, commit, and push only; do not create, reopen, or update a pull
 request.
+
+## Affine-chain fold direct result retention implementation checkpoint
+
+The two raw lowerer expressions now retain their unchanged one-key dictionaries
+as `_layout_pass_set_1_initial_affine_chain_fold_stats` and
+`_layout_pass_set_1_post_binary_affine_chain_fold_stats`. Both targets remain
+unconsumed and observation-only. Terminal affine/Concat/Split recovery still
+selects the public callback and consumes its nested result in the same mutation
+summary.
+
+No result schema, GraphIndex ownership, rewrite cap, candidate handling, layout
+synchronization, direct argument, terminal selection or summary, surrounding
+production call, dependency, public API, or TensorFlow boundary changed.
+
+The initial focused implementation gate reported `409 passed, 1 failed`: the
+attention-prefix architecture test still expected both affine successors to
+have no assignment targets. It now requires the two selected targets while
+continuing to assert the same successor calls and order. This was a stale
+structural contract, not a production regression.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.55s`
+- indexed owner behavior, terminal summary/orchestration, both attention
+  boundaries, architecture, and pass-efficiency coverage:
+  `410 passed in 20.86s`
+- branch-changed broad suite: `1625 passed in 30.08s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, inventory all
+direct and nested `_optimize_transpose_mul_add_const_prepost_nhwc_chains()`
+forms before changing the adjacent affine-pre/post boundary. Commit and push
+only; do not create, reopen, or update a pull request.

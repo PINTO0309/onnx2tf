@@ -4399,9 +4399,11 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_initial_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()
         )
-        _optimize_fold_mul_add_mul_affine_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_pass_set_1_initial_affine_chain_fold_stats = (
+            _optimize_fold_mul_add_mul_affine_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(
             model_ir,
@@ -4455,9 +4457,11 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_post_binary_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()
         )
-        _optimize_fold_mul_add_mul_affine_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_pass_set_1_post_binary_affine_chain_fold_stats = (
+            _optimize_fold_mul_add_mul_affine_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _layout_pass_set_1_attention_quantized_suffix_results = (
             _run_layout_attention_quantized_recovery_suffix(

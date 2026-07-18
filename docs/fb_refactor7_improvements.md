@@ -1696,3 +1696,11 @@ both attention-adjacent boundaries, nested layout routing, and absence of
 direct consumers are frozen. The focused gate passes
 `409 passed, 1 xfailed in 19.22s`; the branch-changed broad gate passes
 `1624 passed, 1 xfailed in 31.32s`.
+
+Both direct affine-chain fold calls now retain their unchanged one-key
+dictionaries in the selected observation-only targets. The terminal nested
+result and mutation summary are unchanged. The initial focused implementation
+gate reported `409 passed, 1 failed` because the attention-prefix architecture
+contract still expected no successor targets. Its corrected target contract
+passes `410 passed in 20.86s`; the branch-changed broad gate passes
+`1625 passed in 30.08s`, and targeted static validation passes.

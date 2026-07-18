@@ -725,8 +725,8 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         "_optimize_transpose_instancenorm_prepost_nhwc_chains",
     ]
     assert next_targets == [
-        None,
-        None,
+        "_layout_pass_set_1_initial_affine_chain_fold_stats",
+        "_layout_pass_set_1_post_binary_affine_chain_fold_stats",
         "_layout_pass_set_1_instancenorm_prepost_stats",
     ]
 

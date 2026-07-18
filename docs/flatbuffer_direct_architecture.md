@@ -12327,3 +12327,10 @@ Strict characterization selects
 direct results. It freezes exact arguments, initial-attention/affine-prepost and
 post-binary-attention/quantized-suffix boundaries, nested terminal index and
 layout flag, fixed schema, and an unconsumed observation-only direct policy.
+
+The two direct calls now retain their unchanged dictionaries in the selected
+targets. Both remain unconsumed and observation-only. The terminal nested
+result remains consumed by the same mutation summary, and its callback route is
+unchanged. No GraphIndex ownership, rewrite cap, candidate handling, layout
+synchronization, call order, dependency, public API, or TensorFlow boundary
+changed.
