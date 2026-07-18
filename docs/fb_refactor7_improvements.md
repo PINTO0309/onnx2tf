@@ -892,12 +892,22 @@ This assignment-only change passes the focused owner/orchestration gate with
 `1515 passed in 25.58s`. It adds no graph traversal, result consumer,
 dependency, or TensorFlow import path.
 
+The diagnostics-aware terminal normalization/pad aggregate is now retained as
+`_terminal_normalization_pad_stats` between the captured InstanceNorm post-bias
+and residual-add results. Its loop-local result consumer and two flatten-only
+orchestrated selections remain unchanged.
+
+The aggregate's two rewrite counters deliberately remain observation-only:
+both child owners can prune unused tensors while returning zero, so no new
+guard or result consumer was added. The focused gate passes `375 passed in
+19.73s`, concrete normalization/pad fixtures pass `2 passed, 739 deselected in
+0.60s`, and the branch-changed broad suite passes `1433 passed in 24.60s`.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit every production occurrence and the complete result schema of
-the diagnostics-aware `run_normalization_pad_layout_cleanup()` immediately
-before `_terminal_instancenorm_residual_add_stats`. Cleanup-only mutation must
-be understood before its aggregate is retained or used as guard evidence. Any
-change must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+unit should audit the next raw terminal result boundary. The retained
+`_terminal_normalization_pad_stats` must remain observation-only because it
+does not include cleanup-only pruning. Any change must preserve current pass
+order, TensorFlow-free boundary, dependency set, and sequential validation
+policy.

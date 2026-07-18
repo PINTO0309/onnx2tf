@@ -7674,3 +7674,34 @@ The sole strict expected failure is the intentionally unimplemented terminal
 result-retention contract. Implement only that observation-only assignment,
 rerun focused and branch-changed broad gates sequentially, then commit and push
 only; do not create, reopen, or update a pull request.
+
+## Terminal normalization/pad result retention implementation checkpoint
+
+The terminal direct call now retains its unchanged fixed two-key dictionary as
+`_terminal_normalization_pad_stats`. The loop-local call remains consumed as
+`normalization_pad_stats`, and the very-late and absolute-final orchestrators
+retain their flatten-only callback selections and shared state scopes.
+
+This is an assignment-only observation change. Because both child owners can
+prune unused tensors while reporting zero rewrites, the new result has no
+consumer and is not used as guard evidence. The child owners, schema,
+unconditional pruning, live LayoutState, diagnostics sink, adjacent captured
+InstanceNorm results, pass order, dependencies, and TensorFlow behavior remain
+unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal normalization/pad boundary, architecture, pass efficiency, and
+  very-late orchestration coverage: `375 passed in 19.73s`
+- concrete InstanceNorm/Pad and flattened global-norm/Pad fixtures:
+  `2 passed, 739 deselected in 0.60s`
+- branch-changed broad suite plus the same orchestration coverage:
+  `1433 passed in 24.60s`
+
+These are unit, contract, and orchestration checks; this result-retention change
+does not claim a new model-corpus run.
+
+At resume, audit the next raw terminal result boundary rather than consuming
+`_terminal_normalization_pad_stats` as complete mutation evidence. Preserve
+the explicit observation-only limitation, commit and push only, and do not
+create, reopen, or update a pull request.

@@ -11163,10 +11163,9 @@ mutation and must not be used by itself as a guard.
 
 Within `lower_onnx_to_ir`, one loop-local result is consumed by convergence and
 one terminal direct result after `_terminal_instancenorm_post_bias_stats`
-remains raw. Two additional recovery orchestrators select the same callback
-with flatten-only options and shared pass-state scope. A strict contract selects
-only the terminal direct occurrence for
-`_terminal_normalization_pad_stats`, preserving the loop-local consumer,
-orchestrated selections, live LayoutState, diagnostics sink, and following
-captured residual-add result. Retention must remain observation-only and add no
-graph work.
+is retained as `_terminal_normalization_pad_stats`. Two additional recovery
+orchestrators select the same callback with flatten-only options and shared
+pass-state scope. The contract preserves the loop-local consumer, orchestrated
+selections, live LayoutState, diagnostics sink, and following captured
+residual-add result. The retained dictionary remains observation-only and adds
+no graph work.

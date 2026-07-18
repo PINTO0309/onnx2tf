@@ -4740,7 +4740,7 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    run_normalization_pad_layout_cleanup(
+    _terminal_normalization_pad_stats = run_normalization_pad_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
