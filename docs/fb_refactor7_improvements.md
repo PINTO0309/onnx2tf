@@ -1589,3 +1589,13 @@ cleanup-only pruning. The focused implementation gate passes
 
 The next unit should audit both InstanceNorm pre/post NHWC recovery occurrences
 and their distinct direct/conditional boundaries.
+
+The InstanceNorm compatibility dispatcher is now characterized as four
+graph-ordered indexed owners, one result counter, and a 32-rewrite cap. Its
+later two-iteration convergence form remains an existing counter consumer;
+only the raw pass-set-1 result is selected as
+`_layout_pass_set_1_instancenorm_prepost_stats`. Exact arguments, call count,
+loop `.get()` expression, final-attention/squeeze-cleanup boundary, and
+unconsumed direct policy are frozen. The focused gate passes
+`536 passed, 1 xfailed in 18.21s`; the branch-changed broad gate passes
+`1614 passed, 1 xfailed in 29.38s`.

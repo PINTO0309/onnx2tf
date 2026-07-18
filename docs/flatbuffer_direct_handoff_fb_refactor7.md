@@ -10666,3 +10666,39 @@ call after `_layout_pass_set_1_final_attention_recovery_results` and the later
 conditional form. Preserve their distinct arguments, guards, and surrounding
 boundaries. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## InstanceNorm pre/post result characterization checkpoint
+
+`_optimize_transpose_instancenorm_prepost_nhwc_chains()` dispatches four
+indexed decomposed-InstanceNorm tail owners in graph order, caps total rewrites
+at 32, and returns the one-key dictionary
+`optimized_transpose_instancenorm_prepost_nhwc_chains`.
+
+There are two production forms. The raw pass-set-1 call receives ModelIR and
+the live LayoutState. The later form runs inside `for _ in range(2)`, receives
+`normalization_graph_index`, immediately extracts the same counter, and feeds
+the existing multi-owner convergence break. That consumed form must remain
+unchanged.
+
+A passing contract freezes the schema, all four owner dispatches, rewrite cap,
+both argument forms, exact call count, loop placement, and consumed `.get()`
+expression. A strict expected-failure contract selects observation-only target
+`_layout_pass_set_1_instancenorm_prepost_stats` between
+`_layout_pass_set_1_final_attention_recovery_results` and direct
+`run_squeeze_reshape_identity_cleanup()`, with no consumer.
+
+Characterization validation completed sequentially under `uv`:
+
+- four InstanceNorm owner families, direct and consumed-loop forms, final
+  attention boundary, architecture, and pass-efficiency coverage:
+  `536 passed, 1 xfailed in 18.21s`
+- branch-changed broad suite including the new result contract:
+  `1614 passed, 1 xfailed in 29.38s`
+
+The sole strict expected failure is the intentionally unimplemented direct
+assignment. Replace only that raw expression with the selected target. Do not
+change the dispatcher, schema, owner order, rewrite cap, GraphIndex/LayoutState
+routing, later consumed form, convergence guard, surrounding calls,
+dependency, public API, or TensorFlow behavior. Keep the direct result
+unconsumed, validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.

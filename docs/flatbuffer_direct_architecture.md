@@ -12198,6 +12198,18 @@ the counter omits cleanup-only pruning. No wrapper, owner, schema, graph-index
 allocation, prune path, pass order, adjacent retained result, guard,
 dependency, public API, or TensorFlow boundary changes.
 
+The InstanceNorm pre/post compatibility dispatcher returns the one-key
+`optimized_transpose_instancenorm_prepost_nhwc_chains` dictionary after
+graph-order dispatch across four indexed owners, capped at 32 rewrites. It has
+two production forms: a raw pass-set-1 call and a later call whose counter is
+already consumed inside a two-iteration normalization convergence loop.
+
+Strict characterization selects
+`_layout_pass_set_1_instancenorm_prepost_stats` for only the raw direct form. It
+freezes the four-owner dispatch and schema, direct live LayoutState argument,
+later shared GraphIndex consumer, exact call count, final-attention/
+squeeze-cleanup boundary, and an unconsumed observation-only policy.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and
