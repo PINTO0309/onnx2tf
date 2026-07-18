@@ -1630,3 +1630,13 @@ now accepts either a direct assignment or expression while preserving the
 exact call identity and boundary. The corrected focused gate passes
 `367 passed in 18.11s`, the branch-changed broad gate passes
 `1617 passed in 29.27s`, and targeted static validation passes.
+
+The quantized-PReLU cleanup is now characterized as a fixed four-key result,
+four transactional default passes in priorities 10 through 40, one direct
+lowerer call, and one nested duplicate-fanout orchestration selection with a
+shared pass-state scope. The selected observation-only direct target is
+`_layout_pass_set_1_quantized_prelu_stats`; exact arguments, the attention-
+gate/dequant-TransposeConv boundary, the nested invocation, and absence of a
+consumer are frozen. The focused gate passes
+`325 passed, 1 xfailed in 17.98s`; the branch-changed broad gate passes
+`1618 passed, 1 xfailed in 29.14s`.

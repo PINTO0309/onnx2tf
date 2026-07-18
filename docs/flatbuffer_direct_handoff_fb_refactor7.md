@@ -10814,3 +10814,40 @@ assignment does not claim a new model-corpus run. At resume, inventory the next
 discarded direct pass result and all of its nested or consumed forms before
 selecting another boundary. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Quantized-PReLU direct result characterization checkpoint
+
+`run_quantized_prelu_cleanup()` returns a fixed four-key dictionary for its
+transpose/quantize bridge, transpose bridge, quantize fusion, and depthwise
+fusion passes. The default direct call enables all four transactional passes in
+priorities 10 through 40.
+
+The lowerer has one raw direct call with the live LayoutState and diagnostics,
+after `_layout_pass_set_1_attention_gate_qdq_results` and before
+`_optimize_dequant_transposeconv_quantize_chains`. The duplicate-fanout/
+quantized-PReLU orchestration separately selects the same callback with its
+shared `ModelIRPassStateScope`; that nested invocation remains unchanged.
+
+A passing contract freezes the four-key schema, exact direct arguments, sole
+direct occurrence, nested invocation arguments, and both boundary calls. A
+strict expected-failure contract selects the unconsumed observation-only target
+`_layout_pass_set_1_quantized_prelu_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.57s`
+- quantized-PReLU owners, duplicate orchestration, attention recovery and
+  quantized suffix boundaries, architecture, and pass-efficiency coverage:
+  `325 passed, 1 xfailed in 17.98s`
+- branch-changed broad suite including the new result contract:
+  `1618 passed, 1 xfailed in 29.14s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct-result
+retention contract. Replace only the raw direct expression with
+`_layout_pass_set_1_quantized_prelu_stats`. Do not change the result schema,
+pass selection/order, preflight, transaction, state scope, direct arguments,
+nested invocation, surrounding calls, guard, dependency, public API, or
+TensorFlow behavior. Keep the result unconsumed, validate sequentially, commit,
+and push only; do not create, reopen, or update a pull request.

@@ -12258,3 +12258,16 @@ tuple. The two direct calls retain
 observation-only. Their newly retained final-attention and layout-recovery
 successors are unchanged. No child, context, pass order, cleanup timing, guard,
 summary, dependency, public API, or TensorFlow boundary changes.
+
+`run_quantized_prelu_cleanup()` exposes a fixed four-key dictionary covering
+its transpose/quantize bridge, transpose bridge, quantize fusion, and
+depthwise fusion passes. Its default direct lowerer call enables all four in
+priorities 10 through 40. The duplicate-fanout orchestration independently
+selects the same callback with a shared `ModelIRPassStateScope`.
+
+Strict characterization selects
+`_layout_pass_set_1_quantized_prelu_stats` for the sole direct call. It freezes
+the exact direct arguments, attention-gate/dequant-TransposeConv boundaries,
+nested invocation arguments, fixed result schema, and an unconsumed
+observation-only policy. The nested callback and its shared state scope remain
+owned by the existing orchestration.
