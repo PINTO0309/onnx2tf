@@ -10894,9 +10894,10 @@ is unchanged.
 The adjacent window-reverse Reshape/Transpose-to-DepthToSpace indexed owner
 also returns one rewrite counter, receives the live Session LayoutState, and is
 selected by the recovery runner in addition to one direct late production
-call. The direct result is currently discarded. Strict characterization fixes
-a late target between the captured window-partition dictionary and indexed
-final shape/activation convergence without changing either execution path.
+call. The direct result is retained as `_late_window_reverse_stats` between the
+captured window-partition dictionary and indexed final shape/activation
+convergence. The retained value has no consumer, and the recovery-runner path
+remains unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

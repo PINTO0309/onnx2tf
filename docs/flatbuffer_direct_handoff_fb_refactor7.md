@@ -5508,3 +5508,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented direct
 late-result retention contract above.
+
+## Late window-reverse result retention implementation checkpoint
+
+The sole direct late production call now retains the existing one-counter
+dictionary as `_late_window_reverse_stats`. This is an assignment-only
+orchestration change. The indexed owner and schema, separate recovery-runner
+selection and captured results, GraphIndex/layout synchronization, callback
+arguments, pass order, window-partition predecessor, indexed final-convergence
+successor, dependencies, and TensorFlow behavior are unchanged. The value has
+no consumer and triggers no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused window owners, partition/final-convergence boundaries, layout
+  recovery, terminal-orchestration, and architecture gate:
+  `411 passed in 18.65s`
+- branch-changed broad related suite plus cleanup, indexed QKV/Gather-axis0,
+  preprojection, both window owners, final convergence, layout recovery, and
+  pass-efficiency coverage: `1683 passed in 24.57s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately following
+`_run_indexed_final_shape_activation_convergence()` result, return schema, live
+LayoutState contract, production occurrences, and window-reverse/boundary-
+normalization boundaries before adding characterization. Commit and push only;
+do not create, reopen, or update a pull request.

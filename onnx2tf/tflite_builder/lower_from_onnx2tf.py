@@ -4928,9 +4928,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_window_reverse_stats = (
+        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.
