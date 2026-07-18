@@ -10744,6 +10744,14 @@ that tuple, and the primary caller retains it as
 dynamic-rank-one assignments remain fixed; no summarizer, guard,
 reconciliation, or traversal is added.
 
+Immediately before the absolute-final affine and normalization sequence, the
+boundary-signature restore runs dynamic-map realignment followed by static
+signature sanitization. The owners return, respectively, one exact mutation
+counter and a four-counter repair/preservation dictionary. Other production
+occurrences already retain these dictionaries; characterization selects only
+the two discarded absolute-final calls and fixes their adjacency to the
+following affine owner before any implementation change.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

@@ -4321,3 +4321,36 @@ absolute-final affine/normalization/attention sequence. Characterize their
 exact mutation schemas and adjacent ordering before retaining any result. Keep
 all existing final owners fixed. Commit and push only; do not create or update
 a pull request.
+
+## Absolute-final boundary-signature result characterization checkpoint
+
+Dynamic-boundary signature realignment returns the exact count of metadata-map
+entries changed. It has three direct primary-path occurrences: the shared-late
+and terminal calls already retain their dictionaries, while the call directly
+before the absolute-final sequence discards its result. Static-signature
+sanitization returns one repair counter plus three dynamic-preservation
+counters. Its earlier late call retains the complete dictionary, while its
+absolute-final call discards it.
+
+A strict expected-failure orchestration contract now requires assigning only
+those two discarded results to `_absolute_final_boundary_signature_stats` and
+`_absolute_final_static_signature_stats`. It fixes all occurrence counts and
+targets, the realign→sanitize adjacency, and the immediately following
+`_absolute_final_affine_post_add_stats` boundary.
+
+At implementation, replace only the two expressions with assignments. Do not
+change either owner or schema, metadata/tensor writes, other occurrences, add a
+guard, reconciliation, scan, sort, dependency, or TensorFlow behavior, or
+reorder the following absolute-final owners. Validate signature-owner,
+terminal-orchestration, architecture, and broad related gates sequentially,
+then commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- signature owner, terminal orchestration, and architecture:
+  `294 passed, 1 xfailed in 17.57s`
+- expanded broad related gate: `1268 passed, 1 xfailed in 30.76s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet two-result capture contract;
+there are no unexpected failures.

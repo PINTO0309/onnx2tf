@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1045,6 +1047,67 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
         key=lambda call: call.lineno,
     )
     assert len(all_calls) == 3
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="absolute-final boundary signature results are discarded",
+)
+def test_primary_path_retains_absolute_final_boundary_signature_results() -> None:
+    body = _lowerer_body()
+    realign_name = "_realign_dynamic_boundary_shape_signature_map"
+    sanitize_name = "_sanitize_static_shape_signature_consistency"
+    realign_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == realign_name
+    ]
+    sanitize_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == sanitize_name
+    ]
+    assert len(realign_indices) == 3
+    assert len(sanitize_indices) == 2
+
+    expected_realign_targets = [
+        "shared_boundary_signature_stats",
+        "_absolute_final_boundary_signature_stats",
+        "_final_dynamic_boundary_signature_stats",
+    ]
+    for index, target_name in zip(
+        realign_indices,
+        expected_realign_targets,
+    ):
+        statement = body[index]
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        assert ast.unparse(statement.value) == f"{realign_name}(model_ir)"
+
+    expected_sanitize_targets = [
+        "late_signature_stats",
+        "_absolute_final_static_signature_stats",
+    ]
+    for index, target_name in zip(
+        sanitize_indices,
+        expected_sanitize_targets,
+    ):
+        statement = body[index]
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        assert ast.unparse(statement.value) == f"{sanitize_name}(model_ir)"
+
+    absolute_realign_index = realign_indices[1]
+    absolute_sanitize_index = sanitize_indices[1]
+    assert absolute_sanitize_index == absolute_realign_index + 1
+    following = body[absolute_sanitize_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_absolute_final_affine_post_add_stats"
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:
