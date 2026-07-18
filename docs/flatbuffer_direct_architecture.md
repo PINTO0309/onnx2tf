@@ -10753,6 +10753,13 @@ caller now retains them as `_absolute_final_boundary_signature_stats` and
 production occurrences. Their adjacency and the following affine owner are
 unchanged; no guard, reconciliation, scan, or traversal is added.
 
+In the no-layout fallback only, the immediately preceding guarded final
+cleanup reruns SE/FC layout propagation and strict constant affine pre/post
+folding after an unconditional topological sort, then sorts again. Both owners
+return stable one-counter dictionaries, but this guarded occurrence currently
+discards them. Characterization selects this exact guard, fixes both callback
+contracts, and preserves the surrounding sort and signature-restore boundary.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

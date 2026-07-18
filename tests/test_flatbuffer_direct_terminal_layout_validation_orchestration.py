@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1102,6 +1104,71 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "_absolute_final_affine_post_add_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="guarded no-layout final cleanup results are discarded",
+)
+def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
+    body = _lowerer_body()
+    guard_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test)
+        == "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+        and any(
+            _call_name(_statement_call(child)) == "run_se_fc_layout_cleanup"
+            for child in statement.body
+        )
+    )
+    guard = body[guard_index]
+    assert isinstance(guard, ast.If)
+    assert len(guard.body) == 3
+
+    expected = (
+        (
+            "_no_layout_final_se_fc_stats",
+            "run_se_fc_layout_cleanup",
+            {
+                "layout_state": "session.layout_state",
+                "diagnostics": "session.diagnostics",
+            },
+        ),
+        (
+            "_no_layout_final_affine_prepost_stats",
+            "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
+            {"layout_state": "session.layout_state"},
+        ),
+    )
+    for statement, (target_name, function_name, keywords) in zip(
+        guard.body[:2],
+        expected,
+    ):
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        call = statement.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == function_name
+        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == keywords
+
+    assert _call_name(_statement_call(guard.body[2])) == (
+        "_topologically_sort_operators"
+    )
+    previous = body[guard_index - 1]
+    assert _call_name(_statement_call(previous)) == "_topologically_sort_operators"
+    following = body[guard_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_absolute_final_boundary_signature_stats"
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

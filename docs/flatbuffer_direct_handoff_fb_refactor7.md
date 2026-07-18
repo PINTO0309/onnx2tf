@@ -4382,3 +4382,36 @@ At resume, audit the two discarded results inside the guarded
 the completed boundary-signature restore. Characterize their schemas, guarded
 execution, and surrounding sort/signature boundaries before retaining any
 evidence. Commit and push only; do not create or update a pull request.
+
+## Guarded no-layout final cleanup result characterization checkpoint
+
+When safe transpose reduction is enabled without the full layout optimizer,
+the final cleanup reruns SE/FC layout propagation and the indexed constant
+affine pre/post owner after final topological normalization, then sorts once
+more. Each owner returns a stable one-counter dictionary and already handles
+its own graph-index, pruning, and layout-state synchronization. This guarded
+occurrence discards both results.
+
+A strict expected-failure orchestration contract now requires assigning the
+raw dictionaries to `_no_layout_final_se_fc_stats` and
+`_no_layout_final_affine_prepost_stats`. It fixes the guard expression, both
+calls and keyword contracts, the preceding and guarded topological sorts, and
+the following `_absolute_final_boundary_signature_stats` boundary.
+
+At implementation, replace only the two guarded expressions with assignments.
+Do not initialize or consume the variables outside the guard, change either
+owner/schema, add a pass, guard, reconciliation, scan, sort, dependency, or
+metadata write, alter layout-state/diagnostics handoff, or affect the normal
+layout-optimized path or TensorFlow boundary. Validate SE/FC, indexed affine,
+terminal orchestration, architecture, and broad related gates sequentially,
+then commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- SE/FC, indexed affine, terminal orchestration, architecture, and pass
+  efficiency: `416 passed, 1 xfailed in 18.02s`
+- expanded broad related gate: `1371 passed, 1 xfailed in 30.72s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet guarded two-result capture
+contract; there are no unexpected failures.
