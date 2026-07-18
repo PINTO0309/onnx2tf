@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1338,6 +1340,85 @@ def test_primary_path_retains_core_cleanup_fusion_results() -> None:
     assert isinstance(consecutive, ast.Assign)
     assert isinstance(consecutive.targets[0], ast.Name)
     assert consecutive.targets[0].id == "_core_cleanup_consecutive_mul_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="terminal Dequantize and Q/DQ cleanup results are discarded",
+)
+def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
+    body = _lowerer_body()
+    sanitizer_name = "_sanitize_terminal_transpose_before_dequantize"
+    qdq_name = "run_terminal_quantize_dequantize_cleanup"
+    sanitizer_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == sanitizer_name
+    ]
+    qdq_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == qdq_name
+    ]
+    assert len(sanitizer_indices) == 2
+    assert len(qdq_indices) == 2
+    assert qdq_indices == [index + 1 for index in sanitizer_indices]
+
+    expected_targets = (
+        (
+            "_core_cleanup_terminal_dequant_stats",
+            "_core_cleanup_terminal_qdq_stats",
+        ),
+        (
+            "_terminal_cleanup_terminal_dequant_stats",
+            "_terminal_cleanup_terminal_qdq_stats",
+        ),
+    )
+    for pair_index, (sanitizer_index, qdq_index) in enumerate(
+        zip(sanitizer_indices, qdq_indices)
+    ):
+        sanitizer = body[sanitizer_index]
+        assert isinstance(sanitizer, ast.Assign)
+        assert isinstance(sanitizer.targets[0], ast.Name)
+        assert sanitizer.targets[0].id == expected_targets[pair_index][0]
+        sanitizer_call = sanitizer.value
+        assert isinstance(sanitizer_call, ast.Call)
+        assert isinstance(sanitizer_call.func, ast.Name)
+        assert sanitizer_call.func.id == sanitizer_name
+        assert [
+            ast.unparse(argument) for argument in sanitizer_call.args
+        ] == ["model_ir"]
+        assert sanitizer_call.keywords == []
+
+        qdq = body[qdq_index]
+        assert isinstance(qdq, ast.Assign)
+        assert isinstance(qdq.targets[0], ast.Name)
+        assert qdq.targets[0].id == expected_targets[pair_index][1]
+        qdq_call = qdq.value
+        assert isinstance(qdq_call, ast.Call)
+        assert isinstance(qdq_call.func, ast.Name)
+        assert qdq_call.func.id == qdq_name
+        assert [ast.unparse(argument) for argument in qdq_call.args] == [
+            "model_ir"
+        ]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in qdq_call.keywords
+        } == {
+            "layout_state": "session.layout_state",
+            "diagnostics": "session.diagnostics",
+        }
+        assert _call_name(_statement_call(body[qdq_index + 1])) == (
+            "_optimize_fold_conv_mul_add_affine_chains"
+        )
+
+    first_previous = body[sanitizer_indices[0] - 1]
+    assert isinstance(first_previous, ast.Assign)
+    assert isinstance(first_previous.targets[0], ast.Name)
+    assert first_previous.targets[0].id == "_core_cleanup_consecutive_mul_stats"
+    assert ast.unparse(body[sanitizer_indices[1] - 1]) == (
+        "_set_post_progress_desc('terminal cleanup passes')"
+    )
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

@@ -4691,3 +4691,39 @@ At resume, audit the immediately following
 schemas, occurrence counts, exact diagnostics/layout handoff, and surrounding
 consecutive-Mul/Conv-affine boundaries before retaining evidence. Commit and
 push only; do not create or update a pull request.
+
+## Terminal quantization-cleanup result characterization checkpoint
+
+The primary path contains two identical ordered cleanup pairs: one immediately
+after the captured core-cleanup consecutive-Mul result, and one after late
+recovery sweeps under the `terminal cleanup passes` progress stage. Each pair
+first normalizes or removes terminal Transpose/Dequantize boundaries, returning
+two counters, then transactionally removes exact-grid terminal
+Quantize/Dequantize pairs, returning one counter. Both pairs precede Conv-affine
+folding, and all four caller results are currently discarded.
+
+A strict expected-failure orchestration contract requires targets
+`_core_cleanup_terminal_dequant_stats`,
+`_core_cleanup_terminal_qdq_stats`,
+`_terminal_cleanup_terminal_dequant_stats`, and
+`_terminal_cleanup_terminal_qdq_stats`. It fixes both occurrence counts,
+pairwise order, ModelIR/layout-state/diagnostics contracts, distinct preceding
+boundaries, and both Conv-affine successors.
+
+At implementation, replace only the four expressions with assignments. Do not
+change either owner/schema, pass transaction, GraphIndex/pruning behavior,
+callback arguments, progress stages, add a guard, reconciliation, scan, sort,
+dependency, metadata write, or result consumer, reorder either pair, or affect
+TensorFlow behavior. Validate quantization cleanup, terminal orchestration,
+architecture, pass efficiency, and broad related gates sequentially, then
+commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- quantization cleanup, terminal orchestration, architecture, and pass
+  efficiency: `358 passed, 1 xfailed in 17.86s`
+- expanded broad related gate: `1479 passed, 1 xfailed in 31.00s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet four-result capture contract;
+there are no unexpected failures.
