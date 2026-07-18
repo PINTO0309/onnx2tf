@@ -12517,3 +12517,16 @@ No owner logic, unconditional pruning, schema, wrapper, direct argument,
 surrounding call order, nested route, dependency, public API, or TensorFlow
 boundary changed. In particular, the observation counter is not used to infer
 whether unconditional cleanup mutated tensor storage.
+
+`optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains()` exposes the
+fixed one-key result
+`optimized_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains`. Its lowerer
+wrapper is called once directly, while pre-Add/mean-attention and SINet pre-
+Add/resize orchestration each select the public model-only owner once. The owner
+always prunes unused tensors on exit, so zero is not complete mutation evidence.
+
+Strict characterization selects `_very_late_residual_affine_fanout_stats` only
+for the direct result. It freezes owner schema and cleanup, wrapper, exact
+argument, retained residual-affine/PReLU predecessor, dead-operator-prune
+successor, both nested selection indices and model-only contracts, sole direct
+occurrence, and an unconsumed observation-only policy.

@@ -1851,3 +1851,13 @@ boundary-target lists (`283 passed, 2 failed`); after adding the observation
 target, the focused gate passes `285 passed in 20.05s`, the 98-file branch-
 changed suite passes `1642 passed in 31.33s`, and targeted static validation
 passes.
+
+The residual affine fan-out owner is now characterized as a fixed one-key
+result with unconditional unused-tensor pruning, one raw direct wrapper call,
+and two model-only declarative selections. Strict retention selects
+`_very_late_residual_affine_fanout_stats` only for the direct result; owner
+schema and cleanup, exact argument and retained-affine/dead-prune neighbors,
+both nested indices, and absence of a consumer are frozen. The focused gate
+passes `286 passed, 1 xfailed in 17.51s`, the 99-file branch-changed suite
+passes `1644 passed, 1 xfailed in 31.59s`, and targeted static validation
+passes.

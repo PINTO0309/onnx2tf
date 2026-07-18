@@ -11638,3 +11638,39 @@ Corrected implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Residual affine fan-out direct result characterization checkpoint
+
+The extracted residual affine fan-out owner returns the fixed one-key
+dictionary
+`optimized_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains`. It
+unconditionally prunes unused tensors before returning, so zero cannot prove
+absence of graph mutation.
+
+The lowerer has one raw direct wrapper call. Pre-Add/mean-attention selects the
+public owner at index 2, and SINet pre-Add/resize recovery selects it at index
+1; both declarative forms are model-only and remain part of their existing
+parent result tuples. The raw call is between retained
+`_very_late_residual_affine_prelu_stats` and dead-operator pruning.
+
+Passing contracts freeze the owner schema and cleanup, wrapper, exact direct
+call and neighbors, sole direct occurrence, and both nested selection indices
+and empty keyword contracts. A strict expected-failure contract selects the
+unconsumed observation target `_very_late_residual_affine_fanout_stats` only
+for the raw direct result.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.58s`
+- both residual owners, both nested routes, architecture, and focused owner
+  behavior: `286 passed, 1 xfailed in 17.51s`
+- 99 branch-changed test files: `1644 passed, 1 xfailed in 31.59s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct assignment.
+Retain only the existing dictionary. Do not change owner cleanup or schema,
+nested selections, call order, direct arguments, adjacent pruning,
+dependencies, public API, or TensorFlow behavior. Keep the target unconsumed,
+validate sequentially, commit, and push only; do not create, reopen, or update
+a pull request.
