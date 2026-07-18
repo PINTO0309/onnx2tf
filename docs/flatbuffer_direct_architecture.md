@@ -10780,6 +10780,13 @@ diagnostics. The fallback retains the results as
 `_fallback_precision_div_restore_stats`. Its exact callback contracts and the
 following unbound-input repair boundary are unchanged.
 
+The remaining earlier consecutive-Mul cleanup runs in the primary core-cleanup
+phase after pseudo-LeakyReLU and YOLO-decode rewrites and before terminal
+Transpose/Dequantize sanitization. It uses the same layout state, diagnostics,
+and stable one-counter schema as the captured primary-final occurrence, but its
+result is currently discarded. Characterization fixes this direct occurrence
+and both adjacent cleanup boundaries before implementation.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

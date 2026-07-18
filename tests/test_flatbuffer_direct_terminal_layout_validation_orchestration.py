@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1243,6 +1245,55 @@ def test_primary_path_retains_final_precision_cleanup_results() -> None:
     assert all_calls.count(rewrite_name) == 2
     assert all_calls.count(consecutive_name) == 3
     assert all_calls.count(restore_name) == 2
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="earlier core-cleanup consecutive-Mul result is discarded",
+)
+def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
+    body = _lowerer_body()
+    owner_name = "run_consecutive_mul_constants_cleanup"
+    direct_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == owner_name
+    ]
+    assert len(direct_indices) == 2
+
+    core_index, final_index = direct_indices
+    core = body[core_index]
+    assert isinstance(core, ast.Assign)
+    assert len(core.targets) == 1
+    assert isinstance(core.targets[0], ast.Name)
+    assert core.targets[0].id == "_core_cleanup_consecutive_mul_stats"
+    call = core.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == owner_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+    assert _call_name(_statement_call(body[core_index - 2])) == (
+        "_optimize_fuse_pseudo_leakyrelu_chains"
+    )
+    assert _call_name(_statement_call(body[core_index - 1])) == (
+        "_optimize_yolo_decode_mul_square_anchor_chains"
+    )
+    assert _call_name(_statement_call(body[core_index + 1])) == (
+        "_sanitize_terminal_transpose_before_dequantize"
+    )
+
+    final = body[final_index]
+    assert isinstance(final, ast.Assign)
+    assert isinstance(final.targets[0], ast.Name)
+    assert final.targets[0].id == "_final_precision_consecutive_mul_stats"
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

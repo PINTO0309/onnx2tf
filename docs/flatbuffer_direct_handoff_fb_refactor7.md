@@ -4569,3 +4569,36 @@ At resume, audit the earlier core-cleanup
 and YOLO-decode cleanups. It is the only remaining discarded result among these
 three precision owners. Fix its surrounding core-cleanup order before retaining
 evidence. Commit and push only; do not create or update a pull request.
+
+## Primary core-cleanup consecutive-Mul result characterization checkpoint
+
+The remaining discarded precision-owner result is the earlier primary
+`run_consecutive_mul_constants_cleanup()` call in the core-cleanup phase. It
+runs after pseudo-LeakyReLU fusion and YOLO decode Mul-square/anchor cleanup,
+and immediately before terminal Transpose/Dequantize sanitization. Its ModelIR,
+layout-state, diagnostics, and one-counter schema match the already captured
+primary-final occurrence.
+
+A strict expected-failure orchestration contract requires assigning this call
+to `_core_cleanup_consecutive_mul_stats`. It fixes both direct primary
+occurrences and the existing `_final_precision_consecutive_mul_stats` target,
+plus the exact pseudo-LeakyReLU→YOLO→consecutive-Mul→terminal-sanitizer order.
+The recursive-fallback occurrence remains independently captured.
+
+At implementation, replace only this one expression with an assignment. Do not
+change the owner/schema, any other occurrence or target, callback arguments,
+diagnostics/layout-state handoff, add a guard, reconciliation, scan, sort,
+dependency, metadata write, or result consumer, or affect TensorFlow behavior.
+Validate graph cleanup, terminal orchestration, architecture, pass efficiency,
+and broad related gates sequentially, then commit and push only; do not create
+or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- graph cleanup, terminal orchestration, architecture, and pass efficiency:
+  `329 passed, 1 xfailed in 17.58s`
+- expanded broad related gate: `1397 passed, 1 xfailed in 31.02s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet core-cleanup result capture
+contract; there are no unexpected failures.
