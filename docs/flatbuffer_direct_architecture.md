@@ -12797,3 +12797,10 @@ Strict characterization selects `_late_orphan_recurrent_repair_stats` and
 It freezes their schemas, return annotations, exact arguments, adjacency after
 post progress and before very-late affine cleanup, and an unconsumed
 observation-only policy. No repair counter may steer the following cleanup.
+
+The two direct repair calls retain their unchanged dictionaries as
+`_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats`. Both remain unconsumed; matching, indexed
+mutation, conditional shape reconciliation, arguments, order, and following
+affine cleanup are unchanged. Result retention therefore adds no scan, copy,
+aggregation, or control dependency.

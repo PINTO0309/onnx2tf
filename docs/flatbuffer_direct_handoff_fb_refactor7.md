@@ -12483,3 +12483,32 @@ repair, the conditional reconciliation, order, arguments, following affine
 cleanup, dependencies, public API, or TensorFlow behavior. Keep both targets
 unconsumed, validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
+
+## Late recurrent/unbound input-repair result implementation checkpoint
+
+The two adjacent direct calls now retain their unchanged dictionaries as
+`_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats`. Both targets remain unconsumed and
+observation-only between `_advance_post_progress()` and the existing very-late
+affine cleanup.
+
+No recurrent alias matching, indexed mutation, unbound-input candidate or
+layout-transpose repair, positive-repair static-shape reconciliation, call
+argument, order, following cleanup, dependency, public API, or TensorFlow
+behavior changed. The existing very-late normalization boundary test now
+recognizes the assigned unbound-input result without weakening its adjacency
+or affine-call assertions.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.56s`
+- recurrent, indexed unbound-input, QLinear, late normalization, fallback,
+  architecture, pass-efficiency, and four direct helper cases:
+  `373 passed in 19.26s`
+- 114 branch-changed test files: `1701 passed in 32.80s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result-returning side-effect boundary before modifying production code.
+Commit and push only; do not create, reopen, or update a pull request.

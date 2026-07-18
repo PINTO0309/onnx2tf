@@ -2077,3 +2077,11 @@ characterized as fixed one-counter results. Strict retention selects
 shape reconciliation or following affine cleanup. The focused gate passes
 `372 passed, 1 xfailed in 19.62s`, the 114-file branch-changed suite passes
 `1700 passed, 1 xfailed in 32.97s`, and targeted static validation passes.
+
+The two direct repair calls now retain their unchanged dictionaries as
+`_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats`. Both remain unconsumed and do not steer the
+following affine cleanup. Recurrent and unbound-input repair behavior,
+conditional shape reconciliation, call order, and arguments remain unchanged.
+The focused gate passes `373 passed in 19.26s`, the 114-file branch-changed
+suite passes `1701 passed in 32.80s`, and targeted static validation passes.

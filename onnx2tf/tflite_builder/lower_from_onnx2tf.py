@@ -5625,8 +5625,12 @@ def lower_onnx_to_ir(
     _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
 
-    _repair_orphan_recurrent_step_tensors(model_ir)
-    _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(model_ir)
+    _late_orphan_recurrent_repair_stats = (
+        _repair_orphan_recurrent_step_tensors(model_ir)
+    )
+    _late_unbound_input_repair_stats = (
+        _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(model_ir)
+    )
     # The late unbound-input repair can inject strict
     # NHWC->NCHW->NHWC MUL/ADD wrappers (repair_perm tensors).
     # Fold them again before final shape/topology reconciliation.

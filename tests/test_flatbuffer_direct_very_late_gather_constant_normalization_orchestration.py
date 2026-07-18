@@ -931,7 +931,10 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
     assert layout_keyword.value.attr == "layout_state"
 
     previous = lowerer.body[invocation_index - 3]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_unbound_input_repair_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (
