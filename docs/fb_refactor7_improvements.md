@@ -779,6 +779,20 @@ This checkpoint passes the focused cluster and all three child-owner families
 with `380 passed in 18.95s`, plus the branch-changed broad related suite with
 `1445 passed in 24.34s`.
 
+The guarded very-late layout-Transpose cleanup now retains its existing five-
+key dictionary as `_very_late_layout_transpose_cleanup_stats`. Because the
+owner can prune unused tensors with zero rewrite counters, this result remains
+observation-only and does not control reconciliation or scan elision. The
+earlier guarded occurrence remains raw and the late-Concat occurrence keeps
+its existing shared-scope target.
+
+The implementation gate exposed a characterization selector that inspected
+only the first statement in each guard. It now scans every direct statement,
+so both guarded occurrences are fixed before selecting the very-late one by
+its captured predecessor. The targeted contract passes `1 passed in 0.55s`,
+the focused gate passes `364 passed in 18.87s`, and the branch-changed broad
+related suite passes `1428 passed in 24.87s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -786,8 +800,9 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit every `run_layout_transpose_cleanup()` production occurrence
-and its mutation schema, then isolate the conditional very-late call directly
-after `_very_late_singleton_consecutive_reshape_results`. Any new observation
-point must preserve the other calls, option guard, current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+unit should audit every
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout()` occurrence
+and its result schema, then isolate the very-late raw call directly after the
+guarded layout-Transpose result. Any new observation point must preserve the
+nested/fallback/final occurrences, current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

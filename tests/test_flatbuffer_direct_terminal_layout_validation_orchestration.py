@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1630,13 +1628,9 @@ def test_primary_path_retains_late_concat_scope_results() -> None:
     assert sum(
         isinstance(statement, ast.Assign)
         for statement in layout_cleanup_statements
-    ) == 1
+    ) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late layout-Transpose cleanup result is discarded",
-)
 def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> None:
     body = _lowerer_body()
     callback_name = "run_layout_transpose_cleanup"
@@ -1645,8 +1639,10 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         for index, statement in enumerate(body)
         if isinstance(statement, ast.If)
         and ast.unparse(statement.test) == "optimize_layout_transpose_chains"
-        and len(statement.body) >= 1
-        and _call_name(_statement_call(statement.body[0])) == callback_name
+        and any(
+            _call_name(_statement_call(child_statement)) == callback_name
+            for child_statement in statement.body
+        )
     ]
     assert len(guarded) == 2
 

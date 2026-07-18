@@ -7010,3 +7010,43 @@ The sole strict expected failure is the intentionally unimplemented very-late
 layout-Transpose cleanup result retention contract above. Implement only the
 observation assignment, rerun the same gates sequentially, then commit and push
 only; do not create, reopen, or update a pull request.
+
+## Very-late layout-Transpose cleanup result retention implementation checkpoint
+
+The guarded very-late call now retains its unchanged five-key dictionary as
+`_very_late_layout_transpose_cleanup_stats`. The earlier guarded primary-layout
+occurrence remains raw, and the late-Concat occurrence keeps
+`_late_concat_transpose_layout_stats` and its shared state scope.
+
+This is an assignment-only orchestration change. The retained dictionary is
+explicitly observation-only because its rewrite counters omit possible zero-
+rewrite unused-tensor pruning. No stability guard, reconciliation decision, or
+scan elision consumes it. Owner behavior and pruning, result schema, live
+LayoutState and diagnostics arguments, option guard, captured singleton tuple
+predecessor, broadcast-repair successor, other occurrences, pass order,
+dependencies, and TensorFlow behavior are unchanged.
+
+The first focused implementation run exposed a bug in the newly added
+characterization selector: it assumed cleanup was the first statement in each
+guard, while the earlier primary-layout guard has setup statements before the
+call. The selector now inspects every direct guard statement and still uses the
+captured predecessor to isolate the very-late guard. Production was unchanged
+by this test-only correction.
+
+Implementation validation completed sequentially under `uv`:
+
+- corrected strict contract alone: `1 passed in 0.55s`
+- layout-Transpose owner, late-binary integration, terminal occurrence,
+  singleton boundary, architecture, and pass-efficiency coverage:
+  `364 passed in 18.87s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1428 passed in 24.87s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit every production occurrence and the complete result schema of
+`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout()`. Isolate
+the very-late raw call immediately after the guarded layout-Transpose result
+without conflating the nested recovery, fallback, or final retained calls.
+Commit and push only; do not create, reopen, or update a pull request.

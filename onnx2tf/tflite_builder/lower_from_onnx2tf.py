@@ -5124,10 +5124,12 @@ def lower_onnx_to_ir(
         )
     )
     if optimize_layout_transpose_chains:
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _very_late_layout_transpose_cleanup_stats = (
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
