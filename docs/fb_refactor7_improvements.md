@@ -1896,3 +1896,10 @@ neighbors, shared-scope nested contracts, and absence of a consumer are frozen.
 The focused gate passes `320 passed, 1 xfailed in 21.01s`, the 101-file branch-
 changed suite passes `1650 passed, 1 xfailed in 35.95s`, and targeted static
 validation passes.
+
+The post-SINet mixed-attention layout call now retains its unchanged dictionary
+as `_post_sinet_mixed_attention_layout_stats`. It remains unconsumed and
+observation-only; gate full/reduced policy, absolute-final selection, shared
+state scopes, and underlying cleanup are unchanged. The focused gate passes
+`321 passed in 18.00s`, the 101-file branch-changed suite passes
+`1651 passed in 31.09s`, and targeted static validation passes.

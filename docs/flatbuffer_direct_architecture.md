@@ -12179,6 +12179,16 @@ SINet predecessor, dequant-HardSigmoid successor, both nested indices and
 shared-scope keyword contracts, reduced-policy exclusion, sole direct
 occurrence, and an unconsumed observation-only policy.
 
+The post-SINet raw mixed-attention layout call now retains its unchanged
+one-key dictionary as `_post_sinet_mixed_attention_layout_stats`. The target
+remains unconsumed and observation-only. Gate-layout full/reduced policy and
+absolute-final normalization/attention selection are unchanged.
+
+No transactional pass logic, underlying pruning, result schema, state-scope
+ownership, direct argument, retained predecessor/successor, nested route, call
+order, dependency, public API, or TensorFlow boundary changed. The counter is
+not used as complete mutation evidence or as a later-pass guard.
+
 The primary call now retains its unchanged dictionary as
 `_layout_pass_set_1_layout_transpose_cleanup_stats`. All three direct lowerer
 occurrences are therefore explicit assignments, while the late-binary nested

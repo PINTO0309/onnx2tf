@@ -11802,3 +11802,30 @@ schema, underlying pruning, state-scope ownership, full/reduced selection,
 direct arguments, call order, dependencies, public API, or TensorFlow behavior.
 Keep the target unconsumed, validate sequentially, commit, and push only; do
 not create, reopen, or update a pull request.
+
+## Mixed-attention layout direct result implementation checkpoint
+
+The post-SINet raw call now retains its unchanged one-key dictionary as
+`_post_sinet_mixed_attention_layout_stats`. The target remains unconsumed and
+observation-only. Gate-layout full/reduced selection, absolute-final
+normalization/attention selection, and both nested parent tuples are unchanged.
+
+No transactional owner logic, underlying unused-tensor pruning, result schema,
+state-scope ownership, direct ModelIR/LayoutState/diagnostics arguments,
+retained indexed-SINet predecessor, retained dequant-HardSigmoid successor,
+call order, dependency, public API, or TensorFlow behavior changed. No
+intermediate test failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.57s`
+- gate and absolute-final orchestration, indexed SINet and dequant neighbors,
+  architecture, pass efficiency, and focused owner behavior:
+  `321 passed in 18.00s`
+- 101 branch-changed test files: `1651 passed in 31.09s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

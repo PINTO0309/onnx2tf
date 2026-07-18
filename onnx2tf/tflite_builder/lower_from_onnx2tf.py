@@ -5003,10 +5003,12 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    run_mixed_attention_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _post_sinet_mixed_attention_layout_stats = (
+        run_mixed_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _post_sinet_dequant_hardsigmoid_bridge_stats = (
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)

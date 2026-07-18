@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
@@ -157,7 +155,7 @@ def test_mixed_attention_layout_schema_cleanup_and_routes_are_explicit() -> None
 def test_mixed_attention_layout_direct_boundary_is_explicit() -> None:
     lowerer, index = _direct_location()
     invocation = lowerer.body[index]
-    assert isinstance(invocation, ast.Expr)
+    assert _single_target(invocation) == RESULT_TARGET
     call = _statement_call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -177,10 +175,6 @@ def test_mixed_attention_layout_direct_boundary_is_explicit() -> None:
     ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="post-SINet mixed-attention layout result is discarded",
-)
 def test_mixed_attention_layout_direct_result_is_retained_for_observation() -> None:
     lowerer, index = _direct_location()
     assert _single_target(lowerer.body[index]) == RESULT_TARGET
