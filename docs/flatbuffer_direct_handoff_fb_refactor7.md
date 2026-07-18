@@ -7705,3 +7705,39 @@ At resume, audit the next raw terminal result boundary rather than consuming
 `_terminal_normalization_pad_stats` as complete mutation evidence. Preserve
 the explicit observation-only limitation, commit and push only, and do not
 create, reopen, or update a pull request.
+
+## Terminal boundary-layout result propagation characterization checkpoint
+
+`run_terminal_boundary_layout()` executes five ordered owners through
+`run_recovery_invocations()` and one shared `ModelIRPassStateScope`. The generic
+runner already returns the ordered five-result tuple, but the terminal phase
+runner currently drops it and the local
+`_run_terminal_boundary_layout_pass_cluster()` helper is annotated and
+implemented as returning `None`. Its sole primary call is consequently raw.
+
+A strict expected-failure contract requires the phase runner to return the
+existing tuple, the local helper to transparently return it, and the primary
+call to retain it as `_terminal_boundary_layout_results`. It fixes the captured
+`_terminal_instancenorm_dualstats_stats` predecessor and the following
+`optimize_layout_transpose_chains` guard.
+
+The first characterization run also exposed a stale dedicated boundary test
+that still required the already-retained dual-statistics predecessor to be an
+`ast.Expr`. It now requires the exact assignment and owner call; no production
+code changed for that correction.
+
+At implementation, propagate only the existing tuple. Do not summarize or
+consume it, do not run a child twice, and do not change child order, arguments,
+shared scope, diagnostics, adjacent calls, pass order, dependencies, or
+TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal boundary owner/orchestration, adjacent mean/attention boundary,
+  terminal result contracts, architecture, and pass-efficiency coverage:
+  `374 passed, 1 xfailed in 19.12s`
+
+The sole strict expected failure is the intentionally unimplemented result
+propagation contract. Implement only the transparent returns and primary
+assignment, rerun focused and branch-changed broad gates sequentially, then
+commit and push only; do not create, reopen, or update a pull request.

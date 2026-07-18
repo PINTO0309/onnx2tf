@@ -208,6 +208,66 @@ def test_terminal_boundary_runner_preserves_instrumented_order(
     assert all(scope is events[0][1] for _, scope in events)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="terminal boundary layout results are not propagated to the primary caller",
+)
+def test_terminal_boundary_propagates_ordered_results_to_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(use_layout_state=True)
+    expected = tuple(
+        {f"{pass_id}_mutations": index}
+        for index, pass_id in enumerate(TERMINAL_BOUNDARY_LAYOUT_PASS_IDS, start=1)
+    )
+    for pass_id, result in zip(TERMINAL_BOUNDARY_LAYOUT_PASS_IDS, expected):
+        monkeypatch.setattr(
+            terminal_boundary_layout_orchestration,
+            pass_id,
+            lambda *args, result=result, **kwargs: result,
+        )
+
+    assert run_terminal_boundary_layout(context) == expected
+
+    lowerer, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    delegate = helper.body[0]
+    assert isinstance(delegate, ast.Return)
+    assert isinstance(delegate.value, ast.Call)
+    assert isinstance(delegate.value.func, ast.Name)
+    assert delegate.value.func.id == "run_terminal_boundary_layout"
+    assert [ast.unparse(argument) for argument in delegate.value.args] == [
+        "terminal_boundary_layout_context"
+    ]
+    assert delegate.value.keywords == []
+
+    invocations = [
+        (index, statement)
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_boundary_layout_results"
+    ]
+    assert len(invocations) == 1
+    invocation_index, invocation = invocations[0]
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == TERMINAL_BOUNDARY
+    assert invocation.value.args == []
+    assert invocation.value.keywords == []
+
+    predecessor = lowerer.body[invocation_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_terminal_instancenorm_dualstats_stats"
+    successor = lowerer.body[invocation_index + 1]
+    assert isinstance(successor, ast.If)
+    assert isinstance(successor.test, ast.Name)
+    assert successor.test.id == "optimize_layout_transpose_chains"
+
+
 def test_terminal_boundary_has_one_argument_free_production_call() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [
@@ -235,7 +295,12 @@ def test_terminal_boundary_preserves_outer_boundaries() -> None:
     )
 
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_terminal_instancenorm_dualstats_stats"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert previous_boundary.value.func.id == (
