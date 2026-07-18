@@ -4664,3 +4664,30 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet two-result capture contract;
 there are no unexpected failures.
+
+## Core-cleanup pseudo-LeakyReLU/YOLO result implementation checkpoint
+
+The primary core-cleanup phase now retains the unchanged pseudo-LeakyReLU
+fusion and YOLO decode constant-fold dictionaries as
+`_core_cleanup_pseudo_leakyrelu_stats` and
+`_core_cleanup_yolo_decode_stats`, respectively.
+
+Both owners/schemas, indexed topology and constant safety guards, pruning,
+single occurrence counts, `model_ir` arguments, core-progress boundary,
+pseudo→YOLO→consecutive-Mul order, dependencies, and TensorFlow-free behavior
+are unchanged. No GraphIndex/layout argument, guard, reconciliation, scan,
+sort, metadata write, or result consumption is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed pseudo-LeakyReLU, indexed YOLO folding, graph cleanup, terminal
+  orchestration, architecture, and pass efficiency: `364 passed in 18.37s`
+- expanded broad related gate: `1432 passed in 31.30s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the immediately following
+`_sanitize_terminal_transpose_before_dequantize()` and
+`run_terminal_quantize_dequantize_cleanup()` expressions. Characterize their
+schemas, occurrence counts, exact diagnostics/layout handoff, and surrounding
+consecutive-Mul/Conv-affine boundaries before retaining evidence. Commit and
+push only; do not create or update a pull request.

@@ -10790,10 +10790,10 @@ boundaries remain unchanged.
 
 The two immediately preceding core-cleanup owners fuse guarded pseudo-LeakyReLU
 subgraphs and fold YOLO decode `Mul(x,x)` plus anchor multiplication. Each has a
-single direct lowerer occurrence and returns a stable one-counter dictionary;
-both results are currently discarded. Characterization fixes the core-progress
-boundary, their exact order, and the captured consecutive-Mul successor before
-implementation.
+single direct lowerer occurrence and returns a stable one-counter dictionary.
+The caller now retains them as `_core_cleanup_pseudo_leakyrelu_stats` and
+`_core_cleanup_yolo_decode_stats`. The core-progress boundary, their exact
+order, and the captured consecutive-Mul successor are unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

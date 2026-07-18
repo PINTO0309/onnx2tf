@@ -4465,8 +4465,12 @@ def lower_onnx_to_ir(
         _run_safe_binary_bridge_recovery_sequence()
         _advance_post_progress()
     _set_post_progress_desc("core cleanup passes")
-    _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
-    _optimize_yolo_decode_mul_square_anchor_chains(model_ir)
+    _core_cleanup_pseudo_leakyrelu_stats = (
+        _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
+    )
+    _core_cleanup_yolo_decode_stats = (
+        _optimize_yolo_decode_mul_square_anchor_chains(model_ir)
+    )
     _core_cleanup_consecutive_mul_stats = (
         run_consecutive_mul_constants_cleanup(
             model_ir,

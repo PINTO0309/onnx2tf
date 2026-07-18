@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1292,10 +1290,6 @@ def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
     assert final.targets[0].id == "_final_precision_consecutive_mul_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="core-cleanup pseudo-LeakyReLU and YOLO results are discarded",
-)
 def test_primary_path_retains_core_cleanup_fusion_results() -> None:
     body = _lowerer_body()
     pseudo_name = "_optimize_fuse_pseudo_leakyrelu_chains"
