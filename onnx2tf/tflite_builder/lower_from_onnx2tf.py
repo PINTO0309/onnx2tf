@@ -4476,11 +4476,13 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            include_unary_passthrough=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_1_squeeze_reshape_identity_stats = (
+            run_squeeze_reshape_identity_cleanup(
+                model_ir,
+                include_unary_passthrough=True,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         _layout_pass_set_1_final_attention_quantized_suffix_results = (
             _run_layout_attention_quantized_recovery_suffix(
@@ -4531,11 +4533,13 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
     )
     _resolve_dynamic_reshape_shapes(model_ir)
-    run_squeeze_reshape_identity_cleanup(
-        model_ir,
-        include_unary_passthrough=True,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _core_cleanup_squeeze_reshape_identity_stats = (
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            include_unary_passthrough=True,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
@@ -4705,11 +4709,13 @@ def lower_onnx_to_ir(
                 <= 0
             ):
                 break
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            include_unary_passthrough=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_2_squeeze_reshape_identity_stats = (
+            run_squeeze_reshape_identity_cleanup(
+                model_ir,
+                include_unary_passthrough=True,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         _prune_dead_operators(model_ir, layout_state=session.layout_state)
         _reconcile_static_tensor_shapes(model_ir)

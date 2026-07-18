@@ -10778,3 +10778,39 @@ transaction, policy arguments, nested occurrences, live context, normalization
 loop, surrounding calls, guard, dependency, public API, or TensorFlow behavior.
 Keep all results unconsumed, validate sequentially, commit, and push only; do
 not create, reopen, or update a pull request.
+
+## Squeeze/Reshape identity result retention implementation checkpoint
+
+The three raw lowerer expressions now retain their unchanged two-key results
+as `_layout_pass_set_1_squeeze_reshape_identity_stats`,
+`_core_cleanup_squeeze_reshape_identity_stats`, and
+`_layout_pass_set_2_squeeze_reshape_identity_stats`. All three targets remain
+unconsumed and observation-only. The identity-only Singleton selection and the
+unary-enabled attention selection are unchanged.
+
+No result schema, pass selection or order, preflight, transaction boundary,
+rewrite cap, argument, live LayoutState/diagnostics route, normalization loop,
+surrounding production call, guard, dependency, public API, or TensorFlow
+boundary changed.
+
+The initial focused implementation gate reported `366 passed, 1 failed`: the
+final-attention suffix test still required the cleanup predecessor to be an
+`ast.Expr`. It now accepts either direct-call statement form and continues to
+assert the exact cleanup call and suffix boundary. This was a stale structural
+contract, not a production regression.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.54s`
+- both cleanup policies, three direct boundaries, attention/Singleton nested
+  selections, InstanceNorm and suffix orchestration, architecture, and
+  pass-efficiency coverage: `367 passed in 18.11s`
+- branch-changed broad suite: `1617 passed in 29.27s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, inventory the next
+discarded direct pass result and all of its nested or consumed forms before
+selecting another boundary. Commit and push only; do not create, reopen, or
+update a pull request.

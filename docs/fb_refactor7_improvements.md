@@ -1621,3 +1621,12 @@ selection. Selected observation-only targets are
 all three boundary pairs, nested policies, and unconsumed results are frozen.
 The focused gate passes `366 passed, 1 xfailed in 18.27s`; the branch-changed
 broad gate passes `1616 passed, 1 xfailed in 29.63s`.
+
+All three direct calls now retain their unchanged two-key dictionaries in the
+selected observation-only targets. The initial focused implementation gate
+reported `366 passed, 1 failed` because the final-attention suffix contract
+still required its cleanup predecessor to be a raw expression. That contract
+now accepts either a direct assignment or expression while preserving the
+exact call identity and boundary. The corrected focused gate passes
+`367 passed in 18.11s`, the branch-changed broad gate passes
+`1617 passed in 29.27s`, and targeted static validation passes.

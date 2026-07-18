@@ -280,13 +280,11 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
                 continue
             previous = statement.body[index - 1]
             following = statement.body[index + 1]
-            assert isinstance(previous, ast.Expr)
-            assert isinstance(previous.value, ast.Call)
-            assert isinstance(previous.value.func, ast.Name)
-            assert isinstance(following, (ast.Assign, ast.Expr))
-            assert isinstance(following.value, ast.Call)
-            assert isinstance(following.value.func, ast.Name)
-            boundaries.append((previous.value.func.id, following.value.func.id))
+            previous_call_name = _direct_call_name(previous)
+            following_call_name = _direct_call_name(following)
+            assert previous_call_name is not None
+            assert following_call_name is not None
+            boundaries.append((previous_call_name, following_call_name))
             result_targets.append(
                 candidate.targets[0].id
                 if isinstance(candidate, ast.Assign)

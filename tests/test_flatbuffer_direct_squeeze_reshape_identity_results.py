@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_squeeze_reshape_identity_cleanup,
@@ -122,10 +120,6 @@ def test_squeeze_reshape_policy_schemas_and_selections_are_explicit() -> None:
         assert len(selections) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="all three direct squeeze/Reshape results are discarded",
-)
 def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> None:
     lowerer = _functions()["lower_onnx_to_ir"]
     locations = _direct_locations(lowerer.body)

@@ -12231,6 +12231,13 @@ all direct arguments and nested selections, InstanceNorm/final-suffix,
 dynamic-Reshape/prune, and normalization-loop/prune boundaries, and an
 unconsumed observation-only policy.
 
+The three direct calls now retain the same two-key results in those selected
+targets. Their arguments, ordering, nested policy selections, live context,
+normalization convergence logic, and surrounding calls remain unchanged. The
+final-attention boundary contract recognizes both direct-call statement forms
+so that result retention does not weaken its call-identity assertion. These
+targets are not mutation counters and remain observation-only.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and
