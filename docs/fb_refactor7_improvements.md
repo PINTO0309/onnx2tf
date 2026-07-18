@@ -1165,6 +1165,16 @@ The next unit should characterize raw result propagation for the preceding
 three-owner `_run_terminal_clamp_unary_relu_pass_cluster()`, which currently
 returns `None`. Shared state scope, cleanup-only mutations, and both outer
 boundaries must be fixed before either runner layer changes.
+
+That cluster is now characterized for ordered raw result propagation. Its
+shared executor already returns the three one-key dictionaries, but both runner
+layers discard them. Clamp and unary callbacks can prune while their rewrite
+counters are zero, so the selected `_terminal_clamp_unary_relu_results` tuple
+must remain observation-only. The shared scope, exact child order, and guarded
+singleton/terminal-SiNet boundaries are frozen before implementation.
+The focused characterization gate passes
+`370 passed, 1 xfailed in 17.98s`; the sole strict xfail is the selected
+two-layer propagation and production assignment.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

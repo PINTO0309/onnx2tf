@@ -22,7 +22,46 @@ from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration impor
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_clamp_unary_relu_orchestration.py"
+)
+GRAPH_CLEANUP_PATH = (
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "graph_cleanup.py"
+)
+LAYOUT_TRANSPOSE_PATH = (
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "layout_transpose.py"
+)
 TERMINAL_CLAMP_UNARY_RELU = "_run_terminal_clamp_unary_relu_pass_cluster"
+RESULT_TARGET = "_terminal_clamp_unary_relu_results"
+
+
+def _functions(path: Path) -> dict[str, ast.FunctionDef]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    function = statement.value.func
+    return function.id if isinstance(function, ast.Name) else None
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -153,6 +192,54 @@ def test_terminal_clamp_unary_relu_preserves_all_cleanup_contracts() -> None:
     assert rebuilt_scope is not scopes[0]
 
 
+def test_terminal_clamp_unary_relu_child_schemas_and_pruning_are_explicit() -> None:
+    context = _context()
+    assert tuple(
+        invocation.run()
+        for invocation in build_terminal_clamp_unary_relu_invocations(context)
+    ) == (
+        {"rewritten_maximum_minimum_relu0to1_chains": 0},
+        {"rewritten_transpose_unary_passthrough_chains": 0},
+        {"rewritten_maximum_with_zero_input2_to_relu": 0},
+    )
+
+    graph_functions = _functions(GRAPH_CLEANUP_PATH)
+    clamp_owner = graph_functions[
+        "_optimize_maximum_minimum_relu0to1_chains"
+    ]
+    unary_owner = _functions(LAYOUT_TRANSPOSE_PATH)[
+        "_optimize_transpose_unary_passthrough_chains"
+    ]
+    maximum_owner = graph_functions[
+        "_optimize_maximum_with_zero_input2_to_relu"
+    ]
+
+    for owner in (clamp_owner, unary_owner):
+        assert sum(
+            1
+            for statement in owner.body
+            if _direct_call_name(statement) == "_prune_unused_tensors"
+        ) == 1
+
+    assert not any(
+        _direct_call_name(statement) == "_prune_unused_tensors"
+        for statement in maximum_owner.body
+    )
+    guarded_cleanup = [
+        statement
+        for statement in maximum_owner.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test) == "rewritten > 0"
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_prune_unused_tensors"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(guarded_cleanup) == 1
+
+
 def test_terminal_clamp_unary_relu_invocation_remains_zero_argument() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [
@@ -264,6 +351,63 @@ def test_terminal_clamp_unary_relu_runner_preserves_instrumented_order(
     run_terminal_clamp_unary_relu(context)
 
     assert events == list(TERMINAL_CLAMP_UNARY_RELU_PASS_IDS)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="terminal clamp/unary/ReLU results are discarded by both runner layers",
+)
+def test_terminal_clamp_unary_relu_propagates_and_retains_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    expected_results = (
+        {"rewritten_maximum_minimum_relu0to1_chains": 1},
+        {"rewritten_transpose_unary_passthrough_chains": 2},
+        {"rewritten_maximum_with_zero_input2_to_relu": 3},
+    )
+    probe_steps = build_terminal_clamp_unary_relu_invocations(context)
+    for step, expected in zip(probe_steps, expected_results):
+        module_name = next(
+            name
+            for name, value in vars(
+                terminal_clamp_unary_relu_orchestration
+            ).items()
+            if value is step.callback
+        )
+
+        def result(*args: Any, _expected: dict[str, int] = expected, **kwargs: Any):
+            return dict(_expected)
+
+        monkeypatch.setattr(
+            terminal_clamp_unary_relu_orchestration,
+            module_name,
+            result,
+        )
+
+    assert run_terminal_clamp_unary_relu(context) == expected_results
+
+    runner = _functions(ORCHESTRATION_PATH)["run_terminal_clamp_unary_relu"]
+    assert ast.unparse(runner.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(runner.body) == 1
+    assert isinstance(runner.body[0], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    invocation_statement = next(
+        statement
+        for statement in lowerer.body
+        if _direct_call_name(statement) == TERMINAL_CLAMP_UNARY_RELU
+    )
+    assert _single_target(invocation_statement) == RESULT_TARGET
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == RESULT_TARGET
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_terminal_clamp_unary_relu_module_does_not_import_lowerer() -> None:

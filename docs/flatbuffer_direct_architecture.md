@@ -11753,3 +11753,19 @@ This assignment adds no consumer or control flow. Terminal SiNet recovery,
 dequantized HardSigmoid cleanup, late hard-activation recovery, dependencies,
 diagnostics, public behavior, and the TensorFlow-free direct path remain fixed.
 The two stale outer-boundary contracts now require the assigned target.
+
+Immediately before terminal SiNet recovery, the terminal clamp/unary/ReLU
+orchestration runs clamp canonicalization, unary Transpose passthrough, and
+Maximum-zero ReLU canonicalization through one shared pass-state scope. Its
+shared recovery executor already returns the three ordered dictionaries, but
+the orchestration runner and lowerer delegate both return `None` and the sole
+production call discards the result.
+
+Strict characterization freezes the three one-key zero schemas, child order,
+single shared scope, and cleanup semantics: clamp and unary owner callbacks
+prune unconditionally when executed, while Maximum-zero ReLU prunes only after
+a rewrite. It requires both runner layers to propagate
+`Tuple[Dict[str, int], ...]`, assigns the sole call to
+`_terminal_clamp_unary_relu_results`, and keeps the tuple unconsumed between
+the guarded singleton/reshape and terminal-SiNet boundaries. Raw counters must
+not become a mutation guard.
