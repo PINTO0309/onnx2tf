@@ -4878,9 +4878,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_sinet_relu_split_conv_concat_stats = (
+        _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _post_sinet_split_conv_concat_bridge_stats = (
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
@@ -5051,9 +5053,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_relu_split_conv_concat_stats = (
+        _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
         model_ir,
