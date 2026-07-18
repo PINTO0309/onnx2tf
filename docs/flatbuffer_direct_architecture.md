@@ -12238,6 +12238,17 @@ and unconditional pruning is unchanged. No producer/consumer-map construction,
 constant handling, call order, dependency, public API, or TensorFlow boundary
 changed.
 
+`optimize_transpose_mean_mul_add_const_prepost_nhwc_chains()` exposes the fixed
+one-key result `optimized_transpose_mean_mul_add_const_prepost_nhwc_chains`.
+Its sole lowerer call and the attention/quantized-suffix and pre-add-attention
+selections are model-only. The owner always prunes unused tensors on exit, so a
+zero counter is not complete mutation evidence.
+
+Strict characterization selects `_layout_pass_set_1_mean_affine_prepost_stats`
+for the direct result. It freezes the exact model-only call, pre-unary-fan-out/
+mean-attention boundary, both declarative selection indices and empty keyword
+contracts, fixed schema, and an unconsumed observation-only policy.
+
 The three direct calls now retain the same two-key results in those selected
 targets. Their arguments, ordering, nested policy selections, live context,
 normalization convergence logic, and surrounding calls remain unchanged. The

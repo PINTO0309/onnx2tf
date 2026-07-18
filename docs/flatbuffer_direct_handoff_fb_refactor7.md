@@ -11230,3 +11230,41 @@ assignment does not claim a new model-corpus run. At resume, inventory all
 direct and nested `_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains()`
 forms before changing the adjacent mean-affine boundary. Commit and push only;
 do not create, reopen, or update a pull request.
+
+## Mean-affine pre/post direct result characterization checkpoint
+
+`optimize_transpose_mean_mul_add_const_prepost_nhwc_chains()` returns the fixed
+one-key dictionary
+`optimized_transpose_mean_mul_add_const_prepost_nhwc_chains`. The owner always
+prunes unused tensors on exit, so a zero counter is not complete mutation
+evidence.
+
+The lowerer wrapper has one raw model-only call between retained pre-unary
+affine fan-out statistics and retained mean-attention results. The attention/
+quantized suffix and pre-add attention recovery independently select the public
+callback with the same model-only contract.
+
+A passing contract freezes the one-key schema, exact direct argument, sole
+direct occurrence, both declarative indices and empty keyword contracts, and
+the two retained-target boundaries. A strict expected-failure contract selects
+the unconsumed observation-only target
+`_layout_pass_set_1_mean_affine_prepost_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.61s`
+- owner behavior, both attention orchestration routes, adjacent affine and
+  mean-attention owners, architecture, and pass-efficiency coverage:
+  `328 passed, 1 xfailed in 18.26s`
+- branch-changed broad suite including the new result contract:
+  `1630 passed, 1 xfailed in 30.30s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct-result
+retention contract. Replace only the raw wrapper-call expression with the
+selected target. Do not change the result schema, producer/consumer maps,
+constant/axis handling, pruning, direct argument, nested selections,
+surrounding calls, dependency, public API, or TensorFlow behavior. Keep the
+result unconsumed, validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.

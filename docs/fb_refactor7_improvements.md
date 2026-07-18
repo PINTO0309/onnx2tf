@@ -1740,3 +1740,13 @@ unconsumed and observation-only; both model-only attention selections and the
 owner's pruning behavior are unchanged. The focused gate passes
 `324 passed in 18.41s`, the branch-changed broad gate passes
 `1629 passed in 30.91s`, and targeted static validation passes.
+
+The mean/MUL-ADD affine pre/post owner is now characterized as a fixed one-key
+model-only result, one direct lowerer call, and two attention-related
+declarative selections. The selected observation-only target is
+`_layout_pass_set_1_mean_affine_prepost_stats`; exact model-only arguments, the
+pre-unary-fan-out/mean-attention boundary, both nested indices, and absence of a
+consumer are frozen. Unconditional final pruning means a zero counter is not
+complete mutation evidence. The focused gate passes
+`328 passed, 1 xfailed in 18.26s`; the branch-changed broad gate passes
+`1630 passed, 1 xfailed in 30.30s`.
