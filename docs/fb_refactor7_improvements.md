@@ -1419,6 +1419,15 @@ parent's still-discarded result. The focused implementation gate passes
 
 The next unit should audit every direct attention-gate/QDQ parent result now
 that its Transpose/unary-fanout callback slot is populated.
+
+That ten-slot parent is now characterized with the nested three-dictionary
+unary-fanout tuple at slot five. Selected observation-only direct targets are
+`_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results`. Exact instrumented result
+identity, child order, shared context, two direct boundary pairs, suffix
+nesting, and the unconsumed policy are frozen before implementation. The
+focused gate passes `571 passed, 1 xfailed in 18.81s`; the strict xfail is
+parent runner/helper/two-call propagation.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

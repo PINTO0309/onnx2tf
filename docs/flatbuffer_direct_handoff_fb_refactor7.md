@@ -9418,6 +9418,44 @@ parent invocation and preserve their distinct boundaries before changing the
 parent runner or helper. Commit and push only; do not create, reopen, or update
 a pull request.
 
+## Attention-gate/QDQ parent result characterization checkpoint
+
+`run_attention_gate_qdq_recovery()` selects ten ordered children covering
+SA/PA MirrorPad, SINet mix-attention, the gate cluster, two TransposeConv output
+owners, the Transpose/unary-fanout callback, two quantized activation bridges,
+trailing-output cleanup, and a quantized PReLU bridge. The newly propagated
+unary-fanout callback contributes its three-dictionary default-policy tuple at
+slot five. The parent runner and lowerer helper currently discard the complete
+tuple.
+
+There are two zero-argument direct calls plus one structural callback selection
+inside the thirteen-slot layout-attention/quantized suffix. Because that suffix
+runs twice, parent propagation will populate both retained suffix tuples as
+well as the two distinct direct observations; no current consumer summarizes
+or guards on any of these results.
+
+A strict expected-failure contract instruments all ten slots, including the
+nested unary-fanout tuple. It selects observation-only direct targets
+`_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results`. It freezes helper/runner
+return, zero arguments, direct-call count, mean-attention/quantized-PReLU and
+pre-add/dequant-TransposeConv boundaries, suffix nesting order, and absence of
+consumers.
+
+The focused attention parent, suffix, unary-fanout, gate, SA/PA, SINet,
+TransposeConv, quantized activation, trailing-output, both direct boundaries,
+architecture, and pass-efficiency gate is
+`571 passed, 1 xfailed in 18.81s`. Ruff, Python bytecode compilation, and
+whitespace validation pass. The sole strict xfail is parent runner/helper/two-
+call propagation; production is unchanged at this checkpoint.
+
+At implementation, return the existing ten-slot tuple from the parent runner
+and helper and assign only the two direct calls. Allow the existing suffix
+callback slots to receive the tuple without adding a summary, guard, or
+consumer. Preserve every child, nested result identity, shared context, order,
+and boundary. Validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

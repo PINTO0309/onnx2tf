@@ -12048,3 +12048,18 @@ The attention-gate/QDQ callback slot now contains the default-policy tuple
 instead of `None`, but its parent still discards the enclosing result. No child
 owner, active pass-ID order, policy, shared scope, cleanup timing, summary,
 guard, dependency, public behavior, or TensorFlow boundary changed.
+
+The attention-gate/QDQ parent selects ten ordered slots around SA/PA,
+SINet attention, gate layout, TransposeConv output, quantized activation, and
+trailing-output cleanup. Its Transpose/unary-fanout callback slot now contains
+the three-dictionary default-policy tuple. The parent runner and lowerer helper
+currently discard the complete ten-slot tuple.
+
+Strict characterization selects
+`_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results` for the two direct calls. It
+freezes every instrumented slot including the nested unary-fanout tuple, the
+shared context, zero-argument helper, exact call count, mean-attention/
+quantized-PReLU and pre-add/dequant-TransposeConv boundaries, the parent slot
+inside both retained suffix executions, and an unconsumed observation-only
+policy.
