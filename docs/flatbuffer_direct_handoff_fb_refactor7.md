@@ -8139,6 +8139,49 @@ newly retained Split/mixed pre-Concat dictionaries, option policy, live
 LayoutState, following layout owners, and observation-only evidence rules.
 Commit and push only; do not create, reopen, or update a pull request.
 
+## Concat input-adapter result characterization checkpoint
+
+The Concat input-adapter wrapper dispatches the indexed owner in
+`concat_input_adapter_layout.py` and returns the fixed one-counter dictionary
+`optimized_transpose_input_chains_pre_concat_to_single_post_adapter`. The owner
+unconditionally prunes unused tensors after candidate processing, so its
+rewrite counter is incomplete evidence for cleanup-only mutation and must
+remain observation-only.
+
+There are exactly two direct wrapper calls. The first is inside layout recovery
+pass-set 2 after `_layout_opt_split_mixed_pre_concat_stats` and before the
+Slice/Logistic/Concat tail owner. The terminal call follows
+`_terminal_split_mixed_pre_concat_stats` and precedes Concat/unary/Conv cleanup.
+Both receive the live Session LayoutState. Layout-recovery orchestration
+directly selects the public owner, while safe-transpose-reduction selects the
+private wrapper as two additional, distinct forms.
+
+A strict expected-failure contract selects
+`_layout_opt_concat_input_adapter_stats` and
+`_terminal_concat_input_adapter_stats` for only the direct wrapper calls. It
+fixes the wrapper, one-key schema, unconditional pruning, exact two-call count,
+model and LayoutState arguments, option guard, four boundaries, both independent
+selections, and absence of result consumers.
+
+At implementation, replace only the two raw direct expressions with
+assignments. Do not add a consumer or guard, and do not change the wrapper,
+owner, schema, unconditional pruning, graph-index behavior, live LayoutState,
+orchestration or safe-reduction selections, surrounding calls, dependencies,
+diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- Concat input-adapter schema and indexed-owner fixtures, unconditional cleanup,
+  layout-recovery and safe-reduction selections, both direct boundaries,
+  adjacent Split/mixed and Slice/Logistic/Concat owners, terminal
+  Concat/unary/Conv cleanup, architecture, and pass-efficiency coverage:
+  `405 passed, 1 xfailed in 18.68s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

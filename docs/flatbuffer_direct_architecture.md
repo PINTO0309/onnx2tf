@@ -11541,3 +11541,24 @@ layout-option guard, StridedSlice and retained ReLU/Split/Conv/Concat
 predecessors, shared Concat input-adapter successor, independent orchestration
 selection, dependencies, diagnostics, and TensorFlow behavior remain
 unchanged.
+
+The following Concat input-adapter wrapper dispatches its indexed owner and
+returns the fixed one-counter dictionary
+`optimized_transpose_input_chains_pre_concat_to_single_post_adapter`. Unlike
+the preceding owner, it prunes unused tensors unconditionally after candidate
+processing, so the rewrite counter is incomplete evidence for cleanup-only
+mutation and must remain observation-only.
+
+There are exactly two direct wrapper calls: one in layout recovery pass-set 2
+and one terminal call. Both receive the live Session LayoutState and follow the
+newly retained Split/mixed pre-Concat result. The guarded call precedes the
+Slice/Logistic/Concat tail owner; the terminal call precedes Concat/unary/Conv
+cleanup. Layout-recovery orchestration separately selects the public owner,
+while safe-transpose-reduction selects the private wrapper.
+
+Strict characterization selects `_layout_opt_concat_input_adapter_stats` and
+`_terminal_concat_input_adapter_stats` for only the direct forms. It fixes the
+wrapper, one-key schema, unconditional prune, exact two-call count, arguments,
+option guard, four boundaries, both independent selections, and absence of
+consumers. Both dictionaries must remain unconsumed; retention must add no
+guard, scan, dependency, or TensorFlow import path.
