@@ -1815,3 +1815,13 @@ Implementation exposed only stale discard-shape and annotation-aware AST
 expectations; after correction, the focused gate passes
 `398 passed in 19.13s`, the 96-file branch-changed suite passes
 `1637 passed in 30.37s`, and targeted static validation passes.
+
+Late dequant/unary fan-out recovery is now characterized as three fixed one-key
+child results sharing one `ModelIRPassStateScope`. The recovery engine already
+constructs their ordered tuple, while the runner, helper, and sole direct call
+currently discard it. Strict propagation selects the unconsumed observation
+target `_late_dequant_unary_fanout_results`; exact child order and schemas,
+zero-argument helper use, retained dequant-HardSigmoid/raw-swish boundary, and
+sole occurrence are frozen. The focused gate passes
+`376 passed, 1 xfailed in 17.77s`, the 97-file branch-changed suite passes
+`1638 passed, 1 xfailed in 31.21s`, and targeted static validation passes.

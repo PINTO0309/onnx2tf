@@ -11510,3 +11510,37 @@ Corrected implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 small discarded-result boundary before modifying production code. Commit and
 push only; do not create, reopen, or update a pull request.
+
+## Late dequant/unary fan-out result characterization checkpoint
+
+The late dequant/unary fan-out runner owns three ordered one-key results:
+dequant-Concat-Quantize layout cleanup, transpose-unary passthrough cleanup,
+and transpose-unary fan-out bridge cleanup. Every child receives the same
+ModelIR, LayoutState, diagnostics, and one shared `ModelIRPassStateScope`.
+
+`run_recovery_invocations()` already creates their ordered tuple, but the
+runner and lowerer helper return `None`, and the sole zero-argument direct call
+is an expression. It remains between the retained
+`_late_dequant_hardsigmoid_bridge_stats` result and the raw swish-transpose
+passthrough call. No nested use was found.
+
+A passing contract freezes all child IDs and empty-model schemas, current
+runner/helper discard form, exact direct boundary, sole occurrence, and shared
+orchestration contract. A strict expected-failure contract verifies synthetic
+ordered results and selects the unconsumed observation target
+`_late_dequant_unary_fanout_results`.
+
+Characterization validation completed sequentially under `uv`:
+
+- child owners, orchestration, direct neighbors, shared context, architecture,
+  and pass-efficiency coverage: `376 passed, 1 xfailed in 17.77s`
+- 97 branch-changed test files: `1638 passed, 1 xfailed in 31.21s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented runner/helper/
+direct propagation contract. Return only the existing tuple and retain it at
+the direct call. Do not change child callbacks or schemas, pass order, shared
+state scope, direct arguments, adjacent calls, dependencies, public API, or
+TensorFlow behavior. Keep the target unconsumed, validate sequentially,
+commit, and push only; do not create, reopen, or update a pull request.

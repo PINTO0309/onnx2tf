@@ -12468,3 +12468,17 @@ context and arguments, child order, terminal elementwise-fanout predecessor,
 convpool-output successor, feature guards, public API, dependencies, and
 TensorFlow boundary are unchanged. The observation target is not a combined
 mutation counter and is not used to steer later lowering.
+
+Late dequant/unary fan-out orchestration has three ordered children: dequant-
+Concat-Quantize layout cleanup, transpose-unary passthrough cleanup, and
+transpose-unary fan-out bridge cleanup. Each returns one fixed integer counter,
+and all three receive one shared `ModelIRPassStateScope` with the same ModelIR,
+LayoutState, and diagnostics. The recovery engine constructs their ordered
+tuple, while the runner, lowerer helper, and sole direct call currently discard
+it.
+
+Strict characterization selects `_late_dequant_unary_fanout_results`. It
+freezes all child IDs and schemas, shared-scope contracts, zero-argument helper
+use, the retained dequant-HardSigmoid predecessor, raw swish successor, sole
+occurrence, typed runner/helper propagation requirement, and an unconsumed
+observation-only direct policy.
