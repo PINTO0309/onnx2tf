@@ -1868,3 +1868,13 @@ observation-only; both model-only declarative selections and unconditional
 owner pruning are unchanged. The focused gate passes
 `287 passed in 17.97s`, the 99-file branch-changed suite passes
 `1645 passed in 30.93s`, and targeted static validation passes.
+
+The indexed SINet mixed-attention owner is now characterized as a fixed one-key
+result with a default 32-rewrite cap, guarded cleanup, one raw direct wrapper
+call, and one layout-aware attention selection. Strict retention selects
+`_post_sinet_mix_attention_stats` only for the direct result; owner defaults,
+schema and cleanup, wrapper forwarding, exact split-bridge/mixed-cleanup
+boundary, nested index, and absence of a consumer are frozen. After correcting
+one test-only wrapper-argument assumption, the focused gate passes
+`375 passed, 1 xfailed in 18.42s`, the 100-file branch-changed suite passes
+`1647 passed, 1 xfailed in 32.58s`, and targeted static validation passes.

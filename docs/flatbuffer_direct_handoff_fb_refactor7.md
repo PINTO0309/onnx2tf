@@ -11699,3 +11699,43 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## SINet mixed-attention direct result characterization checkpoint
+
+The indexed SINet mixed-attention owner returns the fixed one-key dictionary
+`optimized_sinet_mix_attention_double_logistic_nhwc_chains`, accepts an
+optional GraphIndex/candidate, and uses a default 32-rewrite cap. It prunes and
+synchronizes layout only after a successful rewrite.
+
+The lowerer has one raw direct wrapper call. Attention gate/QDQ recovery also
+selects the public owner at index 1 with ModelIR and LayoutState only. The raw
+call remains between retained
+`_post_sinet_split_conv_concat_bridge_stats` and the distinct mixed-attention
+layout cleanup owner.
+
+Passing contracts freeze the owner defaults, result schema, guarded cleanup,
+wrapper forwarding, exact direct call and neighbors, sole direct occurrence,
+and nested layout-aware selection. A strict expected-failure contract selects
+the unconsumed observation target `_post_sinet_mix_attention_stats` only for
+the raw direct result.
+
+The first dedicated characterization run reported `1 passed, 1 failed, 1
+xfailed in 0.60s`; the new test incorrectly expected the wrapper to rename its
+`graph_index` parameter to `active_index`. The expectation now freezes the
+actual unchanged forwarding contract.
+
+Corrected characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.59s`
+- indexed owner, attention and gate orchestration, direct neighbors, and
+  architecture coverage: `375 passed, 1 xfailed in 18.42s`
+- 100 branch-changed test files: `1647 passed, 1 xfailed in 32.58s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct assignment.
+Retain only the existing dictionary. Do not change owner logic or schema,
+rewrite cap, GraphIndex/candidate handling, guarded pruning, nested selection,
+call order, direct arguments, dependencies, public API, or TensorFlow behavior.
+Keep the target unconsumed, validate sequentially, commit, and push only; do
+not create, reopen, or update a pull request.

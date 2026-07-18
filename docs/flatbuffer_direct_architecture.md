@@ -12540,3 +12540,17 @@ No owner logic, unconditional pruning, schema, wrapper, direct argument,
 neighboring residual-affine/PReLU result, dead-operator pruning, nested route,
 dependency, public API, or TensorFlow boundary changed. The counter is not used
 as complete mutation evidence or to steer later cleanup.
+
+`optimize_sinet_mix_attention_double_logistic_nhwc_chains()` exposes the fixed
+one-key result `optimized_sinet_mix_attention_double_logistic_nhwc_chains` from
+a GraphIndex/candidate-based owner with a default 32-rewrite cap. The lowerer
+calls its wrapper once directly, and attention gate/QDQ recovery selects the
+public owner once with LayoutState. Unused tensors are pruned only when at least
+one rewrite succeeds.
+
+Strict characterization selects `_post_sinet_mix_attention_stats` only for the
+raw direct result. It freezes the owner defaults, schema and guarded cleanup,
+wrapper forwarding, exact direct arguments, retained split/Conv/Concat bridge
+predecessor, mixed-attention cleanup successor, attention selection index and
+layout-only keyword contract, sole direct occurrence, and an unconsumed
+observation-only policy.
