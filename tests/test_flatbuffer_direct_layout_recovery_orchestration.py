@@ -22,8 +22,16 @@ from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_recovery_orchestration.py"
+)
 LAYOUT_PREFIX = "_run_layout_recovery_prefix_pass_sequence"
 ATTENTION_PREFIX = "_run_layout_reshape_attention_recovery_prefix"
+LAYOUT_RESULT_TARGET = "_layout_pass_set_2_layout_recovery_prefix_results"
 
 
 def _lowerer_and_helper(helper_name: str) -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -49,6 +57,22 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    function = statement.value.func
+    return function.id if isinstance(function, ast.Name) else None
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
 
 
 def _call_contracts(
@@ -337,3 +361,126 @@ def test_new_attention_runner_executes_the_same_flattened_order(
         *LAYOUT_RECOVERY_PASS_IDS,
         *ATTENTION_RECOVERY_PASS_IDS[1:],
     ]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="the ordered layout-recovery prefix result is discarded",
+)
+def test_layout_recovery_prefix_propagates_direct_and_nested_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    boundary_results = (
+        {"boundary_slot": 0},
+        {"boundary_slot": 1},
+    )
+    pre_concat_result = {"pre_concat_slot": 12}
+    channel_shuffle_results = (
+        {"channel_shuffle_slot": 0},
+        {"channel_shuffle_slot": 1},
+        {"channel_shuffle_slot": 2},
+    )
+    expected_results: tuple[Any, ...] = tuple(
+        boundary_results
+        if index == 1
+        else pre_concat_result
+        if index == 12
+        else channel_shuffle_results
+        if index == 18
+        else {"slot": index}
+        for index in range(len(LAYOUT_RECOVERY_PASS_IDS))
+    )
+
+    def result_callback(index: int):
+        def result(*args: Any, **kwargs: Any) -> Any:
+            value = expected_results[index]
+            return tuple(value) if isinstance(value, tuple) else dict(value)
+
+        return result
+
+    model_ir = ModelIR("layout_recovery_prefix_results_test")
+    context = LayoutRecoveryContext(
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
+        boundary_batchmatmul_unary_cluster=result_callback(1),
+        pre_concat_cleanup=result_callback(12),
+        channel_shuffle_gather_cluster=result_callback(18),
+    )
+    probe_steps = build_layout_recovery_invocations(context)
+    injected_callbacks = {
+        context.boundary_batchmatmul_unary_cluster,
+        context.pre_concat_cleanup,
+        context.channel_shuffle_gather_cluster,
+    }
+    for index, step in enumerate(probe_steps):
+        if step.callback in injected_callbacks:
+            continue
+        module_name = next(
+            name
+            for name, value in vars(layout_recovery_orchestration).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            layout_recovery_orchestration,
+            module_name,
+            result_callback(index),
+        )
+
+    assert (
+        layout_recovery_orchestration.run_layout_recovery_prefix(context)
+        == expected_results
+    )
+
+    attention_steps = build_attention_recovery_invocations(context)
+    assert attention_steps[0].pass_id == LAYOUT_PREFIX
+    assert attention_steps[0].callback is (
+        layout_recovery_orchestration.run_layout_recovery_prefix
+    )
+    assert attention_steps[0].args == (context,)
+    assert attention_steps[0].keyword_args == ()
+    assert attention_steps[0].run() == expected_results
+
+    orchestration_functions = {
+        node.name: node
+        for node in ast.parse(
+            ORCHESTRATION_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    runner = orchestration_functions["run_layout_recovery_prefix"]
+    assert ast.unparse(runner.returns) == "Tuple[Any, ...]"
+    assert isinstance(runner.body[-1], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper(LAYOUT_PREFIX)
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    direct_results: list[tuple[list[ast.stmt], int]] = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if _direct_call_name(candidate) == LAYOUT_PREFIX:
+                direct_results.append((statement.body, index))
+    assert len(direct_results) == 1
+    body, index = direct_results[0]
+    assert _single_target(body[index]) == LAYOUT_RESULT_TARGET
+    assert isinstance(body[index].value, ast.Call)
+    assert body[index].value.args == []
+    assert body[index].value.keywords == []
+    assert _direct_call_name(body[index - 1]) == (
+        "_run_qlinear_mean_concat_recovery_sequence"
+    )
+    assert _single_target(body[index + 1]) == (
+        "_layout_pass_set_2_preadd_mean_attention_results"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == LAYOUT_RESULT_TARGET
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )

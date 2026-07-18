@@ -12095,3 +12095,17 @@ observation-only, and the nested mean-attention tuple is unchanged.
 This propagation changes no child, nested result, shared context, call order,
 cleanup timing, surrounding retained result, summary, guard, dependency,
 public behavior, or TensorFlow isolation.
+
+The layout-recovery prefix selects nineteen ordered slots. Three slots are
+lowerer callbacks and can themselves return heterogeneous nested tuples: the
+boundary BatchMatMul/unary cluster, pre-Concat cleanup, and channel-shuffle/
+Gather cluster. The phase runner already obtains the complete ordered tuple
+from `run_recovery_invocations()`, but currently discards it.
+
+Strict characterization selects
+`_layout_pass_set_2_layout_recovery_prefix_results` for the sole direct
+lowerer call. It freezes every instrumented result identity, the shared
+`LayoutRecoveryContext`, the QLinear/pre-add boundary, the absence of a
+consumer, and the independent nested selection as the first attention-prefix
+callback. The tuple must remain observation-only because individual children
+can perform cleanup that is not represented by a positive rewrite counter.

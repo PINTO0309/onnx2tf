@@ -7884,6 +7884,46 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Layout-recovery prefix result characterization checkpoint
+
+`run_layout_recovery_prefix()` selects nineteen ordered children. Its boundary
+BatchMatMul/unary, pre-ConCat cleanup, and channel-shuffle/Gather callbacks can
+contribute nested heterogeneous results, while the remaining children return
+their existing owner statistics. `run_recovery_invocations()` already creates
+the complete ordered tuple, but the phase runner and zero-argument lowerer
+helper currently discard it.
+
+There is one direct lowerer call in layout pass-set 2. It lies between
+`_run_qlinear_mean_concat_recovery_sequence()` and the retained
+`_layout_pass_set_2_preadd_mean_attention_results`. The same phase runner is
+also selected independently as the first callback of the fifteen-slot
+attention prefix. The attention parent still discards its own result in this
+unit.
+
+A strict expected-failure contract instruments all nineteen result identities,
+including the three callback results. It selects observation-only target
+`_layout_pass_set_2_layout_recovery_prefix_results`, freezes the runner/helper
+return boundary, shared context, sole zero-argument direct call, QLinear/
+pre-add boundaries, nested attention selection, and absence of a consumer.
+The tuple cannot safely drive a mutation guard because child counters need not
+account for cleanup-only graph changes.
+
+Characterization validation completed sequentially under `uv`:
+
+- layout and attention orchestration, all callback boundaries, direct
+  elementwise/Concat/Conv, SPP, pre-Concat, NDHWC Concat, StridedSlice,
+  split-mixed, Concat-input, Slice/Logistic/Concat, architecture, and
+  pass-efficiency coverage: `414 passed, 1 xfailed in 18.88s`
+- branch-changed broad suite: `1597 passed, 1 xfailed in 28.73s`
+
+The sole strict expected failure is the intentionally unimplemented ordered
+result propagation contract. At implementation, return the existing tuple
+from the phase runner and helper and replace only the direct raw expression
+with the selected assignment. Do not consume the result or change a child,
+callback, context, pass order, surrounding boundary, attention-parent policy,
+dependency, public API, or TensorFlow behavior. Validate sequentially, commit,
+and push only; do not create, reopen, or update a pull request.
+
 ## Direct SA/PA MirrorPad result retention implementation checkpoint
 
 The layout-option call now retains `_layout_opt_sa_pa_mirrorpad_stats`, and the

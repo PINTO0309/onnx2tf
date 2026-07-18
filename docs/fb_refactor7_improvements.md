@@ -1464,3 +1464,13 @@ observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
 omits cleanup-only pruning. Any change must preserve current pass order,
 TensorFlow-free boundary, dependency set, and sequential validation policy.
+
+That layout-recovery prefix is now characterized as nineteen ordered results,
+including the three heterogeneous lowerer callback slots. The sole direct
+target is `_layout_pass_set_2_layout_recovery_prefix_results`; the same runner
+also remains the first nested attention-prefix callback. Exact result identity,
+shared context, QLinear/pre-add boundary, nested selection, and the unconsumed
+observation-only policy are frozen before implementation. The focused gate
+passes `414 passed, 1 xfailed in 18.88s`; the strict xfail is the transparent
+runner/helper/direct result propagation contract. The branch-changed broad
+characterization gate passes `1597 passed, 1 xfailed in 28.73s`.
