@@ -11051,6 +11051,19 @@ reconciliation successor, other three occurrence forms, and one-key schema
 remain fixed. The new very-late target is observation-only and changes no
 existing guard.
 
+The immediate static-shape reconciliation remains unconditional because it
+must cover every preceding owner, including the layout-Transpose cleanup whose
+result omits prune-only mutation. Its default one-key result counts only tensor
+shape updates and is not complete evidence. The reconciler's existing opt-in
+`reconciled_static_shape_mutations` counter additionally covers parameter,
+operator-option, and tensor-metadata writes without another graph traversal.
+
+Strict characterization retains the unconditional call but requires
+`include_mutation_count=True` and a future
+`_very_late_broadcast_static_shape_stats` target. It fixes the captured
+broadcast-repair predecessor and following tensor-count boundary and forbids a
+new guard or consumer.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`

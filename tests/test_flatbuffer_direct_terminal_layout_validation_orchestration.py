@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1794,6 +1796,49 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
         )
         for call_node in module_calls
     ) == 1
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="very-late post-broadcast shape reconciliation result is discarded",
+)
+def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
+    body = _lowerer_body()
+    broadcast_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_very_late_broadcast_repair_stats"
+    )
+
+    statement = body[broadcast_index + 1]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == (
+        "_very_late_broadcast_static_shape_stats"
+    )
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_mutation_count": "True"}
+
+    predecessor = body[broadcast_index]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_very_late_broadcast_repair_stats"
+
+    successor = body[broadcast_index + 2]
+    assert isinstance(successor, ast.Assign)
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == "shared_late_tensor_count"
+    assert ast.unparse(successor.value) == "len(model_ir.tensors)"
 
 
 def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:

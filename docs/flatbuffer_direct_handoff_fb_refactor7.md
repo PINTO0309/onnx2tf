@@ -7129,3 +7129,41 @@ captured broadcast counter is complete, but the adjacent layout-Transpose
 dictionary omits zero-rewrite unused-tensor pruning, so it cannot by itself
 prove the graph stable. Commit and push only; do not create, reopen, or update
 a pull request.
+
+## Very-late post-broadcast static-shape result characterization checkpoint
+
+The static-shape reconciliation immediately after
+`_very_late_broadcast_repair_stats` is currently unconditional and discards its
+result. It cannot safely be guarded by that broadcast counter alone: the
+preceding guarded layout-Transpose cleanup can prune unused tensors while
+reporting zero rewrites.
+
+The reconciler's default `reconciled_static_tensor_shapes` key counts only
+tensor shape writes. Its established opt-in
+`reconciled_static_shape_mutations` key also counts constant shape-parameter,
+operator-option, and direct tensor-metadata writes during the same fixed-point
+walk. Requesting it adds no ModelIR copy, fingerprint, or graph traversal.
+
+A strict expected-failure contract therefore keeps the call unconditional but
+requires `include_mutation_count=True` and retains the two-key result as
+`_very_late_broadcast_static_shape_stats`. It fixes the captured broadcast-
+repair predecessor and following `shared_late_tensor_count` boundary. The new
+target is observation-only and must not control a guard or add graph work.
+
+At implementation, replace only the raw call with that assignment and opt-in
+keyword. Do not change reconciler behavior, fixed-point order, preceding
+passes, unconditional execution, adjacent tensor count, result consumers,
+dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- complete reconciler contract, layout-Transpose/broadcast owners, terminal
+  occurrence, architecture, and pass-efficiency coverage:
+  `356 passed, 1 xfailed in 18.98s`
+- branch-changed broad suite plus the same reconciliation and owner coverage:
+  `1429 passed, 1 xfailed in 24.26s`
+
+The sole strict expected failure is the intentionally unimplemented very-late
+post-broadcast static-shape result retention contract above. Implement only the
+unconditional assignment and opt-in counter, rerun the same gates sequentially,
+then commit and push only; do not create, reopen, or update a pull request.
