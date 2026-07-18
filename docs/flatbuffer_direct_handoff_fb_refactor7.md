@@ -4508,3 +4508,37 @@ callbacks operate on `fallback_ir`, omit layout-state handoff, and sit between
 the fallback topological sort and unbound-input repair. Characterize those
 exact differences before retaining results. Commit and push only; do not create
 or update a pull request.
+
+## Recursive-fallback precision-cleanup result characterization checkpoint
+
+The safety fallback runs the same divisor rewrite→consecutive-Mul fold→
+precision-sensitive divisor restore sequence over `fallback_ir` immediately
+after placeholder-MatMul reconciliation and a topological sort. Unlike the
+primary final trio, the direct precision owners receive no layout state; only
+the transactional consecutive-Mul runner receives `session.diagnostics`. All
+three returned one-counter dictionaries are currently discarded.
+
+A strict expected-failure orchestration contract requires assigning the raw
+results to `_fallback_precision_div_rewrite_stats`,
+`_fallback_precision_consecutive_mul_stats`, and
+`_fallback_precision_div_restore_stats`. The fallback input, exact keyword
+contracts, preceding sort, and following `_fallback_unbound_repair_stats`
+boundary remain fixed.
+
+At implementation, replace only these three fallback expressions with
+assignments. Do not change the owners/schemas, primary final or earlier core-
+cleanup occurrences, add layout-state handoff, a guard, reconciliation, scan,
+sort, dependency, metadata write, or result consumer, or affect TensorFlow
+behavior. Validate safety fallback, precision, graph cleanup, terminal
+orchestration, architecture, and broad related gates sequentially, then commit
+and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- safety fallback, precision, graph cleanup, terminal orchestration, and
+  architecture: `318 passed, 1 xfailed in 17.85s`
+- expanded broad related gate: `1396 passed, 1 xfailed in 31.03s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet fallback three-result capture
+contract; there are no unexpected failures.
