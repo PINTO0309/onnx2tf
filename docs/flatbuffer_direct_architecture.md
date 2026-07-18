@@ -11875,3 +11875,16 @@ arguments, call multiplicity, and both adjacent boundaries are unchanged.
 
 This assignment adds no summary, guard, dependency, public behavior change, or
 TensorFlow import path. Only the direct observation becomes available.
+
+The indexed strided-Slice pre-Concat owner immediately after the direct NDHWC
+result has one direct call and one independent public-owner execution inside
+layout recovery. It returns one rewrite counter but invokes unused-tensor
+pruning unconditionally; a dedicated zero-rewrite fixture proves cleanup-only
+mutation is possible.
+
+Strict characterization selects `_layout_opt_stridedslice_pre_concat_stats`
+for the direct result and requires it to remain unconsumed. It freezes the
+wrapper's optional graph-index/layout/bound/candidate forwarding, one-key
+schema, unconditional cleanup, sole direct call, model/layout arguments,
+NDHWC/split-mixed boundaries, and independent orchestration selection. The
+layout-recovery occurrence is not changed by this retention unit.

@@ -1274,6 +1274,16 @@ The next unit should audit the sole direct indexed strided-Slice pre-Concat
 result and its independent layout-recovery occurrence, including schema,
 cleanup semantics, graph-index/layout routing, and NDHWC/split-mixed
 boundaries.
+
+That indexed owner is now characterized with one direct call and one separate
+layout-recovery occurrence. `_layout_opt_stridedslice_pre_concat_stats` is the
+selected observation-only target. Optional graph-index/layout/bound/candidate
+forwarding, the one-key schema, unconditional cleanup with a proven
+zero-rewrite prune, direct arguments, and NDHWC/split-mixed boundaries are
+frozen before implementation.
+The focused characterization gate passes
+`360 passed, 1 xfailed in 18.98s`; the sole strict xfail is the selected direct
+assignment.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

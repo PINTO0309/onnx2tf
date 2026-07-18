@@ -8935,6 +8935,33 @@ arguments, NDHWC/split-mixed boundaries, and current result policy before
 changing production. Commit and push only; do not create, reopen, or update a
 pull request.
 
+## Direct indexed strided-Slice pre-Concat result characterization checkpoint
+
+The indexed owner has one direct production call after
+`_layout_opt_ndhwc_concat_stats` plus one independent public-owner execution
+inside layout recovery. It returns one rewrite counter but invokes
+unused-tensor pruning unconditionally. A dedicated zero-rewrite fixture proves
+that the raw zero counter can coexist with cleanup-only mutation.
+
+A strict expected-failure contract selects
+`_layout_opt_stridedslice_pre_concat_stats` for the direct result and requires
+it to remain unconsumed. It freezes optional graph-index/layout/bound/candidate
+forwarding, one-key schema, unconditional cleanup, model/layout arguments,
+exact sole direct call, NDHWC/split-mixed boundaries, and independent
+orchestration selection.
+
+The focused wrapper/schema/cleanup and zero-prune fixture, indexed owner suite,
+NDHWC/split-mixed boundaries, layout-recovery selection, architecture, and
+pass-efficiency gate is `360 passed, 1 xfailed in 18.98s`. Ruff, Python
+bytecode compilation, and whitespace validation pass. The sole strict xfail is
+the selected direct assignment; production is unchanged at this checkpoint.
+
+At implementation, replace only the discarded direct expression with the
+selected assignment and update stale boundary targets. Do not change the
+layout-recovery occurrence or use the zero counter as a guard. Validate
+sequentially, commit, and push only; do not create, reopen, or update a pull
+request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
