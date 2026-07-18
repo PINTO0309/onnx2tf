@@ -243,6 +243,7 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
         ),
     ]
     assert assigned_boundary_targets == [
+        "_terminal_sinet_hardswish_se_stats",
         "_post_terminal_indexed_shape_convergence_stats",
         "_very_late_sinet_preadd_resize_results",
     ]

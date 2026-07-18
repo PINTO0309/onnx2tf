@@ -8604,6 +8604,37 @@ then run focused and branch-changed broad gates sequentially. Do not use the
 raw zero counter as a stability guard. Commit and push only; do not create,
 reopen, or update a pull request.
 
+## Terminal-SiNet HardSwish-SE result retention implementation checkpoint
+
+The earlier production call now assigns its unchanged one-counter dictionary
+to `_terminal_sinet_hardswish_se_stats`. The value remains unconsumed and is
+not a stability guard: the owner can still prune unused tensors while reporting
+zero rewrites. The later `_terminal_hardswish_se_stats` form continues to carry
+its complete starting-count and `pruned_unused_tensors` evidence.
+
+This is an assignment-only production change. The compatibility wrapper,
+owner implementation and schema, exact two-call count, model-only arguments,
+terminal SiNet/dequant-HardSigmoid boundaries, pass order, dependencies,
+diagnostics, public behavior, and TensorFlow-free direct path are unchanged.
+Two stale outer-boundary contracts now require the new assigned target.
+
+Implementation validation completed sequentially under `uv`:
+
+- wrapper/owner, both production forms, HardSwish-SE fixtures, terminal SiNet,
+  dequant-HardSigmoid, late-hard-activation, architecture, and pass-efficiency
+  coverage: `324 passed in 20.03s`
+- branch-changed broad suite: `1539 passed in 27.43s`
+
+These are unit, owner-fixture, structural, orchestration, and broad contract
+checks; this observation-only retention does not claim a new model-corpus run.
+
+At resume, characterize result propagation for the immediately preceding
+`_run_terminal_clamp_unary_relu_pass_cluster()`. Its three-owner orchestration
+currently returns `None`; freeze raw child results, cleanup semantics, shared
+state scope, and the guarded singleton/terminal-SiNet boundaries before
+changing either runner layer. Commit and push only; do not create, reopen, or
+update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

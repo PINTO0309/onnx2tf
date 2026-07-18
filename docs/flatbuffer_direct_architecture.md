@@ -11742,3 +11742,14 @@ terminal-SiNet/dequant-HardSigmoid boundaries. It selects
 `_terminal_sinet_hardswish_se_stats` for the earlier raw result and requires it
 to remain unconsumed. Retention must add no mutation guard, dependency, pass
 call, reorder, or TensorFlow import path.
+
+The earlier production call now assigns its unchanged one-counter dictionary
+to `_terminal_sinet_hardswish_se_stats`. It remains observation-only because
+the owner's unconditional pruning can mutate ModelIR while the rewrite counter
+is zero. The later `_terminal_hardswish_se_stats` prune-aware form, wrapper,
+owner, call count, arguments, and both adjacent boundaries are unchanged.
+
+This assignment adds no consumer or control flow. Terminal SiNet recovery,
+dequantized HardSigmoid cleanup, late hard-activation recovery, dependencies,
+diagnostics, public behavior, and the TensorFlow-free direct path remain fixed.
+The two stale outer-boundary contracts now require the assigned target.

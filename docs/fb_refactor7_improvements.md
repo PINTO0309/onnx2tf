@@ -1153,6 +1153,18 @@ results, Singleton/Reshape policies, three QKV result forms, and the late
 summary must also remain fixed.
 The focused characterization gate passes `323 passed, 1 xfailed in 17.83s`;
 the sole strict xfail is the selected earlier result assignment.
+
+The earlier call now retains its unchanged dictionary as
+`_terminal_sinet_hardswish_se_stats`. It remains observation-only because a
+zero rewrite counter does not exclude the owner's unconditional unused-tensor
+pruning. The later prune-aware form and all pass behavior remain unchanged.
+The focused implementation gate passes `324 passed in 20.03s`, and the
+branch-changed broad suite passes `1539 passed in 27.43s`.
+
+The next unit should characterize raw result propagation for the preceding
+three-owner `_run_terminal_clamp_unary_relu_pass_cluster()`, which currently
+returns `None`. Shared state scope, cleanup-only mutations, and both outer
+boundaries must be fixed before either runner layer changes.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

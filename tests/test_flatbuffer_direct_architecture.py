@@ -2178,6 +2178,7 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         "_run_sinet_preadd_resize_recovery_sequence",
     ]
     assert assigned_boundary_targets == [
+        "_terminal_sinet_hardswish_se_stats",
         "_post_terminal_indexed_shape_convergence_stats",
         "_very_late_sinet_preadd_resize_results",
     ]

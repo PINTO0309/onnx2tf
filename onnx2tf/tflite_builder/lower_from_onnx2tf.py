@@ -4814,7 +4814,11 @@ def lower_onnx_to_ir(
     _terminal_sinet_layout_recovery_results = (
         _run_sinet_terminal_layout_recovery_sequence()
     )
-    _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
+    _terminal_sinet_hardswish_se_stats = (
+        _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
+            model_ir
+        )
+    )
     _terminal_dequant_hardsigmoid_bridge_stats = (
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     )

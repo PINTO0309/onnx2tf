@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -118,10 +115,6 @@ def test_hardswish_se_has_exactly_two_production_forms() -> None:
     assert prune_key.value == "pruned_unused_tensors"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal-SiNet HardSwish-SE result is not retained yet",
-)
 def test_terminal_sinet_hardswish_se_result_is_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     result_statement = next(
