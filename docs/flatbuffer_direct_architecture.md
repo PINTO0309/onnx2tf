@@ -12295,3 +12295,16 @@ observation-only. The activation-recovery predecessor contract accepts either
 direct-call statement form while preserving the exact cleanup call. No pass
 implementation, selection, ordering, transaction, preflight, nested suffix,
 live context, dependency, public API, or TensorFlow boundary changed.
+
+`_optimize_dequant_transposeconv_quantize_chains()` returns the fixed one-key
+dictionary `folded_dequant_transposeconv_quantize_chains`. It is called twice
+directly by the lowerer and once through the attention/quantized suffix, always
+with the live LayoutState. Candidate-missing exits can prune unused tensors and
+still return zero, so its counter is not complete mutation evidence.
+
+Strict characterization selects
+`_layout_pass_set_1_dequant_transposeconv_quantize_stats` and
+`_layout_pass_set_2_dequant_transposeconv_quantize_stats`. It freezes the exact
+direct arguments, quantized-PReLU/quantized-Reshape and attention-gate/
+quantized-activation boundaries, nested suffix index/context flag, fixed
+schema, and an unconsumed observation-only policy.

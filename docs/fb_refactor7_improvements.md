@@ -1666,3 +1666,14 @@ now accepts either direct-call statement form while preserving the exact call
 identity. The corrected focused gate passes `315 passed in 20.48s`, the branch-
 changed broad gate passes `1621 passed in 30.14s`, and targeted static
 validation passes.
+
+The dequantize/TransposeConv/quantize cleanup is now characterized as a fixed
+one-key result, two direct lowerer calls, and one nested quantized-suffix
+selection. Selected observation-only targets are
+`_layout_pass_set_1_dequant_transposeconv_quantize_stats` and
+`_layout_pass_set_2_dequant_transposeconv_quantize_stats`. Exact arguments,
+both retained-neighbor boundaries, the nested layout route, and absence of
+consumers are frozen. Because candidate-missing exits can still prune unused
+tensors while returning zero, the counter is not complete mutation evidence.
+The focused gate passes `386 passed, 1 xfailed in 18.24s`; the branch-changed
+broad gate passes `1622 passed, 1 xfailed in 30.56s`.

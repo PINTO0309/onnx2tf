@@ -10947,3 +10947,41 @@ assignment does not claim a new model-corpus run. At resume, inventory all
 direct and nested `_optimize_dequant_transposeconv_quantize_chains()` results
 before changing that adjacent boundary. Commit and push only; do not create,
 reopen, or update a pull request.
+
+## Dequant-TransposeConv direct result characterization checkpoint
+
+`_optimize_dequant_transposeconv_quantize_chains()` returns the fixed one-key
+dictionary `folded_dequant_transposeconv_quantize_chains`. Candidate-missing
+early exits can prune unused tensors and still return zero, so this counter is
+not complete mutation evidence.
+
+The lowerer has two raw direct calls with the live LayoutState. Pass-set 1 lies
+between retained quantized-PReLU and quantized-Reshape results; pass-set 2 lies
+between retained attention-gate/QDQ and quantized-activation results. The
+layout/attention quantized suffix independently selects the same callback at
+its fixed index with the live LayoutState.
+
+A passing contract freezes the one-key schema, both exact direct calls, nested
+suffix index/context flag, and all four retained-neighbor boundaries. A strict
+expected-failure contract selects the unconsumed observation-only targets
+`_layout_pass_set_1_dequant_transposeconv_quantize_stats` and
+`_layout_pass_set_2_dequant_transposeconv_quantize_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.58s`
+- indexed owner behavior, both direct boundaries, attention/quantized suffix,
+  quantized recovery, adjacent result contracts, architecture, and pass-
+  efficiency coverage: `386 passed, 1 xfailed in 18.24s`
+- branch-changed broad suite including the new result contract:
+  `1622 passed, 1 xfailed in 30.56s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented two-result
+retention contract. Replace only the two raw direct expressions with the
+selected targets. Do not change the result schema, GraphIndex construction or
+mutation, pruning, call order, direct arguments, nested suffix, surrounding
+calls, guard, dependency, public API, or TensorFlow behavior. Keep both results
+unconsumed, validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.
