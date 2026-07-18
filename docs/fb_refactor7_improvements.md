@@ -364,6 +364,15 @@ This checkpoint extends the expanded related gate to `1372 passed in 30.75s`;
 the focused SE/FC, indexed-affine, terminal, architecture, and pass-efficiency
 gate is `417 passed in 17.82s`.
 
+The primary final precision sequence now retains the raw divisor-rewrite,
+consecutive-Mul-fold, and precision-sensitive divisor-restore dictionaries.
+Only the adjacent final trio changed; earlier core-cleanup and recursive-
+fallback occurrences and the following progress/sort boundary remain fixed.
+
+This checkpoint extends the expanded related gate to `1396 passed in 30.84s`;
+the focused precision, graph-cleanup, terminal, architecture, and pass-
+efficiency gate is `332 passed in 17.67s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -372,7 +381,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should audit result propagation through
-the final precision cleanup sequence immediately before the completed guarded
-no-layout final cleanup and boundary-signature restore. Any new mutation
-evidence must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+the recursive-fallback precision cleanup sequence corresponding to the
+completed primary final trio. Any new mutation evidence must preserve current
+pass order, TensorFlow-free boundary, dependency set, and sequential validation
+policy.

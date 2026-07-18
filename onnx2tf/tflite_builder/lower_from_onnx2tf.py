@@ -5646,18 +5646,24 @@ def lower_onnx_to_ir(
             )
         return _finalize_model_ir(fallback_ir)
 
-    _rewrite_constant_divisors_to_multiplicative_reciprocals(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_precision_div_rewrite_stats = (
+        _rewrite_constant_divisors_to_multiplicative_reciprocals(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    run_consecutive_mul_constants_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _final_precision_consecutive_mul_stats = (
+        run_consecutive_mul_constants_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _restore_precision_sensitive_reciprocal_divisions(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_precision_div_restore_stats = (
+        _restore_precision_sensitive_reciprocal_divisions(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _set_post_progress_desc("topological sort")
     _topologically_sort_operators(model_ir)

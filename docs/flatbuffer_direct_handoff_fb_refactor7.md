@@ -4481,3 +4481,30 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet final three-result capture
 contract; there are no unexpected failures.
+
+## Primary final precision-cleanup result implementation checkpoint
+
+The primary final precision sequence now retains the unchanged divisor-rewrite,
+consecutive-Mul-fold, and precision-sensitive divisor-restore dictionaries as
+`_final_precision_div_rewrite_stats`,
+`_final_precision_consecutive_mul_stats`, and
+`_final_precision_div_restore_stats`, respectively.
+
+All three owners and schemas, indexed mutation, pruning, diagnostics and
+layout-state synchronization, callback arguments, earlier core-cleanup and
+recursive-fallback occurrences, following post-progress description and sort,
+dependencies, and TensorFlow-free behavior are unchanged. No guard,
+reconciliation, scan, sort, metadata write, or result consumption is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- precision, graph cleanup, terminal orchestration, architecture, and pass
+  efficiency: `332 passed in 17.67s`
+- expanded broad related gate: `1396 passed in 30.84s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the corresponding recursive-fallback precision trio. Its
+callbacks operate on `fallback_ir`, omit layout-state handoff, and sit between
+the fallback topological sort and unbound-input repair. Characterize those
+exact differences before retaining results. Commit and push only; do not create
+or update a pull request.

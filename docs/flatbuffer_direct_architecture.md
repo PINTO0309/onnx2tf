@@ -10765,10 +10765,11 @@ external initialization or consumption is added.
 Before the post-progress topological sort, the primary final precision sequence
 rewrites safe constant divisors to reciprocal multiplication, folds consecutive
 constant multiplications, then restores divisions on precision-sensitive
-integer-cast lineages. Each owner returns a stable one-counter dictionary. A
-strict characterization selects only this final consecutive occurrence trio,
-preserving the earlier core-cleanup and recursive-fallback calls and the
-following progress/sort boundary.
+integer-cast lineages. Each owner returns a stable one-counter dictionary. The
+primary caller now retains them as `_final_precision_div_rewrite_stats`,
+`_final_precision_consecutive_mul_stats`, and
+`_final_precision_div_restore_stats`. Earlier core-cleanup and recursive-
+fallback calls and the following progress/sort boundary are unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
