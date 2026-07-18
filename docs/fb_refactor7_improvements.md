@@ -955,13 +955,24 @@ The focused owner/QKV-boundary gate passes `372 passed in 19.41s`, and the
 branch-changed broad suite passes `1463 passed in 25.65s`. No child execution,
 guard, graph traversal, dependency, or TensorFlow import path was added.
 
+The two default-policy QKV tuples are now retained as
+`_terminal_qkv_attention_results` and
+`_post_sinet_qkv_attention_results`. The existing late policy tuple and its
+complete summary with net tensor pruning remain unchanged; the two new tuples
+have no consumers.
+
+The focused QKV/adj-flags gate passes `371 passed in 19.64s`, and the
+branch-changed broad suite passes `1464 passed in 25.62s`. A test-only call
+extractor was made tolerant of non-call lowerer statements after the retained
+assignment exposed that stale assumption.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the raw QKV attention cluster results immediately after the
-captured adj-flags dictionaries. All QKV policy forms and callback ordering
-must remain fixed. Mean/attention tuples and the preceding BatchMatMul results
-must remain observation-only and policy guarded. The retained
+unit should audit the raw split/conv/concat bridge result after
+`_terminal_qkv_attention_results`. All three QKV result forms and the late
+summary must remain fixed. Mean/attention tuples and the preceding BatchMatMul
+results must remain observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
 omits cleanup-only pruning. Any change must preserve current pass order,
 TensorFlow-free boundary, dependency set, and sequential validation policy.

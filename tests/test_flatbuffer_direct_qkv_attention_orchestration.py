@@ -60,10 +60,13 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, (ast.Assign, ast.Expr))
-    assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
+def _call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    if not isinstance(statement.value.func, ast.Name):
+        return None
     return statement.value.func.id
 
 
@@ -450,7 +453,10 @@ def test_qkv_attention_preserves_both_default_boundaries() -> None:
     nested_index = next(
         index
         for index, statement in enumerate(layout_block.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_qkv_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == QKV_ATTENTION
@@ -467,7 +473,10 @@ def test_qkv_attention_preserves_both_default_boundaries() -> None:
     top_level_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_post_sinet_qkv_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == QKV_ATTENTION
@@ -483,10 +492,6 @@ def test_qkv_attention_preserves_both_default_boundaries() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal QKV attention results are not retained",
-)
 def test_qkv_attention_retains_both_default_policy_results() -> None:
     lowerer, _ = _lowerer_and_helper()
     terminal_guard = next(

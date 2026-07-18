@@ -4785,7 +4785,9 @@ def lower_onnx_to_ir(
         _terminal_batchmatmul_adj_flags_stats = (
             _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
         )
-        _run_qkv_attention_layout_pass_cluster()
+        _terminal_qkv_attention_results = (
+            _run_qkv_attention_layout_pass_cluster()
+        )
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
             model_ir,
             layout_state=session.layout_state,
@@ -4843,7 +4845,9 @@ def lower_onnx_to_ir(
     _post_sinet_batchmatmul_adj_flags_stats = (
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
     )
-    _run_qkv_attention_layout_pass_cluster()
+    _post_sinet_qkv_attention_results = (
+        _run_qkv_attention_layout_pass_cluster()
+    )
     _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
         model_ir,
         layout_state=session.layout_state,

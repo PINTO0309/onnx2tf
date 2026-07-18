@@ -11041,12 +11041,11 @@ exist. The late call is already retained as `late_qkv_results` and summarized
 with an explicit net tensor-pruning delta; the two earlier default-policy calls
 after the captured terminal and post-SiNet adj-flags dictionaries are raw.
 
-A strict contract fixes future `_terminal_qkv_attention_results` and
-`_post_sinet_qkv_attention_results` targets with empty arguments and keywords.
-It preserves both adj-flags predecessors, their distinct successors, the total
-three-call count, and the existing late policy/summary consumer. The two new
-tuples must remain observation-only and must not replace the complete late
-summary.
+The two default-policy calls retain `_terminal_qkv_attention_results` and
+`_post_sinet_qkv_attention_results` with empty arguments and keywords. Both
+adj-flags predecessors, their distinct successors, the total three-call count,
+and the existing late policy/summary consumer remain fixed. The two new tuples
+are observation-only and do not replace the complete late summary.
 
 The immediately following guarded `run_layout_transpose_cleanup()` occurrence
 returns `iterations` plus four rewrite counters. Those counters are useful

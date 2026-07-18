@@ -7884,6 +7884,40 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Terminal QKV result retention implementation checkpoint
+
+The default-policy calls now retain `_terminal_qkv_attention_results` and
+`_post_sinet_qkv_attention_results`. The existing late call remains
+`late_qkv_results` and continues to feed the policy-aware summary with an
+explicit net tensor-pruning delta.
+
+These are assignment-only observation changes. The helper, QKV owner
+selection, shared scope, policies, captured adj-flags predecessors, distinct
+successors, late summary, option guard, pass order, dependencies, diagnostics,
+and TensorFlow behavior remain unchanged. Neither new tuple has a consumer.
+
+The first implementation gate reached a previously hidden test-helper
+assumption after the former xfail passed: lowerer-wide statement scanning did
+not tolerate `AnnAssign`. The call extractor now returns `None` for non-call
+statements and supports both raw and assigned calls; production code was not
+affected by that correction.
+
+Implementation validation completed sequentially under `uv`:
+
+- QKV policies and late summary, adj-flags owner fixture, both default-policy
+  boundaries, architecture, terminal result contracts, and pass-efficiency
+  coverage: `371 passed in 19.64s`
+- branch-changed broad suite plus the same QKV/late-summary coverage:
+  `1464 passed in 25.62s`
+
+These are unit, contract, and orchestration checks; this result retention does
+not claim a new model-corpus run.
+
+At resume, audit the raw split/conv/concat bridge result after
+`_terminal_qkv_attention_results` before moving further through the terminal
+sequence. Preserve all three QKV result policies and the late summary. Commit
+and push only; do not create, reopen, or update a pull request.
+
 ## BatchMatMul adj-flags result retention implementation checkpoint
 
 The guarded terminal call now retains
