@@ -4488,12 +4488,12 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
     )
-    _optimize_fold_conv_mul_add_affine_chains(
+    _core_cleanup_conv_affine_stats = _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,
         layout_state=session.layout_state,
     )
-    _optimize_fuse_conv_activation_chains(
+    _core_cleanup_conv_activation_stats = _optimize_fuse_conv_activation_chains(
         model_ir,
         layout_state=session.layout_state,
     )
@@ -4662,12 +4662,12 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
     )
-    _optimize_fold_conv_mul_add_affine_chains(
+    _terminal_cleanup_conv_affine_stats = _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,
         layout_state=session.layout_state,
     )
-    _optimize_fuse_conv_activation_chains(
+    _terminal_cleanup_conv_activation_stats = _optimize_fuse_conv_activation_chains(
         model_ir,
         layout_state=session.layout_state,
     )

@@ -4790,3 +4790,24 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented four-result
 retention contract above.
+
+## Quantization-successor Conv result implementation checkpoint
+
+The two Conv MUL/ADD affine-fold results and the two Conv/binary activation-
+fusion results immediately following the captured terminal quantization pairs
+are now retained under the four phase-specific targets fixed by
+characterization. The pass calls, options, layout-state handoff, pair order,
+mutation behavior, Q/DQ predecessors, and dynamic-Reshape/ArgMax successors are
+unchanged. No guard, reconciliation, scan, sort, metadata write, or result
+consumer was added. The third later Conv-affine expression remains unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused Conv-affine/activation, terminal convergence/orchestration, and
+  architecture gate: `322 passed in 19.48s`
+- expanded broad related gate: `1508 passed in 30.41s`
+
+Ruff, Python bytecode compilation, and `git diff --check` passed. At resume,
+audit the third direct
+`_optimize_fold_conv_mul_add_affine_chains()` occurrence between cost-volume
+cleanup and `late_concat_layout_state_scope` before retaining its result.

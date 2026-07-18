@@ -409,6 +409,16 @@ This checkpoint extends the expanded related gate to `1480 passed in 31.26s`;
 the focused quantization-cleanup, terminal, architecture, and pass-efficiency
 gate is `359 passed in 17.79s`.
 
+The Conv MUL/ADD affine fold and Conv/binary activation fusion immediately
+following each terminal quantization-cleanup pair now retain all four raw
+result dictionaries under phase-specific targets. Pass order, arguments,
+mutation behavior, and distinct dynamic-Reshape/ArgMax successors are
+unchanged; the third later Conv-affine occurrence remains outside this unit.
+
+This checkpoint extends the expanded related gate to `1508 passed in 30.41s`;
+the focused Conv-affine/activation, terminal convergence/orchestration, and
+architecture gate is `322 passed in 19.48s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -416,8 +426,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit result propagation through
-the two Conv-affine fold and Conv-activation fusion pairs immediately following
-the completed terminal quantization-cleanup pairs. Any new mutation evidence
-must preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit result propagation from the third later Conv-affine fold,
+bounded by cost-volume cleanup and the late Concat layout-state scope. Any new
+mutation evidence must preserve current pass order, TensorFlow-free boundary,
+dependency set, and sequential validation policy.

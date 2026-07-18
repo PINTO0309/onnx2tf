@@ -3158,16 +3158,24 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert "remove_operator" in fusion_call_names
     assert "_prune_unused_tensors" in fusion_call_names
 
-    direct_production_calls = [
-        statement.value
+    direct_production_assignments = [
+        statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == "_optimize_fuse_conv_activation_chains"
     ]
-    assert len(direct_production_calls) == 2
-    for call in direct_production_calls:
+    assert [
+        statement.targets[0].id
+        for statement in direct_production_assignments
+        if isinstance(statement.targets[0], ast.Name)
+    ] == [
+        "_core_cleanup_conv_activation_stats",
+        "_terminal_cleanup_conv_activation_stats",
+    ]
+    for statement in direct_production_assignments:
+        call = statement.value
         layout_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "layout_state"
         )

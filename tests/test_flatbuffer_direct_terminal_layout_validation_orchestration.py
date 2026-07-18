@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1417,10 +1415,6 @@ def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="core and terminal Conv-affine/activation results are discarded",
-)
 def test_primary_path_retains_quantization_successor_conv_results() -> None:
     body = _lowerer_body()
     affine_name = "_optimize_fold_conv_mul_add_affine_chains"
