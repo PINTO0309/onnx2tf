@@ -6355,3 +6355,27 @@ owner schema, production occurrence, captured boundary-StridedSlice
 predecessor, and following dequant-logistic bridge. Keep the stale indexed-
 Swish test issue separately classified. Commit and push only; do not create,
 reopen, or update a pull request.
+
+## Indexed quantized-Swish stale-test repair checkpoint
+
+The two indexed quantized-Swish tests no longer monkeypatch
+`_build_tensor_consumer_map` or `_build_tensor_producer_map` on the lowerer,
+where those compatibility helpers no longer exist. They now assert that the
+actual `quantized_swish_layout` owner module does not expose either legacy map
+helper. Existing runtime assertions still verify the supplied GraphIndex,
+single refresh behavior, current producer/consumer indices, rewrite counters,
+metadata propagation, and fixed-point results.
+
+This is a test-only repair. Production code, pass behavior, dependencies, and
+TensorFlow boundaries are unchanged.
+
+Validation completed sequentially under `uv`:
+
+- complete indexed quantized-Swish owner module: `21 passed in 0.53s`
+- indexed quantized-Swish plus terminal recovery/orchestration, architecture,
+  and pass-efficiency coverage: `364 passed in 18.52s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The previously recorded stale-test issue is resolved. At resume, audit the
+Swish-residual closure result. Commit and push only; do not create, reopen, or
+update a pull request.

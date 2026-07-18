@@ -677,6 +677,13 @@ This checkpoint passes the focused boundary-StridedSlice/recovery accounting
 gate with `349 passed in 20.54s`, plus the branch-changed broad related suite
 with `1394 passed in 24.34s`.
 
+Two stale indexed quantized-Swish tests no longer monkeypatch compatibility map
+helpers that are absent from the lowerer. They now assert the actual owner
+module's indexed-only contract while preserving runtime GraphIndex refresh,
+currentness, mutation-counter, metadata, and fixed-point checks. The complete
+owner module passes `21 passed in 0.53s`; the related terminal orchestration,
+architecture, and pass-efficiency gate passes `364 passed in 18.52s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -686,7 +693,7 @@ full model-corpus run for this observation and accounting unit.
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should audit the immediately following model-only Swish-residual-closure
 owner result and its captured boundary-StridedSlice/dequant-logistic bridge
-boundaries. The two stale indexed-Swish monkeypatch tests must remain classified
-separately unless deliberately repaired in an isolated unit. Any new mutation
-evidence must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+boundaries. The two stale indexed-Swish monkeypatch tests are repaired in an
+isolated test-only unit by checking the actual owner module's indexed contract.
+Any new mutation evidence must preserve current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

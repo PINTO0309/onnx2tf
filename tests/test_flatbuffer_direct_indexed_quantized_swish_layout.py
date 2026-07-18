@@ -480,24 +480,12 @@ def _assert_index_matches_fresh(
 
 
 def test_indexed_swish_primary_rewrites_shared_multibranch_and_keeps_index(
-    monkeypatch,
 ) -> None:
     model_ir, expected_rewritten = _make_shared_multibranch_model_ir()
     graph_index = ModelIRGraphIndex(model_ir)
 
-    def unexpected_map_rebuild(*args, **kwargs):
-        raise AssertionError("unexpected compatibility graph-map rebuild")
-
-    monkeypatch.setattr(
-        lowering_module,
-        "_build_tensor_consumer_map",
-        unexpected_map_rebuild,
-    )
-    monkeypatch.setattr(
-        lowering_module,
-        "_build_tensor_producer_map",
-        unexpected_map_rebuild,
-    )
+    assert not hasattr(swish_module, "_build_tensor_consumer_map")
+    assert not hasattr(swish_module, "_build_tensor_producer_map")
 
     result = rewrite_transpose_swish_qdq_nhwc_branches(
         model_ir,
@@ -648,15 +636,8 @@ def test_indexed_swish_metadata_propagates_all_families_to_fixed_point(
         refresh_count += 1
         original_refresh(graph_index)
 
-    def unexpected_consumer_map(*args, **kwargs):
-        raise AssertionError("unexpected compatibility consumer-map rebuild")
-
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    monkeypatch.setattr(
-        lowering_module,
-        "_build_tensor_consumer_map",
-        unexpected_consumer_map,
-    )
+    assert not hasattr(swish_module, "_build_tensor_consumer_map")
 
     result = propagate_swish_qdq_nhwc_metadata(
         model_ir,
