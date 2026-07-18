@@ -12249,6 +12249,13 @@ for the direct result. It freezes the exact model-only call, pre-unary-fan-out/
 mean-attention boundary, both declarative selection indices and empty keyword
 contracts, fixed schema, and an unconsumed observation-only policy.
 
+The direct call now retains its unchanged dictionary as
+`_layout_pass_set_1_mean_affine_prepost_stats`. The target remains unconsumed
+and observation-only. Both attention selections remain model-only, and
+unconditional pruning is unchanged. No producer/consumer-map construction,
+constant or axis handling, call order, dependency, public API, or TensorFlow
+boundary changed.
+
 The three direct calls now retain the same two-key results in those selected
 targets. Their arguments, ordering, nested policy selections, live context,
 normalization convergence logic, and surrounding calls remain unchanged. The

@@ -11268,3 +11268,31 @@ constant/axis handling, pruning, direct argument, nested selections,
 surrounding calls, dependency, public API, or TensorFlow behavior. Keep the
 result unconsumed, validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
+
+## Mean-affine pre/post direct result retention implementation checkpoint
+
+The sole raw lowerer expression now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_mean_affine_prepost_stats`. The target remains unconsumed
+and observation-only. The attention/quantized suffix and pre-add attention
+recovery still select the public callback with their model-only contracts.
+
+No result schema, producer/consumer-map construction, constant or axis
+handling, pruning, direct argument, nested selection, surrounding production
+call, dependency, public API, or TensorFlow boundary changed. A zero counter
+remains insufficient to infer absence of mutation.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.54s`
+- owner behavior, both attention orchestration routes, adjacent affine and
+  mean-attention owners, architecture, and pass-efficiency coverage:
+  `329 passed in 18.61s`
+- branch-changed broad suite: `1631 passed in 30.12s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, re-inventory the
+remaining raw pass expressions and select the next complete owner family before
+changing another boundary. Commit and push only; do not create, reopen, or
+update a pull request.
