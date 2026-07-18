@@ -4389,10 +4389,12 @@ def lower_onnx_to_ir(
         # removes redundant NHWC/NCHW adapters in multi-branch heads.
         enable_duplicate_transpose_fanout_optimizations = not has_qdq_ops
 
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_1_layout_transpose_cleanup_stats = (
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         _layout_pass_set_1_initial_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()

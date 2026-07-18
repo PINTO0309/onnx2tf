@@ -1541,3 +1541,14 @@ shared-scope difference, duplicate-fanout-policy/initial-attention boundary,
 and unconsumed policy are frozen. The focused gate passes
 `370 passed, 1 xfailed in 19.20s`; the branch-changed broad gate passes
 `1608 passed, 1 xfailed in 29.60s`.
+
+The primary call now retains
+`_layout_pass_set_1_layout_transpose_cleanup_stats`, making all three direct
+lowerer occurrences explicit while leaving the late-binary nested consumer
+unchanged. The result remains observation-only. The focused implementation
+gate passes `371 passed in 20.03s`, the branch-changed broad suite passes
+`1609 passed in 29.42s`, and targeted static validation passes.
+
+The next unit should audit the sole raw duplicate-fanout cleanup result before
+the newly retained post-binary attention result, preserving its QDQ-dependent
+transpose policy and live layout/diagnostic context.

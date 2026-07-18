@@ -12154,6 +12154,13 @@ sync path, all occurrence counts, exact layout/diagnostics/state-scope routing,
 the duplicate-fanout-policy/initial-attention boundary, and an unconsumed
 observation-only policy.
 
+The primary call now retains its unchanged dictionary as
+`_layout_pass_set_1_layout_transpose_cleanup_stats`. All three direct lowerer
+occurrences are therefore explicit assignments, while the late-binary nested
+consumer is unchanged. The new target remains unconsumed. No owner, schema,
+preflight, transaction, cleanup, LayoutState sync, argument, shared scope,
+pass-order, guard, dependency, public API, or TensorFlow boundary changes.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

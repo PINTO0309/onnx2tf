@@ -1628,7 +1628,7 @@ def test_primary_path_retains_late_concat_scope_results() -> None:
     assert sum(
         isinstance(statement, ast.Assign)
         for statement in layout_cleanup_statements
-    ) == 2
+    ) == 3
 
 
 def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> None:
@@ -1707,6 +1707,7 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         and isinstance(statement.targets[0], ast.Name)
     ]
     assert assigned_targets == [
+        "_layout_pass_set_1_layout_transpose_cleanup_stats",
         "_late_concat_transpose_layout_stats",
         "_very_late_layout_transpose_cleanup_stats",
     ]

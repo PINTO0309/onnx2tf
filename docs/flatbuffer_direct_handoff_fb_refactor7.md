@@ -10499,3 +10499,37 @@ change the owner, schema, preflight, transaction, nested/retained occurrences,
 arguments, shared scope, pass order, successor, guard, dependency, public API,
 or TensorFlow behavior. Validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
+
+## Primary layout-transpose cleanup result retention implementation checkpoint
+
+The primary pass-set-1 call now retains the unchanged five-key dictionary as
+`_layout_pass_set_1_layout_transpose_cleanup_stats`. It remains between the
+duplicate-fanout policy assignment and
+`_layout_pass_set_1_initial_attention_recovery_results`.
+
+All three direct lowerer occurrences are now explicit assignments. The
+late-ConCat call still receives its shared state scope, the very-late call keeps
+its option guard, and the late-binary nested call still consumes its selected
+mutation fields. The new primary target is unconsumed and observation-only.
+No owner, schema, preflight, transaction, cleanup, LayoutState sync, argument,
+scope, pass order, successor, guard, dependency, public API, or TensorFlow
+import path changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- primary, late-ConCat, very-late, and nested layout-transpose contracts,
+  terminal layout orchestration, attention boundary, architecture, and
+  pass-efficiency coverage: `371 passed in 20.03s`
+- branch-changed broad suite: `1609 passed in 29.42s`
+- post-cleanup focused result contract: `2 passed in 0.15s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run.
+
+At resume, audit the sole raw `run_duplicate_fanout_cleanup()` result
+immediately before `_layout_pass_set_1_post_binary_attention_recovery_results`.
+Preserve its QDQ-dependent `include_transpose` policy, live LayoutState and
+diagnostics, cleanup semantics, and following attention boundary. Commit and
+push only; do not create, reopen, or update a pull request.

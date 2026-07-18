@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -105,7 +102,7 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
     direct_calls = _direct_lowerer_calls(lowerer)
     assert len(direct_calls) == 3
     assert [_single_target(statement) for statement in direct_calls] == [
-        None,
+        RESULT_TARGET,
         "_late_concat_transpose_layout_stats",
         "_very_late_layout_transpose_cleanup_stats",
     ]
@@ -161,10 +158,6 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the primary layout-transpose cleanup result is discarded",
-)
 def test_primary_layout_transpose_result_is_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(
