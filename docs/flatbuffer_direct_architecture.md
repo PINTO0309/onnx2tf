@@ -12161,6 +12161,19 @@ consumer is unchanged. The new target remains unconsumed. No owner, schema,
 preflight, transaction, cleanup, LayoutState sync, argument, shared scope,
 pass-order, guard, dependency, public API, or TensorFlow boundary changes.
 
+`run_duplicate_fanout_cleanup()` has a policy-dependent result schema. The
+reshape-only form returns `removed_duplicate_reshape_fanout`; enabling
+Transpose adds `removed_duplicate_transpose_fanout`. The sole direct lowerer
+call forwards `not has_qdq_ops` as this policy, while duplicate/PReLU,
+singleton/consecutive-Reshape, and Singleton/Reshape orchestration select the
+same owner independently.
+
+Strict characterization selects
+`_layout_pass_set_1_duplicate_fanout_stats`, freezes both schemas, transactional
+pass IDs, all nested selections, the exact QDQ-dependent argument and live
+LayoutState/diagnostics, the binary-bridge/post-binary-attention boundary, and
+an unconsumed observation-only policy.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

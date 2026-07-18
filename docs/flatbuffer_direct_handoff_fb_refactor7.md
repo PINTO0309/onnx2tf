@@ -10533,3 +10533,39 @@ immediately before `_layout_pass_set_1_post_binary_attention_recovery_results`.
 Preserve its QDQ-dependent `include_transpose` policy, live LayoutState and
 diagnostics, cleanup semantics, and following attention boundary. Commit and
 push only; do not create, reopen, or update a pull request.
+
+## Primary duplicate-fanout cleanup result characterization checkpoint
+
+`run_duplicate_fanout_cleanup()` returns a policy-dependent dictionary. With
+`include_transpose=False` it contains only
+`removed_duplicate_reshape_fanout`; enabling Transpose adds
+`removed_duplicate_transpose_fanout`. Both selected passes remain separately
+transactional and share the runner's pass state.
+
+The lowerer has one direct call. It forwards
+`enable_duplicate_transpose_fanout_optimizations`, which is fixed as
+`not has_qdq_ops`, plus the live LayoutState and diagnostics. The same owner is
+selected independently by duplicate/PReLU, singleton/consecutive-Reshape, and
+Singleton/Reshape orchestration.
+
+A passing contract freezes both schemas, transactional pass IDs, and all three
+nested selections. A strict expected-failure contract selects observation-only
+target `_layout_pass_set_1_duplicate_fanout_stats`, exact arguments, the
+conditional binary-bridge predecessor, the retained post-binary attention
+successor, sole direct-call count, and absence of a consumer.
+
+Characterization validation completed sequentially under `uv`:
+
+- duplicate-fanout owner and policy schemas, three nested selections, direct
+  boundary, graph cleanup, Singleton orchestration, architecture, and
+  pass-efficiency coverage: `378 passed, 1 xfailed in 18.47s`
+- branch-changed broad suite including the new result contract:
+  `1610 passed, 1 xfailed in 28.74s`
+
+The sole strict expected failure is the intentionally unimplemented direct
+assignment. Replace only the raw expression with the selected target. Do not
+change either schema, pass selection, preflight, transaction, QDQ policy,
+nested occurrence, live context, pass order, surrounding boundary, guard,
+dependency, public API, or TensorFlow behavior. Keep the result unconsumed,
+validate sequentially, commit, and push only; do not create, reopen, or update
+a pull request.

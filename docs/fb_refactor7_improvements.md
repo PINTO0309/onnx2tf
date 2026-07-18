@@ -1552,3 +1552,13 @@ gate passes `371 passed in 20.03s`, the branch-changed broad suite passes
 The next unit should audit the sole raw duplicate-fanout cleanup result before
 the newly retained post-binary attention result, preserving its QDQ-dependent
 transpose policy and live layout/diagnostic context.
+
+The duplicate-fanout owner is now characterized with its reshape-only one-key
+and Transpose-enabled two-key schemas, two transactional pass IDs, three
+independent orchestration selections, and the sole direct QDQ-dependent call.
+Selected observation-only target is
+`_layout_pass_set_1_duplicate_fanout_stats`. Exact policy/context arguments,
+conditional binary-bridge/post-binary-attention boundary, and unconsumed
+contract are frozen. The focused gate passes
+`378 passed, 1 xfailed in 18.47s`; the branch-changed broad gate passes
+`1610 passed, 1 xfailed in 28.74s`.
