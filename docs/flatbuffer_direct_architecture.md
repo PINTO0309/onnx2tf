@@ -12530,3 +12530,13 @@ for the direct result. It freezes owner schema and cleanup, wrapper, exact
 argument, retained residual-affine/PReLU predecessor, dead-operator-prune
 successor, both nested selection indices and model-only contracts, sole direct
 occurrence, and an unconsumed observation-only policy.
+
+The very-late raw residual affine fan-out call now retains its unchanged one-key
+dictionary as `_very_late_residual_affine_fanout_stats`. The target remains
+unconsumed and observation-only, and both model-only declarative selections
+remain part of the same parent tuples.
+
+No owner logic, unconditional pruning, schema, wrapper, direct argument,
+neighboring residual-affine/PReLU result, dead-operator pruning, nested route,
+dependency, public API, or TensorFlow boundary changed. The counter is not used
+as complete mutation evidence or to steer later cleanup.

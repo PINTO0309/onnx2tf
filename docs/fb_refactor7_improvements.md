@@ -1861,3 +1861,10 @@ both nested indices, and absence of a consumer are frozen. The focused gate
 passes `286 passed, 1 xfailed in 17.51s`, the 99-file branch-changed suite
 passes `1644 passed, 1 xfailed in 31.59s`, and targeted static validation
 passes.
+
+The very-late residual affine fan-out call now retains its unchanged dictionary
+as `_very_late_residual_affine_fanout_stats`. It remains unconsumed and
+observation-only; both model-only declarative selections and unconditional
+owner pruning are unchanged. The focused gate passes
+`287 passed in 17.97s`, the 99-file branch-changed suite passes
+`1645 passed in 30.93s`, and targeted static validation passes.

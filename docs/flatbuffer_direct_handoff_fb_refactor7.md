@@ -11674,3 +11674,28 @@ nested selections, call order, direct arguments, adjacent pruning,
 dependencies, public API, or TensorFlow behavior. Keep the target unconsumed,
 validate sequentially, commit, and push only; do not create, reopen, or update
 a pull request.
+
+## Residual affine fan-out direct result implementation checkpoint
+
+The very-late raw call now retains its unchanged one-key dictionary as
+`_very_late_residual_affine_fanout_stats`. The target remains unconsumed and
+observation-only. Both model-only declarative selections and their parent
+result tuples are unchanged.
+
+No owner behavior, unconditional pruning, schema, wrapper, direct argument,
+adjacent retained residual-affine/PReLU result, dead-operator pruning, nested
+route, dependency, public API, or TensorFlow behavior changed. No intermediate
+test failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.57s`
+- both residual owners, both nested routes, architecture, and focused owner
+  behavior: `287 passed in 17.97s`
+- 99 branch-changed test files: `1645 passed in 30.93s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

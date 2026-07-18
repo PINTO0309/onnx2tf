@@ -4944,7 +4944,9 @@ def lower_onnx_to_ir(
     _very_late_residual_affine_prelu_stats = (
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
     )
-    _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
+    _very_late_residual_affine_fanout_stats = (
+        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
+    )
     _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
     # Dead-op pruning can unblock strict locality guards in this recovery.
