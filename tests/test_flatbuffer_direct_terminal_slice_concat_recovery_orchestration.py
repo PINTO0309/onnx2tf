@@ -22,7 +22,49 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_slice_concat_recovery_orchestration.py"
+)
+PRE_ADD_PATH = (
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "pre_add_layout.py"
+)
+LAYOUT_TRANSPOSE_PATH = (
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "layout_transpose.py"
+)
 TERMINAL_SLICE_CONCAT = "_run_terminal_slice_concat_layout_recovery_sequence"
+RESULT_TARGETS = (
+    "_terminal_slice_concat_recovery_results",
+    "_final_slice_concat_recovery_results",
+)
+
+
+def _functions(path: Path) -> dict[str, ast.FunctionDef]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    function = statement.value.func
+    return function.id if isinstance(function, ast.Name) else None
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -50,11 +92,11 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _context() -> TerminalSliceConcatRecoveryContext:
+def _context(*, callback_result: Any = None) -> TerminalSliceConcatRecoveryContext:
     model_ir = ModelIR("terminal_slice_concat_recovery_test")
 
-    def no_op() -> None:
-        return None
+    def no_op() -> Any:
+        return callback_result
 
     return TerminalSliceConcatRecoveryContext(
         pass_context=ModelIRPassContext(
@@ -195,6 +237,58 @@ def test_terminal_slice_concat_recovery_preserves_all_call_contracts() -> None:
         ),
     }
     assert invocations[0].callback is context.channel_slice_pad_mul_cluster
+
+
+def test_terminal_slice_concat_child_schemas_and_cleanup_are_explicit() -> None:
+    channel_slice_results = (
+        {"channel_slice_mutations": 0},
+        {"pad_mul_mutations": 0},
+    )
+    invocations = build_terminal_slice_concat_recovery_invocations(
+        _context(callback_result=channel_slice_results)
+    )
+    assert tuple(invocation.run() for invocation in invocations) == (
+        channel_slice_results,
+        {"optimized_transpose_mul_posttranspose_add_nhwc_chains": 0},
+        {"optimized_concat_mul_add_transpose_nhwc_bridge_chains": 0},
+        {"optimized_concat_mul_add_transpose_add_nhwc_bridge_chains": 0},
+        {
+            "optimized_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains": 0
+        },
+        {"optimized_concat_tree_mul_add_transpose_nhwc_bridge_chains": 0},
+        {"optimized_singleton_gate_conv_concat_nhwc_bridge_blocks": 0},
+        {"optimized_transpose_unary_split_concat_single_post_nchw": 0},
+        {"optimized_transpose_split_channelwise_tail_to_single_post_nchw": 0},
+        {
+            "optimized_transpose_binary_split_channelwise_tail_to_single_post_nchw": 0
+        },
+        {
+            "sanitized_probable_nhwc_axis_sensitive_ops": 0,
+            "inserted_probable_nhwc_terminal_transposes": 0,
+        },
+        {
+            "optimized_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains": 0
+        },
+        {"optimized_transpose_pre_add_nhwc_chains": 0},
+        {
+            "iterations": 0,
+            "removed_identity_transpose": 0,
+            "removed_inverse_transpose_pairs": 0,
+            "removed_inverse_transpose_fanout_branches": 0,
+            "composed_consecutive_transpose_pairs": 0,
+        },
+    )
+
+    for path, owner_name in (
+        (PRE_ADD_PATH, "optimize_transpose_pre_add_nhwc_chains"),
+        (LAYOUT_TRANSPOSE_PATH, "_optimize_layout_transpose_chains"),
+    ):
+        owner = _functions(path)[owner_name]
+        assert sum(
+            1
+            for statement in owner.body
+            if _direct_call_name(statement) == "_prune_unused_tensors"
+        ) == 1
 
 
 def test_terminal_slice_concat_recovery_invocations_remain_zero_argument() -> None:
@@ -356,6 +450,68 @@ def test_terminal_slice_concat_recovery_runner_preserves_instrumented_order(
     run_terminal_slice_concat_recovery(context)
 
     assert events == list(TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="both terminal slice/concat runner layers discard both production results",
+)
+def test_terminal_slice_concat_propagates_and_retains_both_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_results = tuple(
+        {"slot": index}
+        for index in range(len(TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS))
+    )
+    context = _context(callback_result=expected_results[0])
+    probe_steps = build_terminal_slice_concat_recovery_invocations(context)
+    for step, expected in zip(probe_steps[1:], expected_results[1:]):
+        module_name = next(
+            name
+            for name, value in vars(
+                terminal_slice_concat_recovery_orchestration
+            ).items()
+            if value is step.callback
+        )
+
+        def result(*args: Any, _expected: dict[str, int] = expected, **kwargs: Any):
+            return dict(_expected)
+
+        monkeypatch.setattr(
+            terminal_slice_concat_recovery_orchestration,
+            module_name,
+            result,
+        )
+
+    assert run_terminal_slice_concat_recovery(context) == expected_results
+
+    runner = _functions(ORCHESTRATION_PATH)[
+        "run_terminal_slice_concat_recovery"
+    ]
+    assert ast.unparse(runner.returns) == "Tuple[Any, ...]"
+    assert len(runner.body) == 1
+    assert isinstance(runner.body[0], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    production_results = [
+        statement
+        for statement in lowerer.body
+        if _direct_call_name(statement) == TERMINAL_SLICE_CONCAT
+    ]
+    assert len(production_results) == 2
+    assert tuple(_single_target(statement) for statement in production_results) == (
+        RESULT_TARGETS
+    )
+    for target in RESULT_TARGETS:
+        assert not any(
+            isinstance(node, ast.Name)
+            and node.id == target
+            and isinstance(node.ctx, ast.Load)
+            for node in ast.walk(lowerer)
+        )
 
 
 def test_terminal_slice_concat_recovery_module_does_not_import_lowerer() -> None:

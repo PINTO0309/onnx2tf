@@ -11780,3 +11780,19 @@ stable IDs, exact order, one shared state scope, ModelIR/layout/diagnostics
 routing, transactional behavior, guarded singleton/reshape predecessor, and
 terminal-SiNet successor are unchanged. No result summary, mutation guard,
 dependency, public API change, or TensorFlow import path was added.
+
+The earlier terminal slice/concat recovery has fourteen ordered slots and two
+production invocations. Its first slot is itself the two-dictionary
+channel-slice/pad-Mul tuple; the remaining slots return fixed rewrite
+dictionaries, the two-key probable-NHWC sanitizer result, and a final layout
+dictionary containing four mutation counters plus non-mutating `iterations`.
+The shared executor returns this nested ordered evidence, but both runner
+layers currently return `None` and both production calls discard it.
+
+Strict characterization freezes every empty-model schema, callback and
+argument order, exact two-call multiplicity, and both distinct boundary pairs.
+It also fixes unconditional cleanup in pre-Add and layout owners, proving that
+zero raw counters cannot serve as a general stability guard. The selected
+targets are `_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`; both nested tuples must remain
+unconsumed when propagated.

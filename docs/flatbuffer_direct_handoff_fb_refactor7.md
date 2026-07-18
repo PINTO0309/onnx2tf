@@ -8703,6 +8703,36 @@ cleanup semantic, both distinct boundary pairs, shared state scope, and exact
 two-call multiplicity before choosing result targets. Commit and push only; do
 not create, reopen, or update a pull request.
 
+## Terminal slice/concat result characterization checkpoint
+
+This recovery has fourteen ordered slots and exactly two production calls. The
+first slot is itself the two-dictionary channel-slice/pad-Mul result tuple. The
+remaining slots return fixed rewrite dictionaries, a two-key probable-NHWC
+sanitizer dictionary, and a final layout dictionary with four mutation
+counters plus non-mutating `iterations`. The shared executor already returns
+the complete nested tuple, but the orchestration runner and lowerer delegate
+return `None`, and both production calls discard it.
+
+Empty-model fixtures now freeze every child schema. Structural checks also
+freeze unconditional unused-tensor cleanup in the pre-Add and layout owners,
+so zero counters cannot be used as a general no-mutation guard. A strict
+expected-failure contract requires both runner layers to propagate
+`Tuple[Any, ...]`, retains the two production results as
+`_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`, and requires both to remain unconsumed.
+
+The focused fourteen-slot schema/cleanup, channel-slice child, boundary,
+terminal-layout, architecture, and pass-efficiency gate is
+`465 passed, 1 xfailed in 20.37s`. Ruff, Python bytecode compilation, and
+whitespace validation pass. The sole strict xfail is the missing two-layer
+propagation and two production assignments; production is unchanged here.
+
+The two distinct predecessor/successor pairs, fourteen stable IDs, callback
+identity, ModelIR/layout/diagnostics routing, invocation multiplicity, and pass
+order remain fixed. At implementation, add only two returns and two production
+assignments, update stale structural expectations, validate sequentially,
+commit, and push only. Do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

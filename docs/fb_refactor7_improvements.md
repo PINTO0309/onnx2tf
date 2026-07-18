@@ -1186,6 +1186,17 @@ The next unit should audit both discarded calls to
 `_run_terminal_slice_concat_layout_recovery_sequence()`, including every child
 schema and cleanup behavior, shared state scope, call multiplicity, and the two
 distinct boundary pairs before either runner layer changes.
+
+The terminal slice/concat recovery is now characterized as fourteen ordered
+slots at two production sites. Its nested child schemas, final non-mutating
+`iterations`, unconditional cleanup evidence, exact ordering, and two boundary
+pairs are fixed. Both runner layers still discard the shared executor's tuple;
+the selected observation-only targets are
+`_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`.
+The focused characterization gate passes
+`465 passed, 1 xfailed in 20.37s`; the sole strict xfail covers the missing
+two-layer propagation and both assignments.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
