@@ -11663,3 +11663,23 @@ Concat/unary/Conv and fanout-guard boundaries, late-SPP/QKV boundaries,
 pre-Concat and late-layout-cluster boundaries, dependencies, diagnostics, and
 TensorFlow behavior remain unchanged. Three stale AST contracts now verify the
 exact assigned targets instead of requiring raw expressions.
+
+The guarded Conv/Pool output-transpose compatibility wrapper returns the fixed
+one-counter dictionary
+`optimized_convpool_output_transpose_nhwc_passthrough_chains`. Its owner prunes
+unused tensors unconditionally after candidate processing, so a zero rewrite
+counter does not exclude cleanup-only mutation and must remain
+observation-only.
+
+There is exactly one production call. It is the body of the terminal
+`optimize_layout_transpose_chains` guard after the Singleton/MaxPool/Reshape
+sequence. The `elif` branch preserves safe-transpose-reduction and strict
+Mul/Add constant bridge cleanup; both branches rejoin before the dequantized
+HardSigmoid bridge owner.
+
+Strict characterization selects
+`_terminal_convpool_output_passthrough_stats`. It fixes the wrapper, one-key
+schema, unconditional prune, exact one-call count, model-only argument, option
+guard, predecessor and successor, no-layout fallback order, and absence of
+consumers. The dictionary must remain unconsumed; retention must add no guard,
+scan, dependency, or TensorFlow import path.

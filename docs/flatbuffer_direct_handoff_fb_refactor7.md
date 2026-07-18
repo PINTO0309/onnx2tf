@@ -8432,6 +8432,44 @@ shape-extract/fanout results, terminal Singleton/MaxPool sequence, no-layout
 fallback branch, pass order, and observation-only evidence rules. Commit and
 push only; do not create, reopen, or update a pull request.
 
+## Guarded Conv/Pool output result characterization checkpoint
+
+The Conv/Pool output-transpose compatibility wrapper returns the fixed
+one-counter dictionary
+`optimized_convpool_output_transpose_nhwc_passthrough_chains`. Its owner prunes
+unused tensors unconditionally after candidate processing, so a zero rewrite
+counter does not exclude cleanup-only mutation and the result must remain
+observation-only.
+
+There is exactly one production call. It is the body of the terminal
+`optimize_layout_transpose_chains` guard after the Singleton/MaxPool/Reshape
+sequence. The `elif` branch preserves safe-transpose-reduction and strict
+Mul/Add constant bridge cleanup; both paths rejoin before the dequantized
+HardSigmoid bridge owner.
+
+A strict expected-failure contract selects
+`_terminal_convpool_output_passthrough_stats`. It fixes the wrapper, one-key
+schema, unconditional pruning, exact one-call count, model-only argument,
+option guard, predecessor and successor, no-layout fallback order, and absence
+of result consumers.
+
+At implementation, replace only the guarded raw expression with an assignment.
+Do not add a consumer or guard, and do not change the wrapper, owner, schema,
+unconditional pruning, no-layout fallback, surrounding calls, dependencies,
+diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- Conv/Pool output wrapper/schema and owner fixtures, unconditional cleanup,
+  terminal Singleton/MaxPool and retained shape/fanout boundaries, no-layout
+  fallback, quantized HardSigmoid successor, architecture, and pass-efficiency
+  coverage: `397 passed, 1 xfailed in 18.54s`
+
+The sole strict expected failure is the intentionally unimplemented
+result-retention contract. Implement only that assignment, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
