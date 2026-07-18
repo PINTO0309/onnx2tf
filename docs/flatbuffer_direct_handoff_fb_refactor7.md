@@ -5642,3 +5642,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented final-
 occurrence result retention contract above.
+
+## Final boundary-input normalization result retention implementation checkpoint
+
+Only the final of the two production calls now retains the existing one-counter
+dictionary as `_final_boundary_input_normalization_stats`. The earlier
+occurrence remains a raw call. This is an assignment-only orchestration change:
+the owner and schema, transaction/preflight behavior, GraphIndex/layout
+synchronization, callback arguments, diagnostics, pass order, final-convergence
+predecessor, internal channel-slice successor, dependencies, and TensorFlow
+behavior are unchanged. The retained value has no consumer or extra graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused normalization owner, both occurrence contracts, convergence/channel-
+  slice boundaries, terminal-orchestration, architecture, and pass-efficiency
+  gate: `343 passed in 18.16s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, both window owners, final convergence, boundary normalization,
+  layout recovery, and pass-efficiency coverage: `1689 passed in 24.15s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the earlier raw
+`run_boundary_input_normalization_cleanup()` result and its terminal-softmax/
+boundary-channel-slice boundaries before adding characterization. Keep the
+final target fixed. Commit and push only; do not create, reopen, or update a
+pull request.

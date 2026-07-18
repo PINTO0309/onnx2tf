@@ -552,6 +552,17 @@ This checkpoint passes the focused convergence/window/boundary orchestration
 gate with `390 passed in 20.13s`, plus the branch-changed broad related suite
 with `1688 passed in 24.36s`.
 
+Of the two boundary-input normalization calls, the final occurrence now retains
+its existing one-counter dictionary as
+`_final_boundary_input_normalization_stats`. The earlier occurrence remains an
+unchanged raw call. Transaction/preflight behavior, live Session LayoutState,
+diagnostics, final-convergence predecessor, internal channel-slice successor,
+and TensorFlow-free boundary are unchanged. The retained value has no consumer.
+
+This checkpoint passes the focused two-occurrence boundary contract with
+`343 passed in 18.16s`, plus the branch-changed broad related suite with
+`1689 passed in 24.15s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -559,8 +570,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following final boundary-input normalization
-result, distinguish it from the earlier normalization occurrence, and preserve
-its convergence/internal-channel-slice boundaries. Any new mutation evidence
-must preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should return to the earlier boundary-input normalization occurrence and
+audit its terminal-softmax/boundary-channel-slice boundaries before retaining
+that separate result. Any new mutation evidence must preserve current pass
+order, TensorFlow-free boundary, dependency set, and sequential validation
+policy.
