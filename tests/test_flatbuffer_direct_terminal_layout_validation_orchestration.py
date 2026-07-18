@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1689,6 +1691,65 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
         assert _call_name(_statement_call(body[guard_index + 1])) == (
             successor_name
         )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="late ExpandDims and flatten-HW results are discarded",
+)
+def test_primary_path_retains_late_expanddims_and_flatten_results() -> None:
+    body = _lowerer_body()
+    expected = (
+        (
+            "_late_expanddims_reshape_layout_stats",
+            "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains",
+        ),
+        (
+            "_late_flatten_hw_reshape_layout_stats",
+            "_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains",
+        ),
+    )
+    indices = []
+    for target_name, callback_name in expected:
+        callback_indices = [
+            index
+            for index, statement in enumerate(body)
+            if _call_name(_statement_call(statement)) == callback_name
+        ]
+        assert len(callback_indices) == 1
+        index = callback_indices[0]
+        indices.append(index)
+
+        statement = body[index]
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        call = statement.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == callback_name
+        assert [ast.unparse(argument) for argument in call.args] == [
+            "model_ir"
+        ]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == {"layout_state": "session.layout_state"}
+
+    assert indices[1] == indices[0] + 1
+    preceding_guard = body[indices[0] - 1]
+    assert isinstance(preceding_guard, ast.If)
+    assert ast.unparse(preceding_guard.test) == "optimize_layout_transpose_chains"
+    preceding_assignment = preceding_guard.body[0]
+    assert isinstance(preceding_assignment, ast.Assign)
+    assert isinstance(preceding_assignment.targets[0], ast.Name)
+    assert preceding_assignment.targets[0].id == (
+        "_late_concat_elementwise_fanout_stats"
+    )
+    assert _call_name(_statement_call(body[indices[1] + 1])) == (
+        "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+    )
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

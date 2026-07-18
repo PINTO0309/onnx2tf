@@ -4994,3 +4994,34 @@ schemas and occurrence boundaries before retaining evidence.
 Workflow policy: pull request #955 was closed at the user's direction. Do not
 create, reopen, or update any pull request. Future units must use commits and
 pushes only.
+
+## Late ExpandDims/flatten-HW result characterization checkpoint
+
+The adjacent ExpandDims and flatten-HW Transpose/Reshape compatibility owners
+each return a stable one-counter dictionary, each has exactly one production
+occurrence, and both receive `model_ir` plus the live
+`session.layout_state`. Their results are currently discarded.
+
+A strict expected-failure orchestration contract requires
+`_late_expanddims_reshape_layout_stats` followed by
+`_late_flatten_hw_reshape_layout_stats`. It fixes the captured guarded
+late-Concat fanout predecessor, exact adjacency and callback contracts, and the
+following reshape/transpose-to-NHWC-Reshape owner.
+
+At implementation, replace only these two expressions with assignments. Do not
+change either compatibility/indexed owner or schema, fallback behavior,
+GraphIndex/pruning/layout synchronization, callback arguments, pass order,
+guard, reconciliation, scan, sort, metadata write, result consumer, dependency,
+or TensorFlow behavior. Validate both indexed/compatibility owners, terminal
+orchestration, architecture, and broad related gates sequentially, then commit
+and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused indexed/compatibility owner, terminal-orchestration, and architecture
+  gate: `300 passed, 1 xfailed in 18.25s`
+- expanded broad related gate: `1660 passed, 1 xfailed in 32.09s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented adjacent
+two-result retention contract above.
