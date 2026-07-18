@@ -1779,7 +1779,10 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         assert isinstance(following.value, ast.Call)
         assert isinstance(following.value.func, ast.Name)
         next_call_names.append(following.value.func.id)
-    assert previous_targets == [None, "_final_channel_slice_muladd_bridge_stats"]
+    assert previous_targets == [
+        "_terminal_channel_slice_muladd_bridge_stats",
+        "_final_channel_slice_muladd_bridge_stats",
+    ]
     assert previous_keyword_names == [["layout_state"], []]
     assert next_call_names == [
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",

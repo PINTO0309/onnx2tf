@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2405,10 +2403,16 @@ def test_primary_path_retains_final_channel_slice_muladd_bridge_result() -> None
     assert terminal_index < final_index
 
     terminal_statement = body[terminal_index]
-    assert isinstance(terminal_statement, ast.Expr)
-    terminal_call = _statement_call(terminal_statement)
-    assert _call_name(terminal_call) == callback_name
-    assert terminal_call is not None
+    assert isinstance(terminal_statement, ast.Assign)
+    assert len(terminal_statement.targets) == 1
+    assert isinstance(terminal_statement.targets[0], ast.Name)
+    assert terminal_statement.targets[0].id == (
+        "_terminal_channel_slice_muladd_bridge_stats"
+    )
+    terminal_call = terminal_statement.value
+    assert isinstance(terminal_call, ast.Call)
+    assert isinstance(terminal_call.func, ast.Name)
+    assert terminal_call.func.id == callback_name
     assert [ast.unparse(argument) for argument in terminal_call.args] == [
         "model_ir"
     ]
@@ -2454,10 +2458,6 @@ def test_primary_path_retains_final_channel_slice_muladd_bridge_result() -> None
     assert successor_call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal channel-slice MulAdd-bridge result is discarded",
-)
 def test_primary_path_retains_terminal_channel_slice_muladd_bridge_result() -> None:
     body = _lowerer_body()
     callback_name = (

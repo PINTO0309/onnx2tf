@@ -253,7 +253,7 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
 
     assert observed == [
         (
-            None,
+            "_terminal_channel_slice_muladd_bridge_stats",
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             ("layout_state",),
             "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",

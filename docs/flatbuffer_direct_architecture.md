@@ -10934,13 +10934,13 @@ retained value has a consumer.
 
 The following Transpose/channel-slice MulAdd-bridge owner returns one mutation
 counter and likewise has two production calls. The first receives the live
-Session LayoutState and remains raw between captured terminal internal channel-
-slice propagation and the first terminal slice/Concat recovery sequence. Strict
-characterization fixes `_terminal_channel_slice_muladd_bridge_stats` as its
-result target. The later model-only call retains its result as
+Session LayoutState and retains its result as
+`_terminal_channel_slice_muladd_bridge_stats` between captured terminal
+internal channel-slice propagation and the first terminal slice/Concat
+recovery sequence. The later model-only call retains its result as
 `_final_channel_slice_muladd_bridge_stats` between captured final internal
-channel-slice propagation and the later recovery sequence. The retained final
-value has no consumer.
+channel-slice propagation and the later recovery sequence. Neither retained
+value has a consumer.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

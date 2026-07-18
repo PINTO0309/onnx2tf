@@ -654,6 +654,18 @@ This checkpoint passes the focused MulAdd-bridge/recovery accounting gate with
 `346 passed in 20.08s`, plus the branch-changed broad related suite with
 `1391 passed in 24.78s`.
 
+The first live-LayoutState Transpose/channel-slice MulAdd-bridge call now
+retains the same one-counter schema as
+`_terminal_channel_slice_muladd_bridge_stats`, while the later model-only call
+keeps `_final_channel_slice_muladd_bridge_stats`. Recovery and architecture
+contracts now require both targets and preserve both ordered recovery calls.
+The assignment-only orchestration change leaves owner behavior and the
+TensorFlow-free boundary unchanged. Neither value has a consumer.
+
+This checkpoint passes the focused MulAdd-bridge/recovery accounting gate with
+`347 passed in 20.85s`, plus the branch-changed broad related suite with
+`1392 passed in 24.26s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -661,8 +673,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the first raw live-LayoutState Transpose/channel-slice MulAdd-
-bridge result, keep the later captured target fixed, and preserve its terminal
-internal-channel-slice/recovery boundaries. Any new mutation evidence must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the sole boundary-input Transpose/StridedSlice/QDQ/Concat
+owner result immediately after the first terminal recovery sequence and
+preserve its live LayoutState/Swish-closure boundaries. Any new mutation
+evidence must preserve current pass order, TensorFlow-free boundary, dependency
+set, and sequential validation policy.

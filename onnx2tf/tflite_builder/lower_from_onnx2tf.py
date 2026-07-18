@@ -4711,9 +4711,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_channel_slice_muladd_bridge_stats = (
+        _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _run_terminal_slice_concat_layout_recovery_sequence()
     _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(

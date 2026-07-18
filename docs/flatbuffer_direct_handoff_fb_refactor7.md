@@ -6241,3 +6241,38 @@ The sole strict expected failure is the intentionally unimplemented terminal
 channel-slice MulAdd-bridge result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Terminal channel-slice MulAdd-bridge result retention implementation checkpoint
+
+The first live-LayoutState production call now retains its existing one-counter
+dictionary as `_terminal_channel_slice_muladd_bridge_stats`. The later model-
+only occurrence keeps `_final_channel_slice_muladd_bridge_stats`. This is an
+assignment-only orchestration change. The wrapper and pass implementation,
+result schema, rewrite guards, graph mutation, tensor pruning, GraphIndex/
+LayoutState behavior, callback arguments, pass order, captured terminal and
+final internal-channel-slice predecessors, both terminal recovery calls,
+dependencies, diagnostics, and TensorFlow behavior are unchanged. Neither
+retained value has a consumer or triggers additional graph work.
+
+Terminal orchestration, recovery orchestration, and architecture contracts now
+require the two distinct targets while preserving both zero-argument recovery
+invocations and their successors.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused MulAdd-bridge owner, both terminal recovery boundaries, schema,
+  terminal orchestration, architecture, and pass-efficiency gate:
+  `347 passed in 20.85s`
+- branch-changed broad suite plus boundary/channel-slice, pad-Mul, both terminal
+  recovery sequences, architecture, and pass-efficiency coverage:
+  `1392 passed in 24.26s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the sole
+`_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks()` result,
+owner schema, live LayoutState contract, production occurrence, preceding
+terminal recovery, and following Swish-residual-closure boundary before adding
+characterization. Commit and push only; do not create, reopen, or update a pull
+request.
