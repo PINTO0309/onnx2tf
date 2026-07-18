@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2257,10 +2255,6 @@ def test_primary_path_retains_terminal_boundary_input_channel_slice_result() -> 
     } == {"layout_state": "session.layout_state"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="first terminal internal channel-slice result is discarded",
-)
 def test_primary_path_retains_first_terminal_internal_channel_slice_result() -> None:
     body = _lowerer_body()
     callback_name = (

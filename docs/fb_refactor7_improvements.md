@@ -619,6 +619,18 @@ This checkpoint passes the focused boundary-input/channel-slice accounting
 gate with `339 passed in 19.11s`, plus the branch-changed broad related suite
 with `1383 passed in 24.43s`.
 
+The first of two internal Transpose/channel-slice propagation calls now retains
+its existing four-counter dictionary as `_terminal_internal_channel_slice_stats`.
+The later model-only occurrence remains raw. A small zero-mutation test fixes
+the exact schema, and existing rewrite coverage retains shared GraphIndex/
+LayoutState validation. The assignment-only orchestration change preserves the
+captured boundary owner, live-LayoutState MulAdd-bridge successor, pass
+implementation, and TensorFlow-free boundary. The value has no consumer.
+
+This checkpoint passes the focused boundary/internal channel-slice accounting
+gate with `341 passed in 18.70s`, plus the branch-changed broad related suite
+with `1385 passed in 24.19s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -626,8 +638,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following first internal Transpose/channel-
-slice propagation result, distinguish it from the later raw occurrence, and
-preserve its captured boundary owner/MulAdd-bridge boundaries. Any new mutation
-evidence must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+unit should audit the later raw internal Transpose/channel-slice propagation
+result, keep the first captured target fixed, and preserve its final boundary-
+normalization/model-only MulAdd-bridge boundaries. Any new mutation evidence
+must preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

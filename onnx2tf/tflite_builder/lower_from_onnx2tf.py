@@ -4705,9 +4705,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_internal_channel_slice_stats = (
+        _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
         model_ir,
