@@ -333,10 +333,23 @@ def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() ->
     assert layout_keyword.value.attr == "layout_state"
 
     previous = lowerer.body[post_bias_index - 2]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_absolute_final_static_signature_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == "_sanitize_static_shape_signature_consistency"
+    realign = lowerer.body[post_bias_index - 3]
+    assert isinstance(realign, ast.Assign)
+    assert len(realign.targets) == 1
+    assert isinstance(realign.targets[0], ast.Name)
+    assert realign.targets[0].id == "_absolute_final_boundary_signature_stats"
+    assert isinstance(realign.value, ast.Call)
+    assert isinstance(realign.value.func, ast.Name)
+    assert realign.value.func.id == (
+        "_realign_dynamic_boundary_shape_signature_map"
+    )
     following = lowerer.body[post_bias_index]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1

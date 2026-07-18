@@ -346,6 +346,15 @@ This checkpoint extends the expanded related gate to `1268 passed in 31.17s`;
 the focused pair-owner, pass-efficiency, architecture, and terminal-
 orchestration gate is `317 passed in 20.12s`.
 
+The final boundary-signature restore now retains both the dynamic-map
+realignment dictionary and the complete static-signature
+repair/preservation dictionary. All earlier and terminal occurrences retain
+their existing targets, and the realign→sanitize→affine order is unchanged.
+
+This checkpoint extends the expanded related gate to `1269 passed in 30.78s`;
+the focused signature-owner, terminal, absolute-final orchestration, and
+architecture gate is `306 passed in 17.88s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -354,7 +363,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should audit result propagation through
-the final boundary-signature restore calls immediately before the completed
-absolute-final affine/normalization/attention sequence. Any new mutation
-evidence must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+the guarded no-layout final transpose-reduction cleanup immediately before the
+completed boundary-signature restore. Any new mutation evidence must preserve
+current pass order, TensorFlow-free boundary, dependency set, and sequential
+validation policy.

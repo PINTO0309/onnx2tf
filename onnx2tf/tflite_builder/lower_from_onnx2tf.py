@@ -5677,8 +5677,12 @@ def lower_onnx_to_ir(
     # Final boundary-signature restore:
     # late static-shape reconciliations may overwrite graph-boundary dynamic
     # contracts (e.g. NMS selected_indices leading axis).
-    _realign_dynamic_boundary_shape_signature_map(model_ir)
-    _sanitize_static_shape_signature_consistency(model_ir)
+    _absolute_final_boundary_signature_stats = (
+        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    )
+    _absolute_final_static_signature_stats = (
+        _sanitize_static_shape_signature_consistency(model_ir)
+    )
     # Absolute-final guard: topological sort + signature sanitize can expose
     # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.
     _absolute_final_affine_post_add_stats = (

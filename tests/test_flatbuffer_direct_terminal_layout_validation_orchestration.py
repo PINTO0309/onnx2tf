@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1049,10 +1047,6 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
     assert len(all_calls) == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="absolute-final boundary signature results are discarded",
-)
 def test_primary_path_retains_absolute_final_boundary_signature_results() -> None:
     body = _lowerer_body()
     realign_name = "_realign_dynamic_boundary_shape_signature_map"

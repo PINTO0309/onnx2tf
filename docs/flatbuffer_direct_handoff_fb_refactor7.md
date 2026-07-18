@@ -4354,3 +4354,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet two-result capture contract;
 there are no unexpected failures.
+
+## Absolute-final boundary-signature result implementation checkpoint
+
+The absolute-final dynamic-boundary realignment call now retains its unchanged
+one-counter dictionary as `_absolute_final_boundary_signature_stats`. The
+immediately following static-signature sanitizer retains its complete
+four-counter repair/preservation dictionary as
+`_absolute_final_static_signature_stats`. All direct production occurrences of
+both owners now retain their raw mutation evidence.
+
+The owners, result schemas, metadata/tensor writes, other occurrence targets,
+realign→sanitize order, and following absolute-final affine,
+normalization/attention, dynamic-rank-one, and layout sequence are unchanged.
+No guard, reconciliation, scan, sort, metadata write, dependency, or
+TensorFlow behavior is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- signature owner, terminal orchestration, absolute-final orchestration, and
+  architecture: `306 passed in 17.88s`
+- expanded broad related gate: `1269 passed in 30.78s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the two discarded results inside the guarded
+`apply_safe_transpose_reduction_lite_on_no_layout_opt` block immediately before
+the completed boundary-signature restore. Characterize their schemas, guarded
+execution, and surrounding sort/signature boundaries before retaining any
+evidence. Commit and push only; do not create or update a pull request.

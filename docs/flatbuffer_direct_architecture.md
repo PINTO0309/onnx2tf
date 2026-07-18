@@ -10747,10 +10747,11 @@ reconciliation, or traversal is added.
 Immediately before the absolute-final affine and normalization sequence, the
 boundary-signature restore runs dynamic-map realignment followed by static
 signature sanitization. The owners return, respectively, one exact mutation
-counter and a four-counter repair/preservation dictionary. Other production
-occurrences already retain these dictionaries; characterization selects only
-the two discarded absolute-final calls and fixes their adjacency to the
-following affine owner before any implementation change.
+counter and a four-counter repair/preservation dictionary. The absolute-final
+caller now retains them as `_absolute_final_boundary_signature_stats` and
+`_absolute_final_static_signature_stats`, matching the already retained other
+production occurrences. Their adjacency and the following affine owner are
+unchanged; no guard, reconciliation, scan, or traversal is added.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
