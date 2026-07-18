@@ -10361,3 +10361,36 @@ selected assignments. Do not consume a result or change a child, nested tuple,
 context, order, boundary, summary, guard, dependency, public API, or TensorFlow
 behavior. Validate sequentially, commit, and push only; do not create, reopen,
 or update a pull request.
+
+## Layout/reshape/attention prefix result propagation implementation checkpoint
+
+`run_layout_reshape_attention_recovery_prefix()` and its zero-argument lowerer
+helper now return the unchanged fifteen-slot tuple. The three direct calls
+retain `_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results` at their original
+layout-cleanup/affine, duplicate-fanout/affine, and QLinear/InstanceNorm
+boundaries.
+
+All three tuples are unconsumed and observation-only. Slot zero preserves the
+complete nested nineteen-slot layout-recovery result. The implementation adds
+no consumer, guard, summary, graph scan, tuple copy, child invocation, context,
+order, cleanup timing, dependency, public API, or TensorFlow import path.
+
+Implementation validation completed sequentially under `uv`:
+
+- attention-prefix result identity and all direct boundaries, QLinear,
+  architecture, and pass-efficiency coverage: `304 passed in 19.89s`
+- branch-changed broad suite: `1606 passed in 28.89s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+propagation does not claim a new model-corpus run.
+
+At resume, audit both direct
+`_run_qlinear_mean_concat_recovery_sequence()` results and its five-slot
+runner/helper contract. Preserve the newly retained final attention result
+that follows its second call, both distinct outer boundaries, and the
+observation-only policy. Commit and push only; do not create, reopen, or update
+a pull request.

@@ -646,21 +646,19 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         "_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains",
         "run_squeeze_reshape_identity_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == ATTENTION_RECOVERY_PASS_IDS
-    assert [call.func.id for call in helper_calls] == [
-        "run_layout_reshape_attention_recovery_prefix"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "layout_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_layout_reshape_attention_recovery_prefix"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "layout_recovery_context"
+    assert helper_call.keywords == []
 
     layout_recovery = next(
         statement
@@ -679,12 +677,30 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
     invocation_indexes = [
         index
         for index, statement in enumerate(layout_recovery.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_layout_pass_set_1_initial_attention_recovery_results",
+            "_layout_pass_set_1_post_binary_attention_recovery_results",
+            "_layout_pass_set_1_final_attention_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 3
+    assert [
+        layout_recovery.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(layout_recovery.body[index], ast.Assign)
+        and isinstance(layout_recovery.body[index].targets[0], ast.Name)
+    ] == [
+        "_layout_pass_set_1_initial_attention_recovery_results",
+        "_layout_pass_set_1_post_binary_attention_recovery_results",
+        "_layout_pass_set_1_final_attention_recovery_results",
+    ]
     next_call_names = []
     for index in invocation_indexes:
         invocation = layout_recovery.body[index].value

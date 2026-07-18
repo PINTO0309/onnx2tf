@@ -490,10 +490,6 @@ def test_layout_recovery_prefix_propagates_direct_and_nested_results(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="all three ordered layout/reshape/attention results are discarded",
-)
 def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

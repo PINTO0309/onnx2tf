@@ -1498,3 +1498,16 @@ duplicate-fanout/affine, and QLinear/InstanceNorm boundaries, and the
 unconsumed policy are frozen. The focused gate passes
 `303 passed, 1 xfailed in 18.24s`; the branch-changed broad gate passes
 `1605 passed, 1 xfailed in 29.09s`.
+
+The parent runner/helper now return the unchanged fifteen-slot tuple. The three
+direct calls retain `_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results`, all observation-only
+and unconsumed. The nested nineteen-slot layout tuple remains intact. The
+focused implementation gate passes `304 passed in 19.89s`, the branch-changed
+broad suite passes `1606 passed in 28.89s`, and targeted static validation
+passes.
+
+The next unit should audit both direct QLinear/mean/Concat recovery results,
+preserving the newly retained final attention result that follows the second
+call and both distinct production boundaries.

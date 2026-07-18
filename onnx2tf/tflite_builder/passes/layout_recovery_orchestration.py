@@ -390,8 +390,8 @@ def build_attention_recovery_invocations(
 
 def run_layout_reshape_attention_recovery_prefix(
     context: LayoutRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_attention_recovery_invocations(context),
         expected_pass_ids=ATTENTION_RECOVERY_PASS_IDS,
         phase_name="layout/reshape/attention recovery",

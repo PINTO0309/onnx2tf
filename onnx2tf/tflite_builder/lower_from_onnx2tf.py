@@ -4247,8 +4247,8 @@ def lower_onnx_to_ir(
     def _run_layout_recovery_prefix_pass_sequence() -> Tuple[Any, ...]:
         return run_layout_recovery_prefix(layout_recovery_context)
 
-    def _run_layout_reshape_attention_recovery_prefix() -> None:
-        run_layout_reshape_attention_recovery_prefix(
+    def _run_layout_reshape_attention_recovery_prefix() -> Tuple[Any, ...]:
+        return run_layout_reshape_attention_recovery_prefix(
             layout_recovery_context
         )
 
@@ -4394,7 +4394,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _run_layout_reshape_attention_recovery_prefix()
+        _layout_pass_set_1_initial_attention_recovery_results = (
+            _run_layout_reshape_attention_recovery_prefix()
+        )
         _optimize_fold_mul_add_mul_affine_chains(
             model_ir,
             layout_state=session.layout_state,
@@ -4440,7 +4442,9 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
-        _run_layout_reshape_attention_recovery_prefix()
+        _layout_pass_set_1_post_binary_attention_recovery_results = (
+            _run_layout_reshape_attention_recovery_prefix()
+        )
         _optimize_fold_mul_add_mul_affine_chains(
             model_ir,
             layout_state=session.layout_state,
@@ -4455,7 +4459,9 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
         _run_qlinear_mean_concat_recovery_sequence()
-        _run_layout_reshape_attention_recovery_prefix()
+        _layout_pass_set_1_final_attention_recovery_results = (
+            _run_layout_reshape_attention_recovery_prefix()
+        )
         _optimize_transpose_instancenorm_prepost_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,

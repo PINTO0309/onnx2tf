@@ -12131,3 +12131,12 @@ Strict characterization selects
 layout tuple, every other result identity, the shared context, all three
 zero-argument calls, layout-cleanup/affine, duplicate-fanout/affine, and
 QLinear/InstanceNorm boundaries, and an unconsumed observation-only policy.
+
+The parent runner and lowerer helper now return the existing fifteen-slot
+tuple. The three direct calls retain
+`_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results`; all remain unconsumed.
+The first slot preserves the nested nineteen-slot layout result without
+normalization or copying. No child, context, ordering, cleanup timing, guard,
+summary, dependency, public API, or TensorFlow boundary changes.
