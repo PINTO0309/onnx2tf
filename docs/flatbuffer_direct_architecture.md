@@ -10862,9 +10862,10 @@ The value has no consumer, so result retention adds no graph work or policy.
 The immediately following attention Gather/Transpose/Reshape cleanup owner
 returns two pattern-specific rewrite counters, accepts only the ModelIR, and has
 one direct late production call in addition to its recovery-runner selection.
-The direct result is currently discarded. Strict characterization fixes a late
-cleanup target between the captured QKV dictionary and the live-LayoutState
-Gather-axis0 compatibility owner without changing either execution path.
+The direct result is retained as `_late_attention_gather_cleanup_stats` between
+the captured QKV dictionary and the live-LayoutState Gather-axis0 compatibility
+owner. The retained value has no consumer, and the recovery-runner path remains
+unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

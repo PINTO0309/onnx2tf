@@ -486,6 +486,17 @@ This checkpoint passes the focused QKV owner and orchestration gate with
 `326 passed in 19.68s`, plus the branch-changed broad related suite with
 `1379 passed in 23.78s`.
 
+The direct late attention Gather/Transpose/Reshape cleanup call now retains its
+existing pattern-A/pattern-B rewrite dictionary as
+`_late_attention_gather_cleanup_stats`. The separate recovery-runner selection,
+model-only callback, GraphIndex/pruning behavior, QKV predecessor,
+live-LayoutState Gather-axis0 successor, and TensorFlow-free boundary are
+unchanged. The retained value has no consumer or additional graph work.
+
+This checkpoint passes the focused cleanup/QKV/Gather-axis0 orchestration gate
+with `437 passed in 19.04s`, plus the branch-changed broad related suite with
+`1514 passed in 24.34s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -493,7 +504,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following attention Gather/Transpose/Reshape
-cleanup result and its boundary contract. Any new mutation evidence must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the immediately following Gather-axis0 singleton-to-Reshape
+input result, its live LayoutState contract, and its cleanup/preprojection
+boundaries. Any new mutation evidence must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.
