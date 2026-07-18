@@ -4997,9 +4997,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_sinet_mix_attention_stats = (
+        _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     run_mixed_attention_layout_cleanup(
         model_ir,

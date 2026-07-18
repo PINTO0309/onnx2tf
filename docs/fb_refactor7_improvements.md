@@ -1878,3 +1878,10 @@ boundary, nested index, and absence of a consumer are frozen. After correcting
 one test-only wrapper-argument assumption, the focused gate passes
 `375 passed, 1 xfailed in 18.42s`, the 100-file branch-changed suite passes
 `1647 passed, 1 xfailed in 32.58s`, and targeted static validation passes.
+
+The post-SINet mixed-attention call now retains its unchanged dictionary as
+`_post_sinet_mix_attention_stats`. It remains unconsumed and observation-only;
+the indexed owner, layout-aware attention selection, and following distinct
+mixed-attention cleanup are unchanged. The focused gate passes
+`376 passed in 18.76s`, the 100-file branch-changed suite passes
+`1648 passed in 31.83s`, and targeted static validation passes.

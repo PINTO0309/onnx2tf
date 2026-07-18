@@ -11739,3 +11739,29 @@ rewrite cap, GraphIndex/candidate handling, guarded pruning, nested selection,
 call order, direct arguments, dependencies, public API, or TensorFlow behavior.
 Keep the target unconsumed, validate sequentially, commit, and push only; do
 not create, reopen, or update a pull request.
+
+## SINet mixed-attention direct result implementation checkpoint
+
+The post-SINet raw call now retains its unchanged one-key dictionary as
+`_post_sinet_mix_attention_stats`. The target remains unconsumed and
+observation-only. The layout-aware attention gate/QDQ selection and its parent
+result tuple remain unchanged, as does the following distinct mixed-attention
+layout cleanup owner.
+
+No owner matching or application logic, GraphIndex/candidate handling, default
+rewrite cap, guarded pruning, LayoutState synchronization, result schema,
+wrapper forwarding, direct arguments, call order, dependency, public API, or
+TensorFlow behavior changed. No intermediate test failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.60s`
+- indexed owner, attention and gate orchestration, direct neighbors, and
+  architecture coverage: `376 passed in 18.76s`
+- 100 branch-changed test files: `1648 passed in 31.83s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

@@ -12154,6 +12154,16 @@ sync path, all occurrence counts, exact layout/diagnostics/state-scope routing,
 the duplicate-fanout-policy/initial-attention boundary, and an unconsumed
 observation-only policy.
 
+The post-SINet raw mixed-attention call now retains its unchanged one-key
+dictionary as `_post_sinet_mix_attention_stats`. The target remains unconsumed
+and observation-only. The layout-aware attention selection and the following
+distinct mixed-attention cleanup owner are unchanged.
+
+No GraphIndex/candidate handling, rewrite cap, matching or application logic,
+guarded pruning, LayoutState synchronization, schema, wrapper forwarding,
+direct arguments, call order, nested route, dependency, public API, or
+TensorFlow boundary changed.
+
 The primary call now retains its unchanged dictionary as
 `_layout_pass_set_1_layout_transpose_cleanup_stats`. All three direct lowerer
 occurrences are therefore explicit assignments, while the late-binary nested
