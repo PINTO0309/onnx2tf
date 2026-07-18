@@ -1984,3 +1984,12 @@ unconsumed observation targets together without changing their adjacency
 between Swish and InstanceNorm passthrough owners. The focused gate passes
 `487 passed, 1 xfailed in 18.25s`, the 106-file branch-changed suite passes
 `1665 passed, 1 xfailed in 32.70s`, and targeted static validation passes.
+
+The three adjacent late Conv1D unary calls now retain their unchanged
+dictionaries as `_late_conv1d_squeeze_unary_stats`,
+`_late_conv1d_rank4_unary_stats`, and `_late_conv1d_unary_fanout_stats`.
+All remain unconsumed and observation-only; indexed owner behavior,
+GraphIndex/LayoutState handling, unconditional pruning, wrappers, adjacency,
+and the following InstanceNorm owner remain unchanged. The focused gate passes
+`488 passed in 19.05s`, the 106-file branch-changed suite passes
+`1666 passed in 32.03s`, and targeted static validation passes.

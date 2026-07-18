@@ -12692,3 +12692,11 @@ together. It freezes all three schemas, wrapper defaults and forwarding,
 unconditional pruning, direct arguments and adjacency between retained Swish
 and InstanceNorm passthrough boundaries, sole occurrences, and unconsumed
 observation-only policies.
+
+The three raw Conv1D unary calls now retain their unchanged dictionaries as
+`_late_conv1d_squeeze_unary_stats`, `_late_conv1d_rank4_unary_stats`, and
+`_late_conv1d_unary_fanout_stats`. All targets remain unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, unconditional pruning, wrapper forwarding, direct arguments,
+adjacency, and following owner behavior remain unchanged; the counters do not
+steer later cleanup.

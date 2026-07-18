@@ -12144,3 +12144,30 @@ LayoutState handling, unconditional pruning, schemas, wrapper forwarding,
 direct arguments, adjacency, dependencies, public API, or TensorFlow behavior.
 Keep all targets unconsumed, validate sequentially, commit, and push only; do
 not create, reopen, or update a pull request.
+
+## Late Conv1D unary direct results implementation checkpoint
+
+The three adjacent raw calls now retain their unchanged dictionaries as
+`_late_conv1d_squeeze_unary_stats`, `_late_conv1d_rank4_unary_stats`, and
+`_late_conv1d_unary_fanout_stats`. All targets remain unconsumed and
+observation-only. The calls remain adjacent between the retained Swish result
+and the distinct InstanceNorm unary passthrough owner.
+
+No matching or indexed application logic, GraphIndex or LayoutState handling,
+unconditional unused-tensor pruning, result schema, wrapper forwarding, direct
+arguments, adjacency, dependency, public API, or TensorFlow behavior changed.
+No pre-existing test required adjustment and no intermediate test failure
+occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated family result contract: `3 passed in 0.59s`
+- all three indexed owners, architecture, pass-efficiency, retained Swish
+  boundary, and representative direct rewrites: `488 passed in 19.05s`
+- 106 branch-changed test files: `1666 passed in 32.03s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

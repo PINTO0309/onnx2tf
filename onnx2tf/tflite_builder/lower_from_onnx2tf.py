@@ -5247,21 +5247,27 @@ def lower_onnx_to_ir(
     # Conv1D shim patterns can retain:
     # TRANSPOSE -> SQUEEZE -> UNARY -> EXPAND_DIMS -> TRANSPOSE.
     # Fold them to a single rank-4 UNARY op.
-    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_squeeze_unary_stats = (
+        _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Variant with intermediate rank-4 transpose:
     # TRANSPOSE -> UNARY -> TRANSPOSE -> RESHAPE -> EXPAND_DIMS -> TRANSPOSE.
-    _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_rank4_unary_stats = (
+        _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Fanout variant:
     # Keep NCHW side branch and bypass only the NHWC wrapper branch.
-    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_unary_fanout_stats = (
+        _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # InstanceNorm(flat) bridge variant:
     # T -> SQUEEZE -> RESHAPE -> IN -> RESHAPE -> UNARY -> EXPAND -> T
