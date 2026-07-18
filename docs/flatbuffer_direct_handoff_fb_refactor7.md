@@ -7741,3 +7741,38 @@ The sole strict expected failure is the intentionally unimplemented result
 propagation contract. Implement only the transparent returns and primary
 assignment, rerun focused and branch-changed broad gates sequentially, then
 commit and push only; do not create, reopen, or update a pull request.
+
+## Terminal boundary-layout result propagation implementation checkpoint
+
+`run_terminal_boundary_layout()` now returns the existing ordered five-result
+tuple from `run_recovery_invocations()`. The local
+`_run_terminal_boundary_layout_pass_cluster()` helper transparently returns it,
+and the sole primary call retains it as
+`_terminal_boundary_layout_results`.
+
+The result is not summarized or consumed. Each child still runs exactly once
+in the same order and with the same shared `ModelIRPassStateScope`, arguments,
+live LayoutState, and diagnostics sink. Adjacent terminal InstanceNorm and
+optional mean/attention boundaries, dependencies, and TensorFlow behavior are
+unchanged.
+
+The first implementation gate found four expected stale AST contracts that
+required raw expression statements at the helper, primary invocation, or
+adjacent mean/attention boundary. They now require the transparent return and
+exact retained assignment; no extra production behavior was introduced.
+
+Implementation validation completed sequentially under `uv`:
+
+- terminal boundary owner/orchestration, adjacent mean/attention boundary,
+  terminal result contracts, architecture, and pass-efficiency coverage:
+  `375 passed in 21.39s`
+- branch-changed broad suite plus the same boundary coverage:
+  `1456 passed in 25.15s`
+
+These are unit, contract, and orchestration checks; this result propagation
+does not claim a new model-corpus run.
+
+At resume, audit the guarded terminal mean/attention helper result immediately
+after `_terminal_boundary_layout_results`. Preserve the existing option guard
+and child policy before deciding whether ordered results can be retained.
+Commit and push only; do not create, reopen, or update a pull request.

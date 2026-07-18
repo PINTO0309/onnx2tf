@@ -122,7 +122,8 @@ def test_terminal_boundary_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
+    assert statement.value is not None
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -208,10 +209,6 @@ def test_terminal_boundary_runner_preserves_instrumented_order(
     assert all(scope is events[0][1] for _, scope in events)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal boundary layout results are not propagated to the primary caller",
-)
 def test_terminal_boundary_propagates_ordered_results_to_primary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -288,7 +285,10 @@ def test_terminal_boundary_preserves_outer_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_boundary_layout_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == TERMINAL_BOUNDARY

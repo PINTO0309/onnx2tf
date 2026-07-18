@@ -903,11 +903,23 @@ guard or result consumer was added. The focused gate passes `375 passed in
 19.73s`, concrete normalization/pad fixtures pass `2 passed, 739 deselected in
 0.60s`, and the branch-changed broad suite passes `1433 passed in 24.60s`.
 
+The terminal boundary-layout phase now propagates its existing ordered
+five-result tuple through `run_terminal_boundary_layout()` and the local helper
+to `_terminal_boundary_layout_results`. Child order, single execution, shared
+pass-state scope, arguments, diagnostics, and graph mutation are unchanged;
+the tuple has no consumer.
+
+The focused owner/orchestration gate passes `375 passed in 21.39s`, and the
+branch-changed broad suite passes `1456 passed in 25.15s`. Four stale AST
+contracts were updated from raw-expression assumptions to the exact return and
+assignment boundaries.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the next raw terminal result boundary. The retained
-`_terminal_normalization_pad_stats` must remain observation-only because it
-does not include cleanup-only pruning. Any change must preserve current pass
-order, TensorFlow-free boundary, dependency set, and sequential validation
-policy.
+unit should audit the guarded terminal mean/attention helper result immediately
+after `_terminal_boundary_layout_results`. The existing option guard and child
+selection policy must remain fixed. The retained `_terminal_normalization_pad_stats`
+also remains observation-only because it omits cleanup-only pruning. Any change
+must preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

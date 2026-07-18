@@ -11172,13 +11172,12 @@ no graph work.
 
 The terminal boundary-layout orchestrator executes five ordered child runners
 through one shared pass-state scope. `run_recovery_invocations()` already
-returns their ordered result tuple, but `run_terminal_boundary_layout()` and
-the local `_run_terminal_boundary_layout_pass_cluster()` helper currently
-discard it before the sole primary call.
+returns their ordered result tuple. `run_terminal_boundary_layout()` and the
+local `_run_terminal_boundary_layout_pass_cluster()` helper now transparently
+return that tuple to the sole primary call.
 
-A strict propagation contract fixes a transparent return at both wrapper
-layers and a future `_terminal_boundary_layout_results` assignment between the
-captured terminal dual-statistics result and the optional terminal mean/
-attention guard. Result propagation must execute each child exactly once,
-preserve the existing tuple order and shared scope, add no consumer, and leave
-all mutation semantics unchanged.
+The primary result is retained as `_terminal_boundary_layout_results` between
+the captured terminal dual-statistics result and the optional terminal mean/
+attention guard. Result propagation executes each child exactly once,
+preserves the existing tuple order and shared scope, adds no consumer, and
+leaves all mutation semantics unchanged.

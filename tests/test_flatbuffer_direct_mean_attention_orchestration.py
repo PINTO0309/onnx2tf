@@ -79,7 +79,7 @@ def _expression_path(node: ast.expr) -> Any:
 
 
 def _direct_call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, (ast.Assign, ast.Expr))
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     return statement.value.func.id

@@ -4078,8 +4078,8 @@ def lower_onnx_to_ir(
             )
         )
 
-    def _run_terminal_boundary_layout_pass_cluster() -> None:
-        run_terminal_boundary_layout(terminal_boundary_layout_context)
+    def _run_terminal_boundary_layout_pass_cluster() -> Tuple[Dict[str, int], ...]:
+        return run_terminal_boundary_layout(terminal_boundary_layout_context)
 
     def _run_gate_layout_pass_cluster(
         *,
@@ -4763,7 +4763,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _run_terminal_boundary_layout_pass_cluster()
+    _terminal_boundary_layout_results = (
+        _run_terminal_boundary_layout_pass_cluster()
+    )
     if optimize_layout_transpose_chains:
         # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
         # Run dedicated NHWC passthrough once more in the terminal stage.

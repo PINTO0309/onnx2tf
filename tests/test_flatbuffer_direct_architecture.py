@@ -5232,24 +5232,24 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
         "run_transpose_gather_channel_fanout_cleanup",
     )
     assert TERMINAL_BOUNDARY_LAYOUT_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert len(helper_calls) == 1
-    assert helper_calls[0].func.id == "run_terminal_boundary_layout"
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "terminal_boundary_layout_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    assert isinstance(helper_return.value, ast.Call)
+    assert isinstance(helper_return.value.func, ast.Name)
+    assert helper_return.value.func.id == "run_terminal_boundary_layout"
+    assert len(helper_return.value.args) == 1
+    assert isinstance(helper_return.value.args[0], ast.Name)
+    assert helper_return.value.args[0].id == "terminal_boundary_layout_context"
+    assert helper_return.value.keywords == []
 
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_boundary_layout_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
