@@ -2069,3 +2069,11 @@ The indexed recurrent-alias equivalence test now uses the canonical
 rescan blocker. This repairs a stale test import left after lowerer extraction
 without restoring production compatibility aliases or changing recurrent
 repair behavior. Its dedicated file passes `3 passed in 0.56s`.
+
+The adjacent terminal orphan-recurrent and unbound-input layout repairs are now
+characterized as fixed one-counter results. Strict retention selects
+`_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats` without changing the existing conditional
+shape reconciliation or following affine cleanup. The focused gate passes
+`372 passed, 1 xfailed in 19.62s`, the 114-file branch-changed suite passes
+`1700 passed, 1 xfailed in 32.97s`, and targeted static validation passes.

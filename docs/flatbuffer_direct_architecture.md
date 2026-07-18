@@ -12784,3 +12784,16 @@ consumer scans from `core.model_ir_utils`, which is the canonical owner after
 the lowerer compatibility imports were removed. Its monkeypatched rescan
 blocker targets that same module. No production compatibility re-export is
 reintroduced solely for a test.
+
+The terminal direct input-repair boundary runs orphan recurrent-step alias
+repair immediately before unbound nonconstant rank-four input layout repair.
+Each owner returns a fixed one-counter dictionary. A positive unbound-input
+repair may additionally reconcile static tensor shapes internally, but that
+secondary cleanup is intentionally part of the existing owner contract rather
+than a new pipeline branch.
+
+Strict characterization selects `_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats` only for the two discarded direct results.
+It freezes their schemas, return annotations, exact arguments, adjacency after
+post progress and before very-late affine cleanup, and an unconsumed
+observation-only policy. No repair counter may steer the following cleanup.

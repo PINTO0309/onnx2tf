@@ -12449,3 +12449,37 @@ GraphIndex mutation path, result schema, public behavior, and dependencies are
 unchanged. The dedicated file passes `3 passed in 0.56s` sequentially under
 `uv`. The optional `tf_converter` matrix remains outside the TensorFlow-free
 core gate and is not evidence against `flatbuffer_direct`.
+
+## Late recurrent/unbound input-repair result characterization checkpoint
+
+The direct terminal pipeline contains two adjacent result-returning repairs
+immediately after `_advance_post_progress()`: orphan recurrent-step aliases and
+unbound nonconstant rank-four inputs repaired with a layout transpose. Their
+fixed zero-result schemas are respectively
+`repaired_orphan_recurrent_step_tensors` and
+`repaired_unbound_nonconstant_inputs_with_layout_transpose`. The unbound-input
+owner retains its existing positive-repair static-shape reconciliation.
+
+Both direct calls currently discard their dictionaries. Passing contracts
+freeze the two schemas and return annotations, exact call arguments, adjacency,
+progress predecessor, retained very-late affine successor, and raw-expression
+shape. A strict expected-failure contract selects only
+`_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats` as unconsumed observation targets.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.60s`
+- recurrent, indexed unbound-input, QLinear, late normalization, fallback,
+  architecture, pass-efficiency, and four direct helper cases:
+  `372 passed, 1 xfailed in 19.62s`
+- 114 branch-changed test files: `1700 passed, 1 xfailed in 32.97s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented pair of direct
+assignments. Retain only the existing dictionaries. Do not change either
+repair, the conditional reconciliation, order, arguments, following affine
+cleanup, dependencies, public API, or TensorFlow behavior. Keep both targets
+unconsumed, validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.
