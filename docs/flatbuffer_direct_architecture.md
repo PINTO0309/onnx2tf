@@ -10762,6 +10762,14 @@ them as `_no_layout_final_se_fc_stats` and
 surrounding sorts, and signature-restore boundary are unchanged; no guard-
 external initialization or consumption is added.
 
+Before the post-progress topological sort, the primary final precision sequence
+rewrites safe constant divisors to reciprocal multiplication, folds consecutive
+constant multiplications, then restores divisions on precision-sensitive
+integer-cast lineages. Each owner returns a stable one-counter dictionary. A
+strict characterization selects only this final consecutive occurrence trio,
+preserving the earlier core-cleanup and recursive-fallback calls and the
+following progress/sort boundary.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

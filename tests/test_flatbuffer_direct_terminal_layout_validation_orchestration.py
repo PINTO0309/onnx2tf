@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1163,6 +1165,90 @@ def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "_absolute_final_boundary_signature_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="primary final precision cleanup results are discarded",
+)
+def test_primary_path_retains_final_precision_cleanup_results() -> None:
+    body = _lowerer_body()
+    rewrite_name = "_rewrite_constant_divisors_to_multiplicative_reciprocals"
+    consecutive_name = "run_consecutive_mul_constants_cleanup"
+    restore_name = "_restore_precision_sensitive_reciprocal_divisions"
+    rewrite_index = _call_index(body, rewrite_name)
+    consecutive_index = _call_index(
+        body,
+        consecutive_name,
+        start=rewrite_index + 1,
+    )
+    restore_index = _call_index(
+        body,
+        restore_name,
+        start=consecutive_index + 1,
+    )
+    assert consecutive_index == rewrite_index + 1
+    assert restore_index == consecutive_index + 1
+
+    expected = (
+        (
+            rewrite_index,
+            "_final_precision_div_rewrite_stats",
+            rewrite_name,
+            {"layout_state": "session.layout_state"},
+        ),
+        (
+            consecutive_index,
+            "_final_precision_consecutive_mul_stats",
+            consecutive_name,
+            {
+                "layout_state": "session.layout_state",
+                "diagnostics": "session.diagnostics",
+            },
+        ),
+        (
+            restore_index,
+            "_final_precision_div_restore_stats",
+            restore_name,
+            {"layout_state": "session.layout_state"},
+        ),
+    )
+    for index, target_name, function_name, keywords in expected:
+        statement = body[index]
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        call = statement.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == function_name
+        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == keywords
+
+    assert _call_name(_statement_call(body[restore_index + 1])) == (
+        "_set_post_progress_desc"
+    )
+    all_calls = [
+        node.func.id
+        for node in ast.walk(next(
+            function
+            for function in ast.parse(
+                LOWERER_PATH.read_text(encoding="utf-8")
+            ).body
+            if isinstance(function, ast.FunctionDef)
+            and function.name == "lower_onnx_to_ir"
+        ))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {rewrite_name, consecutive_name, restore_name}
+    ]
+    assert all_calls.count(rewrite_name) == 2
+    assert all_calls.count(consecutive_name) == 3
+    assert all_calls.count(restore_name) == 2
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

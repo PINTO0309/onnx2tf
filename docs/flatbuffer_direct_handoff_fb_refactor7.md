@@ -4445,3 +4445,39 @@ sequence (`_rewrite_constant_divisors_to_multiplicative_reciprocals()`,
 post-progress topological sort. Characterize schemas, exact occurrence counts,
 and surrounding order before retaining any evidence. Commit and push only; do
 not create or update a pull request.
+
+## Primary final precision-cleanup result characterization checkpoint
+
+The final precision sequence first rewrites eligible floating-point constant
+DIV operators to reciprocal MUL, then folds guarded consecutive constant MUL
+chains, and finally restores DIV where reciprocal multiplication feeds an
+integer cast through a precision-sensitive affine lineage. Each owner returns
+a stable one-counter dictionary and performs its own indexed mutation,
+pruning, diagnostics, and layout synchronization as applicable.
+
+The lowerer contains two divisor-rewrite calls, three consecutive-Mul cleanup
+calls, and two precision-restore calls. A strict expected-failure orchestration
+contract selects only the adjacent primary final trio and requires raw result
+targets `_final_precision_div_rewrite_stats`,
+`_final_precision_consecutive_mul_stats`, and
+`_final_precision_div_restore_stats`. Earlier core-cleanup and recursive-
+fallback occurrences remain unchanged, as does the following post-progress
+description and topological-sort boundary.
+
+At implementation, replace only the three primary final expressions with
+assignments. Do not change any owner/schema, other occurrence, callback
+argument, diagnostics/layout-state handoff, add a guard, reconciliation, scan,
+sort, dependency, metadata write, or TensorFlow behavior, or consume the new
+variables. Validate precision, graph cleanup, terminal orchestration,
+architecture, pass efficiency, and broad related gates sequentially, then
+commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- precision, graph cleanup, terminal orchestration, architecture, and pass
+  efficiency: `331 passed, 1 xfailed in 18.06s`
+- expanded broad related gate: `1395 passed, 1 xfailed in 31.22s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict xfail is the deliberately unmet final three-result capture
+contract; there are no unexpected failures.
