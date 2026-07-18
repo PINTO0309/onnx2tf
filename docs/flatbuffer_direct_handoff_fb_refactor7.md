@@ -9340,6 +9340,42 @@ all other helper occurrences before changing any call. Preserve its final
 safe-binary successor. Commit and push only; do not create, reopen, or update a
 pull request.
 
+## Transpose/unary-fanout result characterization checkpoint
+
+`run_transpose_unary_fanout()` supports two three-slot policies on one shared
+`ModelIRPassStateScope`. The default attention-gate/QDQ callback policy selects
+unary-passthrough, unary-fanout, and unary/binary-fanout cleanup. The sole
+post-QDQ direct call selects layout-Transpose, unary-fanout, and unary/binary-
+fanout cleanup. The phase runner and lowerer helper currently discard both
+ordered tuples.
+
+The helper has exactly one direct invocation and one callback identity in
+`AttentionRecoveryContext`. Changing it to return results will make the
+callback's existing parent slot contain a three-dictionary tuple rather than
+`None`; the attention-gate/QDQ parent currently discards its complete result
+tuple and neither summarizes nor guards on that slot.
+
+A strict expected-failure contract instruments and freezes both active pass-ID
+orders and result identities. It selects observation-only target
+`_layout_pass_set_1_transpose_unary_fanout_results` for the direct call and
+freezes its exact `include_layout_transpose=True` /
+`include_unary_passthrough=False` policy, final-suffix/final-safe-binary
+boundaries, callback identity, helper return contract, and absence of a
+consumer.
+
+The focused Transpose/unary-fanout variants, attention recovery, suffix,
+safe-binary, direct/callback boundaries, architecture, and pass-efficiency gate
+is `370 passed, 1 xfailed in 18.07s`. Ruff, Python bytecode compilation, and
+whitespace validation pass. The sole strict xfail is runner/helper/direct
+result propagation; production is unchanged at this checkpoint.
+
+At implementation, return the existing ordered tuple from the runner and
+helper and assign only the direct post-QDQ call. Preserve both policy variants,
+shared scope, callback identity, attention parent result policy, pass order,
+and both adjacent retained results. Do not add a summary, guard, or consumer.
+Validate sequentially, commit, and push only; do not create, reopen, or update
+a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

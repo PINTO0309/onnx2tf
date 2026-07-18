@@ -12024,3 +12024,17 @@ unconsumed and observation-only.
 This propagation changes no child callback, nested result, pass-ID order,
 shared context, duplicate-Transpose policy, cleanup timing, safe-binary or
 unary-fanout successor, dependency, public behavior, or TensorFlow isolation.
+
+The Transpose/unary-fanout runner has two three-slot policies. Its default
+callback policy runs unary-passthrough plus unary-fanout and unary/binary-
+fanout cleanup. The post-QDQ direct policy replaces unary-passthrough with
+layout-Transpose cleanup. Both variants share one pass-state scope. The runner
+and lowerer helper currently discard their ordered results.
+
+Strict characterization requires both variants to return their three
+dictionaries in active pass-ID order. It selects
+`_layout_pass_set_1_transpose_unary_fanout_results` for the sole post-QDQ
+direct call between the final suffix and final safe-binary results. The target
+must remain unconsumed. The same helper remains the attention-gate/QDQ callback;
+its newly exposed tuple will occupy that parent's existing callback slot, but
+the parent currently discards its own result and has no summary or guard.

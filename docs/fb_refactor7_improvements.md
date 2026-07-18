@@ -1400,6 +1400,15 @@ observation-only. The focused implementation gate passes
 
 The next unit should audit the post-QDQ direct Transpose/unary-fanout cluster
 result and inventory the helper's other occurrences before changing any call.
+
+That helper is now characterized as two three-slot policy variants: the sole
+direct post-QDQ result and the attention-gate/QDQ callback result. Selected
+direct target `_layout_pass_set_1_transpose_unary_fanout_results` remains
+observation-only. Exact active pass-ID orders, result identities, shared scope,
+policy arguments, callback identity, final-suffix/final-safe-binary boundaries,
+and the unconsumed policy are frozen before implementation. The focused gate
+passes `370 passed, 1 xfailed in 18.07s`; the strict xfail is transparent
+runner/helper/direct propagation.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
