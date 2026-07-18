@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1873,10 +1871,6 @@ def test_primary_path_retains_late_attention_gather_cleanup_result() -> None:
     } == {"layout_state": "session.layout_state"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late Gather-axis0 singleton-to-Reshape result is discarded",
-)
 def test_primary_path_retains_late_gather_axis0_reshape_result() -> None:
     body = _lowerer_body()
     callback_name = "_optimize_gather_axis0_singleton_to_reshape_input_chains"

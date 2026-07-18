@@ -5319,3 +5319,30 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented direct
 late-result retention contract above.
+
+## Late Gather-axis0 Reshape result retention implementation checkpoint
+
+The sole direct late production call now retains the existing one-counter
+dictionary as `_late_gather_axis0_reshape_stats`. This is an assignment-only
+orchestration change. The indexed owner and schema, separate recovery-runner
+selection and captured results, GraphIndex/layout synchronization, callback
+arguments, pass order, attention-cleanup predecessor, preprojection successor,
+dependencies, and TensorFlow behavior are unchanged. The value has no consumer
+and triggers no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused Gather owner, cleanup/preprojection boundaries, layout recovery,
+  terminal-orchestration, and architecture gate: `496 passed in 18.93s`
+- branch-changed broad related suite plus cleanup, indexed QKV/Gather-axis0,
+  preprojection, layout recovery, and pass-efficiency coverage:
+  `1581 passed in 24.33s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately following
+`_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains()` result,
+owner schema, production occurrences, and Gather/window-partition boundaries
+before adding characterization. Commit and push only; do not create, reopen, or
+update a pull request.

@@ -10870,9 +10870,10 @@ unchanged.
 The following Gather-axis0 singleton-to-Reshape compatibility owner returns one
 rewrite counter and receives the live Session LayoutState. It is selected by
 the recovery runner and has one additional direct late production call whose
-result is currently discarded. Strict characterization fixes a late target
+result is retained as `_late_gather_axis0_reshape_stats`. The target remains
 between the captured attention-cleanup dictionary and the model-only attention
-preprojection rank-lift owner without changing either execution path.
+preprojection rank-lift owner. The retained value has no consumer, and the
+recovery-runner path is unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

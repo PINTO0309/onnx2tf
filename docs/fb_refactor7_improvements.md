@@ -497,6 +497,17 @@ This checkpoint passes the focused cleanup/QKV/Gather-axis0 orchestration gate
 with `437 passed in 19.04s`, plus the branch-changed broad related suite with
 `1514 passed in 24.34s`.
 
+The direct late Gather-axis0 singleton-to-Reshape compatibility call now
+retains its existing one-counter dictionary as
+`_late_gather_axis0_reshape_stats`. The separate recovery-runner selection,
+indexed GraphIndex behavior, live Session LayoutState, cleanup predecessor,
+preprojection successor, and TensorFlow-free boundary are unchanged. The value
+has no consumer and adds no traversal or mutation.
+
+This checkpoint passes the focused Gather/cleanup/preprojection orchestration
+gate with `496 passed in 18.93s`, plus the branch-changed broad related suite
+with `1581 passed in 24.33s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -504,7 +515,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following Gather-axis0 singleton-to-Reshape
-input result, its live LayoutState contract, and its cleanup/preprojection
+unit should audit the immediately following attention-preprojection
+Reshape-to-BatchMatMul rank-lift result and its Gather/window-partition
 boundaries. Any new mutation evidence must preserve current pass order,
 TensorFlow-free boundary, dependency set, and sequential validation policy.
