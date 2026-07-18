@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes.elementwise_concat_layout import (
     optimize_transpose_elementwise_concat_conv_nhwc_groups,
@@ -137,10 +135,6 @@ def test_elementwise_concat_conv_zero_counter_can_prune_unused_tensor() -> None:
     assert "unused" not in model_ir.tensors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the sole direct elementwise-Concat/Conv result is not retained yet",
-)
 def test_direct_elementwise_concat_conv_result_is_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(

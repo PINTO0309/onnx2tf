@@ -9078,6 +9078,42 @@ consumer or guard and do not change the public-owner layout-recovery
 occurrence. Validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
 
+## Direct elementwise-Concat/Conv result retention implementation checkpoint
+
+The sole direct private-wrapper call now retains its unchanged one-counter
+dictionary as `_layout_opt_elementwise_concat_conv_stats`. It remains
+observation-only and unconsumed because the owner's unconditional prune can
+mutate ModelIR while the rewrite counter is zero. The independent public-owner
+layout-recovery occurrence is unchanged.
+
+This is an assignment-only production change. The compatibility wrapper,
+owner, one-key schema, optional graph-index/layout/bound/candidate forwarding,
+ModelIR/layout arguments, pass order, binary-bridge/SPP boundaries,
+dependencies, diagnostics behavior, public API, and TensorFlow-free direct
+path remain unchanged.
+
+The first implementation gate exposed one stale AST boundary that required a
+raw expression after the second quantized-activation binary recovery call
+(`358 passed, 1 failed`). It was updated to require the new assignment target
+and the same unchanged RHS owner call; this was a characterization adjustment,
+not a production regression.
+
+Implementation validation completed sequentially under `uv`:
+
+- wrapper/owner schema, zero-rewrite prune, elementwise-Concat/Conv fixtures,
+  layout-recovery selection, binary-bridge/SPP boundaries, architecture, and
+  pass-efficiency coverage: `359 passed in 19.54s`
+- branch-changed broad suite: `1559 passed in 27.59s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a model-corpus run. At resume, audit both calls to
+`_run_quantized_activation_binary_bridge_recovery_sequence()` and the runner
+result contract they currently discard. Preserve the conditional binary-bridge
+policy following the first call and the retained elementwise-Concat/Conv result
+following the second call. Commit and push only; do not create, reopen, or
+update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

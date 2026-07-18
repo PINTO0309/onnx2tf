@@ -26,7 +26,7 @@ ORCHESTRATION_PATHS = (
 SPP = "run_spp_layout_cleanup"
 INNER_OWNER = "_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains"
 RESULT_TARGET = "_layout_opt_spp_stats"
-PREVIOUS = "_optimize_transpose_elementwise_concat_conv_nhwc_groups"
+PREVIOUS_TARGET = "_layout_opt_elementwise_concat_conv_stats"
 FOLLOWING_TARGET = "_layout_opt_pre_concat_stats"
 
 
@@ -139,5 +139,5 @@ def test_direct_spp_result_is_retained_observation_only() -> None:
         for node in ast.walk(lowerer)
     )
 
-    assert _call_name(layout_guard.body[result_index - 1]) == PREVIOUS
+    assert _single_target(layout_guard.body[result_index - 1]) == PREVIOUS_TARGET
     assert _single_target(layout_guard.body[result_index + 1]) == FOLLOWING_TARGET

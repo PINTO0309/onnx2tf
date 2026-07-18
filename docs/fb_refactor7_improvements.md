@@ -1326,6 +1326,17 @@ arguments, and binary-bridge/SPP boundaries are frozen before implementation.
 The focused characterization gate passes
 `358 passed, 1 xfailed in 19.01s`; the sole strict xfail is the selected direct
 assignment.
+
+The sole direct call now retains its unchanged dictionary as
+`_layout_opt_elementwise_concat_conv_stats`; it remains observation-only, and
+the public-owner layout-recovery occurrence is unchanged. The focused
+implementation gate passes `359 passed in 19.54s`, the branch-changed broad
+suite passes `1559 passed in 27.59s`, and targeted static validation passes.
+
+The next unit should audit both calls to the quantized-activation binary-bridge
+recovery helper and the runner result they currently discard, while preserving
+their distinct conditional-binary-bridge and elementwise-Concat/Conv
+successors.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

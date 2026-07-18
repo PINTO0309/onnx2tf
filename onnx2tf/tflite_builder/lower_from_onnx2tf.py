@@ -4524,9 +4524,11 @@ def lower_onnx_to_ir(
         )
         _run_quantized_activation_binary_bridge_recovery_sequence()
         # Binary bridge recovery can recreate pre/post transpose wrappers around CONCAT.
-        _optimize_transpose_elementwise_concat_conv_nhwc_groups(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_elementwise_concat_conv_stats = (
+            _optimize_transpose_elementwise_concat_conv_nhwc_groups(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _layout_opt_spp_stats = (
             run_spp_layout_cleanup(

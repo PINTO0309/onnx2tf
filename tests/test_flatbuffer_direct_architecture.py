@@ -980,7 +980,13 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         == "enable_transpose_binary_bridge_optimizations"
     )
     second_following = direct_boundaries[1][1]
-    assert isinstance(second_following, ast.Expr)
+    assert isinstance(second_following, ast.Assign)
+    assert len(second_following.targets) == 1
+    assert isinstance(second_following.targets[0], ast.Name)
+    assert (
+        second_following.targets[0].id
+        == "_layout_opt_elementwise_concat_conv_stats"
+    )
     assert isinstance(second_following.value, ast.Call)
     assert isinstance(second_following.value.func, ast.Name)
     assert (

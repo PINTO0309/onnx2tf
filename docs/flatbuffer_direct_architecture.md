@@ -11933,3 +11933,13 @@ one-key schema, unconditional cleanup, ModelIR/layout arguments, exact sole
 direct call, binary-bridge/SPP boundaries, and independent layout-recovery
 selection. That orchestration occurrence is not changed by this retention
 unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_elementwise_concat_conv_stats`. It remains unconsumed because a
+zero counter does not exclude the owner's unconditional unused-tensor cleanup.
+The public-owner layout-recovery occurrence remains unchanged.
+
+This is an assignment-only change. Optional graph index, layout state, rewrite
+bound, and candidate forwarding, the one-key schema, direct arguments,
+binary-bridge/SPP boundaries, dependencies, public behavior, and TensorFlow
+isolation remain fixed.
