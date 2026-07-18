@@ -5347,7 +5347,11 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     assert isinstance(previous_boundary.test, ast.Name)
     assert previous_boundary.test.id == "optimize_layout_transpose_chains"
     previous_call = previous_boundary.body[0]
-    assert isinstance(previous_call, ast.Expr)
+    assert isinstance(previous_call, ast.Assign)
+    assert isinstance(previous_call.targets[0], ast.Name)
+    assert previous_call.targets[0].id == (
+        "_terminal_elementwise_fanout_stats"
+    )
     assert isinstance(previous_call.value, ast.Call)
     assert isinstance(previous_call.value.func, ast.Name)
     assert (
@@ -7365,6 +7369,12 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     assert (
         next_raw_boundary.func.id
         == "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    )
+    next_raw_statement = next_boundary.body[0]
+    assert isinstance(next_raw_statement, ast.Assign)
+    assert isinstance(next_raw_statement.targets[0], ast.Name)
+    assert next_raw_statement.targets[0].id == (
+        "_late_concat_elementwise_fanout_stats"
     )
 
 

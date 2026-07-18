@@ -4874,7 +4874,11 @@ def lower_onnx_to_ir(
         state_scope=late_concat_layout_state_scope,
     )
     if optimize_layout_transpose_chains:
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
+        _late_concat_elementwise_fanout_stats = (
+            _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+                model_ir
+            )
+        )
     _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
         model_ir,
         layout_state=session.layout_state,
@@ -4952,7 +4956,11 @@ def lower_onnx_to_ir(
     )
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
+        _terminal_elementwise_fanout_stats = (
+            _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+                model_ir
+            )
+        )
     _run_terminal_singleton_maxpool_reshape_pass_pair()
     if optimize_layout_transpose_chains:
         _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)

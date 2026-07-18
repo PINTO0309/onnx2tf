@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1633,10 +1631,6 @@ def test_primary_path_retains_late_concat_scope_results() -> None:
     ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="guarded elementwise fanout results are discarded",
-)
 def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
     body = _lowerer_body()
     callback_name = (
@@ -1684,9 +1678,14 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
         assert call.keywords == []
 
         guard_index = body.index(guard)
-        assert _call_name(_statement_call(body[guard_index - 1])) == (
-            predecessor_name
-        )
+        predecessor = body[guard_index - 1]
+        if isinstance(predecessor, ast.Assign):
+            assert isinstance(predecessor.targets[0], ast.Name)
+            assert predecessor.targets[0].id == predecessor_name
+        else:
+            assert _call_name(_statement_call(predecessor)) == (
+                predecessor_name
+            )
         assert _call_name(_statement_call(body[guard_index + 1])) == (
             successor_name
         )

@@ -10828,9 +10828,9 @@ Transpose-cleanup occurrences remain unchanged.
 The elementwise NHWC→NCHW fanout roundtrip owner returns one rewrite counter and
 has two production occurrences under the same layout-optimization guard. The
 first follows the captured late Concat cleanup dictionary; the second precedes
-terminal singleton-MaxPool/Reshape orchestration. Both results are currently
-discarded. Strict characterization fixes distinct phase targets, both guards,
-and their four outer boundaries.
+terminal singleton-MaxPool/Reshape orchestration. Both results are retained
+under distinct phase targets inside their original guards. The model-only
+callback contract and all four outer boundaries remain fixed.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

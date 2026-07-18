@@ -4966,3 +4966,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented guarded
 two-result retention contract above.
+
+## Guarded elementwise-fanout result implementation checkpoint
+
+Both production results are now retained inside their existing guards as
+`_late_concat_elementwise_fanout_stats` and
+`_terminal_elementwise_fanout_stats`. Their unchanged one-counter dictionaries
+remain unavailable when `optimize_layout_transpose_chains` is false; no
+guard-external default or result consumer was added.
+
+The owner/schema, model-only callback contract, guards, pass order,
+rollback/pruning, metadata, dependencies, and four surrounding boundaries are
+unchanged. TensorFlow behavior is unaffected.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused elementwise-fanout owner, terminal-singleton boundary, terminal-
+  orchestration, layout-recovery, and architecture gate:
+  `299 passed in 19.15s`
+- expanded broad related gate: `1645 passed in 32.11s`
+
+At resume, audit the adjacent
+`_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains()` and
+`_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains()` result
+schemas and occurrence boundaries before retaining evidence.
+
+Workflow policy: pull request #955 was closed at the user's direction. Do not
+create, reopen, or update any pull request. Future units must use commits and
+pushes only.

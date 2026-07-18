@@ -438,6 +438,15 @@ This checkpoint extends the expanded related gate to `1630 passed in 32.11s`;
 the focused four-owner, shared-scope efficiency, terminal-orchestration, and
 architecture gate is `387 passed in 17.89s`.
 
+Both guarded elementwise NHWC→NCHW fanout-roundtrip calls now retain their
+one-counter dictionaries under late-Concat and terminal phase targets. Values
+remain guard-local; no default, consumer, call, or additional graph work was
+introduced, and both distinct outer boundaries are unchanged.
+
+This checkpoint extends the expanded related gate to `1645 passed in 32.11s`;
+the focused elementwise-fanout, terminal-singleton, layout-recovery, terminal-
+orchestration, and architecture gate is `299 passed in 19.15s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -445,7 +454,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the two conditional elementwise fanout-roundtrip results that
-follow late layout clusters. Any new mutation evidence must preserve their
-guards, current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the adjacent ExpandDims and flatten-HW Transpose/Reshape
+results following the first captured fanout occurrence. Any new mutation
+evidence must preserve current pass order, TensorFlow-free boundary, dependency
+set, and sequential validation policy.
