@@ -4682,9 +4682,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_terminal_softmax_transpose_after_nhwc_propagation(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_softmax_transpose_stats = (
+        _optimize_terminal_softmax_transpose_after_nhwc_propagation(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _terminal_boundary_input_normalization_stats = (
         run_boundary_input_normalization_cleanup(

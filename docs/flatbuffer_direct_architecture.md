@@ -10917,9 +10917,9 @@ LayoutState and diagnostics arguments.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
-occurrence whose result is currently discarded. Strict characterization fixes
-a terminal target between the diagnostics-aware Gather-channel-fanout runner
-and captured terminal boundary-input normalization.
+occurrence whose result is retained as `_terminal_softmax_transpose_stats`
+between the diagnostics-aware Gather-channel-fanout runner and captured
+terminal boundary-input normalization. The retained value has no consumer.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

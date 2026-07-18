@@ -574,6 +574,16 @@ This checkpoint passes the focused two-occurrence/terminal-neighbor gate with
 `360 passed in 18.72s`, plus the branch-changed broad related suite with
 `1719 passed in 24.61s`.
 
+The sole terminal Softmax/Transpose-after-NHWC-propagation call now retains its
+existing one-counter dictionary as `_terminal_softmax_transpose_stats`.
+Indexed GraphIndex behavior, live Session LayoutState, Gather-channel-fanout
+predecessor, captured boundary-normalization successor, and TensorFlow-free
+boundary are unchanged. The value has no consumer or extra graph work.
+
+This checkpoint passes the focused terminal Softmax/Gather/boundary gate with
+`365 passed in 18.32s`, plus the branch-changed broad related suite with
+`1724 passed in 25.28s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -581,7 +591,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately preceding terminal Softmax/Transpose cleanup
-result and its Gather-fanout/boundary-normalization boundaries. Any new mutation
-evidence must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+unit should audit the immediately preceding direct
+`run_transpose_gather_channel_fanout_cleanup()` result, distinguish that call
+from its orchestrated selections, and preserve its ArgMax/Softmax boundaries.
+Any new mutation evidence must preserve current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.

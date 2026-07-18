@@ -5771,3 +5771,32 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented terminal
 Softmax result retention contract above.
+
+## Terminal Softmax/Transpose result retention implementation checkpoint
+
+The sole production call now retains the existing one-counter dictionary as
+`_terminal_softmax_transpose_stats`. This is an assignment-only orchestration
+change. The indexed owner and schema, GraphIndex/layout synchronization,
+callback arguments, pass order, diagnostics-aware Gather-channel-fanout
+predecessor, captured terminal boundary-normalization successor, dependencies,
+and TensorFlow behavior are unchanged. The value has no consumer and triggers
+no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused indexed Softmax, Gather-fanout, boundary normalization, terminal-
+  orchestration, architecture, and pass-efficiency gate:
+  `365 passed in 18.32s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, window/final convergence, boundary normalization, terminal
+  Softmax, Gather fanout, layout recovery, and pass-efficiency coverage:
+  `1724 passed in 25.28s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately preceding direct
+`run_transpose_gather_channel_fanout_cleanup()` result, distinguish it from the
+two orchestrated selections, and fix its ArgMax/Softmax boundaries before
+adding characterization. Commit and push only; do not create, reopen, or update
+a pull request.
