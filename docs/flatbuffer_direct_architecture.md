@@ -11090,11 +11090,10 @@ complete aggregate that excludes iteration metrics and includes clamped net
 tensor reduction. Its nested positive-count guard is covered by runtime rewrite,
 prune, and stable outcomes and must remain unchanged.
 
-Strict characterization selects only the reconciliation inside that nested
-guard for a future `_late_binary_layout_recovery_static_shape_stats` assignment
-with `include_mutation_count=True`. The surrounding option guard, recovery
-target, positive predicate, and following terminal evidence boundary remain
-fixed.
+The reconciliation inside that nested guard now retains
+`_late_binary_layout_recovery_static_shape_stats` with
+`include_mutation_count=True`. The surrounding option guard, recovery target,
+positive predicate, and following terminal evidence boundary remain fixed.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

@@ -5228,7 +5228,12 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         if _stats_have_positive_count(late_binary_layout_recovery_stats):
-            _reconcile_static_tensor_shapes(model_ir)
+            _late_binary_layout_recovery_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    model_ir,
+                    include_mutation_count=True,
+                )
+            )
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
     _pre_terminal_affine_instancenorm_post_bias_stats = (

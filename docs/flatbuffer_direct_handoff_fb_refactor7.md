@@ -7384,3 +7384,35 @@ The sole strict expected failure is the intentionally unimplemented guarded
 late-binary layout-recovery shape result contract above. Implement only that
 assignment and opt-in counter, rerun the same gates sequentially, then commit
 and push only; do not create, reopen, or update a pull request.
+
+## Guarded late-binary layout-recovery shape result retention implementation checkpoint
+
+The reconciliation inside the existing nested positive-count guard now
+requests `include_mutation_count=True` and retains
+`_late_binary_layout_recovery_static_shape_stats`. The complete result has no
+consumer.
+
+This change preserves the recovery aggregate schema, outer layout-option
+predicate, runner arguments, inner positive-count guard, runtime execution
+count, reconciler fixed point, following pre-terminal InstanceNorm evidence,
+pass order, dependencies, diagnostics, and TensorFlow behavior. Runtime tests
+continue to distinguish rewrite, prune-only, and stable outcomes.
+
+Implementation validation completed sequentially under `uv`:
+
+- recovery aggregate/orchestration, runtime rewrite/prune guard, complete
+  reconciler, architecture, and pass-efficiency coverage:
+  `299 passed in 19.68s`
+- branch-changed broad suite plus the same runtime and structural coverage:
+  `1429 passed in 24.81s`
+
+These are unit, contract, runtime-orchestration, and architecture checks; this
+result-retention change does not claim a new model-corpus run.
+
+At resume, audit all four production occurrences of
+`_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains()`:
+three direct calls plus one nested convergence call. The first terminal direct
+result remains raw, while the very-late and pre-terminal results are retained.
+Characterize only that first direct call and its residual-adapter predecessor
+and dual-statistics successor. Commit and push only; do not create, reopen, or
+update a pull request.

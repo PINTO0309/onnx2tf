@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import onnx2tf.tflite_builder.passes.late_binary_layout_recovery as recovery
-import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
@@ -251,10 +250,6 @@ def test_late_binary_recovery_connects_to_terminal_evidence_boundary() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="guarded late-binary layout recovery shape result is discarded",
-)
 def test_late_binary_recovery_retains_complete_shape_result() -> None:
     lowerer_tree = ast.parse(
         (

@@ -843,6 +843,17 @@ This checkpoint passes the focused runtime/reconciler/architecture gate with
 `353 passed in 21.19s`, plus the branch-changed broad related suite with
 `1428 passed in 24.96s`.
 
+The nested reconciliation after `late_binary_layout_recovery_stats` now
+requests the complete mutation counter and retains
+`_late_binary_layout_recovery_static_shape_stats`. The complete recovery
+aggregate, outer option guard, inner positive-count predicate, and runtime
+rewrite/prune/stable behavior are unchanged. The retained result has no
+consumer.
+
+This checkpoint passes the focused recovery/runtime/architecture gate with
+`299 passed in 19.68s`, plus the branch-changed broad related suite with
+`1429 passed in 24.81s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -850,9 +861,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the guarded reconciliation after
-`late_binary_layout_recovery_stats`. Its existing aggregate already exposes
-complete mutation and prune evidence; the guard must remain unchanged and only
-the complete opt-in reconciliation result may be retained. Any change must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit all production occurrences of the terminal InstanceNorm
+residual/Mul/Concat owner and isolate its still-raw first direct call without
+conflating the retained very-late and pre-terminal calls or nested convergence
+call. Any change must preserve current pass order, TensorFlow-free boundary,
+dependency set, and sequential validation policy.
