@@ -699,7 +699,12 @@ def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() ->
         )
     ]
     assert len(direct_statements) == 3
-    assert all(isinstance(statement, ast.Expr) for statement in direct_statements[:2])
+    assert isinstance(direct_statements[0], ast.Expr)
+    assert isinstance(direct_statements[1], ast.Assign)
+    assert isinstance(direct_statements[1].targets[0], ast.Name)
+    assert direct_statements[1].targets[0].id == (
+        "_very_late_instancenorm_residual_mul_concat_stats"
+    )
     assert direct_statements[2] is invocation
 
 

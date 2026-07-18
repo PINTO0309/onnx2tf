@@ -10984,16 +10984,16 @@ pad cleanup boundary are unchanged.
 The immediately following indexed InstanceNorm residual/Mul/Concat/Conv owner
 has three direct production calls plus one nested convergence call. Its fixed
 one-counter result is complete mutation evidence because pruning occurs only
-after a positive rewrite. The first terminal and second very-late direct calls
-remain raw, the third is retained as
+after a positive rewrite. The first terminal direct call remains raw, the
+second is retained as
+`_very_late_instancenorm_residual_mul_concat_stats`, the third is retained as
 `_pre_terminal_affine_instancenorm_residual_mul_concat_stats`, and the nested
 call consumes its counter through the convergence guard.
 
-Strict characterization selects only the second direct call for a future
-`_very_late_instancenorm_residual_mul_concat_stats` assignment. It fixes the
-captured `_very_late_instancenorm_post_bias_stats` predecessor and following
-live-LayoutState dual-statistics InstanceNorm owner while preserving the first,
-third, and nested occurrence contracts.
+The second direct call now assigns its unchanged result to that very-late
+target. The captured `_very_late_instancenorm_post_bias_stats` predecessor and
+following live-LayoutState dual-statistics InstanceNorm owner remain adjacent,
+and the first, third, and nested occurrence contracts are unchanged.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

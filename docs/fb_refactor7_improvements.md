@@ -741,6 +741,18 @@ This checkpoint passes the focused owner/orchestration gate with
 `387 passed in 20.17s`, plus the branch-changed broad related suite with
 `1420 passed in 23.78s`.
 
+The second of three direct InstanceNorm residual/Mul/Concat/Conv calls now
+retains its existing one-counter dictionary as
+`_very_late_instancenorm_residual_mul_concat_stats`. It remains between the
+captured very-late post-bias result and the live-LayoutState dual-statistics
+owner. The first terminal call remains raw, the third retains its pre-terminal
+target, and the nested convergence call continues to consume its counter. This
+assignment-only change adds no graph work or consumer.
+
+This checkpoint passes the focused indexed owner/orchestration gate with
+`469 passed in 19.78s`, plus the branch-changed broad related suite with
+`1421 passed in 24.65s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -748,8 +760,9 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit all production occurrences of the adjacent InstanceNorm
-residual/Mul/Concat owner and isolate its raw very-late direct result without
-conflating the terminal raw call, pre-terminal retained call, or nested
-convergence call. Any new mutation evidence must preserve current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+unit should audit all production occurrences of the adjacent dual-statistics
+InstanceNorm residual/add/resize owner and isolate its raw very-late direct
+result without conflating the terminal raw call, pre-terminal retained call,
+or nested convergence call. Any new mutation evidence must preserve current
+pass order, TensorFlow-free boundary, dependency set, and sequential validation
+policy.

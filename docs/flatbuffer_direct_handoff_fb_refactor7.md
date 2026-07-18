@@ -6768,3 +6768,41 @@ The sole strict expected failure is the intentionally unimplemented very-late
 InstanceNorm residual/Mul/Concat result retention contract above. Implement
 that assignment, rerun the same gates sequentially, then commit and push only;
 do not create, reopen, or update a pull request.
+
+## Very-late InstanceNorm residual/Mul/Concat result retention implementation checkpoint
+
+The second of the three direct production calls now retains its unchanged one-
+counter dictionary as `_very_late_instancenorm_residual_mul_concat_stats`.
+The first terminal direct call remains raw, the third retains
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`, and the nested
+convergence call continues to consume its counter from the shared graph index.
+
+This is an assignment-only orchestration change. It preserves the wrapper and
+indexed owner, one-key result schema, rewrite guards, positive-only pruning,
+GraphIndex/LayoutState/candidate/max-rewrite controls, callback arguments,
+pass order, captured very-late post-bias predecessor, live-LayoutState dual-
+statistics successor, other occurrence forms, dependencies, diagnostics, and
+TensorFlow behavior. The retained value has no consumer and triggers no
+additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed owner, concrete owner rewrite, direct/nested occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency gate:
+  `469 passed in 19.78s`
+- branch-changed broad suite plus indexed owner, occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency coverage:
+  `1421 passed in 24.65s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit all production occurrences of
+`_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains()`.
+There are three direct calls plus one nested convergence call: the first
+terminal and second very-late direct results are raw, the third is retained as
+`_pre_terminal_affine_instancenorm_dualstats_stats`, and the nested call
+consumes its counter. Characterize the very-late call adjacent to
+`_very_late_instancenorm_residual_mul_concat_stats` without conflating those
+other occurrences. Commit and push only; do not create, reopen, or update a
+pull request.
