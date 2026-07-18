@@ -3103,12 +3103,18 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
-    invocation = lowerer.body[invocation_index].value
+    invocation_statement = lowerer.body[invocation_index]
+    assert isinstance(invocation_statement, ast.Assign)
+    assert isinstance(invocation_statement.targets[0], ast.Name)
+    assert invocation_statement.targets[0].id == (
+        "_late_final_shape_activation_convergence_stats"
+    )
+    invocation = invocation_statement.value
     assert len(invocation.args) == 1
     assert isinstance(invocation.args[0], ast.Name)
     assert invocation.args[0].id == "model_ir"

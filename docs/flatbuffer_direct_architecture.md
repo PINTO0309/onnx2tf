@@ -10901,10 +10901,10 @@ remains unchanged.
 
 The following indexed final shape/activation convergence runner returns its
 existing aggregate mutation dictionary and receives the live Session
-LayoutState. It has one production call, whose result is currently discarded.
-Strict characterization fixes a late convergence target between the captured
-window-reverse dictionary and final boundary-input normalization with shared
-LayoutState and diagnostics.
+LayoutState. Its sole production result is retained as
+`_late_final_shape_activation_convergence_stats` between the captured window-
+reverse dictionary and final boundary-input normalization with shared
+LayoutState and diagnostics. The value has no consumer and adds no graph work.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

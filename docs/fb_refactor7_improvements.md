@@ -541,6 +541,17 @@ This checkpoint passes the focused window/final-convergence orchestration gate
 with `411 passed in 18.65s`, plus the branch-changed broad related suite with
 `1683 passed in 24.57s`.
 
+The sole late indexed final shape/activation convergence call now retains its
+existing aggregate mutation dictionary as
+`_late_final_shape_activation_convergence_stats`. Its one-index internal
+convergence, conditional reconciliation, activation fusion, live LayoutState,
+window-reverse predecessor, boundary-normalization successor, and TensorFlow-
+free boundary are unchanged. The retained value has no consumer.
+
+This checkpoint passes the focused convergence/window/boundary orchestration
+gate with `390 passed in 20.13s`, plus the branch-changed broad related suite
+with `1688 passed in 24.36s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -548,7 +559,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following indexed final shape/activation
-convergence result and its window-reverse/boundary-normalization boundaries.
-Any new mutation evidence must preserve current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+unit should audit the immediately following final boundary-input normalization
+result, distinguish it from the earlier normalization occurrence, and preserve
+its convergence/internal-channel-slice boundaries. Any new mutation evidence
+must preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

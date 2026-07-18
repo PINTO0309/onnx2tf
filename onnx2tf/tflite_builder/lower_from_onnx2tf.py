@@ -4936,9 +4936,11 @@ def lower_onnx_to_ir(
     )
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.
-    _run_indexed_final_shape_activation_convergence(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_final_shape_activation_convergence_stats = (
+        _run_indexed_final_shape_activation_convergence(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Final boundary cleanup after all late transpose/layout rewrites.
     run_boundary_input_normalization_cleanup(

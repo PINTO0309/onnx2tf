@@ -5572,3 +5572,34 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented aggregate-
 result retention contract above.
+
+## Late indexed final convergence result retention implementation checkpoint
+
+The sole production call now retains the existing aggregate mutation
+dictionary as `_late_final_shape_activation_convergence_stats`. This is an
+assignment-only orchestration change. The aggregate schema, one-index
+convergence internals, conditional reconciliation, fusion behavior, callback
+arguments, pass order, window-reverse predecessor, final boundary-normalization
+successor, diagnostics, dependencies, and TensorFlow behavior are unchanged.
+The value has no consumer and triggers no additional graph work.
+
+The architecture contract now locates the production assignment and verifies
+its target while preserving its existing internal convergence assertions.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused indexed final convergence, window-reverse/boundary-normalization,
+  terminal-orchestration, architecture, and pass-efficiency gate:
+  `390 passed in 20.13s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, both window owners, final convergence, boundary normalization,
+  layout recovery, and pass-efficiency coverage: `1688 passed in 24.36s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately following final
+`run_boundary_input_normalization_cleanup()` result, distinguish it from the
+earlier production occurrence, and fix its convergence/internal-channel-slice
+boundaries before adding characterization. Commit and push only; do not create,
+reopen, or update a pull request.
