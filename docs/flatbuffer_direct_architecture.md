@@ -11447,3 +11447,22 @@ pruning and LayoutState synchronization, live Session LayoutState, layout
 option guard, reduced gate-layout successor, captured CSP predecessor,
 BatchMatMul successor, attention-recovery selection, dependencies, diagnostics,
 and TensorFlow behavior remain unchanged.
+
+The later ReLU/Split all-outputs wrapper dispatches an indexed owner and returns
+the fixed one-counter dictionary
+`optimized_transpose_relu_split_all_outputs_to_nhwc_chains`. The owner counts
+only successful complete plan applications and prunes unused tensors only
+inside its positive rewrite guard, so the counter covers every owner mutation
+path.
+
+There are exactly two direct calls. The post-SiNet call follows
+`_post_sinet_qkv_attention_results`; the terminal call follows late pre-Concat
+recovery. Both receive the live Session LayoutState and immediately precede the
+same ReLU/Split/Conv/Concat owner.
+
+Strict characterization selects `_post_sinet_relu_split_all_outputs_stats` and
+`_terminal_relu_split_all_outputs_stats`. It fixes the two-call count, wrapper,
+one-key schema, positive-only prune, arguments, both predecessors, shared
+successor, and surrounding retained results. Both dictionaries remain
+unconsumed in this unit; retention must add no guard, scan, dependency, or
+TensorFlow import path.

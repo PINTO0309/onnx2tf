@@ -7917,6 +7917,44 @@ live LayoutState, following ReLU/Split/Conv/Concat recovery, and the already
 captured Split/Conv/Concat bridge result. Commit and push only; do not create,
 reopen, or update a pull request.
 
+## ReLU/Split all-outputs result characterization checkpoint
+
+The ReLU/Split all-outputs wrapper dispatches one indexed owner and returns the
+fixed one-counter dictionary
+`optimized_transpose_relu_split_all_outputs_to_nhwc_chains`. The owner counts
+only successful complete plan applications and calls unused-tensor pruning only
+when at least one rewrite succeeded. The counter therefore covers all owner
+mutation paths.
+
+There are exactly two direct calls. The post-SiNet call follows
+`_post_sinet_qkv_attention_results`; the terminal call follows late pre-Concat
+NHWC recovery. Both receive the live Session LayoutState and immediately
+precede the same ReLU/Split/Conv/Concat recovery owner.
+
+A strict expected-failure contract selects
+`_post_sinet_relu_split_all_outputs_stats` and
+`_terminal_relu_split_all_outputs_stats`. It fixes the two-call count, model
+and LayoutState arguments, lowerer wrapper, one-key schema, positive-only
+pruning, both predecessors, shared successor, QKV boundary, and related indexed
+owner behavior.
+
+At implementation, replace only the two raw direct expressions with
+assignments. Do not add a consumer or guard, and do not change the wrapper,
+owner, schema, pruning, graph-index behavior, live LayoutState, following
+Split/Conv/Concat calls, surrounding sequences, dependencies, diagnostics, or
+TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- ReLU/Split result/schema semantics and indexed owner fixtures, QKV and
+  Split/Conv/Concat boundaries, architecture, and pass-efficiency coverage:
+  `386 passed, 1 xfailed in 17.76s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
