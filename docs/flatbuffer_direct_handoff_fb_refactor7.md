@@ -8361,6 +8361,43 @@ the following terminal layout-option guard, existing retained shape-extract
 results, pass order, and observation-only evidence rules. Commit and push only;
 do not create, reopen, or update a pull request.
 
+## Remaining shape-extract result characterization checkpoint
+
+The shape-extract compatibility wrapper returns the dedicated owner's fixed
+one-counter dictionary
+`optimized_transpose_shape_extract_nhwc_to_nchw_chains`. The owner prunes
+unused tensors only after a positive rewrite, and its idempotence plus unsafe
+boundary fixtures establish the counter as complete mutation evidence.
+
+There are three production calls. The middle pre-QKV form already retains
+`_late_pre_qkv_shape_extract_stats`. The terminal form after
+`_terminal_concat_unary_conv_stats` and the absolute-end form after pre-Concat
+cleanup remain raw.
+
+A strict expected-failure contract selects `_terminal_shape_extract_stats` and
+`_late_pre_layout_cluster_shape_extract_stats` for those two calls while
+preserving the existing target. It fixes the exact three-call count, one-key
+schema, positive-only pruning, model-only arguments, terminal option-guard
+boundary, late-SPP/QKV boundary, pre-Concat/late-layout-cluster boundary, and
+absence of result consumers.
+
+At implementation, replace only the first and third raw expressions with
+assignments. Do not rename or consume the existing pre-QKV target, and do not
+change the wrapper, owner, schema, pruning, surrounding calls, dependencies,
+diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- shape-extract owner/schema and unsafe-boundary fixtures, exact three-form
+  retention contract, terminal Concat/unary/Conv and fanout guard, late-SPP and
+  QKV, absolute-end late-layout cluster, architecture, pass-efficiency, and
+  terminal-layout coverage: `411 passed, 1 xfailed in 20.23s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

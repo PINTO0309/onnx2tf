@@ -11630,3 +11630,24 @@ transactional PassSpec, preflight/default details, positive-only pruning and
 LayoutState sync, live Session LayoutState and diagnostics, retained Concat
 input-adapter predecessor, shape-extract successor, dependencies, and
 TensorFlow behavior remain unchanged.
+
+The shape-extract compatibility wrapper returns the dedicated owner's fixed
+one-counter dictionary
+`optimized_transpose_shape_extract_nhwc_to_nchw_chains`. The owner prunes
+unused tensors only after a positive rewrite, and its existing idempotence and
+transactional rejection fixtures establish the counter as complete mutation
+evidence.
+
+There are three production calls. The pre-QKV form already retains
+`_late_pre_qkv_shape_extract_stats`; the terminal form after
+`_terminal_concat_unary_conv_stats` and the absolute-end form after pre-Concat
+cleanup remain raw. Strict characterization selects
+`_terminal_shape_extract_stats` and
+`_late_pre_layout_cluster_shape_extract_stats` for those two forms without
+renaming the existing target.
+
+The contract fixes the exact three-call count, one-key schema, positive-only
+prune, model-only arguments, all three targets, terminal option-guard boundary,
+late-SPP/QKV boundary, pre-Concat/late-layout-cluster boundary, and absence of
+consumers. All dictionaries must remain unconsumed; retention must add no guard,
+scan, dependency, or TensorFlow import path.
