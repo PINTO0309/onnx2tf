@@ -5346,3 +5346,38 @@ At resume, audit the immediately following
 owner schema, production occurrences, and Gather/window-partition boundaries
 before adding characterization. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Late attention preprojection result characterization checkpoint
+
+The attention-preprojection Reshape-to-BatchMatMul rank-lift owner returns the
+stable one-counter dictionary
+`optimized_attention_preproj_reshape_to_batchmatmul_ranklift_chains`. It accepts
+only the ModelIR, is selected once by the existing attention-recovery runner,
+and has one additional direct late production call. Only that direct call
+currently discards its result.
+
+A strict expected-failure orchestration contract requires
+`_late_attention_preproj_ranklift_stats` for the direct call. It fixes the
+captured Gather-axis0 predecessor, exact model-only callback, and following
+window-partition callback with its live Session LayoutState.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the owner, one-key schema, recovery-runner selection or captured
+results, GraphIndex/pruning behavior, pass order, callback arguments, neighbor
+targets, guards, dependencies, or TensorFlow behavior. Validate the
+preprojection owner, Gather/window-partition boundaries, layout recovery,
+terminal orchestration, architecture, and broad related gates sequentially,
+then commit and push only; do not create, reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused preprojection owner, Gather/window-partition boundaries, layout
+  recovery, terminal-orchestration, and architecture gate:
+  `450 passed, 1 xfailed in 18.84s`
+- branch-changed broad related suite plus cleanup, indexed QKV/Gather-axis0,
+  preprojection, window partition, layout recovery, and pass-efficiency
+  coverage: `1632 passed, 1 xfailed in 24.26s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented direct
+late-result retention contract above.

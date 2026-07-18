@@ -10875,6 +10875,13 @@ between the captured attention-cleanup dictionary and the model-only attention
 preprojection rank-lift owner. The retained value has no consumer, and the
 recovery-runner path is unchanged.
 
+The following attention-preprojection Reshape-to-BatchMatMul rank-lift owner
+returns one rewrite counter, accepts only the ModelIR, and is selected by the
+recovery runner in addition to one direct late production call. The direct
+result is currently discarded. Strict characterization fixes a late target
+between the captured Gather-axis0 dictionary and the live-LayoutState window-
+partition owner without changing either execution path.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

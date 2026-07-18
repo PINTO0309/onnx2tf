@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1909,6 +1911,52 @@ def test_primary_path_retains_late_gather_axis0_reshape_result() -> None:
     assert successor_call is not None
     assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
     assert successor_call.keywords == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="late attention preprojection rank-lift result is discarded",
+)
+def test_primary_path_retains_late_attention_preproj_ranklift_result() -> None:
+    body = _lowerer_body()
+    callback_name = (
+        "_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains"
+    )
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 1
+    index = indices[0]
+
+    statement = body[index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_late_attention_preproj_ranklift_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert call.keywords == []
+
+    predecessor = body[index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_late_gather_axis0_reshape_stats"
+
+    successor_call = _statement_call(body[index + 1])
+    assert _call_name(successor_call) == (
+        "_optimize_window_partition_reshape_transpose_to_space_to_depth_chains"
+    )
+    assert successor_call is not None
+    assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in successor_call.keywords
+    } == {"layout_state": "session.layout_state"}
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:
