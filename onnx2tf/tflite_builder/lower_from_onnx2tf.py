@@ -4053,8 +4053,8 @@ def lower_onnx_to_ir(
     def _run_duplicate_quantized_prelu_pass_cluster(
         *,
         include_transpose: bool,
-    ) -> None:
-        run_duplicate_quantized_prelu(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_duplicate_quantized_prelu(
             duplicate_quantized_prelu_context,
             include_transpose=include_transpose,
         )
@@ -4161,8 +4161,10 @@ def lower_onnx_to_ir(
             absolute_final_normalization_attention_context
         )
 
-    def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
-        run_boundary_batchmatmul_unary(
+    def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> Tuple[
+        Dict[str, int], ...
+    ]:
+        return run_boundary_batchmatmul_unary(
             boundary_batchmatmul_unary_context
         )
 

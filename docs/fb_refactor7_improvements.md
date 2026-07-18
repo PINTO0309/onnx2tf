@@ -2055,3 +2055,11 @@ callback ownership while replacing only each `None` slot. The focused gate
 passes `332 passed, 1 xfailed in 18.00s`, the 110-file branch-changed suite
 passes `1677 passed, 1 xfailed in 32.56s`, and targeted static validation
 passes.
+
+The duplicate-fanout/quantized-PReLU and boundary-BatchMatMul/input-unary
+runners and lowerer helpers now return their unchanged ordered two-dictionary
+child tuples. Their parent slots carry nested evidence instead of `None`, while
+parent arity, child order, shared scope, policy forwarding, callback ownership,
+and route positions remain unchanged. The focused gate passes
+`333 passed in 20.36s`, the 110-file branch-changed suite passes
+`1678 passed in 33.01s`, and targeted static validation passes.

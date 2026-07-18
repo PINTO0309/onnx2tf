@@ -188,7 +188,7 @@ def test_boundary_batchmatmul_unary_preserves_stable_callback_boundaries() -> No
 def test_boundary_batchmatmul_unary_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)

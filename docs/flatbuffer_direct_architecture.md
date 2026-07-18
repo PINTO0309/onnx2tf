@@ -12771,3 +12771,10 @@ shared-scope identity, callback-only helper ownership, and parent positions:
 layout/attention/quantized suffix index 5 and layout-recovery index 1. The
 propagation contract replaces only each parent's existing `None` slot with the
 ordered two-dictionary tuple; parent tuple arity and pass order stay unchanged.
+
+Both public runners and lowerer helpers now return their unchanged ordered
+two-dictionary child tuples. The corresponding parent slots therefore carry
+nested evidence instead of `None`; parent tuple arity, child selection and
+order, shared state scopes, duplicate-transpose policy, callback-only ownership,
+and route positions remain unchanged. No additional scan, copy, aggregation,
+or result consumer was introduced.

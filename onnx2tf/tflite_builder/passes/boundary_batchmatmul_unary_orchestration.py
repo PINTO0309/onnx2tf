@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple, cast
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -55,9 +55,12 @@ def build_boundary_batchmatmul_unary_invocations(
 
 def run_boundary_batchmatmul_unary(
     context: BoundaryBatchMatMulUnaryContext,
-) -> None:
-    run_recovery_invocations(
-        build_boundary_batchmatmul_unary_invocations(context),
-        expected_pass_ids=BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
-        phase_name="boundary batchmatmul/input-unary",
+) -> Tuple[Dict[str, int], ...]:
+    return cast(
+        Tuple[Dict[str, int], ...],
+        run_recovery_invocations(
+            build_boundary_batchmatmul_unary_invocations(context),
+            expected_pass_ids=BOUNDARY_BATCHMATMUL_UNARY_PASS_IDS,
+            phase_name="boundary batchmatmul/input-unary",
+        ),
     )

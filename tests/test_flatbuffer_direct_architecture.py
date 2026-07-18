@@ -5104,7 +5104,7 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
     assert DUPLICATE_QUANTIZED_PRELU_PASS_IDS == expected_order
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_duplicate_quantized_prelu"

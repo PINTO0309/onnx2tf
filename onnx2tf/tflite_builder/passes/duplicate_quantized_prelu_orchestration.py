@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple, cast
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -62,12 +62,15 @@ def run_duplicate_quantized_prelu(
     context: DuplicateQuantizedPReLUContext,
     *,
     include_transpose: bool,
-) -> None:
-    run_recovery_invocations(
-        build_duplicate_quantized_prelu_invocations(
-            context,
-            include_transpose=include_transpose,
+) -> Tuple[Dict[str, int], ...]:
+    return cast(
+        Tuple[Dict[str, int], ...],
+        run_recovery_invocations(
+            build_duplicate_quantized_prelu_invocations(
+                context,
+                include_transpose=include_transpose,
+            ),
+            expected_pass_ids=DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
+            phase_name="duplicate-fanout/quantized-PReLU",
         ),
-        expected_pass_ids=DUPLICATE_QUANTIZED_PRELU_PASS_IDS,
-        phase_name="duplicate-fanout/quantized-PReLU",
     )

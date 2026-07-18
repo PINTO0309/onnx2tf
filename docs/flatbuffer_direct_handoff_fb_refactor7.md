@@ -12405,3 +12405,32 @@ tuples. Do not change child selection or order, shared scope, policy forwarding,
 callback ownership, parent positions or arity, dependencies, public API, or
 TensorFlow behavior. Validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
+
+## Void orchestration result propagation implementation checkpoint
+
+`run_duplicate_quantized_prelu()` and
+`run_boundary_batchmatmul_unary()` now return the unchanged ordered child
+tuples as `Tuple[Dict[str, int], ...]`. Their lowerer helpers propagate the same
+types and values. Layout/attention/quantized suffix index 5 and layout-recovery
+index 1 now contain nested two-dictionary evidence instead of `None`.
+
+No child invocation, pass order, shared `ModelIRPassStateScope`, LayoutState or
+diagnostic forwarding, duplicate-transpose policy, callback-only ownership,
+parent route position or tuple arity, dependency, public API, or TensorFlow
+behavior changed. No additional ModelIR scan, copy, aggregation, summary, or
+result consumer was added. Three pre-existing structural tests now require
+`Return` rather than a discarded expression without weakening their delegate
+or boundary assertions. No intermediate test failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated propagation contract: `3 passed in 0.54s`
+- both child orchestrations, both parent routes, callback-context composition,
+  architecture, and pass-efficiency coverage: `333 passed in 20.36s`
+- 110 branch-changed test files: `1678 passed in 33.01s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+result-returning side-effect boundary before modifying production code. Commit
+and push only; do not create, reopen, or update a pull request.

@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -150,21 +148,17 @@ def test_void_runner_helpers_and_parent_routes_are_explicit() -> None:
     for path, runner_name, helper_name in contracts:
         runner = _functions(path)[runner_name]
         helper = lowerer_functions[helper_name]
-        assert ast.unparse(runner.returns) == "None"
-        assert ast.unparse(helper.returns) == "None"
+        assert ast.unparse(runner.returns) == "Tuple[Dict[str, int], ...]"
+        assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
         assert len(runner.body) == 1
-        assert isinstance(runner.body[0], ast.Expr)
+        assert isinstance(runner.body[0], ast.Return)
         assert len(helper.body) == 1
-        assert isinstance(helper.body[0], ast.Expr)
+        assert isinstance(helper.body[0], ast.Return)
 
     assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[5] == DUPLICATE_HELPER
     assert LAYOUT_RECOVERY_PASS_IDS[1] == BOUNDARY_HELPER
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="two orchestration runners and helpers discard ordered child results",
-)
 def test_void_orchestrations_propagate_ordered_results() -> None:
     for include_transpose, expected in DUPLICATE_SCHEMAS.items():
         assert run_duplicate_quantized_prelu(
