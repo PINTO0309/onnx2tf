@@ -12235,3 +12235,38 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Late Conv1D tencoder direct result characterization checkpoint
+
+The indexed Conv1D tencoder residual-gate owner returns the fixed one-key
+dictionary `optimized_tencoder_add_expand_transpose_conv_nhwc_chains`. Its
+forwarding lowerer wrapper accepts optional GraphIndex and LayoutState. The
+owner prunes unused tensors on both preflight-zero and normal exit paths, so a
+zero counter is not complete mutation evidence.
+
+The wrapper has exactly one raw direct call with the live LayoutState and no
+nested orchestration selection. It remains between the retained Conv1D
+InstanceNorm unary result and the distinct Squeeze/Unary/BatchMatMul owner.
+
+Passing contracts freeze the fixed schema, wrapper defaults and forwarding,
+unconditional cleanup, exact direct arguments and neighbors, and sole
+occurrence. A strict expected-failure contract selects the unconsumed
+observation target `_late_conv1d_tencoder_stats` only for the raw direct result.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.59s`
+- indexed tencoder owner, retained InstanceNorm boundary, architecture,
+  pass-efficiency, and representative direct rewrite coverage:
+  `313 passed, 1 xfailed in 18.16s`
+- 108 branch-changed test files: `1671 passed, 1 xfailed in 31.66s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+No test assertion failed. The sole expected failure is the intentionally
+unimplemented direct assignment. Retain only the existing dictionary. Do not
+change matching or indexed application, GraphIndex or LayoutState handling,
+unconditional pruning, schema, wrapper forwarding, direct arguments, call
+order, dependencies, public API, or TensorFlow behavior. Keep the target
+unconsumed, validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.

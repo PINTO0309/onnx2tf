@@ -12638,6 +12638,18 @@ selection and state-scope contracts, transactional owners, underlying pruning,
 schemas, direct arguments, and call order remain unchanged; the counters do
 not steer later cleanup.
 
+The Conv1D tencoder residual-gate owner returns the fixed one-key result
+`optimized_tencoder_add_expand_transpose_conv_nhwc_chains` through a
+GraphIndex/LayoutState-aware wrapper. It prunes unused tensors on both
+preflight-zero and normal exits, so a zero counter is not complete mutation
+evidence.
+
+The wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_tencoder_stats` only for that result.
+It freezes schema, wrapper defaults and forwarding, unconditional cleanup,
+exact arguments, retained InstanceNorm predecessor, BatchMatMul successor,
+sole occurrence, and an unconsumed observation-only policy.
+
 `run_singleton_consecutive_reshape()` returns a fixed three-dictionary tuple
 from singleton-channel transpose, duplicate-fanout, and consecutive-reshape
 cleanup. Its three child invocations share one `ModelIRPassStateScope`; the

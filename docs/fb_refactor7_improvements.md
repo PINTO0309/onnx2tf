@@ -2010,3 +2010,11 @@ unconditional pruning, wrapper forwarding, and adjacent Conv1D fan-out and
 tencoder owners remain unchanged. The focused gate passes
 `356 passed in 18.37s`, the 107-file branch-changed suite passes
 `1669 passed in 32.16s`, and targeted static validation passes.
+
+The late Conv1D tencoder residual-gate owner is now characterized as a fixed
+one-key direct result. Its GraphIndex/LayoutState wrapper has one raw call, and
+the owner prunes unused tensors even on its zero preflight path. Strict
+retention selects `_late_conv1d_tencoder_stats` without changing the retained
+InstanceNorm predecessor or BatchMatMul successor. The focused gate passes
+`313 passed, 1 xfailed in 18.16s`, the 108-file branch-changed suite passes
+`1671 passed, 1 xfailed in 31.66s`, and targeted static validation passes.
