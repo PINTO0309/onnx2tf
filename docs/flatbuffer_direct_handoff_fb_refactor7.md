@@ -7776,3 +7776,40 @@ At resume, audit the guarded terminal mean/attention helper result immediately
 after `_terminal_boundary_layout_results`. Preserve the existing option guard
 and child policy before deciding whether ordered results can be retained.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Mean/attention result propagation characterization checkpoint
+
+`run_mean_attention()` selects an ordered five-to-seven-child sequence from
+independent `include_layernorm` and `include_conv_attention` policies. The
+generic recovery runner already returns the corresponding tuple, but the phase
+runner and local `_run_mean_attention_layout_pass_cluster()` helper currently
+drop it.
+
+The helper has two direct primary calls and two existing callback references.
+The first direct call enables LayerNorm and leaves Conv-attention at its default
+enabled state; the guarded terminal call disables Conv-attention and leaves
+LayerNorm disabled. The recovery contexts type the callback result as `Any` and
+do not branch on it.
+
+A strict expected-failure contract requires policy-correct tuples to propagate
+through the phase runner and helper. It fixes direct targets
+`_layout_pass_set_1_mean_attention_results` and
+`_terminal_mean_attention_results`, all four policy combinations, both callback
+references, and existing option keywords.
+
+At implementation, return only the tuple already produced by
+`run_recovery_invocations()` and retain both direct results. Do not summarize
+or consume them, do not run a child twice, and do not change policy selection,
+callback references, shared scopes, option guards, adjacent calls, pass order,
+dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- mean/attention policy and callback contexts, attention recovery, quantized
+  suffix, terminal boundary, architecture, and pass-efficiency coverage:
+  `329 passed, 1 xfailed in 17.89s`
+
+The sole strict expected failure is the intentionally unimplemented tuple
+propagation contract. Implement only the transparent returns and two direct
+assignments, rerun focused and branch-changed broad gates sequentially, then
+commit and push only; do not create, reopen, or update a pull request.

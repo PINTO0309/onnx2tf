@@ -11181,3 +11181,18 @@ the captured terminal dual-statistics result and the optional terminal mean/
 attention guard. Result propagation executes each child exactly once,
 preserves the existing tuple order and shared scope, adds no consumer, and
 leaves all mutation semantics unchanged.
+
+The mean/attention orchestrator selects five to seven ordered child runners
+from the independent LayerNorm and Conv-attention policy flags. The generic
+recovery runner already creates the matching ordered result tuple, but
+`run_mean_attention()` and the local
+`_run_mean_attention_layout_pass_cluster()` helper currently discard it.
+
+The helper has two direct primary calls: the first enables LayerNorm and keeps
+Conv-attention enabled, while the guarded terminal call disables
+Conv-attention and keeps LayerNorm disabled. Two recovery contexts also retain
+the helper as an argument-free callback and accept an arbitrary return value
+without branching on it. A strict contract fixes transparent runner/helper
+returns plus distinct `_layout_pass_set_1_mean_attention_results` and
+`_terminal_mean_attention_results` targets. All four policy matrices, callback
+references, shared scope, option guards, and adjacent calls must remain fixed.
