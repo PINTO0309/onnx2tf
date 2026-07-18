@@ -9302,6 +9302,44 @@ do not change child callbacks, policy routing, order, shared context, safe-
 binary successors, or unary-fanout behavior. Validate sequentially, commit,
 and push only; do not create, reopen, or update a pull request.
 
+## Layout-attention/quantized suffix result propagation implementation checkpoint
+
+`run_layout_attention_quantized_suffix()` and its lowerer helper now return the
+existing thirteen-slot tuple without normalization. The first production call
+retains `_layout_pass_set_1_attention_quantized_suffix_results`; the second
+retains `_layout_pass_set_1_final_attention_quantized_suffix_results`. Both
+remain unconsumed and observation-only because suffix cleanup is not fully
+represented by rewrite counters.
+
+The first implementation gate exposed six stale structural contracts that
+either counted `Tuple[Any, ...]` annotation names as runtime data or required
+raw suffix expressions at the helper, safe-binary, and Transpose/unary-fanout
+boundaries (`730 passed, 6 failed`). Each now scopes data-flow inspection to
+the helper body or requires the correct assignment target plus unchanged RHS
+and policy. These were characterization adjustments, not production
+regressions.
+
+Implementation validation completed sequentially under `uv`:
+
+- suffix runner/helper, all direct and nested children, both result boundaries,
+  safe-binary and Transpose/unary-fanout adjacency, architecture, and
+  pass-efficiency coverage: `736 passed in 20.88s`
+- branch-changed broad suite: `1588 passed in 28.15s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The implementation adds only two return statements and two assignments. It
+adds no summary, guard, child invocation, order or policy change, dependency,
+public API change, or TensorFlow import path. These checks do not claim a
+model-corpus run.
+
+At resume, audit the post-QDQ direct
+`_run_transpose_unary_fanout_layout_pass_cluster()` result immediately after
+`_layout_pass_set_1_final_attention_quantized_suffix_results`, and inventory
+all other helper occurrences before changing any call. Preserve its final
+safe-binary successor. Commit and push only; do not create, reopen, or update a
+pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

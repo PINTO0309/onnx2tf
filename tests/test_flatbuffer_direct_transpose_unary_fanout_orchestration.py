@@ -316,7 +316,12 @@ def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> No
     )
     previous = parent.body[direct_index - 1]
     following = parent.body[direct_index + 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_layout_pass_set_1_final_attention_quantized_suffix_results"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == "_run_layout_attention_quantized_recovery_suffix"

@@ -1530,24 +1530,21 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         "_canonicalize_softmax_transpose_chains",
     )
     assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_layout_attention_quantized_suffix"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_layout_attention_quantized_suffix"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
     assert (
-        helper_calls[0].args[0].id
+        helper_call.args[0].id
         == "layout_attention_quantized_suffix_context"
     )
-    assert len(helper_calls[0].keywords) == 1
-    duplicate_keyword = helper_calls[0].keywords[0]
+    assert len(helper_call.keywords) == 1
+    duplicate_keyword = helper_call.keywords[0]
     assert duplicate_keyword.arg == "include_duplicate_transpose"
     assert isinstance(duplicate_keyword.value, ast.Name)
     assert duplicate_keyword.value.id == "include_duplicate_transpose"
@@ -7808,7 +7805,12 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
         )
     )
     previous_boundary = layout_recovery.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_layout_pass_set_1_final_attention_quantized_suffix_results"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (

@@ -4286,8 +4286,8 @@ def lower_onnx_to_ir(
     def _run_layout_attention_quantized_recovery_suffix(
         *,
         include_duplicate_transpose: bool,
-    ) -> None:
-        run_layout_attention_quantized_suffix(
+    ) -> Tuple[Any, ...]:
+        return run_layout_attention_quantized_suffix(
             layout_attention_quantized_suffix_context,
             include_duplicate_transpose=include_duplicate_transpose,
         )
@@ -4443,8 +4443,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _run_layout_attention_quantized_recovery_suffix(
-            include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
+        _layout_pass_set_1_attention_quantized_suffix_results = (
+            _run_layout_attention_quantized_recovery_suffix(
+                include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
+            )
         )
         _layout_pass_set_1_safe_binary_results = (
             _run_safe_binary_bridge_recovery_sequence()
@@ -4462,8 +4464,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _run_layout_attention_quantized_recovery_suffix(
-            include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
+        _layout_pass_set_1_final_attention_quantized_suffix_results = (
+            _run_layout_attention_quantized_recovery_suffix(
+                include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
+            )
         )
         _run_transpose_unary_fanout_layout_pass_cluster(
             include_layout_transpose=True,

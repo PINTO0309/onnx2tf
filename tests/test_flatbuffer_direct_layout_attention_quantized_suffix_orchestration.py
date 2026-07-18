@@ -150,12 +150,14 @@ def test_layout_attention_quantized_suffix_is_a_straight_line_closure() -> None:
 
     called_names = {
         node.func.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     loaded_data_names = {
         node.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
@@ -263,13 +265,14 @@ def test_layout_attention_quantized_suffix_invocations_preserve_option() -> None
 def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     boundaries: list[tuple[str, str]] = []
+    result_targets: list[str | None] = []
     following_targets: list[str | None] = []
     for statement in lowerer.body:
         if not isinstance(statement, ast.If):
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, (ast.Assign, ast.Expr))
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == SUFFIX
@@ -284,6 +287,13 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
             assert isinstance(following.value, ast.Call)
             assert isinstance(following.value.func, ast.Name)
             boundaries.append((previous.value.func.id, following.value.func.id))
+            result_targets.append(
+                candidate.targets[0].id
+                if isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
+                else None
+            )
             following_targets.append(
                 following.targets[0].id
                 if isinstance(following, ast.Assign)
@@ -302,6 +312,7 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
             "_run_transpose_unary_fanout_layout_pass_cluster",
         ),
     ]
+    assert result_targets == list(RESULT_TARGETS)
     assert following_targets == [
         "_layout_pass_set_1_safe_binary_results",
         None,
@@ -312,7 +323,7 @@ def test_layout_attention_quantized_suffix_context_and_wrapper_are_explicit() ->
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -409,10 +420,6 @@ def test_layout_attention_quantized_suffix_runner_preserves_instrumented_order(
     assert events == list(LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="both ordered layout-attention/quantized suffix results are discarded",
-)
 def test_layout_attention_quantized_suffix_propagates_both_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

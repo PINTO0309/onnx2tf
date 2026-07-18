@@ -1389,6 +1389,17 @@ both distinct boundary pairs, and the unconsumed policy are frozen before
 implementation. The focused gate passes
 `726 passed, 1 xfailed in 19.28s`; the strict xfail is the two-result
 propagation contract.
+
+The suffix runner and helper now return the unchanged thirteen-slot tuple, and
+the two calls retain
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_attention_quantized_suffix_results`. Both remain
+observation-only. The focused implementation gate passes
+`736 passed in 20.88s`, the branch-changed broad suite passes
+`1588 passed in 28.15s`, and targeted static validation passes.
+
+The next unit should audit the post-QDQ direct Transpose/unary-fanout cluster
+result and inventory the helper's other occurrences before changing any call.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

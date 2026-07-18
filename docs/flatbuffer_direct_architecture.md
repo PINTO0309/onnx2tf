@@ -12014,3 +12014,13 @@ duplicate-Transpose policy argument, helper return boundary, exact two-call
 count, fold/safe-binary and squeeze/unary-fanout boundaries, and an unconsumed
 policy. Both results remain observation-only because suffix children can prune
 with zero rewrite counters.
+
+The phase runner and lowerer helper now return the existing thirteen-slot
+tuple. The two production calls retain
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_attention_quantized_suffix_results`. Both remain
+unconsumed and observation-only.
+
+This propagation changes no child callback, nested result, pass-ID order,
+shared context, duplicate-Transpose policy, cleanup timing, safe-binary or
+unary-fanout successor, dependency, public behavior, or TensorFlow isolation.
