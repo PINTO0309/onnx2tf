@@ -9154,6 +9154,42 @@ policy, or the retained elementwise-Concat/Conv successor. Validate
 sequentially, commit, and push only; do not create, reopen, or update a pull
 request.
 
+## Quantized-activation binary result propagation implementation checkpoint
+
+`run_safe_binary_recovery()` now returns its existing one-slot ordered tuple,
+and `run_quantized_activation_binary_recovery()` returns its existing six-slot
+tuple. The outer tuple's sixth slot is therefore the nested safe-binary tuple
+instead of `None`. The lowerer helper transparently returns that outer tuple.
+
+The first production call retains
+`_layout_pass_set_1_quantized_activation_binary_results`; the second retains
+`_layout_pass_set_2_quantized_activation_binary_results`. Both remain
+unconsumed and observation-only because zero counters do not exclude
+cleanup-only pruning. No mutation summary or guard was added.
+
+The first implementation gate exposed only two stale structural contracts:
+one walked the helper's new return annotation as runtime loaded data, and one
+required the helper and both production calls to remain raw expressions
+(`664 passed, 2 failed`). The former now scopes its data-flow scan to the
+helper body, and the latter requires the return plus both explicit assignment
+targets. These were characterization adjustments, not production regressions.
+
+Implementation validation completed sequentially under `uv`:
+
+- quantized recovery, all activation-fold children, canonicalization,
+  safe-binary, both result boundaries, elementwise-Concat/Conv, architecture,
+  and pass-efficiency coverage: `666 passed in 20.24s`
+- branch-changed broad suite: `1570 passed in 28.87s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a model-corpus run. At resume, audit the two direct
+calls to `_run_safe_binary_bridge_recovery_sequence()` outside the nested
+quantized-activation runner. The phase runner now exposes its one-slot tuple,
+but the lowerer helper still discards it. Preserve the layout-attention/
+dequantized-Mean and unary-fanout/progress boundaries. Commit and push only; do
+not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

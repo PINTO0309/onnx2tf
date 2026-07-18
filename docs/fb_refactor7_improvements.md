@@ -1348,6 +1348,18 @@ boundaries, and the unconsumed policy are frozen before implementation.
 The focused characterization gate passes
 `665 passed, 1 xfailed in 18.31s`; the sole strict xfail covers nested runner,
 helper, and two-call result propagation.
+
+Both phase runners and the lowerer helper now return the existing nested tuple,
+and the two calls retain
+`_layout_pass_set_1_quantized_activation_binary_results` and
+`_layout_pass_set_2_quantized_activation_binary_results`. Both remain
+observation-only. The focused implementation gate passes
+`666 passed in 20.24s`, the branch-changed broad suite passes
+`1570 passed in 28.87s`, and targeted static validation passes.
+
+The next unit should audit the two independent direct safe-binary helper calls,
+whose phase runner now returns a one-slot tuple while the lowerer helper still
+discards it.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

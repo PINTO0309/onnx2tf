@@ -11963,3 +11963,14 @@ The contract also freezes the shared ModelIR/layout context, exact child
 order, fixed dictionary schemas, zero-argument helper boundary, distinct
 reshape/conditional-binary and dequant-TransposeConv/elementwise-Concat
 boundaries, and absence of a new summary or guard.
+
+Both phase runners now return their existing ordered tuples. The lowerer helper
+returns the six-slot outer tuple, and its two calls retain separate
+`_layout_pass_set_1_quantized_activation_binary_results` and
+`_layout_pass_set_2_quantized_activation_binary_results` values. The sixth
+outer slot is the one-slot safe-binary tuple rather than `None`.
+
+Both results remain unconsumed and observation-only. This propagation changes
+no child owner, schema, cleanup timing, call order, context, conditional
+binary-bridge policy, elementwise-Concat/Conv successor, dependency, public
+behavior, or TensorFlow import boundary.

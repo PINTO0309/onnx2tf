@@ -30,7 +30,7 @@ ELEMENTWISE_CONCAT_CONV = (
 )
 OWNER_NAME = "optimize_transpose_elementwise_concat_conv_nhwc_groups"
 RESULT_TARGET = "_layout_opt_elementwise_concat_conv_stats"
-PREVIOUS = "_run_quantized_activation_binary_bridge_recovery_sequence"
+PREVIOUS_TARGET = "_layout_pass_set_2_quantized_activation_binary_results"
 FOLLOWING_TARGET = "_layout_opt_spp_stats"
 
 
@@ -175,5 +175,5 @@ def test_direct_elementwise_concat_conv_result_is_retained_observation_only() ->
         for node in ast.walk(lowerer)
     )
 
-    assert _call_name(layout_guard.body[result_index - 1]) == PREVIOUS
+    assert _single_target(layout_guard.body[result_index - 1]) == PREVIOUS_TARGET
     assert _single_target(layout_guard.body[result_index + 1]) == FOLLOWING_TARGET

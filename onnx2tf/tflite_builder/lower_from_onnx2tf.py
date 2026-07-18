@@ -4261,8 +4261,9 @@ def lower_onnx_to_ir(
     def _run_safe_binary_bridge_recovery_sequence() -> None:
         run_safe_binary_recovery(quantized_recovery_context)
 
-    def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
-        run_quantized_activation_binary_recovery(
+    def _run_quantized_activation_binary_bridge_recovery_sequence(
+    ) -> Tuple[Any, ...]:
+        return run_quantized_activation_binary_recovery(
             quantized_recovery_context
         )
 
@@ -4422,7 +4423,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _run_quantized_activation_binary_bridge_recovery_sequence()
+        _layout_pass_set_1_quantized_activation_binary_results = (
+            _run_quantized_activation_binary_bridge_recovery_sequence()
+        )
         if enable_transpose_binary_bridge_optimizations:
             _optimize_transpose_binary_bridges(
                 model_ir,
@@ -4522,7 +4525,9 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _run_quantized_activation_binary_bridge_recovery_sequence()
+        _layout_pass_set_2_quantized_activation_binary_results = (
+            _run_quantized_activation_binary_bridge_recovery_sequence()
+        )
         # Binary bridge recovery can recreate pre/post transpose wrappers around CONCAT.
         _layout_opt_elementwise_concat_conv_stats = (
             _optimize_transpose_elementwise_concat_conv_nhwc_groups(

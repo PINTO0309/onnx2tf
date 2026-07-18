@@ -924,20 +924,17 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         "_run_safe_binary_bridge_recovery_sequence",
     )
     assert QUANTIZED_ACTIVATION_BINARY_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_quantized_activation_binary_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "quantized_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_quantized_activation_binary_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "quantized_recovery_context"
+    assert helper_call.keywords == []
 
     direct_boundaries = []
     for statement in lowerer.body:
@@ -949,7 +946,9 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == helper_name
@@ -958,11 +957,19 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
             assert candidate.value.args == []
             assert candidate.value.keywords == []
             direct_boundaries.append(
-                (statement.body[index - 1], statement.body[index + 1])
+                (
+                    candidate.targets[0].id,
+                    statement.body[index - 1],
+                    statement.body[index + 1],
+                )
             )
     assert len(direct_boundaries) == 2
+    assert [target for target, _, _ in direct_boundaries] == [
+        "_layout_pass_set_1_quantized_activation_binary_results",
+        "_layout_pass_set_2_quantized_activation_binary_results",
+    ]
     previous_call_names = []
-    for previous, _ in direct_boundaries:
+    for _, previous, _ in direct_boundaries:
         assert isinstance(previous, ast.Expr)
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
@@ -972,14 +979,14 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         "_optimize_dequant_transposeconv_quantize_chains",
     ]
 
-    first_following = direct_boundaries[0][1]
+    first_following = direct_boundaries[0][2]
     assert isinstance(first_following, ast.If)
     assert isinstance(first_following.test, ast.Name)
     assert (
         first_following.test.id
         == "enable_transpose_binary_bridge_optimizations"
     )
-    second_following = direct_boundaries[1][1]
+    second_following = direct_boundaries[1][2]
     assert isinstance(second_following, ast.Assign)
     assert len(second_following.targets) == 1
     assert isinstance(second_following.targets[0], ast.Name)
