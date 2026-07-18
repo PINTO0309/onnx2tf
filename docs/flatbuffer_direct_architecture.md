@@ -12738,3 +12738,16 @@ observation-only. Indexed matching and application, GraphIndex/LayoutState
 handling, unconditional pruning, wrapper forwarding, direct arguments, and
 neighboring Conv1D fan-out/tencoder owners remain unchanged; the counter does
 not steer later cleanup.
+
+The adjacent late-tail owners cover Conv1D Squeeze/Unary/BatchMatMul,
+decoder BatchMatMul/Add/ExpandDims/TransposeConv input, and terminal
+Squeeze/Mean/Squeeze forms. Each returns one fixed counter through an optional
+GraphIndex/LayoutState wrapper. Unused-tensor pruning and LayoutState sync are
+guarded by a positive rewrite count.
+
+Each wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_batchmatmul_stats`,
+`_late_decoder_deconv_stats`, and `_late_terminal_squeeze_mean_stats` together.
+It freezes all schemas, wrapper defaults and forwarding, positive-only cleanup,
+direct arguments and adjacency between retained tencoder and pad-layout
+results, sole occurrences, and unconsumed observation-only policies.

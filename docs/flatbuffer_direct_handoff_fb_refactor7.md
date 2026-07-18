@@ -12297,3 +12297,45 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Late Conv1D/decoder terminal direct results characterization checkpoint
+
+Three adjacent indexed owners cover Conv1D Squeeze/Unary/BatchMatMul, decoder
+BatchMatMul/Add/ExpandDims/TransposeConv input, and terminal
+Squeeze/Mean/Squeeze forms. Each returns a fixed one-key dictionary and accepts
+optional GraphIndex and LayoutState through a forwarding lowerer wrapper.
+Unused-tensor pruning and LayoutState synchronization occur only after a
+positive rewrite count.
+
+All three wrappers have exactly one raw direct call with the live LayoutState
+and no nested orchestration selection. The adjacent calls remain between the
+retained Conv1D tencoder result and retained very-late pad-layout result.
+
+Passing contracts freeze all three schemas, wrapper defaults and forwarding,
+positive-only cleanup, exact direct arguments and adjacency, and sole
+occurrences. A strict expected-failure contract selects the unconsumed
+observation targets `_late_conv1d_batchmatmul_stats`,
+`_late_decoder_deconv_stats`, and `_late_terminal_squeeze_mean_stats` together.
+
+The first dedicated characterization run reported `1 passed, 1 failed, 1
+xfailed in 0.60s`; the new AST helper recognized only name calls and therefore
+missed `layout_state.sync_from_model_ir(...)`. It now recognizes both name and
+attribute calls without changing production code or weakening the guarded-
+cleanup assertion.
+
+Corrected characterization validation completed sequentially under `uv`:
+
+- dedicated family result contract: `2 passed, 1 xfailed in 0.60s`
+- all three indexed owners, architecture, pass-efficiency, retained tencoder
+  and pad-layout boundaries: `446 passed, 1 xfailed in 18.63s`
+- 109 branch-changed test files: `1674 passed, 1 xfailed in 32.70s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented group of direct
+assignments. Retain only the existing dictionaries. Do not change matching or
+indexed application, GraphIndex or LayoutState handling, positive-only cleanup,
+schemas, wrapper forwarding, direct arguments, adjacency, dependencies, public
+API, or TensorFlow behavior. Keep all targets unconsumed, validate
+sequentially, commit, and push only; do not create, reopen, or update a pull
+request.

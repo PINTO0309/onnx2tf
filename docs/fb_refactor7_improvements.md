@@ -2026,3 +2026,13 @@ pruning, wrapper forwarding, and adjacent InstanceNorm and BatchMatMul owners
 remain unchanged. The focused gate passes `314 passed in 17.65s`, the 108-file
 branch-changed suite passes `1672 passed in 32.65s`, and targeted static
 validation passes.
+
+The final three raw late-tail owners are now characterized as fixed one-key
+results for Conv1D BatchMatMul, decoder deconvolution input, and terminal mean
+forms. Their GraphIndex/LayoutState wrappers each have one direct call, while
+pruning and layout synchronization remain positive-rewrite-only. Strict
+retention selects three unconsumed targets between retained tencoder and pad-
+layout results. After correcting one test-only AST attribute-call assumption,
+the focused gate passes `446 passed, 1 xfailed in 18.63s`, the 109-file branch-
+changed suite passes `1674 passed, 1 xfailed in 32.70s`, and targeted static
+validation passes.
