@@ -1175,6 +1175,17 @@ singleton/terminal-SiNet boundaries are frozen before implementation.
 The focused characterization gate passes
 `370 passed, 1 xfailed in 17.98s`; the sole strict xfail is the selected
 two-layer propagation and production assignment.
+
+Both runner layers now return the shared executor's unchanged ordered tuple,
+and the sole production call retains it as
+`_terminal_clamp_unary_relu_results`. It remains observation-only. The focused
+implementation gate passes `371 passed in 19.72s`, and the branch-changed broad
+suite passes `1541 passed in 27.26s`; targeted static validation also passes.
+
+The next unit should audit both discarded calls to
+`_run_terminal_slice_concat_layout_recovery_sequence()`, including every child
+schema and cleanup behavior, shared state scope, call multiplicity, and the two
+distinct boundary pairs before either runner layer changes.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

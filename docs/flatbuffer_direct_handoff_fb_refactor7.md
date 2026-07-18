@@ -8667,6 +8667,42 @@ update the structural expectations made stale by expression-to-return or
 expression-to-assignment changes. Validate sequentially, commit, and push only;
 do not create, reopen, or update a pull request.
 
+## Terminal clamp/unary/ReLU result propagation implementation checkpoint
+
+The orchestration runner and lowerer delegate now return the shared executor's
+unchanged ordered three-dictionary tuple. The sole production call retains it
+as `_terminal_clamp_unary_relu_results`. The tuple remains unconsumed and is not
+a mutation guard because clamp and unary callbacks can perform cleanup not
+fully represented by a zero rewrite counter.
+
+These are return- and assignment-only changes. Child selection, stable IDs,
+order, the single shared `ModelIRPassStateScope`, ModelIR/layout/diagnostics
+routing, transactional behavior, invocation count, guarded singleton/reshape
+predecessor, terminal-SiNet successor, dependencies, public behavior, and the
+TensorFlow-free direct path remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- child schemas/cleanup, ordered propagation, shared scope, adjacent
+  singleton/SiNet/HardSwish-SE orchestration, architecture, and pass-efficiency
+  coverage: `371 passed in 19.72s`
+- branch-changed broad suite: `1541 passed in 27.26s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The first focused run exposed four stale AST expectations, including two edits
+that had matched repeated test fragments; those edits were corrected with
+function-specific contexts before the clean focused and broad results above.
+No production failure was observed. These checks do not claim a new
+model-corpus run.
+
+At resume, audit the two production calls to
+`_run_terminal_slice_concat_layout_recovery_sequence()`. Its orchestration
+currently returns `None` at both runner layers. Freeze every child result and
+cleanup semantic, both distinct boundary pairs, shared state scope, and exact
+two-call multiplicity before choosing result targets. Commit and push only; do
+not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

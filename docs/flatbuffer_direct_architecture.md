@@ -11769,3 +11769,14 @@ a rewrite. It requires both runner layers to propagate
 `_terminal_clamp_unary_relu_results`, and keeps the tuple unconsumed between
 the guarded singleton/reshape and terminal-SiNet boundaries. Raw counters must
 not become a mutation guard.
+
+The orchestration runner and lowerer delegate now return the shared executor's
+unchanged ordered three-dictionary tuple, and the sole production call retains
+it as `_terminal_clamp_unary_relu_results`. The tuple remains unconsumed because
+its child counters do not universally capture cleanup-only tensor pruning.
+
+These are return- and assignment-only changes. The three child callbacks,
+stable IDs, exact order, one shared state scope, ModelIR/layout/diagnostics
+routing, transactional behavior, guarded singleton/reshape predecessor, and
+terminal-SiNet successor are unchanged. No result summary, mutation guard,
+dependency, public API change, or TensorFlow import path was added.

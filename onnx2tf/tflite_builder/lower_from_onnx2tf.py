@@ -4124,8 +4124,8 @@ def lower_onnx_to_ir(
             terminal_singleton_maxpool_reshape_context
         )
 
-    def _run_terminal_clamp_unary_relu_pass_cluster() -> None:
-        run_terminal_clamp_unary_relu(
+    def _run_terminal_clamp_unary_relu_pass_cluster() -> Tuple[Dict[str, int], ...]:
+        return run_terminal_clamp_unary_relu(
             terminal_clamp_unary_relu_context
         )
 
@@ -4810,7 +4810,9 @@ def lower_onnx_to_ir(
                 include_multi_branch_gate=True,
             )
         )
-    _run_terminal_clamp_unary_relu_pass_cluster()
+    _terminal_clamp_unary_relu_results = (
+        _run_terminal_clamp_unary_relu_pass_cluster()
+    )
     _terminal_sinet_layout_recovery_results = (
         _run_sinet_terminal_layout_recovery_sequence()
     )

@@ -148,12 +148,14 @@ def test_terminal_clamp_unary_relu_is_a_straight_line_scoped_cluster() -> None:
 
     called_names = {
         node.func.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     loaded_data_names = {
         node.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
@@ -260,7 +262,8 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and _single_target(statement) == RESULT_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == TERMINAL_CLAMP_UNARY_RELU
@@ -299,7 +302,7 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
 def test_terminal_clamp_unary_relu_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -353,10 +356,6 @@ def test_terminal_clamp_unary_relu_runner_preserves_instrumented_order(
     assert events == list(TERMINAL_CLAMP_UNARY_RELU_PASS_IDS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal clamp/unary/ReLU results are discarded by both runner layers",
-)
 def test_terminal_clamp_unary_relu_propagates_and_retains_ordered_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

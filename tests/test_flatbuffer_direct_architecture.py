@@ -2178,6 +2178,7 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         "_run_sinet_preadd_resize_recovery_sequence",
     ]
     assert assigned_boundary_targets == [
+        "_terminal_clamp_unary_relu_results",
         "_terminal_sinet_hardswish_se_stats",
         "_post_terminal_indexed_shape_convergence_stats",
         "_very_late_sinet_preadd_resize_results",
@@ -5523,13 +5524,11 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         "run_transpose_unary_passthrough_cleanup",
         "run_maximum_zero_relu_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    helper_calls = [helper.body[0].value]
+    assert isinstance(helper_calls[0], ast.Call)
+    assert isinstance(helper_calls[0].func, ast.Name)
     assert tuple(expected_order) == TERMINAL_CLAMP_UNARY_RELU_PASS_IDS
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_clamp_unary_relu"
@@ -5542,7 +5541,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_clamp_unary_relu_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
