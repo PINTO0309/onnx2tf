@@ -6205,3 +6205,39 @@ At resume, audit the first raw live-LayoutState
 preserve its captured terminal internal-channel-slice/recovery boundaries
 before adding characterization. Commit and push only; do not create, reopen,
 or update a pull request.
+
+## Terminal channel-slice MulAdd-bridge result characterization checkpoint
+
+The first of the two
+`_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains()` production
+calls returns the same stable one-counter dictionary as the captured later
+occurrence. It receives the live `session.layout_state` and currently discards
+its result.
+
+A strict expected-failure orchestration contract requires only the first
+result to be retained as `_terminal_channel_slice_muladd_bridge_stats`. It keeps
+the later `_final_channel_slice_muladd_bridge_stats` target fixed and preserves
+the captured `_terminal_internal_channel_slice_stats` and
+`_final_internal_channel_slice_stats` predecessors plus both zero-argument
+terminal recovery successors.
+
+At implementation, replace only the first expression with an assignment. Do
+not change the later occurrence or target, wrapper or pass implementation,
+one-key schema, rewrite guards, graph mutation, tensor pruning, GraphIndex/
+LayoutState behavior, callback arguments, pass order, recovery calls, adjacent
+targets, dependencies, diagnostics, or TensorFlow behavior. The retained value
+must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused MulAdd-bridge owner, both terminal recovery boundaries, schema,
+  terminal orchestration, architecture, and pass-efficiency gate:
+  `346 passed, 1 xfailed in 19.05s`
+- branch-changed broad suite plus boundary/channel-slice, pad-Mul, both terminal
+  recovery sequences, architecture, and pass-efficiency coverage:
+  `1391 passed, 1 xfailed in 24.18s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+channel-slice MulAdd-bridge result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.
