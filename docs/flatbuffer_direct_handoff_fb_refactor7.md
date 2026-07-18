@@ -4811,3 +4811,36 @@ Ruff, Python bytecode compilation, and `git diff --check` passed. At resume,
 audit the third direct
 `_optimize_fold_conv_mul_add_affine_chains()` occurrence between cost-volume
 cleanup and `late_concat_layout_state_scope` before retaining its result.
+
+## Late cost-volume Conv-affine result characterization checkpoint
+
+The third and final direct Conv MUL/ADD affine-fold occurrence uses the same
+stable four-counter owner, `enable_conv_add_only_fold=True`, and live
+`session.layout_state` contract as the two captured terminal successors. Its
+result is currently discarded. It is the raw boundary after the shared
+`late_ndhwc_cost_volume_state_scope` pair and before construction of
+`late_concat_layout_state_scope`.
+
+A strict expected-failure orchestration contract requires the result under
+`_late_cost_volume_conv_affine_stats`. It fixes the two adjacent state-scope
+assignments, the NDHWC-gate and cost-volume runner predecessors, and the exact
+owner arguments. The two earlier captured affine occurrences remain unchanged.
+
+At implementation, replace only this final expression with an assignment. Do
+not change the owner/schema, either state scope, callback arguments, pass order,
+indexed/fallback mutation and pruning, layout synchronization, diagnostics,
+add a guard, reconciliation, scan, sort, metadata write, result consumer,
+dependency, or TensorFlow behavior. Validate the Conv-affine owner, both scope
+clusters, pass efficiency, terminal orchestration, architecture, and broad
+related gates sequentially, then commit and push only; do not create or update
+a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused Conv-affine, NDHWC/cost-volume, pass-efficiency, terminal-
+  orchestration, and architecture gate: `372 passed, 1 xfailed in 18.44s`
+- expanded broad related gate: `1556 passed, 1 xfailed in 31.03s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented late
+cost-volume result-retention contract above.

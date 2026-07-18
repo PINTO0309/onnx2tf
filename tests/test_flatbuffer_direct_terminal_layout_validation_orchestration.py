@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1495,6 +1497,64 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
         "_optimize_transpose_pre_argmax_nhwc_terminal_chains"
     )
     assert isinstance(body[affine_indices[2]], ast.Expr)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="late cost-volume Conv-affine result is discarded",
+)
+def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
+    body = _lowerer_body()
+    affine_name = "_optimize_fold_conv_mul_add_affine_chains"
+    affine_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == affine_name
+    ]
+    assert len(affine_indices) == 3
+    late_index = affine_indices[2]
+
+    late_affine = body[late_index]
+    assert isinstance(late_affine, ast.Assign)
+    assert len(late_affine.targets) == 1
+    assert isinstance(late_affine.targets[0], ast.Name)
+    assert late_affine.targets[0].id == "_late_cost_volume_conv_affine_stats"
+    late_call = late_affine.value
+    assert isinstance(late_call, ast.Call)
+    assert isinstance(late_call.func, ast.Name)
+    assert late_call.func.id == affine_name
+    assert [ast.unparse(argument) for argument in late_call.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late_call.keywords
+    } == {
+        "enable_conv_add_only_fold": "True",
+        "layout_state": "session.layout_state",
+    }
+
+    preceding_scope = body[late_index - 3]
+    assert isinstance(preceding_scope, ast.Assign)
+    assert isinstance(preceding_scope.targets[0], ast.Name)
+    assert preceding_scope.targets[0].id == "late_ndhwc_cost_volume_state_scope"
+    assert ast.unparse(preceding_scope.value) == (
+        "ModelIRPassStateScope(model_ir, layout_state=session.layout_state)"
+    )
+    assert _call_name(_statement_call(body[late_index - 2])) == (
+        "run_ndhwc_gate_layout_cleanup"
+    )
+    assert _call_name(_statement_call(body[late_index - 1])) == (
+        "run_cost_volume_scatter_layout_cleanup"
+    )
+
+    following_scope = body[late_index + 1]
+    assert isinstance(following_scope, ast.Assign)
+    assert isinstance(following_scope.targets[0], ast.Name)
+    assert following_scope.targets[0].id == "late_concat_layout_state_scope"
+    assert ast.unparse(following_scope.value) == (
+        "ModelIRPassStateScope(model_ir, layout_state=session.layout_state)"
+    )
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

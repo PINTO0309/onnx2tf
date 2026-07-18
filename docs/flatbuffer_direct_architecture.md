@@ -10812,6 +10812,12 @@ retain their raw dictionaries under core-cleanup and terminal-cleanup targets.
 Their phase-specific Q/DQ predecessors and distinct successors are fixed, while
 the third affine occurrence remains unchanged for a separate audit.
 
+The remaining affine occurrence uses the same four-counter owner and exact
+Conv-ADD/layout-state contract. It is the raw boundary immediately after the
+shared NDHWC-gate/cost-volume state scope and immediately before construction
+of the late Concat layout-state scope. Strict characterization fixes those
+boundaries and requires its result under a late cost-volume-specific target.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
