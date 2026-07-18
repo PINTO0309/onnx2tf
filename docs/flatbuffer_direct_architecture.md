@@ -10883,6 +10883,13 @@ captured Gather-axis0 dictionary and the live-LayoutState window-partition
 owner. The retained value has no consumer, and the recovery-runner path remains
 unchanged.
 
+The following window-partition Reshape/Transpose-to-SpaceToDepth indexed owner
+returns one rewrite counter and receives the live Session LayoutState. It is
+selected by the recovery runner and has one additional direct late production
+call whose result is currently discarded. Strict characterization fixes a late
+target between the captured attention-preprojection dictionary and the window-
+reverse owner without changing either execution path.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
