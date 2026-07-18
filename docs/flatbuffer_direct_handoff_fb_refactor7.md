@@ -5472,3 +5472,39 @@ At resume, audit the immediately following
 owner schema, live LayoutState contract, production occurrences, and window-
 partition/final-convergence boundaries before adding characterization. Commit
 and push only; do not create, reopen, or update a pull request.
+
+## Late window-reverse result characterization checkpoint
+
+The window-reverse Reshape/Transpose-to-DepthToSpace indexed owner returns the
+stable one-counter dictionary
+`optimized_window_reverse_reshape_transpose_to_depth_to_space_chains`. It
+receives the live Session LayoutState, is selected once by the existing
+attention-recovery runner, and has one additional direct late production call.
+Only that direct call currently discards its result.
+
+A strict expected-failure orchestration contract requires
+`_late_window_reverse_stats` for the direct call. It fixes the captured window-
+partition predecessor, exact ModelIR/LayoutState callback, and following
+indexed final shape/activation convergence call with the same live Session
+LayoutState.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the owner, one-key schema, recovery-runner selection or captured
+results, GraphIndex/layout synchronization, pass order, callback arguments,
+neighbor targets, guards, dependencies, or TensorFlow behavior. Validate the
+window owners, partition/final-convergence boundaries, layout recovery,
+terminal orchestration, architecture, and broad related gates sequentially,
+then commit and push only; do not create, reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused window owners, partition/final-convergence boundaries, layout
+  recovery, terminal-orchestration, and architecture gate:
+  `410 passed, 1 xfailed in 19.38s`
+- branch-changed broad related suite plus cleanup, indexed QKV/Gather-axis0,
+  preprojection, both window owners, final convergence, layout recovery, and
+  pass-efficiency coverage: `1682 passed, 1 xfailed in 24.62s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented direct
+late-result retention contract above.

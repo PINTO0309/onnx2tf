@@ -10891,6 +10891,13 @@ remains between the captured attention-preprojection dictionary and the window-
 reverse owner. The retained value has no consumer, and the recovery-runner path
 is unchanged.
 
+The adjacent window-reverse Reshape/Transpose-to-DepthToSpace indexed owner
+also returns one rewrite counter, receives the live Session LayoutState, and is
+selected by the recovery runner in addition to one direct late production
+call. The direct result is currently discarded. Strict characterization fixes
+a late target between the captured window-partition dictionary and indexed
+final shape/activation convergence without changing either execution path.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
