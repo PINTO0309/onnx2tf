@@ -4602,3 +4602,31 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet core-cleanup result capture
 contract; there are no unexpected failures.
+
+## Primary core-cleanup consecutive-Mul result implementation checkpoint
+
+The earlier primary core-cleanup call now retains the unchanged transactional
+consecutive-Mul dictionary as `_core_cleanup_consecutive_mul_stats`. Together
+with `_fallback_precision_consecutive_mul_stats` and
+`_final_precision_consecutive_mul_stats`, every production occurrence of this
+owner now retains its raw mutation evidence.
+
+The owner/schema, ModelIR, layout-state and diagnostics handoff, preceding
+pseudo-LeakyReLU/YOLO cleanups, following terminal Transpose/Dequantize
+sanitizer, other occurrence targets, dependencies, and TensorFlow-free behavior
+are unchanged. No guard, reconciliation, scan, sort, metadata write, or result
+consumption is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- graph cleanup, terminal orchestration, architecture, and pass efficiency:
+  `330 passed in 18.00s`
+- expanded broad related gate: `1398 passed in 31.86s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the immediately preceding
+`_optimize_fuse_pseudo_leakyrelu_chains()` and
+`_optimize_yolo_decode_mul_square_anchor_chains()` core-cleanup expressions.
+Characterize their schemas, occurrence counts, and fixed progress/consecutive-
+Mul boundaries before retaining evidence. Commit and push only; do not create
+or update a pull request.

@@ -382,6 +382,15 @@ This checkpoint extends the expanded related gate to `1397 passed in 31.63s`;
 the focused safety-fallback, precision, graph-cleanup, terminal, and
 architecture gate is `319 passed in 18.49s`.
 
+The earlier primary core-cleanup consecutive-Mul call now retains its raw
+dictionary as well, completing result capture for all three production
+occurrences of that transactional owner. Its pseudo-LeakyReLU/YOLO predecessors
+and terminal-sanitizer successor are unchanged.
+
+This checkpoint extends the expanded related gate to `1398 passed in 31.86s`;
+the focused graph-cleanup, terminal, architecture, and pass-efficiency gate is
+`330 passed in 18.00s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -390,7 +399,7 @@ full model-corpus run for this observation and accounting unit.
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
 unit should audit result propagation through
-the earlier core-cleanup consecutive-Mul call, the only remaining discarded
-result among the now-accounted precision trio owners. Any new mutation evidence
-must preserve current pass order, TensorFlow-free boundary, dependency set, and
+the adjacent pseudo-LeakyReLU and YOLO-decode cleanup calls immediately before
+the completed core-cleanup consecutive-Mul owner. Any new mutation evidence must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
 sequential validation policy.

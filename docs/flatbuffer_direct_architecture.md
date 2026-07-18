@@ -10783,9 +10783,10 @@ following unbound-input repair boundary are unchanged.
 The remaining earlier consecutive-Mul cleanup runs in the primary core-cleanup
 phase after pseudo-LeakyReLU and YOLO-decode rewrites and before terminal
 Transpose/Dequantize sanitization. It uses the same layout state, diagnostics,
-and stable one-counter schema as the captured primary-final occurrence, but its
-result is currently discarded. Characterization fixes this direct occurrence
-and both adjacent cleanup boundaries before implementation.
+and stable one-counter schema as the primary-final occurrence. Its result is
+now retained as `_core_cleanup_consecutive_mul_stats`, so all three production
+occurrences of the owner retain mutation evidence. Both adjacent cleanup
+boundaries remain unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

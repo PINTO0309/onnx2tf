@@ -4467,10 +4467,12 @@ def lower_onnx_to_ir(
     _set_post_progress_desc("core cleanup passes")
     _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
     _optimize_yolo_decode_mul_square_anchor_chains(model_ir)
-    run_consecutive_mul_constants_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _core_cleanup_consecutive_mul_stats = (
+        run_consecutive_mul_constants_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _sanitize_terminal_transpose_before_dequantize(model_ir)
     run_terminal_quantize_dequantize_cleanup(

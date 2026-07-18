@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1247,10 +1245,6 @@ def test_primary_path_retains_final_precision_cleanup_results() -> None:
     assert all_calls.count(restore_name) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="earlier core-cleanup consecutive-Mul result is discarded",
-)
 def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
     body = _lowerer_body()
     owner_name = "run_consecutive_mul_constants_cleanup"
