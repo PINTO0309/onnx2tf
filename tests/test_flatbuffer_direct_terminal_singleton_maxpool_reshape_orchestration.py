@@ -205,7 +205,12 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
     assert isinstance(following.test, ast.Name)
     assert following.test.id == "optimize_layout_transpose_chains"
     following_call = following.body[0]
-    assert isinstance(following_call, ast.Expr)
+    assert isinstance(following_call, ast.Assign)
+    assert len(following_call.targets) == 1
+    assert isinstance(following_call.targets[0], ast.Name)
+    assert following_call.targets[0].id == (
+        "_terminal_convpool_output_passthrough_stats"
+    )
     assert isinstance(following_call.value, ast.Call)
     assert isinstance(following_call.value.func, ast.Name)
     assert (

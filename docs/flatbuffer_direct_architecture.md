@@ -11683,3 +11683,14 @@ schema, unconditional prune, exact one-call count, model-only argument, option
 guard, predecessor and successor, no-layout fallback order, and absence of
 consumers. The dictionary must remain unconsumed; retention must add no guard,
 scan, dependency, or TensorFlow import path.
+
+The guarded call now retains that unchanged one-counter dictionary as
+`_terminal_convpool_output_passthrough_stats`. It remains unconsumed because a
+zero counter does not exclude cleanup-only pruning.
+
+This is an assignment-only change. The wrapper, owner, one-key schema,
+unconditional unused-tensor pruning, model-only argument, layout option guard,
+terminal Singleton/MaxPool predecessor, no-layout safe-reduction/Mul-Add
+fallback, HardSigmoid successor, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged. Two stale boundary tests now require the exact
+assigned target instead of a raw expression.

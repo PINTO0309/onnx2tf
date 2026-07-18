@@ -8470,6 +8470,39 @@ result-retention contract. Implement only that assignment, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Guarded Conv/Pool output result retention implementation checkpoint
+
+The guarded call now retains
+`_terminal_convpool_output_passthrough_stats`. It preserves the owner's
+unchanged one-counter dictionary and remains unconsumed because a zero counter
+does not exclude cleanup-only pruning.
+
+This is an assignment-only change. No consumer or guard was added. The wrapper,
+owner, one-key schema, unconditional unused-tensor pruning, model-only
+argument, layout option guard, terminal Singleton/MaxPool predecessor,
+no-layout safe-reduction/Mul-Add fallback, HardSigmoid successor, dependencies,
+diagnostics, and TensorFlow behavior remain unchanged. Two stale boundary
+tests now require the exact assigned target instead of a raw expression.
+
+Implementation validation completed sequentially under `uv`:
+
+- Conv/Pool output wrapper/schema and owner fixtures, unconditional cleanup,
+  terminal Singleton/MaxPool and retained shape/fanout boundaries, no-layout
+  fallback, quantized HardSigmoid successor, architecture, and pass-efficiency
+  coverage: `398 passed in 20.60s`
+- branch-changed broad suite plus the same guarded Conv/Pool coverage:
+  `1656 passed in 28.18s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the raw
+`_optimize_transpose_dequant_hardsigmoid_quantize_bridges()` result and every
+other production form of that owner. Preserve the guarded Conv/Pool/no-layout
+branch, following late dequant/unary/fanout cluster, pass order, and
+observation-only evidence rules. Commit and push only; do not create, reopen,
+or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

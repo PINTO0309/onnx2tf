@@ -1117,16 +1117,25 @@ the branch-changed broad suite passes `1556 passed in 27.91s`. Positive-only
 pruning, terminal and late-layout boundaries, QKV policy, dependencies, and
 TensorFlow behavior remain unchanged.
 
+The guarded Conv/Pool output-transpose result is now retained as
+`_terminal_convpool_output_passthrough_stats`. Its owner prunes unused tensors
+unconditionally, so the one-counter dictionary remains observation-only and
+has no consumer.
+
+The focused owner/branch/boundary gate passes `398 passed in 20.60s`, and the
+branch-changed broad suite passes `1656 passed in 28.18s`. The terminal layout
+guard, no-layout safe-reduction fallback, HardSigmoid successor, dependencies,
+and TensorFlow behavior remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the guarded
-`_optimize_convpool_output_transpose_nhwc_passthrough_chains()` result and every
-other production form of that owner. The retained terminal shape-extract and
-fanout results, terminal Singleton/MaxPool sequence, no-layout fallback branch,
-and cleanup evidence semantics must remain fixed. All retained SiNet callback
-results, Singleton/Reshape policies, three QKV result forms, and the late
-summary must also remain fixed.
+unit should audit the raw
+`_optimize_transpose_dequant_hardsigmoid_quantize_bridges()` result and every
+other production form of that owner. The guarded Conv/Pool/no-layout branch,
+following late dequant/unary/fanout cluster, and cleanup evidence semantics must
+remain fixed. All retained SiNet callback results, Singleton/Reshape policies,
+three QKV result forms, and the late summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

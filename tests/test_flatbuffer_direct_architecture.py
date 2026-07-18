@@ -5481,7 +5481,12 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     assert isinstance(next_boundary.test, ast.Name)
     assert next_boundary.test.id == "optimize_layout_transpose_chains"
     next_call = next_boundary.body[0]
-    assert isinstance(next_call, ast.Expr)
+    assert isinstance(next_call, ast.Assign)
+    assert len(next_call.targets) == 1
+    assert isinstance(next_call.targets[0], ast.Name)
+    assert next_call.targets[0].id == (
+        "_terminal_convpool_output_passthrough_stats"
+    )
     assert isinstance(next_call.value, ast.Call)
     assert isinstance(next_call.value.func, ast.Name)
     assert (

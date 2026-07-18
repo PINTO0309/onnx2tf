@@ -5095,7 +5095,11 @@ def lower_onnx_to_ir(
         )
     _run_terminal_singleton_maxpool_reshape_pass_pair()
     if optimize_layout_transpose_chains:
-        _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
+        _terminal_convpool_output_passthrough_stats = (
+            _optimize_convpool_output_transpose_nhwc_passthrough_chains(
+                model_ir
+            )
+        )
     elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
         _apply_safe_transpose_reduction_lite(model_ir)
         # Keep strict, const-only NHWC<->NCHW affine bridge folding enabled
