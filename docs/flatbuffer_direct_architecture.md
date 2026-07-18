@@ -11148,10 +11148,8 @@ positive rewrite, so that counter is complete mutation evidence for the owner.
 
 Two production occurrences exist. Indexed binary-layout convergence consumes
 the first result with `residual_graph_index`; the terminal direct call after
-diagnostics-aware normalization/pad cleanup currently discards its result. A
-strict characterization contract selects only that direct call for the future
-`_terminal_instancenorm_residual_add_stats` target. It fixes the live
+diagnostics-aware normalization/pad cleanup now retains its unchanged result as
+`_terminal_instancenorm_residual_add_stats`. The contract fixes the live
 LayoutState argument, retained terminal residual/Mul/Concat successor, and the
-single graph-indexed nested occurrence. Retaining the direct result must remain
-an assignment-only orchestration change with no consumer or additional graph
-work.
+single graph-indexed nested occurrence. This is an assignment-only
+orchestration change with no consumer or additional graph work.

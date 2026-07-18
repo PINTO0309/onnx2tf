@@ -7604,3 +7604,34 @@ The sole strict expected failure is the intentionally unimplemented terminal
 result-retention contract above. Implement only that assignment, rerun focused
 and branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
+
+## Terminal InstanceNorm residual-add result retention implementation checkpoint
+
+The terminal direct occurrence now retains its unchanged one-counter
+dictionary as `_terminal_instancenorm_residual_add_stats`. The nested
+convergence occurrence continues to consume the same counter with
+`residual_graph_index`.
+
+This is an assignment-only orchestration change. It preserves the wrapper and
+indexed owner, one-key schema, positive-only pruning, GraphIndex/LayoutState
+behavior, diagnostics-aware normalization/pad predecessor, retained terminal
+residual/Mul/Concat successor, pass order, dependencies, diagnostics, and
+TensorFlow behavior. The new result has no consumer and triggers no graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed residual-add owner, terminal/direct/nested occurrence, adjacent
+  terminal InstanceNorm results, architecture, and pass-efficiency coverage:
+  `447 passed in 20.01s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1515 passed in 25.58s`
+
+These are unit, contract, and orchestration checks; this result-retention change
+does not claim a new model-corpus run.
+
+At resume, audit the result schema and every production occurrence of the
+diagnostics-aware `run_normalization_pad_layout_cleanup()` immediately before
+`_terminal_instancenorm_residual_add_stats`. Determine whether its aggregate
+fully represents all graph mutation, including cleanup-only paths, before
+retaining or consuming it. Commit and push only; do not create, reopen, or
+update a pull request.

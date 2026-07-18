@@ -880,12 +880,24 @@ Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
 
+The terminal direct InstanceNorm residual-add-to-single-post-adapter result is
+now retained as `_terminal_instancenorm_residual_add_stats`. Its only other
+production occurrence remains the nested convergence call that consumes the
+same one-counter dictionary with the shared GraphIndex. The diagnostics-aware
+normalization/pad predecessor and retained terminal residual/Mul/Concat
+successor remain adjacent.
+
+This assignment-only change passes the focused owner/orchestration gate with
+`447 passed in 20.01s` and the branch-changed broad related suite with
+`1515 passed in 25.58s`. It adds no graph traversal, result consumer,
+dependency, or TensorFlow import path.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit every production occurrence and result schema of
-`_optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains()`.
-Isolate its terminal raw call immediately before the retained residual/Mul/
-Concat target without conflating any nested convergence use. Any change must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit every production occurrence and the complete result schema of
+the diagnostics-aware `run_normalization_pad_layout_cleanup()` immediately
+before `_terminal_instancenorm_residual_add_stats`. Cleanup-only mutation must
+be understood before its aggregate is retained or used as guard evidence. Any
+change must preserve current pass order, TensorFlow-free boundary, dependency
+set, and sequential validation policy.
