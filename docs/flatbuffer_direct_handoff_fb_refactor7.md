@@ -8104,6 +8104,41 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Split/mixed pre-Concat result retention implementation checkpoint
+
+The layout-option call now retains
+`_layout_opt_split_mixed_pre_concat_stats`, and the terminal call retains
+`_terminal_split_mixed_pre_concat_stats`. Both preserve the indexed owner's
+unchanged complete one-counter mutation dictionary and remain unconsumed in
+this unit.
+
+These are assignment-only changes. No consumer or guard was added. The lowerer
+wrapper, owner, one-key schema, successful-plan counting, positive-only
+unused-tensor pruning, graph-index behavior, live Session LayoutState,
+layout-option guard, StridedSlice and retained ReLU/Split/Conv/Concat
+predecessors, shared Concat input-adapter successor, independent orchestration
+selection, dependencies, diagnostics, and TensorFlow behavior remain
+unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- Split/mixed pre-Concat schema and indexed-owner fixtures, layout-recovery
+  orchestration, both direct boundaries, adjacent StridedSlice and Concat
+  input-adapter owners, architecture, and pass-efficiency coverage:
+  `408 passed in 18.71s`
+- branch-changed broad suite plus the same Split/mixed pre-Concat coverage:
+  `1663 passed in 28.60s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit both direct
+`_optimize_transpose_input_chains_pre_concat_to_single_post_adapter()` results
+and its independent layout-recovery orchestration selection. Preserve both
+newly retained Split/mixed pre-Concat dictionaries, option policy, live
+LayoutState, following layout owners, and observation-only evidence rules.
+Commit and push only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

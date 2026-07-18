@@ -11529,3 +11529,15 @@ fixes the wrapper, one-key schema, positive-only prune, exact two-call count,
 arguments, option guard, four boundaries, independent orchestration selection,
 and absence of consumers. Both dictionaries must remain unconsumed in this
 unit; retention must add no guard, scan, dependency, or TensorFlow import path.
+
+The two direct calls now retain those unchanged one-counter dictionaries as
+`_layout_opt_split_mixed_pre_concat_stats` and
+`_terminal_split_mixed_pre_concat_stats`. Both remain unconsumed even though
+the counter is complete owner mutation evidence.
+
+These are assignment-only changes. The wrapper, indexed owner, successful-plan
+counting, positive-only unused-tensor pruning, live Session LayoutState,
+layout-option guard, StridedSlice and retained ReLU/Split/Conv/Concat
+predecessors, shared Concat input-adapter successor, independent orchestration
+selection, dependencies, diagnostics, and TensorFlow behavior remain
+unchanged.

@@ -1062,16 +1062,27 @@ rewrite fixture passes, and the branch-changed broad suite passes
 LayoutState, both predecessors and successors, dependencies, and TensorFlow
 behavior remain unchanged.
 
+Both direct Split/mixed pre-Concat adapter results are now retained as
+`_layout_opt_split_mixed_pre_concat_stats` and
+`_terminal_split_mixed_pre_concat_stats`. Their one-counter dictionaries are
+complete owner mutation evidence but remain unconsumed in this unit.
+
+The focused indexed-owner/orchestration/boundary gate passes
+`408 passed in 18.71s`, and the branch-changed broad suite passes
+`1663 passed in 28.60s`. The option guard, public-owner orchestration selection,
+positive-only pruning, live LayoutState, dependencies, and TensorFlow behavior
+remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the terminal
-`_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains()`
-result and every other production form of that owner. Its live LayoutState
-wiring, the newly retained ReLU/Split/Conv/Concat predecessor, and adjacent
-terminal layout owners must remain fixed. All retained SiNet callback results,
-Singleton/Reshape policies, three QKV result forms, and the late summary must
-also remain fixed.
+unit should audit both direct
+`_optimize_transpose_input_chains_pre_concat_to_single_post_adapter()` results
+and its independent layout-recovery orchestration selection. Its live
+LayoutState wiring, the newly retained Split/mixed pre-Concat predecessors,
+option guard, and adjacent layout owners must remain fixed. All retained SiNet
+callback results, Singleton/Reshape policies, three QKV result forms, and the
+late summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
