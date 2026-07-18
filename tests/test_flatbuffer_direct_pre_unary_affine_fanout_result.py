@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.pre_unary_affine_fanout_layout import (
     optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains,
@@ -115,10 +113,6 @@ def test_pre_unary_affine_fanout_schema_and_selections_are_explicit() -> None:
         assert nested[0].keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the direct pre-unary affine fan-out result is discarded",
-)
 def test_direct_pre_unary_affine_fanout_result_is_retained_observation_only() -> (
     None
 ):

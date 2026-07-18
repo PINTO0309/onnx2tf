@@ -11202,3 +11202,31 @@ constant handling, pruning, direct argument, nested selections, surrounding
 calls, dependency, public API, or TensorFlow behavior. Keep the result
 unconsumed, validate sequentially, commit, and push only; do not create,
 reopen, or update a pull request.
+
+## Pre-unary affine fan-out direct result retention implementation checkpoint
+
+The sole raw lowerer expression now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_pre_unary_affine_fanout_stats`. The target remains
+unconsumed and observation-only. The attention/quantized suffix and pre-add
+attention recovery still select the public callback with their model-only
+contracts.
+
+No result schema, producer/consumer-map construction, constant handling,
+pruning, direct argument, nested selection, surrounding production call,
+dependency, public API, or TensorFlow boundary changed. A zero counter remains
+insufficient to infer absence of mutation.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.57s`
+- owner behavior, both attention orchestration routes, adjacent affine owners,
+  architecture, and pass-efficiency coverage: `324 passed in 18.41s`
+- branch-changed broad suite: `1629 passed in 30.91s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, inventory all
+direct and nested `_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains()`
+forms before changing the adjacent mean-affine boundary. Commit and push only;
+do not create, reopen, or update a pull request.

@@ -4411,7 +4411,11 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
+        _layout_pass_set_1_pre_unary_affine_fanout_stats = (
+            _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(
+                model_ir
+            )
+        )
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
         _layout_pass_set_1_mean_attention_results = (
             _run_mean_attention_layout_pass_cluster(include_layernorm=True)

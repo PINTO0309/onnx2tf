@@ -12231,6 +12231,13 @@ all direct arguments and nested selections, InstanceNorm/final-suffix,
 dynamic-Reshape/prune, and normalization-loop/prune boundaries, and an
 unconsumed observation-only policy.
 
+The direct call now retains its unchanged dictionary as
+`_layout_pass_set_1_pre_unary_affine_fanout_stats`. The target remains
+unconsumed and observation-only. Both attention selections remain model-only,
+and unconditional pruning is unchanged. No producer/consumer-map construction,
+constant handling, call order, dependency, public API, or TensorFlow boundary
+changed.
+
 The three direct calls now retain the same two-key results in those selected
 targets. Their arguments, ordering, nested policy selections, live context,
 normalization convergence logic, and surrounding calls remain unchanged. The

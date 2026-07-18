@@ -1733,3 +1733,10 @@ consumer are frozen. Unconditional final pruning means a zero counter is not
 complete mutation evidence. The focused gate passes
 `323 passed, 1 xfailed in 18.08s`; the branch-changed broad gate passes
 `1628 passed, 1 xfailed in 30.84s`.
+
+The direct pre-unary affine fan-out call now retains its unchanged one-key
+dictionary as `_layout_pass_set_1_pre_unary_affine_fanout_stats`. It remains
+unconsumed and observation-only; both model-only attention selections and the
+owner's pruning behavior are unchanged. The focused gate passes
+`324 passed in 18.41s`, the branch-changed broad gate passes
+`1629 passed in 30.91s`, and targeted static validation passes.
