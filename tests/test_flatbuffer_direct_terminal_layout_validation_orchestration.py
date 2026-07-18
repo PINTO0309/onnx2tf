@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -3115,6 +3117,73 @@ def test_primary_path_retains_terminal_instancenorm_post_bias_result() -> None:
     assert absolute_final.targets[0].id == (
         "_absolute_final_instancenorm_post_bias_stats"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="terminal normalization/pad result is not retained",
+)
+def test_primary_path_retains_terminal_normalization_pad_result() -> None:
+    body = _lowerer_body()
+    callback_name = "run_normalization_pad_layout_cleanup"
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 1
+    terminal_index = indices[0]
+
+    all_calls = [
+        node
+        for root in body
+        for node in ast.walk(root)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == callback_name
+    ]
+    assert len(all_calls) == 2
+    loop_results = [
+        node
+        for root in body
+        for node in ast.walk(root)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "normalization_pad_stats"
+        and _call_name(_statement_call(node)) == callback_name
+    ]
+    assert len(loop_results) == 1
+
+    statement = body[terminal_index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_terminal_normalization_pad_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+    predecessor = body[terminal_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_terminal_instancenorm_post_bias_stats"
+
+    successor = body[terminal_index + 1]
+    assert isinstance(successor, ast.Assign)
+    assert len(successor.targets) == 1
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == "_terminal_instancenorm_residual_add_stats"
 
 
 def test_primary_path_retains_very_late_instancenorm_post_bias_result() -> None:

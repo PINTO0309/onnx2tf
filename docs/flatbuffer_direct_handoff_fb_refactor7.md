@@ -7635,3 +7635,42 @@ diagnostics-aware `run_normalization_pad_layout_cleanup()` immediately before
 fully represents all graph mutation, including cleanup-only paths, before
 retaining or consuming it. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Terminal normalization/pad result characterization checkpoint
+
+`run_normalization_pad_layout_cleanup()` returns a fixed two-key dictionary for
+the InstanceNorm/Pad and flattened global-norm/Pad child owners. Both children
+unconditionally prune unused tensors after candidate processing but count only
+successful rewrites. The aggregate can therefore be retained for observation,
+but its counters are incomplete evidence for cleanup-only mutation and must not
+be used alone in a guard.
+
+There are two direct lowerer occurrences and two orchestrated callback
+selections. The loop-local direct result remains consumed as
+`normalization_pad_stats`; the terminal direct result after
+`_terminal_instancenorm_post_bias_stats` remains raw. The very-late and
+absolute-final orchestrators continue to select flatten-only invocations with
+shared pass-state scopes.
+
+A strict expected-failure contract selects only the terminal direct result for
+`_terminal_normalization_pad_stats`. It fixes the live Session LayoutState,
+diagnostics sink, captured post-bias predecessor, captured residual-add
+successor, total direct-call count, and loop-local result consumer.
+
+At implementation, replace only the terminal direct expression with an
+assignment. Do not add a guard or consumer, and do not change either child
+owner, the two-key schema, unconditional pruning, loop convergence,
+orchestrated selections, state scopes, adjacent calls, pass order,
+dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- terminal normalization/pad boundary, architecture, pass efficiency, and
+  very-late orchestration coverage: `374 passed, 1 xfailed in 19.77s`
+- concrete InstanceNorm/Pad and flattened global-norm/Pad fixtures:
+  `2 passed, 739 deselected in 0.59s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+result-retention contract. Implement only that observation-only assignment,
+rerun focused and branch-changed broad gates sequentially, then commit and push
+only; do not create, reopen, or update a pull request.

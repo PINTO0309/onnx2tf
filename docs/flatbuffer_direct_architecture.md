@@ -11153,3 +11153,20 @@ diagnostics-aware normalization/pad cleanup now retains its unchanged result as
 LayoutState argument, retained terminal residual/Mul/Concat successor, and the
 single graph-indexed nested occurrence. This is an assignment-only
 orchestration change with no consumer or additional graph work.
+
+The diagnostics-aware normalization/pad aggregate returns the fixed two-key
+schema for decomposed InstanceNorm/Pad and flattened global-norm/Pad rewrites.
+Both child owners prune unused tensors unconditionally after candidate
+processing, while their counters report rewrites only. The aggregate is
+therefore stable observation data but is not complete evidence for cleanup-only
+mutation and must not be used by itself as a guard.
+
+Within `lower_onnx_to_ir`, one loop-local result is consumed by convergence and
+one terminal direct result after `_terminal_instancenorm_post_bias_stats`
+remains raw. Two additional recovery orchestrators select the same callback
+with flatten-only options and shared pass-state scope. A strict contract selects
+only the terminal direct occurrence for
+`_terminal_normalization_pad_stats`, preserving the loop-local consumer,
+orchestrated selections, live LayoutState, diagnostics sink, and following
+captured residual-add result. Retention must remain observation-only and add no
+graph work.
