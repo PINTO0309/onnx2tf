@@ -4832,10 +4832,12 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
         state_scope=late_ndhwc_cost_volume_state_scope,
     )
-    _optimize_fold_conv_mul_add_affine_chains(
-        model_ir,
-        enable_conv_add_only_fold=True,
-        layout_state=session.layout_state,
+    _late_cost_volume_conv_affine_stats = (
+        _optimize_fold_conv_mul_add_affine_chains(
+            model_ir,
+            enable_conv_add_only_fold=True,
+            layout_state=session.layout_state,
+        )
     )
     late_concat_layout_state_scope = ModelIRPassStateScope(
         model_ir,

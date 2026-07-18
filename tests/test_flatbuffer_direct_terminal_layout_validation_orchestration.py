@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1496,13 +1494,12 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
     assert _call_name(_statement_call(body[activation_indices[1] + 1])) == (
         "_optimize_transpose_pre_argmax_nhwc_terminal_chains"
     )
-    assert isinstance(body[affine_indices[2]], ast.Expr)
+    late_affine = body[affine_indices[2]]
+    assert isinstance(late_affine, ast.Assign)
+    assert isinstance(late_affine.targets[0], ast.Name)
+    assert late_affine.targets[0].id == "_late_cost_volume_conv_affine_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late cost-volume Conv-affine result is discarded",
-)
 def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
     body = _lowerer_body()
     affine_name = "_optimize_fold_conv_mul_add_affine_chains"

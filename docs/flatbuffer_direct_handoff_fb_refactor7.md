@@ -4844,3 +4844,29 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented late
 cost-volume result-retention contract above.
+
+## Late cost-volume Conv-affine result implementation checkpoint
+
+The third and final direct Conv MUL/ADD affine-fold result is now retained as
+`_late_cost_volume_conv_affine_stats`. This completes raw result capture for all
+three production occurrences of the stable four-counter owner. Its exact
+options, live layout-state handoff, shared NDHWC/cost-volume predecessor scope,
+and following late-Concat scope construction are unchanged.
+
+No owner/schema, callback argument, pass order, indexed/fallback mutation or
+pruning, layout synchronization, diagnostic, guard, reconciliation, scan, sort,
+metadata write, result consumer, dependency, or TensorFlow behavior changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused Conv-affine, NDHWC/cost-volume, pass-efficiency, terminal-
+  orchestration, and architecture gate: `373 passed in 18.53s`
+- expanded broad related gate: `1557 passed in 32.00s`
+
+At resume, audit the four result schemas and occurrence contracts for
+`run_axis3_const_concat_layout_cleanup()`,
+`run_dequant_concat_quantize_layout_cleanup()`,
+`run_layernorm_statistics_layout_cleanup()`, and
+`run_layout_transpose_cleanup()` inside `late_concat_layout_state_scope` before
+retaining evidence. Commit and push only; do not create or update a pull
+request.

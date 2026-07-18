@@ -7266,7 +7266,7 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     assert assignment.value.func.id == "ModelIRPassStateScope"
 
     def _statement_call(statement: ast.stmt) -> ast.Call:
-        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement, (ast.Assign, ast.Expr))
         assert isinstance(statement.value, ast.Call)
         assert isinstance(statement.value.func, ast.Name)
         return statement.value
@@ -7286,6 +7286,12 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     assert ndhwc_call.func.id == "run_ndhwc_gate_layout_cleanup"
     assert cost_volume_call.func.id == "run_cost_volume_scatter_layout_cleanup"
     assert next_raw_boundary_call.func.id == "_optimize_fold_conv_mul_add_affine_chains"
+    next_raw_boundary = lowerer.body[assignment_index + 3]
+    assert isinstance(next_raw_boundary, ast.Assign)
+    assert isinstance(next_raw_boundary.targets[0], ast.Name)
+    assert next_raw_boundary.targets[0].id == (
+        "_late_cost_volume_conv_affine_stats"
+    )
 
     for call in [ndhwc_call, cost_volume_call]:
         scope_keyword = next(
@@ -7321,13 +7327,19 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     assert assignment.value.func.id == "ModelIRPassStateScope"
 
     def _statement_call(statement: ast.stmt) -> ast.Call:
-        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement, (ast.Assign, ast.Expr))
         assert isinstance(statement.value, ast.Call)
         assert isinstance(statement.value.func, ast.Name)
         return statement.value
 
     previous_raw_boundary = _statement_call(lowerer.body[assignment_index - 1])
     assert previous_raw_boundary.func.id == "_optimize_fold_conv_mul_add_affine_chains"
+    previous_boundary = lowerer.body[assignment_index - 1]
+    assert isinstance(previous_boundary, ast.Assign)
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_late_cost_volume_conv_affine_stats"
+    )
 
     expected_order = [
         "run_axis3_const_concat_layout_cleanup",

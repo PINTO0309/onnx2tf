@@ -419,6 +419,15 @@ This checkpoint extends the expanded related gate to `1508 passed in 30.41s`;
 the focused Conv-affine/activation, terminal convergence/orchestration, and
 architecture gate is `322 passed in 19.48s`.
 
+The third and final direct Conv MUL/ADD affine fold now retains its four-counter
+result after the shared NDHWC-gate/cost-volume scope. The exact owner arguments,
+both surrounding state-scope boundaries, and all three production occurrences
+remain fixed; no result consumer or additional graph work was introduced.
+
+This checkpoint extends the expanded related gate to `1557 passed in 32.00s`;
+the focused Conv-affine, NDHWC/cost-volume, pass-efficiency, terminal-
+orchestration, and architecture gate is `373 passed in 18.53s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -426,7 +435,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit result propagation from the third later Conv-affine fold,
-bounded by cost-volume cleanup and the late Concat layout-state scope. Any new
-mutation evidence must preserve current pass order, TensorFlow-free boundary,
-dependency set, and sequential validation policy.
+unit should audit the four late Concat layout-state-scope runner results
+immediately following this captured affine fold. Any new mutation evidence must
+preserve current pass order, shared scope, TensorFlow-free boundary, dependency
+set, and sequential validation policy.
