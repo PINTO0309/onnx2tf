@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -146,10 +145,6 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="recursive-fallback precision cleanup results are discarded",
-)
 def test_safety_fallback_retains_precision_cleanup_results() -> None:
     body = _safety_fallback_body(_lowerer())
     rewrite_name = "_rewrite_constant_divisors_to_multiplicative_reciprocals"

@@ -5503,12 +5503,18 @@ def lower_onnx_to_ir(
                 )
             )
         _topologically_sort_operators(fallback_ir)
-        _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
-        run_consecutive_mul_constants_cleanup(
-            fallback_ir,
-            diagnostics=session.diagnostics,
+        _fallback_precision_div_rewrite_stats = (
+            _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
         )
-        _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
+        _fallback_precision_consecutive_mul_stats = (
+            run_consecutive_mul_constants_cleanup(
+                fallback_ir,
+                diagnostics=session.diagnostics,
+            )
+        )
+        _fallback_precision_div_restore_stats = (
+            _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
+        )
         _fallback_unbound_repair_stats = (
             _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
                 fallback_ir

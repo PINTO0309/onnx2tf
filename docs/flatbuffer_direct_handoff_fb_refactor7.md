@@ -4542,3 +4542,30 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet fallback three-result capture
 contract; there are no unexpected failures.
+
+## Recursive-fallback precision-cleanup result implementation checkpoint
+
+The safety fallback now retains its unchanged divisor-rewrite,
+consecutive-Mul-fold, and precision-sensitive divisor-restore dictionaries as
+`_fallback_precision_div_rewrite_stats`,
+`_fallback_precision_consecutive_mul_stats`, and
+`_fallback_precision_div_restore_stats`, respectively.
+
+The owners/schemas, `fallback_ir` input, deliberate absence of layout-state
+handoff, consecutive-Mul diagnostics, preceding sort, following unbound-input
+repair, primary final and earlier core-cleanup occurrences, dependencies, and
+TensorFlow-free behavior are unchanged. No guard, reconciliation, scan, sort,
+metadata write, or result consumption is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- safety fallback, precision, graph cleanup, terminal orchestration, and
+  architecture: `319 passed in 18.49s`
+- expanded broad related gate: `1397 passed in 31.63s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit the earlier core-cleanup
+`run_consecutive_mul_constants_cleanup()` expression after the pseudo-LeakyReLU
+and YOLO-decode cleanups. It is the only remaining discarded result among these
+three precision owners. Fix its surrounding core-cleanup order before retaining
+evidence. Commit and push only; do not create or update a pull request.

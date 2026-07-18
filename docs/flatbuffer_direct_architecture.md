@@ -10774,9 +10774,11 @@ fallback calls and the following progress/sort boundary are unchanged.
 The recursive safety fallback runs the same precision trio over `fallback_ir`
 after its placeholder-MatMul reconciliation and topological sort, but without a
 layout-state handoff; only the consecutive-Mul runner receives shared
-diagnostics. These three stable dictionaries are currently discarded. Strict
-characterization fixes that exact callback contract and the following unbound-
-input repair boundary before any implementation change.
+diagnostics. The fallback retains the results as
+`_fallback_precision_div_rewrite_stats`,
+`_fallback_precision_consecutive_mul_stats`, and
+`_fallback_precision_div_restore_stats`. Its exact callback contracts and the
+following unbound-input repair boundary are unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
