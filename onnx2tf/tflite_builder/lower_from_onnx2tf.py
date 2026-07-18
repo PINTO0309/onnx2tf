@@ -5296,7 +5296,7 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
     )
     # Very late transpose/layout rewrites can recreate PAD-adjacent NCHW wrappers.
-    run_pad_layout_cleanup(
+    _very_late_pad_layout_stats = run_pad_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,

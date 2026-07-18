@@ -12630,3 +12630,10 @@ only for the raw result and leaves `fallback_norm_stats` consumed. It freezes
 the three schemas and pass IDs, route indices, state-scope forwarding, direct
 arguments and neighbors, fallback feature flags, sole direct occurrence, and
 an unconsumed observation-only policy for the raw result.
+
+The raw very-late call now retains its unchanged three-key dictionary as
+`_very_late_pad_layout_stats`. The target remains unconsumed and
+observation-only. The consumed norm-only safety fallback, all nested route
+selection and state-scope contracts, transactional owners, underlying pruning,
+schemas, direct arguments, and call order remain unchanged; the counters do
+not steer later cleanup.

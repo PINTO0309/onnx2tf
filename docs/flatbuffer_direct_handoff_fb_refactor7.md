@@ -11942,3 +11942,30 @@ scope ownership, fallback flags or consumption, direct arguments, call order,
 dependencies, public API, or TensorFlow behavior. Keep the target unconsumed,
 validate sequentially, commit, and push only; do not create, reopen, or update
 a pull request.
+
+## Very-late pad-layout direct result implementation checkpoint
+
+The raw `model_ir` call now retains its unchanged three-key dictionary as
+`_very_late_pad_layout_stats`. The target remains unconsumed and
+observation-only. The separate norm-only safety fallback remains consumed as
+`fallback_norm_stats` with `include_pad=False`, `include_unary=False`, and
+`include_norm=True`.
+
+No transactional owner behavior, fixed schema, lower-level unused-tensor
+pruning, gate required/full or terminal-boundary selection, nested state-scope
+ownership, fallback flags or consumption, direct ModelIR/LayoutState/diagnostic
+arguments, retained predecessor/successor, call order, dependency, public API,
+or TensorFlow behavior changed. No intermediate test failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.59s`
+- direct, gate, terminal-boundary, fallback, architecture, pass-efficiency,
+  and focused Pad owner coverage: `395 passed in 19.98s`
+- 103 branch-changed test files: `1657 passed in 32.02s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result boundary before modifying production code. Commit and push only; do
+not create, reopen, or update a pull request.

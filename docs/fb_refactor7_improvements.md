@@ -1933,3 +1933,10 @@ pass IDs, lower-level pruning, route indices and scopes, direct neighbors, and
 the raw result's lack of consumers are frozen. The focused gate passes
 `394 passed, 1 xfailed in 20.62s`, the 103-file branch-changed suite passes
 `1656 passed, 1 xfailed in 30.91s`, and targeted static validation passes.
+
+The raw very-late pad-layout call now retains its unchanged dictionary as
+`_very_late_pad_layout_stats`. It remains unconsumed and observation-only;
+the consumed norm-only fallback, nested route indices and scopes,
+transactional owners, schemas, and lower-level pruning remain unchanged. The
+focused gate passes `395 passed in 19.98s`, the 103-file branch-changed suite
+passes `1657 passed in 32.02s`, and targeted static validation passes.
