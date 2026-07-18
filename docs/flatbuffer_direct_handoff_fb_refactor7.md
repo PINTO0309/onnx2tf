@@ -11164,3 +11164,41 @@ assignment does not claim a new model-corpus run. At resume, re-inventory the
 remaining raw pass expressions and select the next complete owner family before
 changing another boundary. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Pre-unary affine fan-out direct result characterization checkpoint
+
+`optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains()` returns
+the fixed one-key dictionary
+`optimized_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`. The owner
+always prunes unused tensors on exit, so a zero counter is not complete mutation
+evidence.
+
+The lowerer wrapper has one raw model-only call between retained affine
+pre/post statistics and direct mean-affine cleanup. The attention/quantized
+suffix and pre-add attention recovery independently select the public callback
+with the same model-only contract.
+
+A passing contract freezes the one-key schema, exact direct argument, sole
+direct occurrence, both declarative indices and empty keyword contracts, and
+the two boundary calls. A strict expected-failure contract selects the
+unconsumed observation-only target
+`_layout_pass_set_1_pre_unary_affine_fanout_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.58s`
+- owner behavior, both attention orchestration routes, adjacent affine owners,
+  architecture, and pass-efficiency coverage:
+  `323 passed, 1 xfailed in 18.08s`
+- branch-changed broad suite including the new result contract:
+  `1628 passed, 1 xfailed in 30.84s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented direct-result
+retention contract. Replace only the raw wrapper-call expression with the
+selected target. Do not change the result schema, producer/consumer maps,
+constant handling, pruning, direct argument, nested selections, surrounding
+calls, dependency, public API, or TensorFlow behavior. Keep the result
+unconsumed, validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.

@@ -12357,3 +12357,16 @@ declarative orchestration selections, and consumed late-binary form remain
 unchanged. No GraphIndex ownership, rewrite cap, candidate handling, pruning,
 layout synchronization, condition, dependency, public API, or TensorFlow
 boundary changed.
+
+`optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains()` exposes
+the fixed one-key result
+`optimized_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`. Its sole
+lowerer call and the attention/quantized-suffix and pre-add-attention selections
+are model-only. The owner always prunes unused tensors on exit, so a zero
+counter is not complete mutation evidence.
+
+Strict characterization selects
+`_layout_pass_set_1_pre_unary_affine_fanout_stats` for the direct result. It
+freezes the exact model-only call, affine-pre/post/mean-affine boundary, both
+declarative selection indices and empty keyword contracts, fixed schema, and an
+unconsumed observation-only policy.

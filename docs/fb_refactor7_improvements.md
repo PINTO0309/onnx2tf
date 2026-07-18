@@ -1723,3 +1723,13 @@ final target, three declarative selections, and consumed late-binary form are
 unchanged; zero counters remain insufficient to prove no mutation. The focused
 gate passes `496 passed in 20.88s`, the branch-changed broad gate passes
 `1627 passed in 30.99s`, and targeted static validation passes.
+
+The pre-unary/MUL-ADD/transpose fan-out owner is now characterized as a fixed
+one-key model-only result, one direct lowerer call, and two attention-related
+declarative selections. The selected observation-only target is
+`_layout_pass_set_1_pre_unary_affine_fanout_stats`; exact model-only arguments,
+the affine-pre/post/mean-affine boundary, both nested indices, and absence of a
+consumer are frozen. Unconditional final pruning means a zero counter is not
+complete mutation evidence. The focused gate passes
+`323 passed, 1 xfailed in 18.08s`; the branch-changed broad gate passes
+`1628 passed, 1 xfailed in 30.84s`.
