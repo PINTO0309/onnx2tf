@@ -1316,6 +1316,16 @@ The next unit should audit the sole direct elementwise-Concat/Conv group result
 and its independent layout-recovery owner occurrence, including optional
 graph-index/layout/bound/candidate forwarding, schema, cleanup semantics, and
 binary-bridge/SPP boundaries.
+
+That indexed owner is now characterized with one direct private-wrapper call
+and one independent public-owner layout-recovery occurrence.
+`_layout_opt_elementwise_concat_conv_stats` is the selected observation-only
+target. Optional graph-index/layout/bound/candidate forwarding, the one-key
+schema, unconditional cleanup with a proven zero-rewrite prune, exact direct
+arguments, and binary-bridge/SPP boundaries are frozen before implementation.
+The focused characterization gate passes
+`358 passed, 1 xfailed in 19.01s`; the sole strict xfail is the selected direct
+assignment.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

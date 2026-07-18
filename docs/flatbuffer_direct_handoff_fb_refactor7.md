@@ -9045,6 +9045,39 @@ schema, cleanup semantics, binary-bridge/SPP boundaries, and current result
 policy before changing production. Commit and push only; do not create,
 reopen, or update a pull request.
 
+## Direct elementwise-Concat/Conv result characterization checkpoint
+
+The indexed elementwise-Concat/Conv owner has one direct private-wrapper call
+between the quantized-activation binary-bridge recovery sequence and
+`_layout_opt_spp_stats`. Layout recovery independently selects the public owner
+once. The compatibility wrapper forwards optional graph index, layout state,
+rewrite bound, and candidate identity unchanged.
+
+The owner returns the fixed one-key rewrite dictionary but invokes
+unused-tensor pruning unconditionally. A zero-rewrite fixture proves that the
+owner can remove an unrelated unused tensor while returning zero, so the
+direct result is observation-only and cannot be used as complete mutation or
+guard evidence.
+
+A strict expected-failure contract selects
+`_layout_opt_elementwise_concat_conv_stats` for the direct result and requires
+it to remain unconsumed. It freezes wrapper forwarding, the one-key schema,
+unconditional cleanup, exact ModelIR/layout arguments, sole direct call,
+binary-bridge/SPP boundaries, and the independent public-owner orchestration
+selection.
+
+The focused wrapper/owner schema, zero-rewrite prune, elementwise-Concat/Conv
+fixtures, layout-recovery selection, binary-bridge/SPP boundaries,
+architecture, and pass-efficiency gate is
+`358 passed, 1 xfailed in 19.01s`. The sole strict xfail is the selected direct
+assignment; production is unchanged at this checkpoint.
+
+At implementation, replace only the discarded direct expression with the
+selected assignment and update the stale SPP predecessor target. Do not add a
+consumer or guard and do not change the public-owner layout-recovery
+occurrence. Validate sequentially, commit, and push only; do not create,
+reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

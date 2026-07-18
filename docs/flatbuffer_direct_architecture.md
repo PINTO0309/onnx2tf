@@ -11919,3 +11919,17 @@ direct-call count, and adjacent boundaries are unchanged.
 
 This assignment adds no summary, guard, dependency, public behavior change, or
 TensorFlow import path; the three orchestration result policies remain fixed.
+
+The indexed elementwise-Concat/Conv owner immediately before the direct SPP
+result has one direct private-wrapper call and one independent public-owner
+execution inside layout recovery. Its wrapper forwards optional graph index,
+layout state, rewrite bound, and candidate identity without adaptation. The
+owner returns one rewrite counter but prunes unused tensors unconditionally; a
+dedicated zero-rewrite fixture proves cleanup-only mutation is possible.
+
+Strict characterization selects `_layout_opt_elementwise_concat_conv_stats`
+for the direct result and requires it to remain unconsumed. It freezes the
+one-key schema, unconditional cleanup, ModelIR/layout arguments, exact sole
+direct call, binary-bridge/SPP boundaries, and independent layout-recovery
+selection. That orchestration occurrence is not changed by this retention
+unit.
