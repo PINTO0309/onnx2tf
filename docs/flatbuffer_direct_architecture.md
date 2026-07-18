@@ -11651,3 +11651,15 @@ prune, model-only arguments, all three targets, terminal option-guard boundary,
 late-SPP/QKV boundary, pre-Concat/late-layout-cluster boundary, and absence of
 consumers. All dictionaries must remain unconsumed; retention must add no guard,
 scan, dependency, or TensorFlow import path.
+
+The terminal call now retains `_terminal_shape_extract_stats`, the existing
+pre-QKV call keeps `_late_pre_qkv_shape_extract_stats`, and the absolute-end
+call now retains `_late_pre_layout_cluster_shape_extract_stats`. All three
+complete one-counter dictionaries remain unconsumed.
+
+These are assignment-only changes. The wrapper, owner, one-key schema,
+positive-only unused-tensor pruning, model-only arguments, terminal
+Concat/unary/Conv and fanout-guard boundaries, late-SPP/QKV boundaries,
+pre-Concat and late-layout-cluster boundaries, dependencies, diagnostics, and
+TensorFlow behavior remain unchanged. Three stale AST contracts now verify the
+exact assigned targets instead of requiring raw expressions.

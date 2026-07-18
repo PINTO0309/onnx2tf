@@ -1982,7 +1982,7 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
         ),
         (
             "_terminal_elementwise_fanout_stats",
-            "_optimize_transpose_shape_extract_nhwc_to_nchw_chains",
+            "_terminal_shape_extract_stats",
             "_run_terminal_singleton_maxpool_reshape_pass_pair",
         ),
     )

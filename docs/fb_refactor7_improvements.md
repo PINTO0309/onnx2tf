@@ -1106,14 +1106,25 @@ the branch-changed broad suite passes `1585 passed in 28.42s`. Positive-only
 pruning and LayoutState sync, preflight/default details, live diagnostics,
 dependencies, and TensorFlow behavior remain unchanged.
 
+The two previously raw shape-extract results are now retained as
+`_terminal_shape_extract_stats` and
+`_late_pre_layout_cluster_shape_extract_stats`; the existing
+`_late_pre_qkv_shape_extract_stats` target remains unchanged. All three complete
+one-counter dictionaries remain unconsumed.
+
+The focused three-form owner/boundary gate passes `412 passed in 23.37s`, and
+the branch-changed broad suite passes `1556 passed in 27.91s`. Positive-only
+pruning, terminal and late-layout boundaries, QKV policy, dependencies, and
+TensorFlow behavior remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the raw terminal
-`_optimize_transpose_shape_extract_nhwc_to_nchw_chains()` result and every other
-production form of that owner. The newly retained Concat/unary/Conv predecessor,
-following terminal layout guard, existing retained shape-extract results, and
-cleanup evidence semantics must remain fixed. All retained SiNet callback
+unit should audit the guarded
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains()` result and every
+other production form of that owner. The retained terminal shape-extract and
+fanout results, terminal Singleton/MaxPool sequence, no-layout fallback branch,
+and cleanup evidence semantics must remain fixed. All retained SiNet callback
 results, Singleton/Reshape policies, three QKV result forms, and the late
 summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain

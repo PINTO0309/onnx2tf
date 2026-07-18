@@ -8398,6 +8398,40 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Remaining shape-extract result retention implementation checkpoint
+
+The terminal call now retains `_terminal_shape_extract_stats`, the existing
+pre-QKV call keeps `_late_pre_qkv_shape_extract_stats`, and the absolute-end
+call now retains `_late_pre_layout_cluster_shape_extract_stats`. All three
+complete one-counter dictionaries remain unconsumed.
+
+These are assignment-only changes. No consumer or guard was added. The
+compatibility wrapper, owner, one-key schema, positive-only unused-tensor
+pruning, model-only arguments, terminal Concat/unary/Conv and fanout-guard
+boundaries, late-SPP/QKV boundaries, pre-Concat and late-layout-cluster
+boundaries, dependencies, diagnostics, and TensorFlow behavior remain
+unchanged. Three stale AST contracts now verify the exact assigned targets
+instead of requiring raw expressions.
+
+Implementation validation completed sequentially under `uv`:
+
+- shape-extract owner/schema and unsafe-boundary fixtures, exact three-form
+  retention contract, terminal Concat/unary/Conv and fanout guard, late-SPP and
+  QKV, absolute-end late-layout cluster, architecture, pass-efficiency, and
+  terminal-layout coverage: `412 passed in 23.37s`
+- branch-changed broad suite plus the same three-form shape-extract coverage:
+  `1556 passed in 27.91s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit the guarded
+`_optimize_convpool_output_transpose_nhwc_passthrough_chains()` result and every
+other production form of that owner. Preserve the retained terminal
+shape-extract/fanout results, terminal Singleton/MaxPool sequence, no-layout
+fallback branch, pass order, and observation-only evidence rules. Commit and
+push only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

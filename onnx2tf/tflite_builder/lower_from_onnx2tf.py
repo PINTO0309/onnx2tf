@@ -5084,7 +5084,9 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
     )
-    _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    _terminal_shape_extract_stats = (
+        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    )
     if optimize_layout_transpose_chains:
         _terminal_elementwise_fanout_stats = (
             _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
@@ -5446,7 +5448,9 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    _late_pre_layout_cluster_shape_extract_stats = (
+        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    )
     late_layout_cluster_tensor_count = len(model_ir.tensors)
     late_layout_cluster_results = (
         _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
