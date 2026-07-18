@@ -7914,6 +7914,42 @@ immediately after the newly retained reshape/SE results. Preserve the two
 surrounding sequences and observation-only evidence rules. Commit and push
 only; do not create, reopen, or update a pull request.
 
+## BatchMatMul adj-flags result characterization checkpoint
+
+`_optimize_batchmatmul_transpose_input_to_adj_flags()` dispatches one dedicated
+owner and returns the fixed one-counter dictionary
+`optimized_batchmatmul_transpose_input_to_adj_flags`. Every count follows the
+input bypass or singleton-preserving RESHAPE conversion and matching
+`adjX`/`adjY` toggle. Unused-tensor pruning runs only after at least one rewrite,
+so the counter covers all owner mutation paths.
+
+There are exactly two raw direct production calls. They follow
+`_terminal_batchmatmul_reshape_se_stats` and
+`_post_sinet_batchmatmul_reshape_se_stats`, respectively, and both immediately
+precede `_run_qkv_attention_layout_pass_cluster()`.
+
+A strict expected-failure contract selects distinct
+`_terminal_batchmatmul_adj_flags_stats` and
+`_post_sinet_batchmatmul_adj_flags_stats` targets. It fixes the two-call count,
+model argument, empty keywords, both captured predecessors, both QKV
+successors, and terminal option guard.
+
+At implementation, replace only the two raw expressions with assignments. Do
+not add a consumer or guard in this unit and do not change the wrapper, owner,
+one-key schema, positive-only pruning, surrounding sequences, QKV policies,
+pass order, dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- adj-flags and reshape/SE owner fixtures, both production boundaries, QKV
+  orchestration, architecture, terminal result contracts, and pass-efficiency
+  coverage: `371 passed, 1 xfailed in 19.44s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## BatchMatMul affine-input result retention implementation checkpoint
 
 The guarded terminal call now retains

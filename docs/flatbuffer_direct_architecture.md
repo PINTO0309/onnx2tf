@@ -11222,3 +11222,17 @@ results and retain `_terminal_batchmatmul_reshape_se_stats` and
 `_post_sinet_batchmatmul_reshape_se_stats`, respectively. Both precede the same
 adj-flags owner. The retained values have no guard or consumer and add no graph
 traversal.
+
+The following BatchMatMul transpose-input-to-adj-flags owner returns the fixed
+one-counter `optimized_batchmatmul_transpose_input_to_adj_flags` dictionary.
+Each count follows the complete input rewrite or singleton-preserving RESHAPE
+conversion plus the corresponding `adjX`/`adjY` toggle. Unused tensors are
+pruned only after a positive rewrite, so the counter is complete owner mutation
+evidence.
+
+Two raw direct occurrences follow the captured terminal and post-SiNet
+reshape/SE results and precede QKV attention clusters. A strict contract fixes
+future `_terminal_batchmatmul_adj_flags_stats` and
+`_post_sinet_batchmatmul_adj_flags_stats` targets, both predecessors, both QKV
+successors, exact arguments, and the terminal option guard. This unit retains
+the dictionaries without adding a consumer, guard, or graph work.
