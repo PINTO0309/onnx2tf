@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1714,10 +1712,6 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late broadcast-constant repair result is discarded",
-)
 def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> None:
     body = _lowerer_body()
     callback_name = (
@@ -1777,18 +1771,28 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == callback_name
     ]
-    assert len(all_calls) == 4
+    assert len(all_calls) == 3
     assert sum(
         ast.unparse(call_node).startswith(f"{callback_name}(fallback_ir")
         for call_node in all_calls
     ) == 1
+
+    module_tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+    module_calls = [
+        node
+        for node in ast.walk(module_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == callback_name
+    ]
+    assert len(module_calls) == 4
     assert sum(
         any(
             keyword.arg == "graph_index"
             and ast.unparse(keyword.value) == "graph_index"
             for keyword in call_node.keywords
         )
-        for call_node in all_calls
+        for call_node in module_calls
     ) == 1
 
 

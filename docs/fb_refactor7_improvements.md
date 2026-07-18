@@ -793,6 +793,19 @@ its captured predecessor. The targeted contract passes `1 passed in 0.55s`,
 the focused gate passes `364 passed in 18.87s`, and the branch-changed broad
 related suite passes `1428 passed in 24.87s`.
 
+The very-late rank-four channelwise broadcast-constant repair now retains its
+complete one-counter result as `_very_late_broadcast_repair_stats`. Indexed
+binary convergence still consumes the module-level occurrence, and the
+fallback/final lowerer occurrences keep their existing targets and positive
+guards. The new target is observation-only and leaves the immediate static-
+shape reconciliation unconditional.
+
+The implementation gate corrected the characterization inventory from four
+lowerer calls to four module-wide calls: three are inside `lower_onnx_to_ir`
+and one belongs to indexed convergence. The targeted contract passes
+`1 passed in 0.60s`, the focused gate passes `377 passed in 18.74s`, and the
+branch-changed broad related suite passes `1425 passed in 24.42s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -800,9 +813,9 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit every
-`_repair_rank4_channelwise_broadcast_constants_to_runtime_layout()` occurrence
-and its result schema, then isolate the very-late raw call directly after the
-guarded layout-Transpose result. Any new observation point must preserve the
-nested/fallback/final occurrences, current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+unit should audit the immediate very-late `_reconcile_static_tensor_shapes()`
+call and all preceding mutation evidence before changing or guarding it. In
+particular, the adjacent layout-Transpose result omits prune-only mutation, so
+the broadcast counter alone is insufficient for scan elision. Any change must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

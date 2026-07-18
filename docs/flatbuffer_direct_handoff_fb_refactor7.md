@@ -7089,3 +7089,43 @@ The sole strict expected failure is the intentionally unimplemented very-late
 broadcast-constant repair result retention contract above. Implement only that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Very-late broadcast-constant repair result retention implementation checkpoint
+
+The very-late model-level call now retains its unchanged one-counter dictionary
+as `_very_late_broadcast_repair_stats`. The fallback and final calls retain
+their existing targets and positive static-shape reconciliation guards. The
+indexed convergence helper continues to consume the fourth module-wide
+occurrence with its shared GraphIndex.
+
+This is an assignment-only orchestration change. It preserves the wrapper and
+indexed owner, one-key schema, GraphIndex maintenance, constant clone policy,
+callback arguments, existing fallback/final guards, guarded layout-Transpose
+predecessor, immediate unconditional static-shape reconciliation, pass order,
+dependencies, diagnostics, and TensorFlow behavior. The new target has no
+consumer and triggers no additional graph work.
+
+The first implementation run exposed an error in the newly added occurrence
+inventory. There are four module-wide calls, but only three are inside
+`lower_onnx_to_ir`; the graph-indexed convergence call is a separate module-
+level helper. The corrected contract counts three lowerer calls, one fallback
+argument form, and four module calls with exactly one `graph_index` argument.
+Production was unchanged by this test-only correction.
+
+Implementation validation completed sequentially under `uv`:
+
+- corrected strict contract alone: `1 passed in 0.60s`
+- broadcast owner, indexed convergence, safety fallback, terminal occurrence,
+  architecture, and pass-efficiency coverage: `377 passed in 18.74s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1425 passed in 24.42s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediate very-late `_reconcile_static_tensor_shapes()`
+call and every preceding mutation source before considering a guard. The
+captured broadcast counter is complete, but the adjacent layout-Transpose
+dictionary omits zero-rewrite unused-tensor pruning, so it cannot by itself
+prove the graph stable. Commit and push only; do not create, reopen, or update
+a pull request.

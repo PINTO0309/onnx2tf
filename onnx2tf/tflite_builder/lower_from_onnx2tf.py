@@ -5131,7 +5131,11 @@ def lower_onnx_to_ir(
                 diagnostics=session.diagnostics,
             )
         )
-    _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+    _very_late_broadcast_repair_stats = (
+        _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
+            model_ir
+        )
+    )
     _reconcile_static_tensor_shapes(model_ir)
     shared_late_tensor_count = len(model_ir.tensors)
     shared_boundary_signature_stats = (
