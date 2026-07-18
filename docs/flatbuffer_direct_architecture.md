@@ -10966,6 +10966,15 @@ result is retained as `_terminal_swish_qdq_island_stats` between the captured
 dequant-logistic bridge dictionary and the live-LayoutState InstanceNorm post-
 Transpose bias owner. The retained value has no consumer.
 
+The following indexed InstanceNorm post-Transpose bias/add owner has four
+direct production calls plus one nested convergence call. Its one-key result
+is already retained by the third and fourth direct calls, while the first two
+direct calls are raw. Strict characterization selects only the first direct
+call after `_terminal_swish_qdq_island_stats` for
+`_terminal_instancenorm_post_bias_stats`, preserves the second very-late raw
+call and the two existing later targets, and fixes the following diagnostics-
+aware normalization-pad cleanup boundary.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`

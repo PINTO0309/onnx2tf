@@ -6571,3 +6571,42 @@ isolate the terminal call immediately following `_terminal_swish_qdq_island_stat
 and its normalization-pad successor. Do not conflate nested convergence, late,
 or final calls. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## Terminal InstanceNorm post-bias result characterization checkpoint
+
+`_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains()` returns
+the stable one-counter dictionary
+`optimized_transpose_instancenorm_posttranspose_bias_add_nhwc_chains`. It has
+four direct production calls plus one nested convergence call. The third and
+fourth direct results are already retained as
+`_pre_terminal_affine_instancenorm_post_bias_stats` and
+`_absolute_final_instancenorm_post_bias_stats`; the first terminal and second
+very-late direct calls are raw.
+
+A strict expected-failure orchestration contract requires only the first
+direct result to be retained as `_terminal_instancenorm_post_bias_stats`. It
+fixes the captured `_terminal_swish_qdq_island_stats` predecessor and following
+diagnostics-aware normalization-pad cleanup, while preserving the second raw
+call, the two later targets, and the nested call.
+
+At implementation, replace only the first direct expression with an assignment
+and update the existing four-direct occurrence-shape assertions accordingly.
+Do not change the second direct or nested call, later targets, wrapper or
+indexed owner, one-key schema, rewrite guards, positive-only pruning, optional
+GraphIndex/candidate/max-rewrite controls, callback arguments, pass order,
+adjacent targets, dependencies, diagnostics, or TensorFlow behavior. The
+retained value must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- owner rewrite, indexed Swish predecessor, terminal/final occurrence
+  accounting, normalization/attention boundaries, architecture, and pass-
+  efficiency gate: `385 passed, 1 xfailed in 19.20s`
+- branch-changed broad suite plus indexed Swish, terminal/final occurrence
+  accounting, normalization/attention boundaries, architecture, and pass-
+  efficiency coverage: `1418 passed, 1 xfailed in 23.93s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+InstanceNorm post-bias result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.
