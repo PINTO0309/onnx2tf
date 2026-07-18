@@ -4734,9 +4734,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
     )
     # Late recovery passes can recreate Conv->InstNorm(NCHW)->Pad wrappers.
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     run_normalization_pad_layout_cleanup(
         model_ir,

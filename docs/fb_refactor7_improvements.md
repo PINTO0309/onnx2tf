@@ -716,6 +716,17 @@ This checkpoint passes the focused indexed logistic/Swish orchestration gate
 with `376 passed in 18.74s`, plus the branch-changed broad related suite with
 `1434 passed in 24.48s`.
 
+The first of four direct InstanceNorm post-Transpose bias/add calls now retains
+its existing one-counter dictionary as `_terminal_instancenorm_post_bias_stats`.
+The second very-late call remains raw; the third and fourth keep their existing
+staged targets, and the nested convergence call is unchanged. Occurrence-shape
+contracts now distinguish all five forms. The retained terminal value has no
+consumer.
+
+This checkpoint passes the focused InstanceNorm/Swish/terminal-final accounting
+gate with `386 passed in 19.95s`, plus the branch-changed broad related suite
+with `1419 passed in 23.89s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -723,8 +734,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit all production occurrences of the InstanceNorm post-
-Transpose bias owner and isolate the call immediately following the captured
-Swish-QDQ-island result without conflating loop, late, or final occurrences.
-Any new mutation evidence must preserve current pass order, TensorFlow-free
-boundary, dependency set, and sequential validation policy.
+unit should audit the remaining raw second direct InstanceNorm post-Transpose
+bias result in the very-late block, while keeping the terminal, pre-terminal,
+absolute-final, and nested occurrence contracts fixed. Any new mutation
+evidence must preserve current pass order, TensorFlow-free boundary, dependency
+set, and sequential validation policy.

@@ -760,7 +760,12 @@ def test_pre_terminal_affine_post_bias_captures_mutation_evidence() -> None:
         )
     ]
     assert len(direct_statements) == 4
-    assert all(isinstance(statement, ast.Expr) for statement in direct_statements[:2])
+    assert isinstance(direct_statements[0], ast.Assign)
+    assert isinstance(direct_statements[0].targets[0], ast.Name)
+    assert direct_statements[0].targets[0].id == (
+        "_terminal_instancenorm_post_bias_stats"
+    )
+    assert isinstance(direct_statements[1], ast.Expr)
     assert direct_statements[2] is invocation
     assert isinstance(direct_statements[3], ast.Assign)
     assert len(direct_statements[3].targets) == 1

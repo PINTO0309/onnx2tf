@@ -10449,7 +10449,9 @@ direct call, immediately before the staged residual/Mul/Concat result, for
 direct call remains an expression.
 
 That third direct call now assigns its unchanged result to the staged target.
-The absolute-final fourth call and all earlier occurrences remain unchanged.
+The first direct call retains `_terminal_instancenorm_post_bias_stats`, the
+second direct and nested calls remain unchanged, and the absolute-final fourth
+call retains its distinct target.
 The staged counter is observation-only, and no tensor-count proxy is required
 because pruning remains positive-only.
 
@@ -10468,8 +10470,9 @@ absolute-final normalization/attention pair, while preserving the separately
 staged third call.
 
 That absolute-final call now assigns its unchanged result to
-`_absolute_final_instancenorm_post_bias_stats`. The first two direct calls
-remain expressions, the third retains
+`_absolute_final_instancenorm_post_bias_stats`. The first direct call retains
+`_terminal_instancenorm_post_bias_stats`, the second remains an expression, the
+third retains
 `_pre_terminal_affine_instancenorm_post_bias_stats`, and the fourth therefore
 has an unambiguous observation point of its own. The result is not consumed by
 reconciliation, and pass order, ModelIR/LayoutState forwarding, rewrite guards,
@@ -10968,12 +10971,11 @@ Transpose bias owner. The retained value has no consumer.
 
 The following indexed InstanceNorm post-Transpose bias/add owner has four
 direct production calls plus one nested convergence call. Its one-key result
-is already retained by the third and fourth direct calls, while the first two
-direct calls are raw. Strict characterization selects only the first direct
-call after `_terminal_swish_qdq_island_stats` for
-`_terminal_instancenorm_post_bias_stats`, preserves the second very-late raw
-call and the two existing later targets, and fixes the following diagnostics-
-aware normalization-pad cleanup boundary.
+is retained by the first, third, and fourth direct calls. The first assigns
+`_terminal_instancenorm_post_bias_stats` after
+`_terminal_swish_qdq_island_stats`; the second very-late call remains raw, and
+the two existing later targets remain distinct. The following diagnostics-
+aware normalization-pad cleanup boundary is unchanged.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

@@ -6610,3 +6610,40 @@ The sole strict expected failure is the intentionally unimplemented terminal
 InstanceNorm post-bias result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Terminal InstanceNorm post-bias result retention implementation checkpoint
+
+The first of the four direct production calls now retains its existing one-
+counter dictionary as `_terminal_instancenorm_post_bias_stats`. The second
+very-late direct call remains raw; the third and fourth keep
+`_pre_terminal_affine_instancenorm_post_bias_stats` and
+`_absolute_final_instancenorm_post_bias_stats`; the nested convergence call is
+unchanged. This is an assignment-only orchestration change. The wrapper and
+indexed owner, schema, rewrite guards, positive-only pruning, GraphIndex/
+LayoutState/candidate/max-rewrite controls, callback arguments, pass order,
+captured Swish-QDQ predecessor, normalization-pad successor, dependencies,
+diagnostics, and TensorFlow behavior are unchanged. The retained value has no
+consumer and triggers no additional graph work.
+
+The existing terminal-affine and absolute-final occurrence-shape contracts now
+require the first target and second raw expression while preserving both later
+targets.
+
+Implementation validation completed sequentially under `uv`:
+
+- owner rewrite, indexed Swish predecessor, terminal/final occurrence
+  accounting, normalization/attention boundaries, architecture, and pass-
+  efficiency gate: `386 passed in 19.95s`
+- branch-changed broad suite plus indexed Swish, terminal/final occurrence
+  accounting, normalization/attention boundaries, architecture, and pass-
+  efficiency coverage: `1419 passed in 23.89s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the remaining raw second direct
+`_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains()` result
+in the very-late block. Keep `_terminal_instancenorm_post_bias_stats`,
+`_pre_terminal_affine_instancenorm_post_bias_stats`,
+`_absolute_final_instancenorm_post_bias_stats`, and the nested convergence call
+fixed. Commit and push only; do not create, reopen, or update a pull request.
