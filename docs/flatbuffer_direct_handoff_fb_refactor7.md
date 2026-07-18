@@ -8818,6 +8818,34 @@ schema and cleanup behavior, and existing result policies before changing
 production. Commit and push only; do not create, reopen, or update a pull
 request.
 
+## Direct pre-Concat result characterization checkpoint
+
+The pre-Concat composite has three direct production calls plus one independent
+layout-recovery callback execution. It runs indexed, quantized-indexed, and
+legacy families in fixed order and returns their summed rewrite count as one
+dictionary. The legacy owner prunes unused tensors unconditionally, so a zero
+composite counter can coexist with cleanup-only mutation.
+
+A strict expected-failure contract selects `_layout_opt_pre_concat_stats`,
+`_final_pre_concat_stats`, and `_absolute_final_pre_concat_stats` for the three
+direct calls. It freezes identical ModelIR/layout/diagnostics routing, exact
+three-call count, three boundary pairs, one-key schema, dispatch order,
+unconditional legacy cleanup, and the independent layout-recovery callback
+selection. All three direct results must remain unconsumed.
+
+The focused composite/schema/cleanup, float and quantized Concat fixtures,
+layout-recovery callback, Slice/late-hard-activation/shape-extract/ReLU-split
+boundaries, architecture, and pass-efficiency gate is
+`430 passed, 1 xfailed in 19.00s`. Ruff, Python bytecode compilation, and
+whitespace validation pass. The sole strict xfail covers the three selected
+direct assignments; production is unchanged at this checkpoint.
+
+At implementation, replace only the three discarded direct expressions with
+the selected assignments and update stale boundary targets. Do not change or
+consume the layout-recovery callback result in this unit. Validate
+sequentially, commit, and push only; do not create, reopen, or update a pull
+request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

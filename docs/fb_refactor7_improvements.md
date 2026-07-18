@@ -1230,6 +1230,17 @@ The next unit should audit all three production forms of
 `_optimize_transpose_pre_concat_nhwc_chains()`, including distinct boundaries,
 layout/diagnostics routing, owner schema, cleanup behavior, and current result
 policies before changing any call.
+
+The three direct pre-Concat calls are now characterized separately from the
+independent layout-recovery callback form. Selected observation-only targets
+are `_layout_opt_pre_concat_stats`, `_final_pre_concat_stats`, and
+`_absolute_final_pre_concat_stats`. The one-key composite schema, indexed/
+quantized/legacy dispatch order, unconditional legacy cleanup, identical
+layout/diagnostics routing, and all three boundary pairs are frozen before
+implementation.
+The focused characterization gate passes
+`430 passed, 1 xfailed in 19.00s`; the sole strict xfail covers the three
+selected direct assignments.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

@@ -11831,3 +11831,17 @@ final slice/concat predecessor, and pre-Concat successor are unchanged.
 This assignment adds no mutation guard or control flow. Pass execution,
 dependencies, diagnostics, public behavior, and the TensorFlow-free direct path
 remain fixed; only two stale boundary target expectations changed.
+
+The pre-Concat composite has three direct production calls plus one independent
+layout-recovery callback execution. It dispatches indexed, quantized-indexed,
+and legacy families in fixed order and returns their sum as one counter. The
+legacy owner prunes unused tensors unconditionally, so a zero composite counter
+does not prove ModelIR stability.
+
+Strict characterization selects `_layout_opt_pre_concat_stats`,
+`_final_pre_concat_stats`, and `_absolute_final_pre_concat_stats` for the three
+direct calls. It freezes their identical ModelIR/layout/diagnostics arguments,
+three distinct boundary pairs, one-key schema, dispatch order, unconditional
+legacy cleanup, and independent layout-recovery callback selection. All three
+direct results must remain unconsumed; the orchestration callback form is not
+changed by this retention unit.
