@@ -8105,6 +8105,21 @@ that process tree, records the model as `swap_detected`, and includes the peak
 tree total and per-process peak values in `bulk_status.json` and the generated
 summary.
 
+The indexed Split/Conv/Concat bridge owner returns the fixed one-counter
+`optimized_split_conv_concat_transpose_bridge_to_single_post_nchw` dictionary.
+Each count follows a successful transactional plan, and unused tensors are
+pruned only after a positive rewrite, so the counter is complete owner mutation
+evidence.
+
+Three direct calls exist. The late call is already retained as
+`_terminal_split_conv_concat_bridge_stats`; the terminal-QKV and post-SiNet
+calls remain raw. A strict contract fixes future
+`_terminal_qkv_split_conv_concat_bridge_stats` and
+`_post_sinet_split_conv_concat_bridge_stats` targets, both predecessors and
+successors, exact live LayoutState arguments, total occurrence count, and the
+existing late target. The two new dictionaries must remain unconsumed in this
+unit.
+
 A model reported as `swap_detected` must be changed to
 `baseline_classification: excluded` in the managed regression profile before
 the next corpus run, with `baseline_reason` set to

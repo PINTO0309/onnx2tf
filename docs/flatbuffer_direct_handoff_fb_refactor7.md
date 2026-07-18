@@ -7918,6 +7918,42 @@ At resume, audit the raw split/conv/concat bridge result after
 sequence. Preserve all three QKV result policies and the late summary. Commit
 and push only; do not create, reopen, or update a pull request.
 
+## Earlier Split/Conv/Concat bridge result characterization checkpoint
+
+The indexed
+`_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw()` owner
+returns one fixed rewrite counter. Each count follows a successful
+transactional rewrite, while unused-tensor pruning occurs only after at least
+one rewrite. The dictionary is complete owner mutation evidence.
+
+Three direct production calls exist. The late call is already retained as
+`_terminal_split_conv_concat_bridge_stats`. The terminal call after
+`_terminal_qkv_attention_results` and the post-SiNet call after the ReLU/Split/
+Conv/Concat propagation remain raw.
+
+A strict expected-failure contract selects
+`_terminal_qkv_split_conv_concat_bridge_stats` and
+`_post_sinet_split_conv_concat_bridge_stats` for only those raw calls. It fixes
+the live Session LayoutState keyword, both predecessors and successors, total
+three-call count, terminal option guard, and existing late retained target.
+
+At implementation, replace only the two raw expressions with assignments. Do
+not add a consumer or guard and do not change the wrapper, indexed owner,
+one-key schema, positive-only pruning, transactional behavior, adjacent QKV/
+Singleton/SiNet calls, existing late target, pass order, dependencies,
+diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed bridge owner, all three production occurrences, QKV and Singleton
+  orchestration, HardSwish-SE late boundary, architecture, and pass-efficiency
+  coverage: `400 passed, 1 xfailed in 18.27s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## BatchMatMul adj-flags result retention implementation checkpoint
 
 The guarded terminal call now retains

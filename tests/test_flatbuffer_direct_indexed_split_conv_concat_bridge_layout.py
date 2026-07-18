@@ -780,3 +780,111 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "terminal_hardswish_se_tensor_count"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="earlier split/conv/concat bridge results are not retained",
+)
+def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
+    tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+
+    def _call_name(statement: ast.stmt) -> str | None:
+        if not isinstance(statement, (ast.Assign, ast.Expr)):
+            return None
+        if not isinstance(statement.value, ast.Call):
+            return None
+        if not isinstance(statement.value.func, ast.Name):
+            return None
+        return statement.value.func.id
+
+    all_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    ]
+    assert len(all_calls) == 3
+
+    terminal_guard = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == "optimize_layout_transpose_chains"
+        and any(
+            isinstance(node, ast.Name)
+            and node.id == "_terminal_qkv_attention_results"
+            for node in ast.walk(statement)
+        )
+    )
+    terminal_index = next(
+        index
+        for index, statement in enumerate(terminal_guard.body)
+        if _call_name(statement) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    )
+    terminal = terminal_guard.body[terminal_index]
+    assert isinstance(terminal, ast.Assign)
+    assert len(terminal.targets) == 1
+    assert isinstance(terminal.targets[0], ast.Name)
+    assert terminal.targets[0].id == (
+        "_terminal_qkv_split_conv_concat_bridge_stats"
+    )
+    predecessor = terminal_guard.body[terminal_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_terminal_qkv_attention_results"
+    assert _call_name(terminal_guard.body[terminal_index + 1]) == (
+        "_run_singleton_reshape_layout_pass_cluster"
+    )
+
+    post_sinet_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if _call_name(statement) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    )
+    post_sinet = lowerer.body[post_sinet_index]
+    assert isinstance(post_sinet, ast.Assign)
+    assert len(post_sinet.targets) == 1
+    assert isinstance(post_sinet.targets[0], ast.Name)
+    assert post_sinet.targets[0].id == (
+        "_post_sinet_split_conv_concat_bridge_stats"
+    )
+    assert _call_name(lowerer.body[post_sinet_index - 1]) == (
+        "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains"
+    )
+    assert _call_name(lowerer.body[post_sinet_index + 1]) == (
+        "_optimize_sinet_mix_attention_double_logistic_nhwc_chains"
+    )
+
+    for statement in (terminal, post_sinet):
+        assert isinstance(statement.value, ast.Call)
+        assert [ast.unparse(argument) for argument in statement.value.args] == [
+            "model_ir"
+        ]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in statement.value.keywords
+        } == {"layout_state": "session.layout_state"}
+
+    late = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
+    )
+    assert _call_name(late) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
