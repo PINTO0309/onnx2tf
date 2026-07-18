@@ -6806,3 +6806,45 @@ consumes its counter. Characterize the very-late call adjacent to
 `_very_late_instancenorm_residual_mul_concat_stats` without conflating those
 other occurrences. Commit and push only; do not create, reopen, or update a
 pull request.
+
+## Very-late dual-statistics InstanceNorm result characterization checkpoint
+
+`_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains()`
+returns the stable one-counter dictionary
+`optimized_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains`.
+The counter is complete mutation evidence because unused-tensor pruning and
+LayoutState synchronization occur only after a positive rewrite.
+
+The owner has three direct production calls plus one nested convergence call.
+The first terminal and second very-late direct results are raw, the third is
+retained as `_pre_terminal_affine_instancenorm_dualstats_stats`, and the nested
+call consumes its counter from the shared `residual_graph_index` invocation.
+
+A strict expected-failure orchestration contract requires only the second
+direct result to be retained as `_very_late_instancenorm_dualstats_stats`. It
+fixes the captured `_very_late_instancenorm_residual_mul_concat_stats`
+predecessor and following singleton consecutive-Reshape cluster. It also fixes
+the other two direct forms and proves that exactly one nested occurrence keeps
+the shared graph index and live Session LayoutState.
+
+At implementation, replace only the second direct expression with an
+assignment and update the existing three-direct occurrence-shape assertion.
+Do not change the first direct or nested calls, existing staged target, wrapper
+or indexed owner, one-key schema, rewrite guards, positive-only pruning,
+GraphIndex/LayoutState/candidate/max-rewrite controls, callback arguments,
+pass order, adjacent targets, dependencies, diagnostics, or TensorFlow
+behavior. The retained value must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- dual-statistics and residual indexed owners, direct/nested occurrence
+  accounting, terminal/final boundaries, architecture, and pass-efficiency
+  gate: `674 passed, 1 xfailed in 20.13s`
+- branch-changed broad suite plus both indexed owners, occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency coverage:
+  `1421 passed, 1 xfailed in 24.84s`
+
+The sole strict expected failure is the intentionally unimplemented very-late
+dual-statistics InstanceNorm result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.

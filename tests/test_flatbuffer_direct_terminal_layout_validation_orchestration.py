@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2935,6 +2937,98 @@ def test_primary_path_retains_very_late_instancenorm_residual_result() -> None:
         node
         for statement in body
         for node in ast.walk(statement)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == callback_name
+    ]
+    assert len(all_calls) == 4
+    nested_calls = [
+        nested_call
+        for nested_call in all_calls
+        if all(nested_call is not direct_call for direct_call in direct_calls)
+    ]
+    assert len(nested_calls) == 1
+    nested_call = nested_calls[0]
+    assert [ast.unparse(argument) for argument in nested_call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in nested_call.keywords
+    } == {
+        "graph_index": "residual_graph_index",
+        "layout_state": "session.layout_state",
+    }
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="very-late dual-statistics InstanceNorm result is discarded",
+)
+def test_primary_path_retains_very_late_instancenorm_dualstats_result() -> None:
+    body = _lowerer_body()
+    callback_name = (
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+    )
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 3
+    terminal_index, very_late_index, staged_index = indices
+    assert terminal_index < very_late_index < staged_index
+
+    assert isinstance(body[terminal_index], ast.Expr)
+
+    statement = body[very_late_index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_very_late_instancenorm_dualstats_stats"
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"layout_state": "session.layout_state"}
+
+    predecessor = body[very_late_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_very_late_instancenorm_residual_mul_concat_stats"
+    )
+    assert _call_name(_statement_call(predecessor)) == (
+        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
+    )
+
+    successor_call = _statement_call(body[very_late_index + 1])
+    assert _call_name(successor_call) == (
+        "_run_singleton_consecutive_reshape_pass_cluster"
+    )
+    assert successor_call is not None
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "model_ir",
+        "session.layout_state",
+    ]
+    assert successor_call.keywords == []
+
+    staged = body[staged_index]
+    assert isinstance(staged, ast.Assign)
+    assert len(staged.targets) == 1
+    assert isinstance(staged.targets[0], ast.Name)
+    assert staged.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
+
+    direct_calls = [_statement_call(body[index]) for index in indices]
+    all_calls = [
+        node
+        for body_statement in body
+        for node in ast.walk(body_statement)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == callback_name

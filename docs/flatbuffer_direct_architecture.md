@@ -10995,6 +10995,20 @@ target. The captured `_very_late_instancenorm_post_bias_stats` predecessor and
 following live-LayoutState dual-statistics InstanceNorm owner remain adjacent,
 and the first, third, and nested occurrence contracts are unchanged.
 
+That following indexed dual-statistics InstanceNorm residual/add/resize owner
+also has three direct production calls plus one nested convergence call. Its
+fixed one-counter result is complete mutation evidence because pruning and
+LayoutState synchronization occur only after a positive rewrite. The first
+terminal and second very-late direct calls remain raw, the third is retained as
+`_pre_terminal_affine_instancenorm_dualstats_stats`, and the nested call
+consumes its counter through the shared convergence guard.
+
+Strict characterization selects only the second direct call for a future
+`_very_late_instancenorm_dualstats_stats` assignment. It fixes the captured
+very-late residual/Mul/Concat predecessor and following singleton consecutive-
+Reshape cluster while preserving the first, third, and nested occurrence
+contracts.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`
