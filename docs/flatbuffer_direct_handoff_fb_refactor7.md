@@ -6934,3 +6934,38 @@ The sole strict expected failure is the intentionally unimplemented very-late
 singleton/consecutive-Reshape result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Very-late singleton/consecutive-Reshape result retention implementation checkpoint
+
+The first model-level production call now retains its unchanged ordered three-
+dictionary tuple as `_very_late_singleton_consecutive_reshape_results`. The
+second model-level call continues to destructure
+`shared_singleton_channel_stats`, `shared_duplicate_fanout_stats`, and
+`shared_consecutive_reshape_stats` for its existing reconciliation guard. The
+conditional fallback call remains a raw expression.
+
+This is an assignment-only orchestration change. It preserves the helper and
+three child owners, result order and schemas, shared state scope, callback
+arguments, diagnostics, captured very-late dual-statistics predecessor,
+following optional layout-transpose branch, later destructuring, fallback
+call, pass order, reconciliation behavior, dependencies, and TensorFlow
+behavior. The retained tuple has no consumer and triggers no additional graph
+work.
+
+Implementation validation completed sequentially under `uv`:
+
+- singleton/consecutive orchestration and all three child-owner families plus
+  terminal occurrence, architecture, and pass-efficiency coverage:
+  `380 passed in 18.95s`
+- branch-changed broad suite plus the same singleton/consecutive owner and
+  orchestration coverage: `1445 passed in 24.34s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit every production occurrence and the complete result schema of
+`run_layout_transpose_cleanup()`. Isolate the guarded very-late call immediately
+after `_very_late_singleton_consecutive_reshape_results` without conflating the
+other helper/late occurrences or changing the
+`optimize_layout_transpose_chains` guard. Commit and push only; do not create,
+reopen, or update a pull request.

@@ -5117,9 +5117,11 @@ def lower_onnx_to_ir(
     # Norm-subgraph fallback rewrites can introduce channelwise
     # [1,C,1,1]->[1,1,1,C] adapters as TRANSPOSE in no-layout mode.
     # Re-canonicalize them to RESHAPE at the very end.
-    _run_singleton_consecutive_reshape_pass_cluster(
-        model_ir,
-        session.layout_state,
+    _very_late_singleton_consecutive_reshape_results = (
+        _run_singleton_consecutive_reshape_pass_cluster(
+            model_ir,
+            session.layout_state,
+        )
     )
     if optimize_layout_transpose_chains:
         run_layout_transpose_cleanup(

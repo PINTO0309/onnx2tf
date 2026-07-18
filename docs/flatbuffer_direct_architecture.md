@@ -11013,15 +11013,15 @@ That following singleton/consecutive-Reshape cluster returns three ordered,
 pure mutation-count dictionaries for singleton-channel Transpose cleanup,
 duplicate Reshape fan-out cleanup, and consecutive Reshape cleanup. All child
 owners prune only after a positive counter. The private runner has three
-production occurrences: the first model-level call is raw, the second model-
-level call destructures all three dictionaries for the shared reconciliation
-guard, and the conditional fallback call remains raw.
+production occurrences: the first model-level call retains its tuple as
+`_very_late_singleton_consecutive_reshape_results`, the second model-level call
+destructures all three dictionaries for the shared reconciliation guard, and
+the conditional fallback call remains raw.
 
-Strict characterization selects only the first model-level call for a future
-`_very_late_singleton_consecutive_reshape_results` assignment. It fixes the
-captured very-late dual-statistics predecessor, following optional layout-
+The captured very-late dual-statistics predecessor, following optional layout-
 transpose cleanup branch, later destructuring assignment, and fallback
-expression without introducing a consumer.
+expression remain fixed. The retained tuple has no consumer and introduces no
+graph work.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

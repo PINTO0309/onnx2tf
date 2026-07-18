@@ -313,10 +313,6 @@ def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     assert all(invocation.keywords == [] for invocation in invocations)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late singleton/consecutive cluster results are discarded",
-)
 def test_singleton_consecutive_retains_very_late_main_results() -> None:
     lowerer, _ = _lowerer_and_helper()
     first_index, second_index = _main_invocation_indexes(lowerer)

@@ -768,6 +768,17 @@ other boundaries are unchanged. The focused gate including that module passes
 `686 passed in 20.88s`, and the branch-changed broad related suite passes
 `1422 passed in 24.93s`.
 
+The first model-level singleton/consecutive-Reshape cluster call now retains
+its existing ordered three-dictionary tuple as
+`_very_late_singleton_consecutive_reshape_results`. The later model-level call
+continues to destructure its results for the shared reconciliation guard, and
+the conditional fallback call remains raw. This assignment-only change
+preserves all child-owner ordering, shared state, diagnostics, and graph work.
+
+This checkpoint passes the focused cluster and all three child-owner families
+with `380 passed in 18.95s`, plus the branch-changed broad related suite with
+`1445 passed in 24.34s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -775,9 +786,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit all production occurrences and the three-result mutation
-contract of the adjacent singleton consecutive-Reshape cluster. Its first
-model-level call and conditional fallback call remain raw while a later model-
-level call is destructured. Any new observation point must preserve those
-distinct occurrences, current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+unit should audit every `run_layout_transpose_cleanup()` production occurrence
+and its mutation schema, then isolate the conditional very-late call directly
+after `_very_late_singleton_consecutive_reshape_results`. Any new observation
+point must preserve the other calls, option guard, current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.
