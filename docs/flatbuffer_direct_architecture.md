@@ -12118,3 +12118,16 @@ tuple to its parent invocation, while the attention runner continues to
 discard its own aggregate result. No child, callback, context, ordering,
 cleanup timing, guard, summary, dependency, public API, or TensorFlow boundary
 changes with this propagation.
+
+The layout/reshape/attention prefix selects fifteen ordered slots, with the
+complete nineteen-slot layout-recovery tuple now occupying its first slot.
+The parent runner and lowerer helper currently discard the aggregate tuple at
+all three direct pass-set-1 calls.
+
+Strict characterization selects
+`_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results`. It freezes the nested
+layout tuple, every other result identity, the shared context, all three
+zero-argument calls, layout-cleanup/affine, duplicate-fanout/affine, and
+QLinear/InstanceNorm boundaries, and an unconsumed observation-only policy.

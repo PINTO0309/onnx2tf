@@ -10324,3 +10324,40 @@ The sole strict expected failure is the intentionally unimplemented two-result
 retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
+
+## Layout/reshape/attention prefix result characterization checkpoint
+
+`run_layout_reshape_attention_recovery_prefix()` selects fifteen ordered
+children. Its first slot now contains the complete nested nineteen-slot
+layout-recovery result; the remaining slots preserve the pre-add, reshape,
+attention, window-partition/reverse, unary-squeeze, and final squeeze-cleanup
+owner results. The parent runner and zero-argument lowerer helper currently
+discard the aggregate tuple.
+
+There are exactly three direct calls in layout pass-set 1. Their boundaries are
+layout-transpose cleanup/affine fold, duplicate-fanout cleanup/affine fold, and
+QLinear recovery/InstanceNorm cleanup. None currently has a consumer, summary,
+or guard.
+
+A strict expected-failure contract instruments the nested layout result and
+all fourteen remaining identities. It selects observation-only targets
+`_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results`. It freezes the shared
+context, helper/runner return, exact three-call count, all boundary pairs, and
+absence of consumers. Incomplete child counters and cleanup-only changes make
+the aggregate unsafe as guard evidence.
+
+Characterization validation completed sequentially under `uv`:
+
+- attention-prefix result identity and production boundaries, QLinear,
+  architecture, and pass-efficiency coverage: `303 passed, 1 xfailed in 18.24s`
+- branch-changed broad suite: `1605 passed, 1 xfailed in 29.09s`
+
+The sole strict expected failure is the intentionally unimplemented parent
+result propagation. At implementation, return the existing tuple through the
+runner/helper and replace only the three raw direct expressions with the
+selected assignments. Do not consume a result or change a child, nested tuple,
+context, order, boundary, summary, guard, dependency, public API, or TensorFlow
+behavior. Validate sequentially, commit, and push only; do not create, reopen,
+or update a pull request.

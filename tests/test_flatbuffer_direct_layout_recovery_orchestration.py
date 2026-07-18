@@ -32,6 +32,11 @@ ORCHESTRATION_PATH = (
 LAYOUT_PREFIX = "_run_layout_recovery_prefix_pass_sequence"
 ATTENTION_PREFIX = "_run_layout_reshape_attention_recovery_prefix"
 LAYOUT_RESULT_TARGET = "_layout_pass_set_2_layout_recovery_prefix_results"
+ATTENTION_RESULT_TARGETS = (
+    "_layout_pass_set_1_initial_attention_recovery_results",
+    "_layout_pass_set_1_post_binary_attention_recovery_results",
+    "_layout_pass_set_1_final_attention_recovery_results",
+)
 
 
 def _lowerer_and_helper(helper_name: str) -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -483,3 +488,105 @@ def test_layout_recovery_prefix_propagates_direct_and_nested_results(
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="all three ordered layout/reshape/attention results are discarded",
+)
+def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout_results: tuple[Any, ...] = tuple(
+        {"layout_slot": index} for index in range(len(LAYOUT_RECOVERY_PASS_IDS))
+    )
+    expected_results: tuple[Any, ...] = tuple(
+        layout_results if index == 0 else {"attention_slot": index}
+        for index in range(len(ATTENTION_RECOVERY_PASS_IDS))
+    )
+
+    def result_callback(index: int):
+        def result(*args: Any, **kwargs: Any) -> Any:
+            value = expected_results[index]
+            return tuple(value) if isinstance(value, tuple) else dict(value)
+
+        return result
+
+    context = _context()
+    probe_steps = build_attention_recovery_invocations(context)
+    for index, step in enumerate(probe_steps):
+        module_name = next(
+            name
+            for name, value in vars(layout_recovery_orchestration).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            layout_recovery_orchestration,
+            module_name,
+            result_callback(index),
+        )
+
+    assert (
+        layout_recovery_orchestration.run_layout_reshape_attention_recovery_prefix(
+            context
+        )
+        == expected_results
+    )
+    assert expected_results[0] == layout_results
+
+    orchestration_functions = {
+        node.name: node
+        for node in ast.parse(
+            ORCHESTRATION_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    runner = orchestration_functions[
+        "run_layout_reshape_attention_recovery_prefix"
+    ]
+    assert ast.unparse(runner.returns) == "Tuple[Any, ...]"
+    assert isinstance(runner.body[-1], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper(ATTENTION_PREFIX)
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    direct_results: list[tuple[list[ast.stmt], int]] = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if _direct_call_name(candidate) == ATTENTION_PREFIX:
+                direct_results.append((statement.body, index))
+    assert len(direct_results) == 3
+    assert tuple(
+        _single_target(body[index]) for body, index in direct_results
+    ) == ATTENTION_RESULT_TARGETS
+    assert all(
+        isinstance(body[index].value, ast.Call)
+        and body[index].value.args == []
+        and body[index].value.keywords == []
+        for body, index in direct_results
+    )
+    assert tuple(
+        _direct_call_name(body[index - 1]) for body, index in direct_results
+    ) == (
+        "run_layout_transpose_cleanup",
+        "run_duplicate_fanout_cleanup",
+        "_run_qlinear_mean_concat_recovery_sequence",
+    )
+    assert tuple(
+        _direct_call_name(body[index + 1]) for body, index in direct_results
+    ) == (
+        "_optimize_fold_mul_add_mul_affine_chains",
+        "_optimize_fold_mul_add_mul_affine_chains",
+        "_optimize_transpose_instancenorm_prepost_nhwc_chains",
+    )
+    for target in ATTENTION_RESULT_TARGETS:
+        assert not any(
+            isinstance(node, ast.Name)
+            and node.id == target
+            and isinstance(node.ctx, ast.Load)
+            for node in ast.walk(lowerer)
+        )

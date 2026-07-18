@@ -1487,3 +1487,14 @@ The next unit should audit all three direct layout/reshape/attention prefix
 results, including the newly populated nested layout-recovery slot, without
 changing their distinct surrounding pass boundaries or consuming incomplete
 child summaries.
+
+That fifteen-slot parent is now characterized with the complete nested
+nineteen-slot layout-recovery result at slot zero. Selected observation-only
+targets are `_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results`. Exact result identity,
+shared context, three zero-argument calls, layout-cleanup/affine,
+duplicate-fanout/affine, and QLinear/InstanceNorm boundaries, and the
+unconsumed policy are frozen. The focused gate passes
+`303 passed, 1 xfailed in 18.24s`; the branch-changed broad gate passes
+`1605 passed, 1 xfailed in 29.09s`.
