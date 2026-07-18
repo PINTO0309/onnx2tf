@@ -976,12 +976,24 @@ The focused indexed-owner/boundary gate passes `401 passed in 18.59s`, and the
 branch-changed broad suite passes `1502 passed in 25.50s`. Singleton boundary
 tests now accept an assigned predecessor without changing cluster execution.
 
+Singleton/Reshape orchestration now propagates its existing policy-selected
+result tuple through `run_singleton_reshape()` and the local helper. The two
+direct primary calls retain `_terminal_singleton_reshape_results` and
+`_post_terminal_singleton_reshape_results`; neither tuple has a consumer.
+
+All sixteen policy combinations, exact child order, shared pass-state scope,
+and both terminal boundaries remain fixed. The focused gate passes
+`392 passed in 19.36s`, and the branch-changed broad suite passes
+`1503 passed in 25.34s`. The change adds no child execution, graph traversal,
+dependency, or TensorFlow import path.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the guarded terminal Singleton/Reshape cluster result after
-`_terminal_qkv_split_conv_concat_bridge_stats`. All other Singleton/Reshape
-policies, three QKV result forms, and the late summary must remain fixed.
+unit should audit the raw top-level indexed shape-convergence result after
+`_post_terminal_singleton_reshape_results`. The nested indexed-convergence
+result is already consumed and must remain fixed. All Singleton/Reshape
+policies, three QKV result forms, and the late summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

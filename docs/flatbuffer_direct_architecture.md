@@ -11280,3 +11280,14 @@ fixes all sixteen policy combinations, result order, the two exact call
 policies, shared scope, direct-call count, and both surrounding boundaries.
 The intended propagation is observation-only: it must not add a result
 consumer, guard, child execution, graph traversal, or TensorFlow import path.
+
+`run_singleton_reshape()` and the local helper now transparently return the
+existing policy-selected tuple. The guarded terminal call retains it as
+`_terminal_singleton_reshape_results`, and the later top-level call retains it
+as `_post_terminal_singleton_reshape_results`.
+
+Both tuples remain unconsumed observation data. Every selected child still
+executes exactly once in the original order through the original shared scope;
+all four policy flags and both surrounding boundaries remain unchanged. The
+retention adds no graph scan, mutation, conditional work, dependency, or
+TensorFlow import path.

@@ -7924,6 +7924,39 @@ result propagation contract. Implement only that contract, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Singleton/Reshape result propagation implementation checkpoint
+
+`run_singleton_reshape()` now returns the ordered dictionary tuple produced by
+`run_recovery_invocations()`, and the local helper transparently forwards it.
+The guarded terminal call retains `_terminal_singleton_reshape_results`; the
+later top-level call retains `_post_terminal_singleton_reshape_results`.
+
+Both tuples are observation-only and have no consumer or guard. All sixteen
+policy combinations still select the same child pass IDs, every selected child
+executes exactly once through the original shared scope, and the option guard,
+two production boundaries, pass order, dependencies, diagnostics, and
+TensorFlow behavior remain unchanged. Two architecture tests were updated to
+recognize and verify the newly assigned Singleton boundary instead of assuming
+that it remained a raw expression.
+
+Implementation validation completed sequentially under `uv`:
+
+- Singleton/Reshape policies and boundaries, indexed Split/Conv/Concat bridge,
+  QKV orchestration, architecture, and pass-efficiency coverage:
+  `392 passed in 19.36s`
+- branch-changed broad suite plus the same Singleton/Reshape coverage:
+  `1503 passed in 25.34s`
+
+These are unit, contract, and orchestration checks; this result propagation
+does not claim a new model-corpus run.
+
+At resume, audit the raw top-level
+`_run_indexed_shape_convergence_cleanup()` result immediately after
+`_post_terminal_singleton_reshape_results`. Preserve the already consumed
+nested convergence form, the terminal call's live LayoutState, and all
+following very-late recovery boundaries. Commit and push only; do not create,
+reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

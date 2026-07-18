@@ -2021,6 +2021,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert len(invocation_indexes) == 3
     previous_call_names = []
     next_call_names = []
+    assigned_boundary_targets = []
     for index in invocation_indexes:
         invocation = lowerer.body[index].value
         assert invocation.args == []
@@ -2028,9 +2029,13 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
+            if isinstance(boundary, ast.Assign):
+                assert len(boundary.targets) == 1
+                assert isinstance(boundary.targets[0], ast.Name)
+                assigned_boundary_targets.append(boundary.targets[0].id)
         previous_call_names.append(previous.value.func.id)
         next_call_names.append(following.value.func.id)
     assert previous_call_names == [
@@ -2042,6 +2047,9 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         "_run_singleton_reshape_layout_pass_cluster",
         "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
         "_optimize_transpose_csp_attention_nhwc_chains",
+    ]
+    assert assigned_boundary_targets == [
+        "_post_terminal_singleton_reshape_results",
     ]
 
     all_invocations = [
@@ -5464,7 +5472,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
     assert isinstance(previous_boundary.test, ast.Name)
     assert previous_boundary.test.id == "optimize_layout_transpose_chains"
     previous_call = previous_boundary.body[-1]
-    assert isinstance(previous_call, ast.Expr)
+    assert isinstance(previous_call, ast.Assign)
+    assert len(previous_call.targets) == 1
+    assert isinstance(previous_call.targets[0], ast.Name)
+    assert previous_call.targets[0].id == "_terminal_singleton_reshape_results"
     assert isinstance(previous_call.value, ast.Call)
     assert isinstance(previous_call.value.func, ast.Name)
     assert (
@@ -7816,7 +7827,7 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     )
     assert len(long_helper.body) == 1
     long_statement = long_helper.body[0]
-    assert isinstance(long_statement, ast.Expr)
+    assert isinstance(long_statement, ast.Return)
     assert isinstance(long_statement.value, ast.Call)
     assert isinstance(long_statement.value.func, ast.Name)
     assert long_statement.value.func.id == "run_singleton_reshape"

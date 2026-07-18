@@ -4173,8 +4173,8 @@ def lower_onnx_to_ir(
         include_duplicate_fanout: bool = False,
         include_multi_branch_gate: bool = False,
         include_spatial_concat_post_transpose: bool = True,
-    ) -> None:
-        run_singleton_reshape(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_singleton_reshape(
             singleton_reshape_context,
             include_layout_transpose=include_layout_transpose,
             include_duplicate_fanout=include_duplicate_fanout,
@@ -4796,9 +4796,11 @@ def lower_onnx_to_ir(
         )
         # Run the multi-branch gate rewrite at terminal stage so earlier
         # generic passes do not re-wrap rewritten NHWC tensors.
-        _run_singleton_reshape_layout_pass_cluster(
-            include_layout_transpose=True,
-            include_multi_branch_gate=True,
+        _terminal_singleton_reshape_results = (
+            _run_singleton_reshape_layout_pass_cluster(
+                include_layout_transpose=True,
+                include_multi_branch_gate=True,
+            )
         )
     _run_terminal_clamp_unary_relu_pass_cluster()
     _run_sinet_terminal_layout_recovery_sequence()
@@ -4809,9 +4811,11 @@ def lower_onnx_to_ir(
     # Apply singleton transpose->reshape rewrite regardless of layout-opt mode.
     # This is required for fallback relowering (optimize_layout_transpose_chains=False)
     # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
-    _run_singleton_reshape_layout_pass_cluster(
-        include_duplicate_fanout=True,
-        include_spatial_concat_post_transpose=False,
+    _post_terminal_singleton_reshape_results = (
+        _run_singleton_reshape_layout_pass_cluster(
+            include_duplicate_fanout=True,
+            include_spatial_concat_post_transpose=False,
+        )
     )
     _run_indexed_shape_convergence_cleanup(
         model_ir,

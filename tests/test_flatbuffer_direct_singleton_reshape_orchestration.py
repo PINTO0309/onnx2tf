@@ -166,7 +166,7 @@ def test_singleton_reshape_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -363,13 +363,6 @@ def test_singleton_reshape_runner_preserves_all_instrumented_orders(
         assert duplicate_kwargs["include_transpose"] is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "singleton/reshape orchestration does not yet propagate its ordered "
-        "results to the two direct primary callers"
-    ),
-)
 def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -476,7 +469,10 @@ def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> Non
     invocation_index = next(
         index
         for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_singleton_reshape_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_RESHAPE
@@ -484,7 +480,7 @@ def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> Non
     invocation = guard.body[invocation_index]
 
     assert invocation_index == len(guard.body) - 1
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {
@@ -507,14 +503,17 @@ def test_singleton_reshape_preserves_duplicate_spatial_policy_and_boundaries() -
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_post_terminal_singleton_reshape_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_RESHAPE
     )
     invocation = lowerer.body[invocation_index]
 
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {
