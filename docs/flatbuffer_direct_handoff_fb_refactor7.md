@@ -7350,3 +7350,37 @@ At resume, audit the guarded reconciliation immediately after
 metrics and includes clamped net tensor reduction, so preserve the existing
 positive-count predicate and characterize only a complete opt-in result target.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Guarded late-binary layout-recovery shape result characterization checkpoint
+
+`late_binary_layout_recovery_stats` is a complete mutation aggregate. The
+runner excludes non-mutating iteration metrics, includes fixed rewrite
+counters, and adds clamped net tensor reduction for cleanup-only pruning. Its
+nested `_stats_have_positive_count()` guard is already covered by runtime
+rewrite, prune, and stable outcomes.
+
+A strict expected-failure contract requires only the reconciliation inside
+that nested guard to retain
+`_late_binary_layout_recovery_static_shape_stats` with
+`include_mutation_count=True`. It fixes the outer layout-option predicate,
+runner arguments, recovery target, inner positive predicate, one-statement
+body, and following pre-terminal InstanceNorm evidence boundary.
+
+At implementation, replace only the inner raw reconciliation with that
+assignment and opt-in keyword. Do not alter either guard, aggregate schema,
+runner behavior, reconciler fixed point, following terminal pass, pass order,
+dependencies, diagnostics, or TensorFlow behavior. The complete result must
+have no consumer.
+
+Characterization validation completed sequentially under `uv`:
+
+- recovery aggregate/orchestration, runtime rewrite/prune guard, complete
+  reconciler, architecture, and pass-efficiency coverage:
+  `298 passed, 1 xfailed in 17.48s`
+- branch-changed broad suite plus the same runtime and structural coverage:
+  `1428 passed, 1 xfailed in 24.32s`
+
+The sole strict expected failure is the intentionally unimplemented guarded
+late-binary layout-recovery shape result contract above. Implement only that
+assignment and opt-in counter, rerun the same gates sequentially, then commit
+and push only; do not create, reopen, or update a pull request.

@@ -11085,6 +11085,17 @@ That predicate remains unchanged, and its body now retains
 `include_mutation_count=True`. The following optional late-binary layout-
 recovery guard remains fixed, and the result has no consumer.
 
+The following optional late-binary layout-recovery runner already returns a
+complete aggregate that excludes iteration metrics and includes clamped net
+tensor reduction. Its nested positive-count guard is covered by runtime rewrite,
+prune, and stable outcomes and must remain unchanged.
+
+Strict characterization selects only the reconciliation inside that nested
+guard for a future `_late_binary_layout_recovery_static_shape_stats` assignment
+with `include_mutation_count=True`. The surrounding option guard, recovery
+target, positive predicate, and following terminal evidence boundary remain
+fixed.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`

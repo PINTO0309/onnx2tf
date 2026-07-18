@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import onnx2tf.tflite_builder.passes.late_binary_layout_recovery as recovery
+import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
@@ -248,3 +249,61 @@ def test_late_binary_recovery_connects_to_terminal_evidence_boundary() -> None:
     assert following.value.func.id == (
         "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="guarded late-binary layout recovery shape result is discarded",
+)
+def test_late_binary_recovery_retains_complete_shape_result() -> None:
+    lowerer_tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    branch = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test)
+        == (
+            "optimize_layout_transpose_chains or "
+            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+        )
+    )
+    assert len(branch.body) == 2
+    stats_assignment = branch.body[0]
+    assert isinstance(stats_assignment, ast.Assign)
+    assert isinstance(stats_assignment.targets[0], ast.Name)
+    assert stats_assignment.targets[0].id == "late_binary_layout_recovery_stats"
+
+    guard = branch.body[1]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+    )
+    assert len(guard.body) == 1
+    statement = guard.body[0]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == (
+        "_late_binary_layout_recovery_static_shape_stats"
+    )
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_mutation_count": "True"}
