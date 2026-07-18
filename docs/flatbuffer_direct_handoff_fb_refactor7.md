@@ -12547,3 +12547,42 @@ cleanup, a summary consumer, or any new branch. Preserve phase order,
 LayoutState forwarding, result counts, graph/tensor mutations, dependencies,
 public API, and TensorFlow behavior. Validate sequentially, commit, and push
 only; do not create, reopen, or update a pull request.
+
+## Indexed prune/reconcile result implementation checkpoint
+
+`run_indexed_prune_reconcile_cleanup()` now owns exactly dead-operator pruning
+and one static-shape reconciliation. It creates or accepts one
+`ModelIRGraphIndex`, forwards it to both passes, forwards the live LayoutState
+to pruning, and returns the unchanged counters as one fixed two-key dictionary.
+It does not run dynamic reshape, retry reconciliation, or add a convergence
+branch.
+
+The core-cleanup, conditional layout-pass-set-2, and very-late residual-affine
+pairs now call that owner and retain `_core_cleanup_prune_reconcile_stats`,
+`_layout_pass_set_2_prune_reconcile_stats`, and
+`_very_late_prune_reconcile_stats`. All three remain unconsumed and
+observation-only. Exact legacy mutation equivalence is exercised with one dead
+constant-derived operator and one stale Reshape output; the owner constructs
+the index once and reports one prune plus one shape reconciliation.
+
+The first implementation fixture retained its nominally dead Identity because
+it read a variable tensor and therefore correctly triggered the existing
+side-effect guard; it also omitted Reshape `newShape`. The fixture was
+corrected to exercise the intended counters. Subsequent focused and broad
+failures were only stale AST boundary expectations in architecture and SiNet
+orchestration tests. Four pre-existing structural test files now recognize the
+shared owner and retained result targets without weakening ordering assertions.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated indexed result contract: `3 passed in 0.52s`
+- graph cleanup, shape reconciliation, affected phase boundaries, indexed
+  convergence, dynamic reshape, core, architecture, and pass efficiency:
+  `391 passed in 19.96s`
+- 115 branch-changed test files: `1704 passed in 31.70s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+raw result-returning side-effect boundary before modifying production code.
+Commit and push only; do not create, reopen, or update a pull request.

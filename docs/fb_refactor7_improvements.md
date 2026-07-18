@@ -2093,3 +2093,11 @@ forwarding, one-index construction, and three unconsumed result targets. The
 focused gate passes `390 passed, 1 xfailed in 18.34s`, the 115-file branch-
 changed suite passes `1703 passed, 1 xfailed in 31.73s`, and targeted static
 validation passes.
+
+The new two-pass-only `run_indexed_prune_reconcile_cleanup()` owner shares one
+`ModelIRGraphIndex` across dead-op pruning and static-shape reconciliation at
+all three selected phase boundaries. It retains the three combined result
+dictionaries without consumers and adds no dynamic reshape or fixed-point
+retry. Mutation equivalence and one-index construction are explicit tests. The
+focused gate passes `391 passed in 19.96s`, the 115-file branch-changed suite
+passes `1704 passed in 31.70s`, and targeted static validation passes.

@@ -670,6 +670,9 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_duplicate_fanout_cleanup,
     run_squeeze_reshape_identity_cleanup,
 )
+from onnx2tf.tflite_builder.passes.prune_reconcile import (
+    run_indexed_prune_reconcile_cleanup,
+)
 from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
     _optimize_singleton_layout_reshape_maxpool_binary_cast_chains as _optimize_singleton_layout_reshape_maxpool_binary_cast_chains_pass,
     _optimize_singleton_nms_maxpool_nhwc_chains as _optimize_singleton_nms_maxpool_nhwc_chains_pass,
@@ -4567,8 +4570,10 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
     )
-    _prune_dead_operators(model_ir, layout_state=session.layout_state)
-    _reconcile_static_tensor_shapes(model_ir)
+    _core_cleanup_prune_reconcile_stats = run_indexed_prune_reconcile_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _advance_post_progress()
     if optimize_layout_transpose_chains:
         _set_post_progress_desc("layout recovery pass-set 2")
@@ -4747,8 +4752,12 @@ def lower_onnx_to_ir(
                 diagnostics=session.diagnostics,
             )
         )
-        _prune_dead_operators(model_ir, layout_state=session.layout_state)
-        _reconcile_static_tensor_shapes(model_ir)
+        _layout_pass_set_2_prune_reconcile_stats = (
+            run_indexed_prune_reconcile_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
         _advance_post_progress()
     _set_post_progress_desc("terminal cleanup passes")
     # Recovery sweeps above can re-introduce terminal TRANSPOSE->DEQUANTIZE.
@@ -4949,8 +4958,10 @@ def lower_onnx_to_ir(
     _very_late_residual_affine_fanout_stats = (
         _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
     )
-    _prune_dead_operators(model_ir, layout_state=session.layout_state)
-    _reconcile_static_tensor_shapes(model_ir)
+    _very_late_prune_reconcile_stats = run_indexed_prune_reconcile_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Dead-op pruning can unblock strict locality guards in this recovery.
     # Its pre-Add/PRELU rewrites can recreate SiNet dual-resize adapters.
     _post_cleanup_sinet_preadd_resize_results = (

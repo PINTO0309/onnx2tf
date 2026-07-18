@@ -140,7 +140,9 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
     assert _call_name(core_body[core_index - 1]) == (
         "_resolve_dynamic_reshape_shapes"
     )
-    assert _call_name(core_body[core_index + 1]) == "_prune_dead_operators"
+    assert _call_name(core_body[core_index + 1]) == (
+        "run_indexed_prune_reconcile_cleanup"
+    )
 
     final_body, final_index = locations[2]
     convergence_loop = final_body[final_index - 1]
@@ -152,7 +154,9 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
         and node.id == "rewritten_instnorm"
         for node in ast.walk(convergence_loop)
     )
-    assert _call_name(final_body[final_index + 1]) == "_prune_dead_operators"
+    assert _call_name(final_body[final_index + 1]) == (
+        "run_indexed_prune_reconcile_cleanup"
+    )
 
     for target in RESULT_TARGETS:
         assert not any(

@@ -33,7 +33,7 @@ DIRECT_OWNER = "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains
 PUBLIC_OWNER = "optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains"
 RESULT_TARGET = "_very_late_residual_affine_fanout_stats"
 PREDECESSOR_TARGET = "_very_late_residual_affine_prelu_stats"
-SUCCESSOR = "_prune_dead_operators"
+SUCCESSOR = "run_indexed_prune_reconcile_cleanup"
 RESULT_KEY = "optimized_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains"
 
 

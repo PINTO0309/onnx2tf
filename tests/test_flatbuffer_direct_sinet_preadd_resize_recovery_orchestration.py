@@ -277,7 +277,7 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
             "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
         ),
         (
-            "_reconcile_static_tensor_shapes",
+            "run_indexed_prune_reconcile_cleanup",
             "_optimize_transpose_csp_attention_nhwc_chains",
         ),
     ]
@@ -286,6 +286,7 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
         "_post_terminal_singleton_reshape_results",
         "_very_late_sinet_layout_recovery_results",
         "_very_late_residual_affine_prelu_stats",
+        "_very_late_prune_reconcile_stats",
         "_post_cleanup_csp_attention_stats",
     ]
 
@@ -438,7 +439,7 @@ def test_sinet_preadd_resize_propagates_and_retains_ordered_results(
         "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
     )
     assert _direct_call_name(lowerer.body[third_index - 1]) == (
-        "_reconcile_static_tensor_shapes"
+        "run_indexed_prune_reconcile_cleanup"
     )
     assert _direct_call_name(lowerer.body[third_index + 1]) == (
         "_optimize_transpose_csp_attention_nhwc_chains"

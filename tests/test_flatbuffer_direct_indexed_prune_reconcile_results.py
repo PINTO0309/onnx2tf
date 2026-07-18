@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import ast
 import copy
-import importlib
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
@@ -15,11 +13,13 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _prune_dead_operators,
     _reconcile_static_tensor_shapes,
 )
+from onnx2tf.tflite_builder.passes.prune_reconcile import (
+    run_indexed_prune_reconcile_cleanup,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
-OWNER_MODULE = "onnx2tf.tflite_builder.passes.prune_reconcile"
 OWNER = "run_indexed_prune_reconcile_cleanup"
 RESULT_TARGETS = (
     "_core_cleanup_prune_reconcile_stats",
@@ -106,6 +106,20 @@ def _raw_pairs(
     )
 
 
+def _owner_locations(
+    lowerer: ast.FunctionDef,
+) -> list[tuple[list[ast.stmt], int]]:
+    return sorted(
+        [
+            (block, index)
+            for block in _pipeline_blocks(lowerer.body)
+            for index, statement in enumerate(block)
+            if _call_name(statement) == OWNER
+        ],
+        key=lambda item: item[0][item[1]].lineno,
+    )
+
+
 def _tensor(
     name: str,
     shape: list[int],
@@ -128,6 +142,11 @@ def _make_cleanup_model_ir() -> ModelIR:
     model_ir.outputs = ["output"]
     model_ir.tensors = {
         "input": _tensor("input", [1, 4]),
+        "dead_source": _tensor(
+            "dead_source",
+            [1, 4],
+            data=np.ones([1, 4], dtype=np.float32),
+        ),
         "shape": _tensor(
             "shape",
             [2],
@@ -137,8 +156,13 @@ def _make_cleanup_model_ir() -> ModelIR:
         "output": _tensor("output", [1, 4]),
     }
     model_ir.operators = [
-        OperatorIR("IDENTITY", ["input"], ["dead"]),
-        OperatorIR("RESHAPE", ["input", "shape"], ["output"]),
+        OperatorIR("IDENTITY", ["dead_source"], ["dead"]),
+        OperatorIR(
+            "RESHAPE",
+            ["input", "shape"],
+            ["output"],
+            options={"newShape": [2, 2]},
+        ),
     ]
     return model_ir
 
@@ -164,42 +188,35 @@ def _snapshot(model_ir: ModelIR) -> dict[str, object]:
     }
 
 
-def test_raw_prune_reconcile_phase_boundaries_are_explicit() -> None:
+def test_indexed_prune_reconcile_phase_boundaries_are_explicit() -> None:
     lowerer = _lowerer()
-    pairs = _raw_pairs(lowerer)
-    assert len(pairs) == 3
+    locations = _owner_locations(lowerer)
+    assert len(locations) == 3
     for (
         block,
         index,
-    ), predecessor_target, successor in zip(
-        pairs,
+    ), target, predecessor_target, successor in zip(
+        locations,
+        RESULT_TARGETS,
         PREDECESSOR_TARGETS,
         SUCCESSORS,
     ):
-        prune = block[index]
-        reconcile = block[index + 1]
+        invocation = block[index]
+        assert _single_target(invocation) == target
         assert _single_target(block[index - 1]) == predecessor_target
-        assert _call_name(prune) == "_prune_dead_operators"
-        assert _call_name(reconcile) == "_reconcile_static_tensor_shapes"
-        prune_call = _statement_call(prune)
-        reconcile_call = _statement_call(reconcile)
-        assert prune_call is not None
-        assert reconcile_call is not None
-        assert [ast.unparse(argument) for argument in prune_call.args] == [
+        call = _statement_call(invocation)
+        assert call is not None
+        assert [ast.unparse(argument) for argument in call.args] == [
             "model_ir"
         ]
         assert {
             keyword.arg: ast.unparse(keyword.value)
-            for keyword in prune_call.keywords
+            for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
-        assert [ast.unparse(argument) for argument in reconcile_call.args] == [
-            "model_ir"
-        ]
-        assert reconcile_call.keywords == []
         if successor == "_advance_post_progress":
-            assert _call_name(block[index + 2]) == successor
+            assert _call_name(block[index + 1]) == successor
         else:
-            assert _single_target(block[index + 2]) == successor
+            assert _single_target(block[index + 1]) == successor
 
 
 def test_raw_prune_reconcile_result_schemas_are_explicit() -> None:
@@ -211,16 +228,9 @@ def test_raw_prune_reconcile_result_schemas_are_explicit() -> None:
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="three phase boundaries rebuild and discard prune/reconcile evidence",
-)
 def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
     monkeypatch,
 ) -> None:
-    owner_module = importlib.import_module(OWNER_MODULE)
-    owner = getattr(owner_module, OWNER)
-
     expected_ir = _make_cleanup_model_ir()
     actual_ir = copy.deepcopy(expected_ir)
     expected_layout = LayoutState.from_model_ir(expected_ir)
@@ -239,7 +249,10 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
         original_refresh(graph_index)
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
-    result = owner(actual_ir, layout_state=actual_layout)
+    result = run_indexed_prune_reconcile_cleanup(
+        actual_ir,
+        layout_state=actual_layout,
+    )
 
     assert result == {
         "removed_dead_operators": prune_stats["removed_dead_operators"],
@@ -255,15 +268,10 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
     assert _snapshot(actual_ir) == _snapshot(expected_ir)
 
     lowerer = _lowerer()
-    invocations = sorted(
-        [
-            statement
-            for block in _pipeline_blocks(lowerer.body)
-            for statement in block
-            if _call_name(statement) == OWNER
-        ],
-        key=lambda statement: statement.lineno,
-    )
+    invocations = [
+        block[index]
+        for block, index in _owner_locations(lowerer)
+    ]
     assert tuple(_single_target(statement) for statement in invocations) == (
         RESULT_TARGETS
     )

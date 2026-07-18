@@ -2141,7 +2141,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert previous_call_names == [
         "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
         "_run_sinet_terminal_layout_recovery_sequence",
-        "_reconcile_static_tensor_shapes",
+        "run_indexed_prune_reconcile_cleanup",
     ]
     assert next_call_names == [
         "_run_singleton_reshape_layout_pass_cluster",
@@ -2153,6 +2153,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         "_post_terminal_singleton_reshape_results",
         "_very_late_sinet_layout_recovery_results",
         "_very_late_residual_affine_prelu_stats",
+        "_very_late_prune_reconcile_stats",
         "_post_cleanup_csp_attention_stats",
     ]
 

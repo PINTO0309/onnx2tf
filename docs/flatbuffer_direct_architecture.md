@@ -12818,3 +12818,10 @@ unconsumed `_core_cleanup_prune_reconcile_stats`,
 `_layout_pass_set_2_prune_reconcile_stats`, and
 `_very_late_prune_reconcile_stats`. Dynamic reshape and fixed-point retries are
 explicitly outside this owner's contract.
+
+`run_indexed_prune_reconcile_cleanup()` now implements that two-pass-only
+contract. One `ModelIRGraphIndex` is created or accepted and forwarded through
+dead-op pruning and static-shape reconciliation; LayoutState is forwarded only
+where the legacy pair used it. The three phase calls retain their selected
+dictionaries without consumers. No additional pass, scan after pruning,
+summary, fixed-point loop, or control dependency is introduced.
