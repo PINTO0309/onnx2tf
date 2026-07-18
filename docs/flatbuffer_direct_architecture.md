@@ -11139,3 +11139,19 @@ The primary caller now initializes that stable result and replaces it with the
 opt-in complete reconciliation dictionary as the unchanged first statement of
 the positive guard. The following sort and layout inference remain in place,
 and no scan is added.
+
+The terminal InstanceNorm residual-add-to-single-post-adapter owner returns the
+fixed one-counter dictionary
+`optimized_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains`.
+It prunes unused tensors and synchronizes the live LayoutState only after a
+positive rewrite, so that counter is complete mutation evidence for the owner.
+
+Two production occurrences exist. Indexed binary-layout convergence consumes
+the first result with `residual_graph_index`; the terminal direct call after
+diagnostics-aware normalization/pad cleanup currently discards its result. A
+strict characterization contract selects only that direct call for the future
+`_terminal_instancenorm_residual_add_stats` target. It fixes the live
+LayoutState argument, retained terminal residual/Mul/Concat successor, and the
+single graph-indexed nested occurrence. Retaining the direct result must remain
+an assignment-only orchestration change with no consumer or additional graph
+work.

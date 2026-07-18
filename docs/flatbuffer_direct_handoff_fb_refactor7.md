@@ -7569,3 +7569,38 @@ Isolate the terminal raw call immediately before
 `_terminal_instancenorm_residual_mul_concat_stats` without conflating any
 nested convergence occurrence. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Terminal InstanceNorm residual-add result characterization checkpoint
+
+`_optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains()`
+has exactly two production occurrences. The nested convergence occurrence
+consumes its result with `residual_graph_index`; the terminal direct occurrence
+after diagnostics-aware normalization/pad cleanup remains raw.
+
+The indexed owner returns the fixed one-counter dictionary
+`optimized_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains`.
+Unused-tensor pruning and LayoutState synchronization run only after a positive
+rewrite, so the counter covers all owner mutation paths.
+
+A strict expected-failure contract selects only the terminal direct result for
+`_terminal_instancenorm_residual_add_stats`. It fixes the live Session
+LayoutState argument, diagnostics-aware normalization/pad predecessor, retained
+`_terminal_instancenorm_residual_mul_concat_stats` successor, total occurrence
+count, and exactly one graph-indexed nested occurrence.
+
+At implementation, replace only the terminal direct expression with an
+assignment. Do not change the wrapper or owner, one-key schema, positive-only
+pruning, GraphIndex/LayoutState behavior, nested counter consumption, adjacent
+calls, pass order, dependencies, diagnostics, or TensorFlow behavior. The
+retained value must have no consumer and trigger no graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed residual-add owner, terminal/direct/nested occurrence, adjacent
+  terminal InstanceNorm results, architecture, and pass-efficiency coverage:
+  `446 passed, 1 xfailed in 19.82s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+result-retention contract above. Implement only that assignment, rerun focused
+and branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
