@@ -319,7 +319,14 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
 
     assert len(invocation_indexes) == 2
     first_index, second_index = invocation_indexes
-    assert _direct_call_name(lowerer.body[first_index - 1]) == (
+    first_preceding = lowerer.body[first_index - 1]
+    assert isinstance(first_preceding, ast.Assign)
+    assert len(first_preceding.targets) == 1
+    assert isinstance(first_preceding.targets[0], ast.Name)
+    assert first_preceding.targets[0].id == (
+        "_very_late_instancenorm_dualstats_stats"
+    )
+    assert _statement_call_name(first_preceding) == (
         "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
     )
     first_following = lowerer.body[first_index + 1]

@@ -5108,9 +5108,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_instancenorm_dualstats_stats = (
+        _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Norm-subgraph fallback rewrites can introduce channelwise
     # [1,C,1,1]->[1,1,1,C] adapters as TRANSPOSE in no-layout mode.

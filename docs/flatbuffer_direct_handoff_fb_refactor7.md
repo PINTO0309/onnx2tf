@@ -6848,3 +6848,47 @@ The sole strict expected failure is the intentionally unimplemented very-late
 dual-statistics InstanceNorm result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Very-late dual-statistics InstanceNorm result retention implementation checkpoint
+
+The second of the three direct production calls now retains its unchanged one-
+counter dictionary as `_very_late_instancenorm_dualstats_stats`. The first
+terminal direct call remains raw, the third retains
+`_pre_terminal_affine_instancenorm_dualstats_stats`, and the nested convergence
+call continues to consume its counter from the shared graph index.
+
+This is an assignment-only orchestration change. It preserves the wrapper and
+indexed owner, one-key result schema, rewrite guards, positive-only pruning,
+GraphIndex/LayoutState/candidate/max-rewrite controls, callback arguments,
+pass order, captured very-late residual predecessor, following singleton
+consecutive-Reshape cluster, other occurrence forms, dependencies,
+diagnostics, and TensorFlow behavior. The retained value has no consumer and
+triggers no additional graph work.
+
+The first broad implementation run found one stale structural contract:
+`test_singleton_consecutive_preserves_both_main_boundaries` required the
+cluster predecessor to be `ast.Expr`. The production assignment was correct;
+the test now requires `ast.Assign`, the exact
+`_very_late_instancenorm_dualstats_stats` target, and the unchanged owner call.
+The singleton runner and all other production boundaries remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- stale boundary contract alone: `1 passed in 0.52s`
+- dual-statistics/residual indexed owners, direct/nested occurrence accounting,
+  singleton orchestration, terminal/final boundaries, architecture, and pass-
+  efficiency gate: `686 passed in 20.88s`
+- branch-changed broad suite plus both indexed owners, singleton orchestration,
+  occurrence accounting, terminal/final boundaries, architecture, and pass-
+  efficiency coverage: `1422 passed in 24.93s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the three production occurrences of
+`_run_singleton_consecutive_reshape_pass_cluster()`: the first model-level call
+after `_very_late_instancenorm_dualstats_stats` is raw, the second model-level
+call destructures its three ordered results, and the conditional fallback call
+is raw. Establish whether all three child dictionaries form complete mutation
+evidence before selecting any new observation point. Commit and push only; do
+not create, reopen, or update a pull request.

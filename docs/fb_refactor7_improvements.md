@@ -753,6 +753,21 @@ This checkpoint passes the focused indexed owner/orchestration gate with
 `469 passed in 19.78s`, plus the branch-changed broad related suite with
 `1421 passed in 24.65s`.
 
+The second of three direct dual-statistics InstanceNorm residual/add/resize
+calls now retains its existing one-counter dictionary as
+`_very_late_instancenorm_dualstats_stats`. It remains between the captured
+very-late residual/Mul/Concat result and singleton consecutive-Reshape cluster.
+The first terminal call remains raw, the third keeps its pre-terminal target,
+and the nested convergence call continues to consume its counter. The retained
+value has no consumer and adds no graph work.
+
+The broad gate exposed one stale singleton-boundary test that required its
+predecessor to be an expression. That contract now requires the intentional
+assignment and exact target instead; the singleton implementation and its
+other boundaries are unchanged. The focused gate including that module passes
+`686 passed in 20.88s`, and the branch-changed broad related suite passes
+`1422 passed in 24.93s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -760,9 +775,9 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit all production occurrences of the adjacent dual-statistics
-InstanceNorm residual/add/resize owner and isolate its raw very-late direct
-result without conflating the terminal raw call, pre-terminal retained call,
-or nested convergence call. Any new mutation evidence must preserve current
-pass order, TensorFlow-free boundary, dependency set, and sequential validation
-policy.
+unit should audit all production occurrences and the three-result mutation
+contract of the adjacent singleton consecutive-Reshape cluster. Its first
+model-level call and conditional fallback call remain raw while a later model-
+level call is destructured. Any new observation point must preserve those
+distinct occurrences, current pass order, TensorFlow-free boundary, dependency
+set, and sequential validation policy.
