@@ -10804,6 +10804,14 @@ all four dictionaries under phase-specific targets. Both occurrence pairs,
 their shared callback contracts, distinct preceding boundaries, and Conv-
 affine successors are unchanged.
 
+Each terminal quantization pair is followed by Conv MUL/ADD affine folding and
+Conv/binary activation fusion. The affine owner returns four counters and has a
+third later occurrence; activation fusion returns seven counters and occurs
+only in these two pairs. Both pairs currently discard their results. Strict
+characterization selects the first two affine calls plus both activation calls,
+fixes their phase-specific Q/DQ predecessors and distinct successors, and
+leaves the third affine occurrence unchanged.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

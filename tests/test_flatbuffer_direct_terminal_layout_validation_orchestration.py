@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1413,6 +1415,92 @@ def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
     assert ast.unparse(body[sanitizer_indices[1] - 1]) == (
         "_set_post_progress_desc('terminal cleanup passes')"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="core and terminal Conv-affine/activation results are discarded",
+)
+def test_primary_path_retains_quantization_successor_conv_results() -> None:
+    body = _lowerer_body()
+    affine_name = "_optimize_fold_conv_mul_add_affine_chains"
+    activation_name = "_optimize_fuse_conv_activation_chains"
+    affine_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == affine_name
+    ]
+    activation_indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == activation_name
+    ]
+    assert len(affine_indices) == 3
+    assert len(activation_indices) == 2
+    assert activation_indices == [index + 1 for index in affine_indices[:2]]
+
+    expected_targets = (
+        (
+            "_core_cleanup_conv_affine_stats",
+            "_core_cleanup_conv_activation_stats",
+            "_core_cleanup_terminal_qdq_stats",
+        ),
+        (
+            "_terminal_cleanup_conv_affine_stats",
+            "_terminal_cleanup_conv_activation_stats",
+            "_terminal_cleanup_terminal_qdq_stats",
+        ),
+    )
+    for pair_index, (affine_index, activation_index) in enumerate(
+        zip(affine_indices[:2], activation_indices)
+    ):
+        affine = body[affine_index]
+        assert isinstance(affine, ast.Assign)
+        assert isinstance(affine.targets[0], ast.Name)
+        assert affine.targets[0].id == expected_targets[pair_index][0]
+        affine_call = affine.value
+        assert isinstance(affine_call, ast.Call)
+        assert isinstance(affine_call.func, ast.Name)
+        assert affine_call.func.id == affine_name
+        assert [ast.unparse(argument) for argument in affine_call.args] == [
+            "model_ir"
+        ]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in affine_call.keywords
+        } == {
+            "enable_conv_add_only_fold": "True",
+            "layout_state": "session.layout_state",
+        }
+
+        activation = body[activation_index]
+        assert isinstance(activation, ast.Assign)
+        assert isinstance(activation.targets[0], ast.Name)
+        assert activation.targets[0].id == expected_targets[pair_index][1]
+        activation_call = activation.value
+        assert isinstance(activation_call, ast.Call)
+        assert isinstance(activation_call.func, ast.Name)
+        assert activation_call.func.id == activation_name
+        assert [
+            ast.unparse(argument) for argument in activation_call.args
+        ] == ["model_ir"]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in activation_call.keywords
+        } == {"layout_state": "session.layout_state"}
+
+        predecessor = body[affine_index - 1]
+        assert isinstance(predecessor, ast.Assign)
+        assert isinstance(predecessor.targets[0], ast.Name)
+        assert predecessor.targets[0].id == expected_targets[pair_index][2]
+
+    assert _call_name(_statement_call(body[activation_indices[0] + 1])) == (
+        "_resolve_dynamic_reshape_shapes"
+    )
+    assert _call_name(_statement_call(body[activation_indices[1] + 1])) == (
+        "_optimize_transpose_pre_argmax_nhwc_terminal_chains"
+    )
+    assert isinstance(body[affine_indices[2]], ast.Expr)
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

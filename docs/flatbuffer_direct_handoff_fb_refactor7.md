@@ -4755,3 +4755,38 @@ At resume, audit the two following
 schemas, the shared layout-state/Conv-ADD option contracts, and their fixed Q/DQ
 predecessors before retaining evidence. Commit and push only; do not create or
 update a pull request.
+
+## Quantization-successor Conv result characterization checkpoint
+
+Each captured terminal quantization-cleanup pair is followed by Conv MUL/ADD
+affine folding and Conv/binary activation fusion. The affine owner returns a
+four-counter total/category dictionary and has three direct primary-path
+occurrences. Activation fusion returns seven Conv/binary/total counters and has
+two direct occurrences, both in these pairs. The first two affine results and
+both activation results are currently discarded.
+
+A strict expected-failure orchestration contract requires phase-specific
+targets `_core_cleanup_conv_affine_stats`,
+`_core_cleanup_conv_activation_stats`,
+`_terminal_cleanup_conv_affine_stats`, and
+`_terminal_cleanup_conv_activation_stats`. It fixes the shared Conv-ADD option
+and layout-state contracts, captured Q/DQ predecessors, and distinct dynamic-
+Reshape/ArgMax successors. The third later affine expression remains explicitly
+unchanged for a separate audit.
+
+At implementation, replace only these four expressions with assignments. Do
+not change either owner/schema, the third affine call, callback arguments,
+indexed mutation/pruning/layout sync, add a guard, reconciliation, scan, sort,
+dependency, metadata write, or result consumer, reorder either pair, or affect
+TensorFlow behavior. Validate indexed Conv-affine folding, activation fusion,
+terminal convergence/orchestration, architecture, and broad related gates
+sequentially, then commit and push only; do not create or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused Conv-affine/activation, terminal convergence/orchestration, and
+  architecture gate: `321 passed, 1 xfailed in 17.90s`
+- expanded broad related gate: `1507 passed, 1 xfailed in 31.15s`
+
+The sole strict expected failure is the intentionally unimplemented four-result
+retention contract above.
