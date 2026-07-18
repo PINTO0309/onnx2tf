@@ -4727,7 +4727,9 @@ def lower_onnx_to_ir(
     _terminal_swish_residual_concat_closure_stats = (
         _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
     )
-    _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
+    _terminal_dequant_logistic_mul_quantize_bridge_stats = (
+        _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
+    )
     _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
     # Late recovery passes can recreate Conv->InstNorm(NCHW)->Pad wrappers.
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(

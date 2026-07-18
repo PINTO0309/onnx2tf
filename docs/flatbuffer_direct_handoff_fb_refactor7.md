@@ -6477,3 +6477,32 @@ The sole strict expected failure is the intentionally unimplemented terminal
 dequant-logistic bridge result retention contract above. Implement that
 assignment, rerun the same gates sequentially, then commit and push only; do
 not create, reopen, or update a pull request.
+
+## Terminal dequant-logistic bridge result retention implementation checkpoint
+
+The sole model-only production call now retains its existing one-counter
+dictionary as `_terminal_dequant_logistic_mul_quantize_bridge_stats`. This is an
+assignment-only orchestration change. The wrapper and indexed owner, optional
+GraphIndex contract, result schema, rewrite guards, graph mutation, tensor
+pruning, callback arguments, pass order, captured Swish-closure predecessor,
+Swish-QDQ-island successor, dependencies, diagnostics, and TensorFlow behavior
+are unchanged. The retained value has no consumer and triggers no additional
+graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed quantized-logistic and Swish owners plus terminal recovery/
+  orchestration, architecture, and pass-efficiency gate:
+  `382 passed in 19.29s`
+- branch-changed broad suite plus both indexed owners, terminal recovery/
+  orchestration, architecture, and pass-efficiency coverage:
+  `1433 passed in 24.66s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the sole `_optimize_transpose_swish_qdq_nhwc_islands()`
+result, owner schema, fixed default options, production occurrence, captured
+dequant-logistic predecessor, and following InstanceNorm-bias boundary before
+adding characterization. Commit and push only; do not create, reopen, or update
+a pull request.

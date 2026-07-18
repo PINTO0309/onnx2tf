@@ -10956,9 +10956,9 @@ dequant-logistic-Mul-quantize bridge. The retained value has no consumer.
 
 The immediately following dequant-logistic-Mul-quantize indexed owner returns
 one mutation counter and has one model-only production call. Its result is
-currently discarded between the captured Swish-residual-closure dictionary and
-the model-only Swish-QDQ-island owner. Strict characterization fixes
-`_terminal_dequant_logistic_mul_quantize_bridge_stats` as its direct target.
+retained as `_terminal_dequant_logistic_mul_quantize_bridge_stats` between the
+captured Swish-residual-closure dictionary and the model-only Swish-QDQ-island
+owner. The retained value has no consumer.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
