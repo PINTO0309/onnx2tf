@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2571,6 +2573,56 @@ def test_primary_path_retains_terminal_boundary_stridedslice_result() -> None:
     successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == (
         "_optimize_transpose_swish_residual_concat_closure_nhwc_chains"
+    )
+    assert successor_call is not None
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "model_ir"
+    ]
+    assert successor_call.keywords == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="terminal Swish-residual closure result is discarded",
+)
+def test_primary_path_retains_terminal_swish_residual_closure_result() -> None:
+    body = _lowerer_body()
+    callback_name = (
+        "_optimize_transpose_swish_residual_concat_closure_nhwc_chains"
+    )
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 1
+    index = indices[0]
+
+    statement = body[index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == (
+        "_terminal_swish_residual_concat_closure_stats"
+    )
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert call.keywords == []
+
+    predecessor = body[index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_terminal_boundary_stridedslice_qdq_concat_stats"
+    )
+
+    successor_call = _statement_call(body[index + 1])
+    assert _call_name(successor_call) == (
+        "_optimize_transpose_dequant_logistic_mul_quantize_bridges"
     )
     assert successor_call is not None
     assert [ast.unparse(argument) for argument in successor_call.args] == [

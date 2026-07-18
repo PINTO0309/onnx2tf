@@ -6379,3 +6379,38 @@ Validation completed sequentially under `uv`:
 The previously recorded stale-test issue is resolved. At resume, audit the
 Swish-residual closure result. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Terminal Swish-residual closure result characterization checkpoint
+
+`_optimize_transpose_swish_residual_concat_closure_nhwc_chains()` returns the
+stable four-counter dictionary comprising rewritten closure branches, removed
+pre-Transposes, rewritten Concat axes, and removed post-Transposes. Its wrapper
+fixes `min_spatial_stage=0` and `require_concat_closure=True` and has one model-
+only production call whose result is currently discarded.
+
+Existing owner tests fix the exact four-key result, wrapper equivalence, fixed
+options, index behavior, metadata propagation, and graph result. A strict
+expected-failure orchestration contract requires the direct result to be
+retained as `_terminal_swish_residual_concat_closure_stats`. It fixes the
+captured `_terminal_boundary_stridedslice_qdq_concat_stats` predecessor and the
+following model-only dequant-logistic-Mul-quantize bridge.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the wrapper or owner implementation, fixed options, four-key result
+schema, indexed phase order, graph mutation, tensor pruning, callback arguments,
+pass order, adjacent targets, dependencies, diagnostics, or TensorFlow
+behavior. The retained value must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- complete indexed quantized-Swish owner plus terminal recovery/orchestration,
+  architecture, and pass-efficiency gate:
+  `364 passed, 1 xfailed in 18.62s`
+- branch-changed broad suite plus the complete indexed quantized-Swish owner,
+  terminal recovery/orchestration, architecture, and pass-efficiency coverage:
+  `1415 passed, 1 xfailed in 24.39s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+Swish-residual closure result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.
