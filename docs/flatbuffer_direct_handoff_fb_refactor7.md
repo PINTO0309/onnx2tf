@@ -7884,6 +7884,46 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Singleton/Reshape result characterization checkpoint
+
+`run_singleton_reshape()` selects seven to ten ordered child runners from the
+layout-transpose, duplicate-fanout, multi-branch-gate, and spatial-Concat
+post-transpose policy flags. All selected runners already share one
+`ModelIRPassStateScope`, and `run_recovery_invocations()` already returns their
+results in the selected pass-ID order. The phase runner and its local helper
+currently discard that tuple.
+
+There are exactly two direct primary calls. The call after
+`_terminal_qkv_split_conv_concat_bridge_stats` is the last statement in the
+`optimize_layout_transpose_chains` guard and enables layout-transpose plus
+multi-branch-gate cleanup. The later call follows terminal SiNet pre-add/resize
+recovery, enables duplicate-fanout cleanup, disables spatial-Concat
+post-transpose cleanup, and precedes indexed shape convergence.
+
+A strict expected-failure contract selects
+`_terminal_singleton_reshape_results` and
+`_post_terminal_singleton_reshape_results` as the two retention targets. It
+fixes all sixteen policy-specific result tuples, exact child order, helper
+return boundary, direct-call count, policy keywords, shared scope, and both
+production boundaries.
+
+At implementation, transparently return the existing tuple through the phase
+runner and local helper, then replace only the two raw direct expressions with
+assignments. Do not add a consumer or guard, and do not change policy defaults,
+child order, shared-scope construction, surrounding sequences, dependencies,
+diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- Singleton/Reshape policies and boundaries, indexed Split/Conv/Concat bridge,
+  QKV orchestration, architecture, and pass-efficiency coverage:
+  `391 passed, 1 xfailed in 18.54s`
+
+The sole strict expected failure is the intentionally unimplemented ordered
+result propagation contract. Implement only that contract, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

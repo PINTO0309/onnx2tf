@@ -11260,3 +11260,23 @@ results and retain `_terminal_batchmatmul_adj_flags_stats` and
 `_post_sinet_batchmatmul_adj_flags_stats`, respectively. Both precede QKV
 attention clusters. The dictionaries have no consumer or new guard and add no
 graph work.
+
+The following Singleton/Reshape orchestrator selects seven to ten child
+runners from four independent policy flags and executes them through one
+shared pass-state scope. `run_recovery_invocations()` already returns the
+selected results in pass-ID order, but `run_singleton_reshape()` and the local
+helper currently discard that tuple.
+
+There are two direct primary calls. The guarded terminal call follows
+`_terminal_qkv_split_conv_concat_bridge_stats`, enables layout-transpose and
+multi-branch-gate cleanup, and is the last statement in the layout-option
+guard. The later top-level call follows terminal SiNet pre-add/resize recovery,
+enables duplicate-fanout cleanup, disables spatial-Concat post-transpose
+cleanup, and precedes indexed shape convergence.
+
+Strict characterization selects `_terminal_singleton_reshape_results` and
+`_post_terminal_singleton_reshape_results` as distinct retention targets. It
+fixes all sixteen policy combinations, result order, the two exact call
+policies, shared scope, direct-call count, and both surrounding boundaries.
+The intended propagation is observation-only: it must not add a result
+consumer, guard, child execution, graph traversal, or TensorFlow import path.

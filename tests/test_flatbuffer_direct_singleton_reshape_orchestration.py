@@ -363,6 +363,99 @@ def test_singleton_reshape_runner_preserves_all_instrumented_orders(
         assert duplicate_kwargs["include_transpose"] is False
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "singleton/reshape orchestration does not yet propagate its ordered "
+        "results to the two direct primary callers"
+    ),
+)
+def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(use_layout_state=True)
+    result_by_pass_id = {
+        pass_id: {f"{pass_id}_mutations": index}
+        for index, pass_id in enumerate(SINGLETON_RESHAPE_PASS_IDS, start=1)
+    }
+    for pass_id, result in result_by_pass_id.items():
+        monkeypatch.setattr(
+            singleton_reshape_orchestration,
+            pass_id,
+            lambda *args, result=result, **kwargs: dict(result),
+        )
+
+    for (
+        include_layout_transpose,
+        include_duplicate_fanout,
+        include_multi_branch_gate,
+        include_spatial_concat_post_transpose,
+    ) in POLICIES:
+        expected_ids = _expected_ids(
+            include_layout_transpose,
+            include_duplicate_fanout,
+            include_multi_branch_gate,
+        )
+        assert run_singleton_reshape(
+            context,
+            include_layout_transpose=include_layout_transpose,
+            include_duplicate_fanout=include_duplicate_fanout,
+            include_multi_branch_gate=include_multi_branch_gate,
+            include_spatial_concat_post_transpose=(
+                include_spatial_concat_post_transpose
+            ),
+        ) == tuple(result_by_pass_id[pass_id] for pass_id in expected_ids)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    delegate = helper.body[0]
+    assert isinstance(delegate, ast.Return)
+    assert isinstance(delegate.value, ast.Call)
+    assert isinstance(delegate.value.func, ast.Name)
+    assert delegate.value.func.id == "run_singleton_reshape"
+
+    direct_results = sorted(
+        (
+            node
+            for node in ast.walk(lowerer)
+            if isinstance(node, (ast.Assign, ast.Expr))
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == SINGLETON_RESHAPE
+        ),
+        key=lambda node: node.lineno,
+    )
+    assert len(direct_results) == 2
+    assert all(isinstance(result, ast.Assign) for result in direct_results)
+    assert [
+        result.targets[0].id
+        for result in direct_results
+        if isinstance(result, ast.Assign)
+        and len(result.targets) == 1
+        and isinstance(result.targets[0], ast.Name)
+    ] == [
+        "_terminal_singleton_reshape_results",
+        "_post_terminal_singleton_reshape_results",
+    ]
+    assert [
+        {
+            keyword.arg: _expression_path(keyword.value)
+            for keyword in result.value.keywords
+        }
+        for result in direct_results
+    ] == [
+        {
+            "include_layout_transpose": True,
+            "include_multi_branch_gate": True,
+        },
+        {
+            "include_duplicate_fanout": True,
+            "include_spatial_concat_post_transpose": False,
+        },
+    ]
+
+
 def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     outer_index = next(
