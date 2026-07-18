@@ -12256,6 +12256,19 @@ unconditional pruning is unchanged. No producer/consumer-map construction,
 constant or axis handling, call order, dependency, public API, or TensorFlow
 boundary changed.
 
+Gate-layout orchestration has eight ordered full-policy invocations and seven
+required-policy invocations, all sharing one `ModelIRPassStateScope`. The
+recovery engine already constructs the corresponding result tuple, but
+`run_gate_layout()`, the lowerer helper, and the reduced direct call currently
+discard it. The helper's default full policy remains the argument-free callback
+owned by attention recovery.
+
+Strict characterization requires `run_gate_layout()` and the helper to return
+`Tuple[Dict[str, int], ...]`, and selects `_layout_opt_gate_layout_results` for
+the reduced direct result. It freezes full/reduced order, shared scope, exact
+policy arguments, retained SA/PA-mirrorpad/normalization-loop boundaries, and
+an unconsumed observation-only direct policy.
+
 `optimize_transpose_binary_bridges()` exposes the fixed two-key result
 `removed_transpose_binary_bridges` and
 `removed_transpose_binary_asymmetric_bridges` from an indexed owner with a

@@ -1774,3 +1774,14 @@ observation-only; the feature guard, no-else policy, indexed owner, pruning,
 and surrounding retained results are unchanged. The focused gate passes
 `347 passed in 18.42s`, the branch-changed broad gate passes
 `1633 passed in 30.06s`, and targeted static validation passes.
+
+Gate-layout recovery is now characterized as eight full-policy and seven
+required-policy child results sharing one `ModelIRPassStateScope`. The runner
+and lowerer helper currently discard the tuple produced by
+`run_recovery_invocations`; the reduced direct call also discards it. Strict
+propagation selects `_layout_opt_gate_layout_results`, while the argument-free
+full-policy callback remains available to attention recovery. Exact policy,
+helper signature, shared scope, SA/PA-mirrorpad/normalization-loop boundary,
+and unconsumed direct target are frozen. The focused gate passes
+`337 passed, 1 xfailed in 17.88s`; the branch-changed broad gate passes
+`1634 passed, 1 xfailed in 30.47s`.

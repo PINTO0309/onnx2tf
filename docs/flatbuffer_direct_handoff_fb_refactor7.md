@@ -11362,3 +11362,42 @@ assignment does not claim a new model-corpus run. At resume, inventory all
 direct and nested `_run_gate_layout_pass_cluster()` forms before changing the
 next raw boundary. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## Gate-layout result propagation characterization checkpoint
+
+Gate-layout orchestration declares eight full-policy children and seven
+required-policy children. Every policy builds one shared
+`ModelIRPassStateScope`, and `run_recovery_invocations()` already produces the
+ordered child-result tuple. `run_gate_layout()` and the lowerer helper currently
+discard that tuple, as does the reduced direct call.
+
+The direct call sets `include_mixed_attention=False` between retained SA/PA
+MirrorPad statistics and the two-iteration normalization loop. The helper
+defaults to the full policy and remains the argument-free callback selected by
+attention recovery.
+
+A passing contract freezes both pass-ID sequences, the helper policy signature,
+exact reduced direct call, single direct occurrence, and both boundaries. A
+strict expected-failure contract requires runner and helper return annotations/
+statements, verifies synthetic full and reduced result tuples, and selects the
+unconsumed observation-only direct target `_layout_opt_gate_layout_results`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `1 passed, 1 xfailed in 0.56s`
+- gate orchestration, full attention callback, reduced direct boundary,
+  SA/PA-MirrorPad owner, callback composition, architecture, and pass-
+  efficiency coverage: `337 passed, 1 xfailed in 17.88s`
+- branch-changed broad suite including the new result contract:
+  `1634 passed, 1 xfailed in 30.47s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented three-boundary
+propagation contract. Return the existing recovery tuple from
+`run_gate_layout()`, return it from the helper, and retain the reduced direct
+tuple as `_layout_opt_gate_layout_results`. Do not change child callbacks,
+policy order or selection, shared state scope, direct arguments, full callback,
+normalization loop, surrounding calls, dependency, public API, or TensorFlow
+behavior. Keep the direct result unconsumed, validate sequentially, commit, and
+push only; do not create, reopen, or update a pull request.
