@@ -4528,10 +4528,12 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_opt_spp_stats = (
+            run_spp_layout_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         _layout_opt_pre_concat_stats = (
             _optimize_transpose_pre_concat_nhwc_chains(

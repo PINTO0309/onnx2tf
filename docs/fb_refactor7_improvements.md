@@ -1305,6 +1305,17 @@ implementation.
 The focused characterization gate passes
 `363 passed, 1 xfailed in 18.83s`; the sole strict xfail is the selected direct
 assignment.
+
+The sole direct SPP call now retains its unchanged dictionary as
+`_layout_opt_spp_stats`; the three orchestration policies remain unchanged.
+The focused implementation gate passes `364 passed in 18.10s`, the
+branch-changed broad suite passes `1556 passed in 28.08s`, and targeted static
+validation passes.
+
+The next unit should audit the sole direct elementwise-Concat/Conv group result
+and its independent layout-recovery owner occurrence, including optional
+graph-index/layout/bound/candidate forwarding, schema, cleanup semantics, and
+binary-bridge/SPP boundaries.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

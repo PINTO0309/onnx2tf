@@ -11911,3 +11911,11 @@ positive-only cleanup, ModelIR/layout/diagnostics arguments, sole direct call,
 elementwise-Concat/pre-Concat boundaries, and all three independent
 orchestration selections. Those orchestration result policies are not changed
 by this retention unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_spp_stats`. It remains unconsumed in this unit. The positive-only
+cleanup, transactional runner, three orchestration selections, arguments,
+direct-call count, and adjacent boundaries are unchanged.
+
+This assignment adds no summary, guard, dependency, public behavior change, or
+TensorFlow import path; the three orchestration result policies remain fixed.

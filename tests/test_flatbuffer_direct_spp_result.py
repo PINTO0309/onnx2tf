@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "spp_layout.py"
@@ -102,10 +99,6 @@ def test_spp_schema_positive_cleanup_and_selections_are_explicit() -> None:
     assert selected == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the sole direct SPP layout-cleanup result is not retained yet",
-)
 def test_direct_spp_result_is_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(

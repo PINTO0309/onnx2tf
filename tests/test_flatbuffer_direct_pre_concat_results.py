@@ -137,7 +137,7 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
     expected_boundaries = (
         (
             "run_spp_layout_cleanup",
-            None,
+            "_layout_opt_spp_stats",
             "run_ndhwc_concat_layout_cleanup",
         ),
         (

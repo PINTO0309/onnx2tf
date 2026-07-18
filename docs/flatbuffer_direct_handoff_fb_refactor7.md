@@ -9017,6 +9017,34 @@ selected assignment and update stale boundary targets. Do not change any
 orchestration result policy in the same unit. Validate sequentially, commit,
 and push only; do not create, reopen, or update a pull request.
 
+## Direct SPP cleanup result retention implementation checkpoint
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_spp_stats`. It remains unconsumed in this unit even though
+positive-only cleanup makes it complete owner mutation evidence.
+
+This is an assignment-only production change. The transactional runner,
+inner owner and schema, cleanup guard, ModelIR/layout/diagnostics routing,
+three independent orchestration selections, pass order, dependencies, public
+behavior, and TensorFlow-free direct path remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- schema/cleanup, SPP fixtures, three orchestration selections,
+  elementwise-Concat/pre-Concat boundaries, architecture, and pass-efficiency
+  coverage: `364 passed in 18.10s`
+- branch-changed broad suite: `1556 passed in 28.08s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a model-corpus run. At resume, audit the sole direct
+`_optimize_transpose_elementwise_concat_conv_nhwc_groups()` call immediately
+before `_layout_opt_spp_stats`, plus its independent layout-recovery owner
+execution. Freeze optional graph-index/layout/bound/candidate forwarding,
+schema, cleanup semantics, binary-bridge/SPP boundaries, and current result
+policy before changing production. Commit and push only; do not create,
+reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
