@@ -6132,3 +6132,40 @@ distinguish it from the earlier live-LayoutState occurrence, and preserve its
 captured final internal-channel-slice/terminal recovery boundaries before
 adding characterization. Commit and push only; do not create, reopen, or
 update a pull request.
+
+## Final channel-slice MulAdd-bridge result characterization checkpoint
+
+`_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains()` returns the
+stable one-counter dictionary
+`optimized_transpose_channel_slice_muladd_nhwc_bridge_chains` and has two
+production calls. The first receives the live `session.layout_state` and is
+raw; the later model-only call also currently discards its result.
+
+The zero-mutation schema test fixes the exact one-key result, while existing
+owner coverage validates a supplied GraphIndex and LayoutState after a rewrite.
+A strict expected-failure orchestration contract requires only the later result
+to be retained as `_final_channel_slice_muladd_bridge_stats`. It keeps the first
+live-LayoutState occurrence raw and fixes both terminal recovery successors,
+the captured `_terminal_internal_channel_slice_stats` first predecessor, and
+the captured `_final_internal_channel_slice_stats` later predecessor.
+
+At implementation, replace only the later expression with an assignment. Do
+not change the first occurrence, wrapper or pass implementation, one-key
+schema, rewrite guards, graph mutation, tensor pruning, GraphIndex/LayoutState
+behavior, callback arguments, pass order, recovery calls, adjacent targets,
+dependencies, diagnostics, or TensorFlow behavior. The retained value must
+have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused MulAdd-bridge owner, both terminal recovery boundaries, schema,
+  terminal orchestration, architecture, and pass-efficiency gate:
+  `345 passed, 1 xfailed in 19.04s`
+- branch-changed broad suite plus boundary/channel-slice, pad-Mul, both terminal
+  recovery sequences, architecture, and pass-efficiency coverage:
+  `1390 passed, 1 xfailed in 24.70s`
+
+The sole strict expected failure is the intentionally unimplemented final
+channel-slice MulAdd-bridge result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.

@@ -10932,6 +10932,13 @@ the same schema as `_final_internal_channel_slice_stats` between captured final
 boundary-input normalization and the later model-only MulAdd bridge. Neither
 retained value has a consumer.
 
+The following Transpose/channel-slice MulAdd-bridge owner returns one mutation
+counter and likewise has two production calls. The first receives the live
+Session LayoutState and remains raw. The later model-only call currently
+discards its result between captured final internal channel-slice propagation
+and the later terminal slice/Concat recovery sequence. Strict characterization
+fixes `_final_channel_slice_muladd_bridge_stats` as the later result target only.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`
