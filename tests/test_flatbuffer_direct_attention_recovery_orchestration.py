@@ -292,7 +292,7 @@ def test_attention_recovery_context_and_wrappers_are_explicit() -> None:
         PREADD_MEAN_ATTENTION: (
             preadd_helper,
             "run_preadd_mean_attention_recovery",
-            ast.Expr,
+            ast.Return,
         ),
         ATTENTION_GATE_QDQ: (
             attention_helper,
@@ -564,10 +564,6 @@ def test_attention_gate_qdq_propagates_nested_results_to_both_direct_calls(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="both ordered pre-add/mean/attention results are discarded",
-)
 def test_preadd_mean_attention_propagates_nested_results_to_both_direct_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

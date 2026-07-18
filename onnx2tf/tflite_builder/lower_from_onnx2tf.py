@@ -4252,8 +4252,8 @@ def lower_onnx_to_ir(
             layout_recovery_context
         )
 
-    def _run_preadd_mean_attention_recovery_sequence() -> None:
-        run_preadd_mean_attention_recovery(attention_recovery_context)
+    def _run_preadd_mean_attention_recovery_sequence() -> Tuple[Any, ...]:
+        return run_preadd_mean_attention_recovery(attention_recovery_context)
 
     def _run_attention_gate_qdq_recovery_sequence() -> Tuple[Any, ...]:
         return run_attention_gate_qdq_recovery(attention_recovery_context)
@@ -4531,7 +4531,9 @@ def lower_onnx_to_ir(
         # metadata reconciliation, so run bridge passes once more.
         _run_qlinear_mean_concat_recovery_sequence()
         _run_layout_recovery_prefix_pass_sequence()
-        _run_preadd_mean_attention_recovery_sequence()
+        _layout_pass_set_2_preadd_mean_attention_results = (
+            _run_preadd_mean_attention_recovery_sequence()
+        )
         _layout_pass_set_2_attention_gate_qdq_results = (
             _run_attention_gate_qdq_recovery_sequence()
         )
@@ -4599,7 +4601,9 @@ def lower_onnx_to_ir(
                 include_post_gather_cleanup=True,
             )
         )
-        _run_preadd_mean_attention_recovery_sequence()
+        _layout_opt_preadd_mean_attention_results = (
+            _run_preadd_mean_attention_recovery_sequence()
+        )
         _layout_opt_sa_pa_mirrorpad_stats = (
             _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
                 model_ir,

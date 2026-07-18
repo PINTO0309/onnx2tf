@@ -144,8 +144,8 @@ def build_preadd_mean_attention_invocations(
 
 def run_preadd_mean_attention_recovery(
     context: AttentionRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_preadd_mean_attention_invocations(context),
         expected_pass_ids=PREADD_MEAN_ATTENTION_PASS_IDS,
         phase_name="preadd/mean/attention recovery",

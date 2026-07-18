@@ -727,21 +727,18 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
         "_run_mean_attention_layout_pass_cluster",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == PREADD_MEAN_ATTENTION_PASS_IDS
-    assert [call.func.id for call in helper_calls] == [
-        "run_preadd_mean_attention_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "attention_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_preadd_mean_attention_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "attention_recovery_context"
+    assert helper_call.keywords == []
 
     recovery_block = next(
         statement
@@ -760,12 +757,28 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(recovery_block.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_layout_pass_set_2_preadd_mean_attention_results",
+            "_layout_opt_preadd_mean_attention_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 2
+    assert [
+        recovery_block.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(recovery_block.body[index], ast.Assign)
+        and isinstance(recovery_block.body[index].targets[0], ast.Name)
+    ] == [
+        "_layout_pass_set_2_preadd_mean_attention_results",
+        "_layout_opt_preadd_mean_attention_results",
+    ]
     previous_call_names = []
     next_call_names = []
     for index in invocation_indexes:

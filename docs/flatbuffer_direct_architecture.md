@@ -12086,3 +12086,12 @@ Strict characterization selects
 identities including the nested mean-attention tuple, shared context, exact
 two-call count, layout-prefix/retained-attention and channel-shuffle/SA-PA
 boundaries, and unconsumed observation-only policy.
+
+The pre-add parent runner and helper now return the existing seven-slot tuple.
+Its direct calls retain `_layout_pass_set_2_preadd_mean_attention_results` and
+`_layout_opt_preadd_mean_attention_results`. Both remain unconsumed and
+observation-only, and the nested mean-attention tuple is unchanged.
+
+This propagation changes no child, nested result, shared context, call order,
+cleanup timing, surrounding retained result, summary, guard, dependency,
+public behavior, or TensorFlow isolation.

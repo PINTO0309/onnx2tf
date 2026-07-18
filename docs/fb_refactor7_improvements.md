@@ -1449,6 +1449,16 @@ channel-shuffle/SA-PA boundaries, and the unconsumed policy are frozen before
 implementation. The focused gate passes
 `355 passed, 1 xfailed in 18.12s`; the strict xfail is runner/helper/two-call
 propagation.
+
+The parent runner/helper now return the unchanged seven-slot tuple. The two
+direct calls retain `_layout_pass_set_2_preadd_mean_attention_results` and
+`_layout_opt_preadd_mean_attention_results`; both remain observation-only. The
+focused implementation gate passes `356 passed in 20.18s`, the branch-changed
+broad suite passes `1591 passed in 29.45s`, and targeted static validation
+passes.
+
+The next unit should audit the layout-recovery prefix result immediately before
+the first retained pre-add parent result and inventory every other occurrence.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

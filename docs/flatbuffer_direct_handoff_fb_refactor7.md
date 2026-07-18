@@ -9530,6 +9530,38 @@ do not change any child, context, order, boundary, summary, or guard. Validate
 sequentially, commit, and push only; do not create, reopen, or update a pull
 request.
 
+## Pre-add/mean/attention parent result propagation implementation checkpoint
+
+`run_preadd_mean_attention_recovery()` and its lowerer helper now return the
+existing seven-slot tuple. The first direct call retains
+`_layout_pass_set_2_preadd_mean_attention_results`; the later call retains
+`_layout_opt_preadd_mean_attention_results`. Both remain unconsumed and
+observation-only, and the nested mean-attention tuple remains intact.
+
+The first implementation gate exposed one stale architecture contract that
+required the helper and both direct calls to remain raw expressions
+(`355 passed, 1 failed`). It now requires the helper return plus the two
+explicit targets. This was a characterization adjustment, not a production
+regression.
+
+Implementation validation completed sequentially under `uv`:
+
+- pre-add parent and nested mean-attention, layout recovery, channel-shuffle,
+  SA/PA, both retained boundary pairs, architecture, and pass-efficiency
+  coverage: `356 passed in 20.18s`
+- branch-changed broad suite: `1591 passed in 29.45s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The implementation adds only transparent returns and two assignments. It adds
+no child, summary, guard, context/order change, dependency, public API change,
+or TensorFlow import path. These checks do not claim a model-corpus run.
+
+At resume, audit `_run_layout_recovery_prefix_pass_sequence()` immediately
+before `_layout_pass_set_2_preadd_mean_attention_results` and inventory every
+other direct or nested occurrence before changing its runner/helper result
+policy. Commit and push only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the
