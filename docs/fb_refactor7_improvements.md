@@ -1610,3 +1610,14 @@ the initial `536 passed, 1 failed` gate. The corrected focused gate passes
 The next unit should audit the direct squeeze/unary/Reshape identity cleanup
 result and all of that runner's other policy-selected occurrences before
 changing its boundary.
+
+That cleanup runner is now characterized with an identity-only one-key schema,
+a unary-enabled two-key schema, three direct unary-enabled calls, one nested
+attention unary-enabled selection, and one nested Singleton identity-only
+selection. Selected observation-only targets are
+`_layout_pass_set_1_squeeze_reshape_identity_stats`,
+`_core_cleanup_squeeze_reshape_identity_stats`, and
+`_layout_pass_set_2_squeeze_reshape_identity_stats`. Exact direct arguments,
+all three boundary pairs, nested policies, and unconsumed results are frozen.
+The focused gate passes `366 passed, 1 xfailed in 18.27s`; the branch-changed
+broad gate passes `1616 passed, 1 xfailed in 29.63s`.

@@ -12217,6 +12217,20 @@ normalization GraphIndex. No dispatcher, owner order, rewrite cap, schema,
 GraphIndex/LayoutState routing, convergence guard, pass order, dependency,
 public API, or TensorFlow boundary changes.
 
+`run_squeeze_reshape_identity_cleanup()` has a one-key identity-only schema and
+a two-key schema when unary passthrough is enabled. The lowerer has three raw
+two-key direct calls in pass-set 1, core cleanup, and pass-set 2. The attention
+prefix independently selects the two-key policy, while Singleton/Reshape
+selects the one-key policy.
+
+Strict characterization selects
+`_layout_pass_set_1_squeeze_reshape_identity_stats`,
+`_core_cleanup_squeeze_reshape_identity_stats`, and
+`_layout_pass_set_2_squeeze_reshape_identity_stats`. It freezes both schemas,
+all direct arguments and nested selections, InstanceNorm/final-suffix,
+dynamic-Reshape/prune, and normalization-loop/prune boundaries, and an
+unconsumed observation-only policy.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

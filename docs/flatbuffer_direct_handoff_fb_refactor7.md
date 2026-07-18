@@ -10740,3 +10740,41 @@ all other direct or orchestration-selected policy forms before changing it.
 Preserve `include_unary_passthrough=True`, live LayoutState/diagnostics, and the
 following final suffix boundary. Commit and push only; do not create, reopen,
 or update a pull request.
+
+## Squeeze/Reshape identity result characterization checkpoint
+
+`run_squeeze_reshape_identity_cleanup()` returns
+`optimized_squeeze_reshape_identity_chains` for the identity-only policy and
+adds `optimized_squeeze_unary_reshape_passthrough_chains` when
+`include_unary_passthrough=True`. Both pass specs remain transactional and
+ordered unary-first when both are enabled.
+
+The lowerer has three raw direct calls, all using the two-key policy with the
+live LayoutState and diagnostics: pass-set 1 after retained InstanceNorm,
+core cleanup after dynamic-Reshape resolution, and pass-set 2 after the
+two-iteration normalization convergence loop. The attention prefix selects the
+same two-key policy; Singleton/Reshape independently selects identity-only.
+
+A passing contract freezes both schemas, all three exact direct calls, and both
+nested selections. A strict expected-failure contract selects observation-only
+targets `_layout_pass_set_1_squeeze_reshape_identity_stats`,
+`_core_cleanup_squeeze_reshape_identity_stats`, and
+`_layout_pass_set_2_squeeze_reshape_identity_stats`. It fixes the InstanceNorm/
+final-suffix, dynamic-Reshape/prune, and normalization-loop/prune boundaries
+and absence of consumers.
+
+Characterization validation completed sequentially under `uv`:
+
+- both cleanup policies, three direct boundaries, attention/Singleton nested
+  selections, InstanceNorm and suffix orchestration, architecture, and
+  pass-efficiency coverage: `366 passed, 1 xfailed in 18.27s`
+- branch-changed broad suite including the new result contract:
+  `1616 passed, 1 xfailed in 29.63s`
+
+The sole strict expected failure is the intentionally unimplemented three-call
+retention contract. Replace only the three raw expressions with the selected
+targets. Do not change either schema, pass selection/order, preflight,
+transaction, policy arguments, nested occurrences, live context, normalization
+loop, surrounding calls, guard, dependency, public API, or TensorFlow behavior.
+Keep all results unconsumed, validate sequentially, commit, and push only; do
+not create, reopen, or update a pull request.
