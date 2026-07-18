@@ -516,19 +516,19 @@ def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
         "_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains",
         "_run_channel_shuffle_gather_layout_pass_cluster",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == LAYOUT_RECOVERY_PASS_IDS
-    assert [call.func.id for call in helper_calls] == ["run_layout_recovery_prefix"]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "layout_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_layout_recovery_prefix"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "layout_recovery_context"
+    assert helper_call.keywords == []
 
     helper_invocations = [
         node

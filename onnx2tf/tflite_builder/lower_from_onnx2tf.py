@@ -4244,8 +4244,8 @@ def lower_onnx_to_ir(
     late_spp_concat_unary_conv_context = shared_model_ir_pass_context
     sinet_preadd_resize_recovery_context = shared_model_ir_pass_context
 
-    def _run_layout_recovery_prefix_pass_sequence() -> None:
-        run_layout_recovery_prefix(layout_recovery_context)
+    def _run_layout_recovery_prefix_pass_sequence() -> Tuple[Any, ...]:
+        return run_layout_recovery_prefix(layout_recovery_context)
 
     def _run_layout_reshape_attention_recovery_prefix() -> None:
         run_layout_reshape_attention_recovery_prefix(
@@ -4530,7 +4530,9 @@ def lower_onnx_to_ir(
         # some transpose-binary patterns become shape-safe only after static
         # metadata reconciliation, so run bridge passes once more.
         _run_qlinear_mean_concat_recovery_sequence()
-        _run_layout_recovery_prefix_pass_sequence()
+        _layout_pass_set_2_layout_recovery_prefix_results = (
+            _run_layout_recovery_prefix_pass_sequence()
+        )
         _layout_pass_set_2_preadd_mean_attention_results = (
             _run_preadd_mean_attention_recovery_sequence()
         )

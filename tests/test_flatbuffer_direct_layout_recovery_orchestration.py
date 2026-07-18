@@ -80,7 +80,7 @@ def _call_contracts(
 ) -> dict[str, tuple[tuple[Any, ...], dict[str, Any]]]:
     contracts: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
     for statement in helper.body:
-        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement, (ast.Expr, ast.Return))
         call = statement.value
         assert isinstance(call, ast.Call)
         assert isinstance(call.func, ast.Name)
@@ -249,12 +249,15 @@ def test_layout_recovery_wrappers_only_capture_explicit_context() -> None:
         _, helper = _lowerer_and_helper(helper_name)
         called_names = {
             node.func.id
-            for node in ast.walk(helper)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            for statement in helper.body
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
         }
         loaded_data_names = {
             node.id
-            for node in ast.walk(helper)
+            for statement in helper.body
+            for node in ast.walk(statement)
             if isinstance(node, ast.Name)
             and isinstance(node.ctx, ast.Load)
             and node.id not in called_names
@@ -363,10 +366,6 @@ def test_new_attention_runner_executes_the_same_flattened_order(
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the ordered layout-recovery prefix result is discarded",
-)
 def test_layout_recovery_prefix_propagates_direct_and_nested_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

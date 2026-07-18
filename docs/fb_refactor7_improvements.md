@@ -1474,3 +1474,16 @@ observation-only policy are frozen before implementation. The focused gate
 passes `414 passed, 1 xfailed in 18.88s`; the strict xfail is the transparent
 runner/helper/direct result propagation contract. The branch-changed broad
 characterization gate passes `1597 passed, 1 xfailed in 28.73s`.
+
+The layout-recovery runner/helper now return the unchanged nineteen-slot tuple,
+and the sole direct call retains
+`_layout_pass_set_2_layout_recovery_prefix_results`. It remains unconsumed and
+observation-only. The first nested attention callback receives the same tuple,
+while the attention parent still discards its aggregate result. The focused
+implementation gate passes `422 passed in 21.02s`, the branch-changed broad
+suite passes `1605 passed in 30.11s`, and targeted static validation passes.
+
+The next unit should audit all three direct layout/reshape/attention prefix
+results, including the newly populated nested layout-recovery slot, without
+changing their distinct surrounding pass boundaries or consuming incomplete
+child summaries.

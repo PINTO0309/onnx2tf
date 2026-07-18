@@ -12109,3 +12109,12 @@ lowerer call. It freezes every instrumented result identity, the shared
 consumer, and the independent nested selection as the first attention-prefix
 callback. The tuple must remain observation-only because individual children
 can perform cleanup that is not represented by a positive rewrite counter.
+
+The phase runner and lowerer helper now return that existing nineteen-slot
+tuple, and the sole direct call retains it as
+`_layout_pass_set_2_layout_recovery_prefix_results`. The target remains
+unconsumed. The first attention-prefix callback now also returns the nested
+tuple to its parent invocation, while the attention runner continues to
+discard its own aggregate result. No child, callback, context, ordering,
+cleanup timing, guard, summary, dependency, public API, or TensorFlow boundary
+changes with this propagation.

@@ -7924,6 +7924,40 @@ callback, context, pass order, surrounding boundary, attention-parent policy,
 dependency, public API, or TensorFlow behavior. Validate sequentially, commit,
 and push only; do not create, reopen, or update a pull request.
 
+## Layout-recovery prefix result propagation implementation checkpoint
+
+`run_layout_recovery_prefix()` and its zero-argument lowerer helper now return
+the existing nineteen-slot tuple produced by `run_recovery_invocations()`.
+The sole direct pass-set-2 call retains it as
+`_layout_pass_set_2_layout_recovery_prefix_results` between the unchanged
+QLinear recovery and retained pre-add/mean/attention result.
+
+The direct tuple is unconsumed and observation-only. The independent first
+callback of the attention prefix now contributes the same nested tuple to its
+parent invocation; `run_layout_reshape_attention_recovery_prefix()` still
+discards the complete attention result. No new consumer, guard, summary, graph
+scan, fingerprint, child invocation, context, order, cleanup timing,
+dependency, public API, or TensorFlow import path was added.
+
+Implementation validation completed sequentially under `uv`:
+
+- layout and attention orchestration, QLinear boundary, all layout callback
+  boundaries and direct child-owner contracts, architecture, and
+  pass-efficiency coverage: `422 passed in 21.02s`
+- branch-changed broad suite: `1605 passed in 30.11s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+propagation does not claim a new model-corpus run.
+
+At resume, audit all three direct
+`_run_layout_reshape_attention_recovery_prefix()` calls and the complete
+fifteen-slot parent result now that its first slot contains the nested
+nineteen-slot layout tuple. Preserve each distinct production boundary and
+keep incomplete child summaries observation-only. Commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Direct SA/PA MirrorPad result retention implementation checkpoint
 
 The layout-option call now retains `_layout_opt_sa_pa_mirrorpad_stats`, and the

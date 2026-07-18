@@ -158,10 +158,20 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
             assert isinstance(previous, ast.Expr)
             assert isinstance(previous.value, ast.Call)
             assert isinstance(previous.value.func, ast.Name)
-            assert isinstance(following, ast.Expr)
+            assert isinstance(following, (ast.Assign, ast.Expr))
             assert isinstance(following.value, ast.Call)
             assert isinstance(following.value.func, ast.Name)
             boundaries.append((previous.value.func.id, following.value.func.id))
+
+            if following.value.func.id == (
+                "_run_layout_recovery_prefix_pass_sequence"
+            ):
+                assert isinstance(following, ast.Assign)
+                assert len(following.targets) == 1
+                assert isinstance(following.targets[0], ast.Name)
+                assert following.targets[0].id == (
+                    "_layout_pass_set_2_layout_recovery_prefix_results"
+                )
 
     assert boundaries == [
         (
