@@ -10840,9 +10840,10 @@ fanout guard and the following NHWC-Reshape owner remains fixed.
 
 The immediately following private rank-three layout-shim collapse owner returns
 one rewrite counter, accepts only ModelIR, and has one direct production
-occurrence. Its result is currently discarded. Strict characterization fixes a
-late NHWC-Reshape target between the captured flatten-HW dictionary and the
-channel-shuffle/Gather cluster with both optional shuffle families disabled.
+occurrence. Its result is retained under a late NHWC-Reshape target between the
+captured flatten-HW dictionary and the channel-shuffle/Gather cluster with both
+optional shuffle families disabled. The model-only callback and boundaries are
+unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

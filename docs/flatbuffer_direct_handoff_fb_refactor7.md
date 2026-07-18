@@ -5078,3 +5078,27 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict expected failure is the intentionally unimplemented single-
 result retention contract above.
+
+## Late NHWC-Reshape collapse result implementation checkpoint
+
+The single production result is now retained as
+`_late_nhwc_reshape_collapse_stats`. Its unchanged one-counter dictionary is
+captured without projection or consumption. The owner-internal GraphIndex,
+positive-only pruning, model-only callback contract, captured flatten-HW
+predecessor, and channel-shuffle/Gather successor options remain fixed.
+
+No guard, reconciliation, scan, sort, metadata write, dependency, or TensorFlow
+behavior changed. An initially misapplied AST-test edit was reverted before the
+focused gate; no unrelated production or test contract remains changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused collapse-owner, channel-shuffle boundary, layout-recovery, terminal-
+  orchestration, and architecture gate: `365 passed in 20.07s`
+- expanded broad related gate: `1734 passed in 32.13s`
+
+At resume, audit the return schema of `run_channel_shuffle_gather()`, the local
+`_run_channel_shuffle_gather_layout_pass_cluster()` helper's current `None`
+contract, all helper invocations/policy combinations, and the late base-policy
+boundary before propagating and retaining its result. Commit and push only; do
+not create, reopen, or update a pull request.

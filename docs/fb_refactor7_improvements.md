@@ -456,6 +456,15 @@ This checkpoint extends the expanded related gate to `1661 passed in 32.15s`;
 the focused indexed/compatibility-owner, terminal-orchestration, and
 architecture gate is `301 passed in 18.71s`.
 
+The immediately following private rank-three layout-shim collapse now retains
+its one-counter NHWC-Reshape dictionary. Its internal GraphIndex mutation and
+positive-only pruning, model-only callback, captured flatten-HW predecessor,
+and channel-shuffle/Gather policy boundary are unchanged.
+
+This checkpoint extends the expanded related gate to `1734 passed in 32.13s`;
+the focused collapse-owner, channel-shuffle boundary, layout-recovery,
+terminal-orchestration, and architecture gate is `365 passed in 20.07s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -463,7 +472,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately following
-reshape/transpose/reshape/transpose-to-NHWC-Reshape result. Any new mutation
-evidence must preserve current pass order, TensorFlow-free boundary, dependency
-set, and sequential validation policy.
+unit should audit result propagation through the immediately following
+channel-shuffle/Gather helper and its underlying runner. Any new mutation
+evidence must preserve policy arguments, current pass order, TensorFlow-free
+boundary, dependency set, and sequential validation policy.
