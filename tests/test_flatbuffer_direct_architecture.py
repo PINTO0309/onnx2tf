@@ -5255,7 +5255,12 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_terminal_instancenorm_dualstats_stats"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (

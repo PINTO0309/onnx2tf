@@ -11015,12 +11015,11 @@ target. The captured very-late residual/Mul/Concat predecessor and following
 singleton consecutive-Reshape cluster remain adjacent, and the first, third,
 and nested occurrence contracts are unchanged.
 
-The still-raw first direct dual-statistics occurrence is the terminal result
-between `_terminal_instancenorm_residual_mul_concat_stats` and the terminal
-boundary cluster. Strict characterization selects only that call for a future
-`_terminal_instancenorm_dualstats_stats` assignment. The one-key positive-only
-mutation contract, retained very-late/pre-terminal targets, and graph-indexed
-nested convergence call remain fixed.
+The first direct dual-statistics occurrence now retains the terminal result as
+`_terminal_instancenorm_dualstats_stats` between
+`_terminal_instancenorm_residual_mul_concat_stats` and the terminal boundary
+cluster. The one-key positive-only mutation contract, retained very-late/pre-
+terminal targets, and graph-indexed nested convergence call remain fixed.
 
 That following singleton/consecutive-Reshape cluster returns three ordered,
 pure mutation-count dictionaries for singleton-channel Transpose cleanup,

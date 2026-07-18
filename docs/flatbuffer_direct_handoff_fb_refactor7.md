@@ -7531,3 +7531,41 @@ The sole strict expected failure is the intentionally unimplemented terminal
 dual-statistics InstanceNorm result retention contract above. Implement only
 that assignment, rerun the same gates sequentially, then commit and push only;
 do not create, reopen, or update a pull request.
+
+## Terminal dual-statistics InstanceNorm result retention implementation checkpoint
+
+The first direct production call now retains its unchanged one-counter
+dictionary as `_terminal_instancenorm_dualstats_stats`. The second and third
+retain `_very_late_instancenorm_dualstats_stats` and
+`_pre_terminal_affine_instancenorm_dualstats_stats`; the nested convergence
+call continues to consume its counter with the shared graph index.
+
+This is an assignment-only orchestration change. It preserves the wrapper and
+indexed owner, one-key schema, positive-only pruning, GraphIndex/LayoutState
+behavior, terminal residual predecessor, terminal boundary-cluster successor,
+all other occurrences, pass order, dependencies, diagnostics, and TensorFlow
+behavior. The new result has no consumer and triggers no graph work.
+
+The first implementation run found the expected stale terminal-boundary
+architecture assertion that required its predecessor to be `ast.Expr`. It now
+requires the exact terminal dual-statistics assignment. The very-late and pre-
+terminal cross-occurrence contracts were updated in the same bounded unit.
+
+Implementation validation completed sequentially under `uv`:
+
+- boundary and terminal/very-late occurrence contracts: `3 passed in 2.27s`
+- dual-statistics indexed owner, terminal/direct/nested occurrence, pre-
+  terminal boundary, architecture, and pass-efficiency coverage:
+  `569 passed in 20.57s`
+- branch-changed broad suite plus the same owner and orchestration coverage:
+  `1431 passed in 25.37s`
+
+These are unit, contract, and orchestration checks; this result-retention change
+does not claim a new model-corpus run.
+
+At resume, audit all production occurrences and the complete result schema of
+`_optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains()`.
+Isolate the terminal raw call immediately before
+`_terminal_instancenorm_residual_mul_concat_stats` without conflating any
+nested convergence occurrence. Commit and push only; do not create, reopen, or
+update a pull request.

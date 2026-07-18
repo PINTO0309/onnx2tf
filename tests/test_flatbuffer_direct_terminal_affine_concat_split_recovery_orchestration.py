@@ -628,7 +628,11 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
         )
     ]
     assert len(direct_statements) == 3
-    assert isinstance(direct_statements[0], ast.Expr)
+    assert isinstance(direct_statements[0], ast.Assign)
+    assert isinstance(direct_statements[0].targets[0], ast.Name)
+    assert direct_statements[0].targets[0].id == (
+        "_terminal_instancenorm_dualstats_stats"
+    )
     assert isinstance(direct_statements[1], ast.Assign)
     assert isinstance(direct_statements[1].targets[0], ast.Name)
     assert direct_statements[1].targets[0].id == (

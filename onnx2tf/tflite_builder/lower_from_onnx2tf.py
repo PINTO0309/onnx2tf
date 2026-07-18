@@ -4755,9 +4755,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_instancenorm_dualstats_stats = (
+        _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _run_terminal_boundary_layout_pass_cluster()
     if optimize_layout_transpose_chains:
