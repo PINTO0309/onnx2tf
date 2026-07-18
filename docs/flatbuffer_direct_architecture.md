@@ -12658,3 +12658,16 @@ unconsumed and observation-only. The two main-route results, positive norm-
 cleanup guard, shared child state, disabled duplicate-fanout transpose handling,
 LayoutState choice, diagnostics, and adjacent repair/reconciliation remain
 unchanged; the retained fallback tuple does not steer later cleanup.
+
+`optimize_swish_transpose_passthrough_chains()` exposes the fixed one-key result
+`rewritten_swish_transpose_passthrough_chains` through a GraphIndex/candidate-
+aware owner. A successful plan performs indexed graph edits, layout updates,
+and unused-tensor pruning; an empty or rejected candidate set returns zero.
+
+The lowerer calls its forwarding wrapper once directly, while layout-recovery
+selects the public owner at index 5 with LayoutState. Strict characterization
+selects `_late_swish_transpose_passthrough_stats` only for the raw direct result.
+It freezes wrapper defaults and forwarding, result schema and guarded pruning,
+direct arguments and retained dequant-unary/squeeze-unary neighbors, nested
+selection and keyword contract, sole direct occurrence, and an unconsumed
+observation-only policy.

@@ -12038,3 +12038,40 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Late Swish passthrough direct result characterization checkpoint
+
+The indexed Swish transpose-passthrough owner returns the fixed one-key
+dictionary `rewritten_swish_transpose_passthrough_chains`. It accepts optional
+GraphIndex, LayoutState, rewrite-limit, and candidate inputs. Successful plans
+perform indexed graph edits, layout synchronization, and unused-tensor pruning;
+an empty or rejected candidate set returns zero.
+
+The lowerer has one raw direct wrapper call with the live LayoutState. It
+remains between retained late dequant/unary-fanout results and the distinct
+Squeeze/Unary/ExpandDims passthrough owner. Layout-recovery also selects the
+public owner at index 5 with ModelIR and LayoutState only.
+
+Passing contracts freeze the fixed schema, owner and wrapper defaults, wrapper
+forwarding, successful-plan cleanup, exact direct arguments and neighbors,
+sole direct wrapper occurrence, and nested selection index and keyword
+contract. A strict expected-failure contract selects the unconsumed observation
+target `_late_swish_transpose_passthrough_stats` only for the raw direct call.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed, 1 xfailed in 0.58s`
+- indexed owner, layout-recovery, dequant/unary-fanout boundary, architecture,
+  pass-efficiency, and direct Swish rewrite coverage:
+  `366 passed, 1 xfailed in 18.67s`
+- 105 branch-changed test files: `1662 passed, 1 xfailed in 31.40s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+No test assertion failed. The sole expected failure is the intentionally
+unimplemented direct assignment. Retain only the existing dictionary. Do not
+change matching or application logic, GraphIndex/candidate handling, rewrite-
+limit semantics, guarded pruning, result schema, wrapper forwarding,
+layout-recovery selection, direct arguments, call order, dependencies, public
+API, or TensorFlow behavior. Keep the target unconsumed, validate sequentially,
+commit, and push only; do not create, reopen, or update a pull request.

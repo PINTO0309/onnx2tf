@@ -1958,3 +1958,12 @@ state, fallback LayoutState choice, positive norm-cleanup guard, and adjacent
 repair/reconciliation remain unchanged. The focused gate passes
 `392 passed in 19.82s`, the 104-file branch-changed suite passes
 `1660 passed in 32.15s`, and targeted static validation passes.
+
+The late indexed Swish transpose-passthrough result is now characterized as a
+fixed one-key dictionary. Its raw wrapper call is separate from layout-recovery
+index 5, which selects the public owner with LayoutState. Strict retention
+selects `_late_swish_transpose_passthrough_stats` only for the direct result;
+wrapper forwarding, GraphIndex/candidate handling, guarded pruning, adjacent
+owners, and lack of consumers are frozen. The focused gate passes
+`366 passed, 1 xfailed in 18.67s`, the 105-file branch-changed suite passes
+`1662 passed, 1 xfailed in 31.40s`, and targeted static validation passes.
