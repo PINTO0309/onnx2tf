@@ -7913,6 +7913,37 @@ newly retained adj-flags dictionaries. Preserve all QKV production policies and
 callback ordering before propagating or capturing any result. Commit and push
 only; do not create, reopen, or update a pull request.
 
+## Terminal QKV result characterization checkpoint
+
+`_run_qkv_attention_layout_pass_cluster()` already returns the ordered tuple
+selected from optional layout-transpose, optional prefix, and required bridge
+owners. There are three direct production calls. The late call is retained as
+`late_qkv_results` and normalized with a separate net tensor-pruning delta;
+the terminal and post-SiNet default-policy calls remain raw.
+
+A strict expected-failure contract selects
+`_terminal_qkv_attention_results` and
+`_post_sinet_qkv_attention_results` for only those two raw calls. It fixes empty
+arguments and keywords, captured terminal/post-SiNet adj-flags predecessors,
+the split/concat and ReLU/split successors, total three-call count, and the
+existing late `include_layout_transpose`/`include_prefix=False` policy.
+
+At implementation, replace only the two raw default-policy expressions with
+assignments. Do not summarize or consume the new tuples and do not alter the
+helper, QKV owner selection, shared scope, late result/summary, adjacent calls,
+option guard, pass order, dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- QKV policies and late summary, adj-flags owner fixture, both raw production
+  boundaries, architecture, terminal result contracts, and pass-efficiency
+  coverage: `370 passed, 1 xfailed in 19.69s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## BatchMatMul reshape/SE result retention implementation checkpoint
 
 The guarded terminal call now retains

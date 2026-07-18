@@ -483,6 +483,91 @@ def test_qkv_attention_preserves_both_default_boundaries() -> None:
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="terminal QKV attention results are not retained",
+)
+def test_qkv_attention_retains_both_default_policy_results() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    terminal_guard = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == "optimize_layout_transpose_chains"
+        and any(
+            isinstance(node, ast.Name)
+            and node.id == "_terminal_batchmatmul_adj_flags_stats"
+            for node in ast.walk(statement)
+        )
+    )
+    terminal_index = next(
+        index
+        for index, statement in enumerate(terminal_guard.body)
+        if _call_name(statement) == QKV_ATTENTION
+    )
+    terminal = terminal_guard.body[terminal_index]
+    assert isinstance(terminal, ast.Assign)
+    assert len(terminal.targets) == 1
+    assert isinstance(terminal.targets[0], ast.Name)
+    assert terminal.targets[0].id == "_terminal_qkv_attention_results"
+    assert isinstance(terminal.value, ast.Call)
+    assert terminal.value.args == []
+    assert terminal.value.keywords == []
+    predecessor = terminal_guard.body[terminal_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_terminal_batchmatmul_adj_flags_stats"
+    assert _call_name(terminal_guard.body[terminal_index + 1]) == (
+        "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+    )
+
+    post_sinet_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if _call_name(statement) == QKV_ATTENTION
+    )
+    post_sinet = lowerer.body[post_sinet_index]
+    assert isinstance(post_sinet, ast.Assign)
+    assert len(post_sinet.targets) == 1
+    assert isinstance(post_sinet.targets[0], ast.Name)
+    assert post_sinet.targets[0].id == "_post_sinet_qkv_attention_results"
+    assert isinstance(post_sinet.value, ast.Call)
+    assert post_sinet.value.args == []
+    assert post_sinet.value.keywords == []
+    predecessor = lowerer.body[post_sinet_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_post_sinet_batchmatmul_adj_flags_stats"
+    assert _call_name(lowerer.body[post_sinet_index + 1]) == (
+        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
+    )
+
+    all_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == QKV_ATTENTION
+    ]
+    assert len(all_calls) == 3
+    late_result = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_qkv_results"
+    )
+    assert isinstance(late_result.value, ast.Call)
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late_result.value.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
+        "include_prefix": "False",
+    }
+
+
 def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     late_index = next(
