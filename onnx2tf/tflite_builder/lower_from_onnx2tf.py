@@ -4405,9 +4405,11 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_pass_set_1_affine_prepost_stats = (
+            _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
@@ -5194,9 +5196,11 @@ def lower_onnx_to_ir(
         # Keep strict, const-only NHWC<->NCHW affine bridge folding enabled
         # in no-layout fallback so simple TRANSPOSE->MUL->ADD->TRANSPOSE
         # chains are still reduced.
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _no_layout_fallback_affine_prepost_stats = (
+            _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
     _late_dequant_hardsigmoid_bridge_stats = (
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)

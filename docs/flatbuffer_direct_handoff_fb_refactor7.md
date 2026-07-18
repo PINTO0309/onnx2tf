@@ -11133,3 +11133,34 @@ arguments or conditions, existing final target, nested selections, late-binary
 consumer, surrounding calls, dependency, public API, or TensorFlow behavior.
 Keep both new results unconsumed, validate sequentially, commit, and push only;
 do not create, reopen, or update a pull request.
+
+## Affine pre/post direct result retention implementation checkpoint
+
+The initial and no-layout fallback raw expressions now retain their unchanged
+one-key dictionaries as `_layout_pass_set_1_affine_prepost_stats` and
+`_no_layout_fallback_affine_prepost_stats`. Both targets remain unconsumed and
+observation-only. The final lowerer call still retains
+`_no_layout_final_affine_prepost_stats`; all three declarative orchestration
+selections and the consumed late-binary form remain unchanged.
+
+No result schema, GraphIndex ownership, rewrite cap, candidate handling,
+pruning, layout synchronization, direct argument or condition, existing final
+target, nested selection, late-binary consumer, surrounding production call,
+dependency, public API, or TensorFlow boundary changed. A zero counter remains
+insufficient to infer absence of mutation.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.56s`
+- indexed owner, terminal/attention/suffix/late-binary routes, initial and
+  no-layout boundaries, final validation, architecture, and pass-efficiency
+  coverage: `496 passed in 20.88s`
+- branch-changed broad suite: `1627 passed in 30.99s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, re-inventory the
+remaining raw pass expressions and select the next complete owner family before
+changing another boundary. Commit and push only; do not create, reopen, or
+update a pull request.

@@ -1716,3 +1716,10 @@ final boundaries, nested layout routes, and consumed late-binary form are
 frozen. Unconditional pruning means a zero counter is not complete mutation
 evidence. The focused gate passes `495 passed, 1 xfailed in 19.89s`; the
 branch-changed broad gate passes `1626 passed, 1 xfailed in 30.38s`.
+
+The initial and no-layout fallback affine pre/post calls now retain their
+unchanged dictionaries in the selected observation-only targets. The existing
+final target, three declarative selections, and consumed late-binary form are
+unchanged; zero counters remain insufficient to prove no mutation. The focused
+gate passes `496 passed in 20.88s`, the branch-changed broad gate passes
+`1627 passed in 30.99s`, and targeted static validation passes.

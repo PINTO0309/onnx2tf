@@ -12350,3 +12350,10 @@ Strict characterization selects `_layout_pass_set_1_affine_prepost_stats` and
 freezes all three direct calls, exact arguments, initial/fallback/final
 boundaries, three declarative selections, the consumed late-binary form, fixed
 schema, and an unconsumed observation-only policy for the two new targets.
+
+The initial and fallback calls now retain their unchanged dictionaries in the
+selected targets. Both remain unconsumed and observation-only. The final target,
+declarative orchestration selections, and consumed late-binary form remain
+unchanged. No GraphIndex ownership, rewrite cap, candidate handling, pruning,
+layout synchronization, condition, dependency, public API, or TensorFlow
+boundary changed.

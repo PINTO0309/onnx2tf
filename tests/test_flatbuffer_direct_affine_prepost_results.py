@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.affine_prepost_layout import (
     optimize_transpose_mul_add_const_prepost_nhwc_chains,
@@ -150,10 +148,6 @@ def test_affine_prepost_schema_and_all_selections_are_explicit() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the initial and fallback affine-pre/post results are discarded",
-)
 def test_all_direct_affine_prepost_results_are_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     locations = _direct_locations(lowerer.body)
