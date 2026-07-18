@@ -313,6 +313,75 @@ def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     assert all(invocation.keywords == [] for invocation in invocations)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="very-late singleton/consecutive cluster results are discarded",
+)
+def test_singleton_consecutive_retains_very_late_main_results() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    first_index, second_index = _main_invocation_indexes(lowerer)
+
+    first = lowerer.body[first_index]
+    assert isinstance(first, ast.Assign)
+    assert len(first.targets) == 1
+    assert isinstance(first.targets[0], ast.Name)
+    assert first.targets[0].id == (
+        "_very_late_singleton_consecutive_reshape_results"
+    )
+    assert isinstance(first.value, ast.Call)
+    assert isinstance(first.value.func, ast.Name)
+    assert first.value.func.id == SINGLETON_CONSECUTIVE
+    assert [_expression_path(argument) for argument in first.value.args] == [
+        "model_ir",
+        "session.layout_state",
+    ]
+    assert first.value.keywords == []
+
+    predecessor = lowerer.body[first_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_very_late_instancenorm_dualstats_stats"
+    )
+
+    successor = lowerer.body[first_index + 1]
+    assert isinstance(successor, ast.If)
+    assert isinstance(successor.test, ast.Name)
+    assert successor.test.id == "optimize_layout_transpose_chains"
+
+    second = lowerer.body[second_index]
+    assert isinstance(second, ast.Assign)
+    assert len(second.targets) == 1
+    second_target = second.targets[0]
+    assert isinstance(second_target, ast.Tuple)
+    assert [
+        element.id
+        for element in second_target.elts
+        if isinstance(element, ast.Name)
+    ] == [
+        "shared_singleton_channel_stats",
+        "shared_duplicate_fanout_stats",
+        "shared_consecutive_reshape_stats",
+    ]
+
+    fallback_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SINGLETON_CONSECUTIVE
+        and [_expression_path(argument) for argument in node.args]
+        == ["fallback_ir", None]
+    ]
+    assert len(fallback_calls) == 1
+    fallback_call = fallback_calls[0]
+    assert any(
+        isinstance(statement, ast.Expr) and statement.value is fallback_call
+        for statement in ast.walk(lowerer)
+    )
+
+
 def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = _main_invocation_indexes(lowerer)

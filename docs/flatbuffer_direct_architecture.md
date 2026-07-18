@@ -11009,6 +11009,20 @@ target. The captured very-late residual/Mul/Concat predecessor and following
 singleton consecutive-Reshape cluster remain adjacent, and the first, third,
 and nested occurrence contracts are unchanged.
 
+That following singleton/consecutive-Reshape cluster returns three ordered,
+pure mutation-count dictionaries for singleton-channel Transpose cleanup,
+duplicate Reshape fan-out cleanup, and consecutive Reshape cleanup. All child
+owners prune only after a positive counter. The private runner has three
+production occurrences: the first model-level call is raw, the second model-
+level call destructures all three dictionaries for the shared reconciliation
+guard, and the conditional fallback call remains raw.
+
+Strict characterization selects only the first model-level call for a future
+`_very_late_singleton_consecutive_reshape_results` assignment. It fixes the
+captured very-late dual-statistics predecessor, following optional layout-
+transpose cleanup branch, later destructuring assignment, and fallback
+expression without introducing a consumer.
+
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
 occurrence whose result is retained as `_terminal_softmax_transpose_stats`

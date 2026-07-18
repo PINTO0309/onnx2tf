@@ -6892,3 +6892,45 @@ call destructures its three ordered results, and the conditional fallback call
 is raw. Establish whether all three child dictionaries form complete mutation
 evidence before selecting any new observation point. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Very-late singleton/consecutive-Reshape result characterization checkpoint
+
+`_run_singleton_consecutive_reshape_pass_cluster()` forwards the three ordered
+result dictionaries from singleton-channel Transpose cleanup, duplicate
+Reshape fan-out cleanup, and consecutive Reshape cleanup. The empty-model
+schema is fixed at one, one, and three mutation counters respectively. Each
+child owner prunes only after a positive mutation count, so the tuple contains
+pure mutation evidence without an additional tensor-count proxy.
+
+The private runner has three production occurrences. The first model-level
+call after `_very_late_instancenorm_dualstats_stats` is raw; the second model-
+level call destructures all three dictionaries into the shared late
+reconciliation guard; and the conditional fallback call remains a raw
+expression with `fallback_ir` and no LayoutState.
+
+A strict expected-failure orchestration contract requires only the first
+model-level result to be retained as
+`_very_late_singleton_consecutive_reshape_results`. It fixes the exact model
+and live LayoutState arguments, captured dual-statistics predecessor,
+following optional layout-transpose branch, later three-target destructuring,
+and fallback expression.
+
+At implementation, replace only the first model-level expression with an
+assignment. Do not change the helper or child owners, three-result order or
+schemas, shared state scope, callback arguments, diagnostics, later
+destructuring, fallback call, pass order, reconciliation behavior,
+dependencies, or TensorFlow behavior. The retained tuple must have no consumer
+or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- singleton/consecutive orchestration and all three child-owner families plus
+  terminal occurrence, architecture, and pass-efficiency coverage:
+  `379 passed, 1 xfailed in 19.25s`
+- branch-changed broad suite plus the same singleton/consecutive owner and
+  orchestration coverage: `1444 passed, 1 xfailed in 24.31s`
+
+The sole strict expected failure is the intentionally unimplemented very-late
+singleton/consecutive-Reshape result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.
