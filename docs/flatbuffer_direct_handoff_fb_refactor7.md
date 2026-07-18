@@ -11333,3 +11333,32 @@ candidate handling, pruning, layout synchronization, feature guard, direct
 arguments, surrounding calls, dependency, public API, or TensorFlow behavior.
 Keep the result unconsumed, validate sequentially, commit, and push only; do not
 create, reopen, or update a pull request.
+
+## Transpose-binary bridge direct result retention implementation checkpoint
+
+The sole raw guarded expression now retains its unchanged two-key dictionary as
+`_layout_pass_set_1_transpose_binary_bridge_stats`. The target remains
+unconsumed and observation-only. The
+`enable_transpose_binary_bridge_optimizations` guard and its no-else policy are
+unchanged.
+
+No result schema, GraphIndex ownership, rewrite cap, candidate handling,
+pruning, layout synchronization, feature guard, direct argument, surrounding
+production call, dependency, public API, or TensorFlow boundary changed. Zero
+counters remain insufficient to infer absence of mutation.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.58s`
+- indexed owner and recovery behavior, quantized-activation and duplicate-
+  fanout boundaries, architecture, and pass-efficiency coverage:
+  `347 passed in 18.42s`
+- branch-changed broad suite: `1633 passed in 30.06s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, inventory all
+direct and nested `_run_gate_layout_pass_cluster()` forms before changing the
+next raw boundary. Commit and push only; do not create, reopen, or update a pull
+request.

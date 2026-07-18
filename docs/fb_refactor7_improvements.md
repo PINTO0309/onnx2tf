@@ -1767,3 +1767,10 @@ owner occurrence, and absence of a consumer are frozen. Pruning on zero-cap and
 normal exits means zero counters are not complete mutation evidence. The
 focused gate passes `346 passed, 1 xfailed in 17.89s`; the branch-changed broad
 gate passes `1632 passed, 1 xfailed in 30.34s`.
+
+The guarded binary bridge call now retains its unchanged two-key dictionary as
+`_layout_pass_set_1_transpose_binary_bridge_stats`. It remains unconsumed and
+observation-only; the feature guard, no-else policy, indexed owner, pruning,
+and surrounding retained results are unchanged. The focused gate passes
+`347 passed in 18.42s`, the branch-changed broad gate passes
+`1633 passed in 30.06s`, and targeted static validation passes.

@@ -4449,9 +4449,11 @@ def lower_onnx_to_ir(
             _run_quantized_activation_binary_bridge_recovery_sequence()
         )
         if enable_transpose_binary_bridge_optimizations:
-            _optimize_transpose_binary_bridges(
-                model_ir,
-                layout_state=session.layout_state,
+            _layout_pass_set_1_transpose_binary_bridge_stats = (
+                _optimize_transpose_binary_bridges(
+                    model_ir,
+                    layout_state=session.layout_state,
+                )
             )
         _layout_pass_set_1_duplicate_fanout_stats = (
             run_duplicate_fanout_cleanup(

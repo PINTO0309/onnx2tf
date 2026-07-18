@@ -12269,6 +12269,13 @@ Strict characterization selects
 feature guard, no-else policy, quantized-activation/duplicate-fanout boundaries,
 sole occurrence, fixed schema, and an unconsumed observation-only policy.
 
+The guarded call now retains its unchanged dictionary as
+`_layout_pass_set_1_transpose_binary_bridge_stats`. The target remains
+unconsumed and observation-only. The feature guard and no-else policy are
+unchanged. No GraphIndex ownership, rewrite cap, candidate handling, pruning,
+layout synchronization, call order, dependency, public API, or TensorFlow
+boundary changed.
+
 The three direct calls now retain the same two-key results in those selected
 targets. Their arguments, ordering, nested policy selections, live context,
 normalization convergence logic, and surrounding calls remain unchanged. The

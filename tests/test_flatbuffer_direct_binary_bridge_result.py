@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.binary_bridge_layout import (
     optimize_transpose_binary_bridges,
@@ -96,10 +94,6 @@ def test_binary_bridge_schema_guard_and_call_are_explicit() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the guarded binary bridge result is discarded",
-)
 def test_guarded_binary_bridge_result_is_retained_observation_only() -> None:
     lowerer = _lowerer()
     _, _, binary_guard = _layout_and_binary_guards()
