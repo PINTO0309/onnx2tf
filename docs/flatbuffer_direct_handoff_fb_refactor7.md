@@ -8503,6 +8503,45 @@ branch, following late dequant/unary/fanout cluster, pass order, and
 observation-only evidence rules. Commit and push only; do not create, reopen,
 or update a pull request.
 
+## Dequantized HardSigmoid result characterization checkpoint
+
+The dequantized HardSigmoid bridge wrapper returns the indexed owner's fixed
+one-counter dictionary
+`removed_transpose_dequant_hardsigmoid_quantize_bridges`. With no Transpose the
+owner returns zero early; otherwise it prunes unused tensors after scanning
+even when no bridge was removed. The counter is therefore incomplete evidence
+for cleanup-only mutation and must remain observation-only.
+
+There are exactly three direct wrapper calls: before terminal SiNet
+pre-add/resize recovery, after post-SiNet mixed-attention cleanup, and after the
+terminal Conv/Pool/no-layout branch. Attention-gate/QDQ orchestration directly
+selects the public owner as a fourth, distinct form.
+
+A strict expected-failure contract selects
+`_terminal_dequant_hardsigmoid_bridge_stats`,
+`_post_sinet_dequant_hardsigmoid_bridge_stats`, and
+`_late_dequant_hardsigmoid_bridge_stats`. It fixes the wrapper, one-key schema,
+early return and cleanup semantics, exact three-call count, model-only
+arguments, six direct boundaries, independent orchestration selection, and
+absence of result consumers.
+
+At implementation, replace only the three direct raw expressions with
+assignments. Do not add a consumer or guard, and do not change the wrapper,
+owner, schema, cleanup, graph-index behavior, orchestration selection,
+surrounding calls, dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- dequantized HardSigmoid wrapper/schema and indexed-owner fixtures, early
+  return and cleanup semantics, attention-recovery selection, three direct
+  boundaries, adjacent SiNet/ConvPool/late-dequant orchestration, architecture,
+  and pass-efficiency coverage: `404 passed, 1 xfailed in 18.99s`
+
+The sole strict expected failure is the intentionally unimplemented
+three-result retention contract. Implement only those assignments, rerun
+focused and branch-changed broad gates sequentially, then commit and push only;
+do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

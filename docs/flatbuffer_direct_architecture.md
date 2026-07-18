@@ -11694,3 +11694,24 @@ terminal Singleton/MaxPool predecessor, no-layout safe-reduction/Mul-Add
 fallback, HardSigmoid successor, dependencies, diagnostics, and TensorFlow
 behavior remain unchanged. Two stale boundary tests now require the exact
 assigned target instead of a raw expression.
+
+The dequantized HardSigmoid bridge wrapper returns the indexed owner's fixed
+one-counter dictionary
+`removed_transpose_dequant_hardsigmoid_quantize_bridges`. With no Transpose the
+owner returns zero early; otherwise it prunes unused tensors after scanning
+even when no bridge was removed. The counter is therefore incomplete evidence
+for cleanup-only mutation and must remain observation-only.
+
+There are exactly three direct wrapper calls: before terminal SiNet
+pre-add/resize recovery, after post-SiNet mixed-attention cleanup, and after the
+terminal Conv/Pool/no-layout branch. Attention-gate/QDQ orchestration separately
+selects the public owner.
+
+Strict characterization selects
+`_terminal_dequant_hardsigmoid_bridge_stats`,
+`_post_sinet_dequant_hardsigmoid_bridge_stats`, and
+`_late_dequant_hardsigmoid_bridge_stats`. It fixes the wrapper, one-key schema,
+early return and cleanup semantics, exact three-call count, model-only
+arguments, six direct boundaries, independent orchestration selection, and
+absence of consumers. All dictionaries must remain unconsumed; retention must
+add no guard, scan, dependency, or TensorFlow import path.
