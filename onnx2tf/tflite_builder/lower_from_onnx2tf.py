@@ -4677,10 +4677,12 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    run_transpose_gather_channel_fanout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_transpose_gather_channel_fanout_stats = (
+        run_transpose_gather_channel_fanout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
     _terminal_softmax_transpose_stats = (
         _optimize_terminal_softmax_transpose_after_nhwc_propagation(

@@ -10923,9 +10923,10 @@ terminal boundary-input normalization. The retained value has no consumer.
 
 The immediately preceding diagnostics-aware Gather-channel-fanout runner
 returns one rewrite counter. Its callback is also selected by two existing
-orchestrators, while its sole direct production result is currently discarded.
-Strict characterization fixes a direct-only terminal target between the
-live-LayoutState ArgMax owner and captured terminal Softmax dictionary.
+orchestrators, while its sole direct production result is retained as
+`_terminal_transpose_gather_channel_fanout_stats` between the live-LayoutState
+ArgMax owner and captured terminal Softmax dictionary. The retained value has
+no consumer, and orchestrated selections are unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

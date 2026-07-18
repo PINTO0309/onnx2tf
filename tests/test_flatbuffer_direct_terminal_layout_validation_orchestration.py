@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2259,10 +2257,6 @@ def test_primary_path_retains_terminal_softmax_transpose_result() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="direct terminal Gather-channel-fanout result is discarded",
-)
 def test_primary_path_retains_terminal_gather_channel_fanout_result() -> None:
     body = _lowerer_body()
     callback_name = "run_transpose_gather_channel_fanout_cleanup"
