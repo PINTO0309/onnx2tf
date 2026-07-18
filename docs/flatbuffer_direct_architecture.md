@@ -11058,11 +11058,10 @@ shape updates and is not complete evidence. The reconciler's existing opt-in
 `reconciled_static_shape_mutations` counter additionally covers parameter,
 operator-option, and tensor-metadata writes without another graph traversal.
 
-Strict characterization retains the unconditional call but requires
-`include_mutation_count=True` and a future
-`_very_late_broadcast_static_shape_stats` target. It fixes the captured
-broadcast-repair predecessor and following tensor-count boundary and forbids a
-new guard or consumer.
+The unconditional call now requests `include_mutation_count=True` and retains
+`_very_late_broadcast_static_shape_stats`. The captured broadcast-repair
+predecessor and following tensor-count boundary remain fixed. No new guard or
+consumer is introduced.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production

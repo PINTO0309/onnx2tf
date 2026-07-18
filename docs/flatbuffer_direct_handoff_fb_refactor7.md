@@ -7167,3 +7167,44 @@ The sole strict expected failure is the intentionally unimplemented very-late
 post-broadcast static-shape result retention contract above. Implement only the
 unconditional assignment and opt-in counter, rerun the same gates sequentially,
 then commit and push only; do not create, reopen, or update a pull request.
+
+## Very-late post-broadcast static-shape result retention implementation checkpoint
+
+The unconditional reconciliation now requests
+`include_mutation_count=True` and retains the two-key result as
+`_very_late_broadcast_static_shape_stats`. The additional key counts constant
+shape-parameter, operator-option, direct tensor-metadata, and ordinary output-
+shape writes during the existing fixed-point walk. It adds no ModelIR copy,
+fingerprint, or traversal.
+
+This change preserves unconditional execution because the preceding layout-
+Transpose result does not expose prune-only mutation. Reconciler behavior and
+fixed-point order, preceding owners, captured broadcast target, following
+tensor-count boundary, pass order, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged. The new result has no consumer and controls no
+guard.
+
+The first implementation run exposed one stale adjacent boundary assertion
+that required the successor to be a raw default-schema call. It now requires
+the exact `_very_late_broadcast_static_shape_stats` assignment and
+`include_mutation_count=True`. Production was unchanged by this test-only
+correction.
+
+Implementation validation completed sequentially under `uv`:
+
+- broadcast and reconciliation boundary contracts: `2 passed in 0.64s`
+- complete reconciler contract, layout-Transpose/broadcast owners, terminal
+  occurrence, architecture, and pass-efficiency coverage:
+  `357 passed in 19.30s`
+- branch-changed broad suite plus the same reconciliation and owner coverage:
+  `1430 passed in 25.27s`
+
+These are unit, contract, and orchestration checks; this observation-only
+change does not claim a new model-corpus run.
+
+At resume, audit the guarded shared-late `_reconcile_static_tensor_shapes()`
+call after the boundary-signature, HardSwish, Squeeze, Conv-Transpose, two
+binary-repair, and three singleton/consecutive dictionaries plus tensor-count
+delta. Preserve its existing predicate and characterize only a complete opt-in
+result target. Commit and push only; do not create, reopen, or update a pull
+request.

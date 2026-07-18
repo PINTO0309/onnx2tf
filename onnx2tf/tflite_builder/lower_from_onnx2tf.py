@@ -5136,7 +5136,10 @@ def lower_onnx_to_ir(
             model_ir
         )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _very_late_broadcast_static_shape_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        include_mutation_count=True,
+    )
     shared_late_tensor_count = len(model_ir.tensors)
     shared_boundary_signature_stats = (
         _realign_dynamic_boundary_shape_signature_map(model_ir)

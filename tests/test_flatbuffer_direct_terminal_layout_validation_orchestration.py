@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1752,13 +1750,22 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
     ]
     assert len(retained_layout) == 1
 
-    successor_call = _statement_call(body[very_late_index + 1])
+    successor = body[very_late_index + 1]
+    assert isinstance(successor, ast.Assign)
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == (
+        "_very_late_broadcast_static_shape_stats"
+    )
+    successor_call = _statement_call(successor)
     assert _call_name(successor_call) == "_reconcile_static_tensor_shapes"
     assert successor_call is not None
     assert [ast.unparse(argument) for argument in successor_call.args] == [
         "model_ir"
     ]
-    assert successor_call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in successor_call.keywords
+    } == {"include_mutation_count": "True"}
 
     final = body[final_index]
     assert isinstance(final, ast.Assign)
@@ -1798,10 +1805,6 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
     ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late post-broadcast shape reconciliation result is discarded",
-)
 def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     body = _lowerer_body()
     broadcast_index = next(

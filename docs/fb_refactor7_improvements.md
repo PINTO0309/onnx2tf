@@ -806,6 +806,19 @@ and one belongs to indexed convergence. The targeted contract passes
 `1 passed in 0.60s`, the focused gate passes `377 passed in 18.74s`, and the
 branch-changed broad related suite passes `1425 passed in 24.42s`.
 
+The immediate post-broadcast static-shape reconciliation remains unconditional
+but now requests its established complete mutation counter and retains the two-
+key result as `_very_late_broadcast_static_shape_stats`. This captures
+parameter-, option-, metadata-, and ordinary shape writes during the existing
+fixed-point walk without a copy or additional traversal. The result has no
+consumer.
+
+The implementation gate updated the preceding broadcast-boundary contract to
+require the new assignment and opt-in keyword. Those two boundary contracts
+pass `2 passed in 0.64s`, the focused reconciliation/owner gate passes
+`357 passed in 19.30s`, and the branch-changed broad related suite passes
+`1430 passed in 25.27s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -813,9 +826,8 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediate very-late `_reconcile_static_tensor_shapes()`
-call and all preceding mutation evidence before changing or guarding it. In
-particular, the adjacent layout-Transpose result omits prune-only mutation, so
-the broadcast counter alone is insufficient for scan elision. Any change must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the guarded shared-late `_reconcile_static_tensor_shapes()`
+call after the nine mutation dictionaries and tensor-count delta. Its execution
+guard must remain unchanged; only the complete opt-in result may be retained.
+Any change must preserve current pass order, TensorFlow-free boundary,
+dependency set, and sequential validation policy.
