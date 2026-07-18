@@ -11998,3 +11998,19 @@ This propagation changes no safe-binary phase, five-key dictionary schema,
 cleanup timing, shared context, nested quantized-activation invocation,
 layout-attention or unary-fanout policy, progress boundary, dependency, public
 behavior, or TensorFlow isolation.
+
+The layout-attention/quantized recovery suffix selects thirteen ordered
+results: three direct layout owners, three nested attention/PReLU clusters,
+dequantized TransposeConv, quantized Reshape cleanup, four quantized activation
+folds, and Softmax/Transpose canonicalization. Its phase runner and
+zero-argument lowerer helper currently discard the ordered tuple.
+
+Strict characterization selects
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_attention_quantized_suffix_results` for the two
+calls. An instrumented contract freezes all thirteen result identities and
+their pass-ID order, the shared ModelIR/layout/diagnostics context, the common
+duplicate-Transpose policy argument, helper return boundary, exact two-call
+count, fold/safe-binary and squeeze/unary-fanout boundaries, and an unconsumed
+policy. Both results remain observation-only because suffix children can prune
+with zero rewrite counters.

@@ -1379,6 +1379,16 @@ validation passes.
 
 The next unit should audit both layout-attention/quantized suffix calls and the
 ordered runner results they currently discard.
+
+That suffix is now characterized as thirteen ordered results, including three
+nested cluster slots. Selected observation-only targets are
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_attention_quantized_suffix_results`. Exact pass-ID
+order, instrumented result identity, shared context and boolean policy routing,
+both distinct boundary pairs, and the unconsumed policy are frozen before
+implementation. The focused gate passes
+`726 passed, 1 xfailed in 19.28s`; the strict xfail is the two-result
+propagation contract.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

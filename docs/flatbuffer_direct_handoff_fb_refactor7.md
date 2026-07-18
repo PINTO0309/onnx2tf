@@ -9265,6 +9265,43 @@ the phase runner's ordered result contract, policy argument, and both distinct
 boundaries before changing production. Commit and push only; do not create,
 reopen, or update a pull request.
 
+## Layout-attention/quantized suffix result characterization checkpoint
+
+`run_layout_attention_quantized_suffix()` selects thirteen ordered children:
+three layout owners; nested mean-attention, attention-gate, and duplicate-PReLU
+clusters; dequantized TransposeConv; quantized Reshape cleanup; four quantized
+activation folds; and Softmax/Transpose canonicalization. The runner and its
+zero-argument lowerer helper currently discard the tuple returned by
+`run_recovery_invocations()`.
+
+An instrumented contract freezes the exact thirteen pass IDs and result slots,
+including the three nested callback results. Both production calls pass the
+same `enable_duplicate_transpose_fanout_optimizations` policy. The first lies
+between affine folding and `_layout_pass_set_1_safe_binary_results`; the second
+lies between Squeeze/Reshape cleanup and the Transpose/unary-fanout cluster.
+
+A strict expected-failure contract selects observation-only targets
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_attention_quantized_suffix_results`. It requires
+tuple propagation through the runner and helper, exact policy arguments, both
+boundaries, and no consumers. Quantized suffix children perform cleanup even
+when their rewrite counters are zero, so neither tuple is complete mutation
+evidence.
+
+The focused suffix, nested cluster, activation-fold, TransposeConv, quantized
+Reshape, canonicalization, both production boundaries, architecture, and
+pass-efficiency gate is `726 passed, 1 xfailed in 19.28s`. Ruff, Python
+bytecode compilation, and whitespace validation pass. The sole strict xfail is
+the selected two-result propagation contract; production is unchanged at this
+checkpoint.
+
+At implementation, return the existing ordered tuple from the phase runner and
+helper, then replace only the two discarded expressions with the selected
+assignments. Do not normalize, summarize, consume, or guard on the results and
+do not change child callbacks, policy routing, order, shared context, safe-
+binary successors, or unary-fanout behavior. Validate sequentially, commit,
+and push only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

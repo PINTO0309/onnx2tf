@@ -22,7 +22,18 @@ from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestrati
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_attention_quantized_suffix_orchestration.py"
+)
 SUFFIX = "_run_layout_attention_quantized_recovery_suffix"
+RESULT_TARGETS = (
+    "_layout_pass_set_1_attention_quantized_suffix_results",
+    "_layout_pass_set_1_final_attention_quantized_suffix_results",
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -48,6 +59,22 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    function = statement.value.func
+    return function.id if isinstance(function, ast.Name) else None
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
 
 
 def _context() -> LayoutAttentionQuantizedSuffixContext:
@@ -380,6 +407,127 @@ def test_layout_attention_quantized_suffix_runner_preserves_instrumented_order(
     )
 
     assert events == list(LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="both ordered layout-attention/quantized suffix results are discarded",
+)
+def test_layout_attention_quantized_suffix_propagates_both_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_results = tuple(
+        {"slot": index}
+        for index in range(len(LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS))
+    )
+
+    def result_callback(index: int):
+        def result(*args: Any, **kwargs: Any) -> dict[str, int]:
+            return dict(expected_results[index])
+
+        return result
+
+    model_ir = ModelIR("layout_attention_quantized_suffix_results_test")
+    context = LayoutAttentionQuantizedSuffixContext(
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
+        mean_attention_cluster=result_callback(3),
+        attention_gate_qdq_recovery=result_callback(4),
+        duplicate_quantized_prelu_cluster=result_callback(5),
+    )
+    probe_steps = build_layout_attention_quantized_suffix_invocations(
+        context,
+        include_duplicate_transpose=True,
+    )
+    injected_callbacks = {
+        context.mean_attention_cluster,
+        context.attention_gate_qdq_recovery,
+        context.duplicate_quantized_prelu_cluster,
+    }
+    for index, step in enumerate(probe_steps):
+        if step.callback in injected_callbacks:
+            continue
+        module_name = next(
+            name
+            for name, value in vars(
+                layout_attention_quantized_suffix_orchestration
+            ).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            layout_attention_quantized_suffix_orchestration,
+            module_name,
+            result_callback(index),
+        )
+
+    assert run_layout_attention_quantized_suffix(
+        context,
+        include_duplicate_transpose=True,
+    ) == expected_results
+
+    orchestration_functions = {
+        node.name: node
+        for node in ast.parse(
+            ORCHESTRATION_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    runner = orchestration_functions["run_layout_attention_quantized_suffix"]
+    assert ast.unparse(runner.returns) == "Tuple[Any, ...]"
+    assert len(runner.body) == 1
+    assert isinstance(runner.body[0], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    production_results: list[tuple[list[ast.stmt], int]] = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if _direct_call_name(candidate) == SUFFIX:
+                production_results.append((statement.body, index))
+    assert len(production_results) == 2
+    assert tuple(
+        _single_target(body[index]) for body, index in production_results
+    ) == RESULT_TARGETS
+    for body, index in production_results:
+        call = body[index].value
+        assert isinstance(call, ast.Call)
+        assert call.args == []
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == {
+            "include_duplicate_transpose": (
+                "enable_duplicate_transpose_fanout_optimizations"
+            )
+        }
+    assert tuple(
+        _direct_call_name(body[index - 1])
+        for body, index in production_results
+    ) == (
+        "_optimize_fold_mul_add_mul_affine_chains",
+        "run_squeeze_reshape_identity_cleanup",
+    )
+    assert _single_target(
+        production_results[0][0][production_results[0][1] + 1]
+    ) == "_layout_pass_set_1_safe_binary_results"
+    assert _direct_call_name(
+        production_results[1][0][production_results[1][1] + 1]
+    ) == "_run_transpose_unary_fanout_layout_pass_cluster"
+    for target in RESULT_TARGETS:
+        assert not any(
+            isinstance(node, ast.Name)
+            and node.id == target
+            and isinstance(node.ctx, ast.Load)
+            for node in ast.walk(lowerer)
+        )
 
 
 def test_layout_attention_quantized_suffix_module_does_not_import_lowerer() -> None:
