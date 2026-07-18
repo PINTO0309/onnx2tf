@@ -5736,3 +5736,38 @@ At resume, audit the immediately preceding
 schema, live LayoutState contract, production occurrences, and Gather-fanout/
 boundary-normalization boundaries before adding characterization. Commit and
 push only; do not create, reopen, or update a pull request.
+
+## Terminal Softmax/Transpose result characterization checkpoint
+
+The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns the
+stable one-counter dictionary
+`removed_terminal_softmax_transpose_after_nhwc_propagation`. It receives the
+live Session LayoutState and has one production occurrence. Its result is
+currently discarded.
+
+A strict expected-failure orchestration contract requires
+`_terminal_softmax_transpose_stats`. It fixes the exact ModelIR/LayoutState
+callback between the diagnostics-aware Gather-channel-fanout runner and the
+captured `_terminal_boundary_input_normalization_stats` successor.
+
+At implementation, replace only the expression with an assignment. Do not
+change the owner, one-key schema, GraphIndex/layout synchronization, pass order,
+callback arguments, neighbor targets, diagnostics, guards, dependencies, or
+TensorFlow behavior. Validate the indexed Softmax owner, Gather-fanout/
+normalization boundaries, terminal orchestration, architecture, and broad
+related gates sequentially, then commit and push only; do not create, reopen,
+or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused indexed Softmax, Gather-fanout, boundary normalization, terminal-
+  orchestration, architecture, and pass-efficiency gate:
+  `364 passed, 1 xfailed in 18.89s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, window/final convergence, boundary normalization, terminal
+  Softmax, Gather fanout, layout recovery, and pass-efficiency coverage:
+  `1723 passed, 1 xfailed in 24.50s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented terminal
+Softmax result retention contract above.

@@ -10915,6 +10915,12 @@ Softmax/Transpose cleanup and boundary-input Transpose/channel-slice rewriting.
 Both values have no consumer, and both invocations preserve the shared live
 LayoutState and diagnostics arguments.
 
+The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
+rewrite counter, receives the live Session LayoutState, and has one production
+occurrence whose result is currently discarded. Strict characterization fixes
+a terminal target between the diagnostics-aware Gather-channel-fanout runner
+and captured terminal boundary-input normalization.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
