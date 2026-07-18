@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.quantized_prelu import (
     run_quantized_prelu_cleanup,
@@ -112,10 +110,6 @@ def test_quantized_prelu_result_schema_and_all_selections_are_explicit() -> None
     assert ast.unparse(nested[0]["keyword_args"]) == "shared_keyword_args"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the direct quantized-PReLU result is discarded",
-)
 def test_direct_quantized_prelu_result_is_retained_observation_only() -> None:
     lowerer = _lowerer()
     locations = _direct_locations(lowerer.body)

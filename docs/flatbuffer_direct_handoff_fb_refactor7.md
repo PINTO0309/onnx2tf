@@ -10851,3 +10851,31 @@ pass selection/order, preflight, transaction, state scope, direct arguments,
 nested invocation, surrounding calls, guard, dependency, public API, or
 TensorFlow behavior. Keep the result unconsumed, validate sequentially, commit,
 and push only; do not create, reopen, or update a pull request.
+
+## Quantized-PReLU direct result retention implementation checkpoint
+
+The sole raw lowerer call now retains its unchanged four-key dictionary as
+`_layout_pass_set_1_quantized_prelu_stats`. The target remains unconsumed and
+observation-only. The duplicate-fanout/quantized-PReLU orchestration still
+selects the callback with the same shared `ModelIRPassStateScope`.
+
+No result schema, pass implementation, default selection or priority,
+preflight, transaction boundary, state scope, direct argument, nested
+invocation, surrounding production call, guard, dependency, public API, or
+TensorFlow boundary changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.53s`
+- quantized-PReLU owners, duplicate orchestration, attention recovery and
+  quantized suffix boundaries, architecture, and pass-efficiency coverage:
+  `326 passed in 17.98s`
+- branch-changed broad suite: `1619 passed in 29.96s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These are unit, contract, and orchestration checks; this observation-only
+assignment does not claim a new model-corpus run. At resume, audit the direct
+`run_quantized_reshape_cleanup()` result together with its nested quantized-
+suffix selection before changing that boundary. Commit and push only; do not
+create, reopen, or update a pull request.

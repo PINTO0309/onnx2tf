@@ -4415,10 +4415,12 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_attention_gate_qdq_results = (
             _run_attention_gate_qdq_recovery_sequence()
         )
-        run_quantized_prelu_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_1_quantized_prelu_stats = (
+            run_quantized_prelu_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         _optimize_dequant_transposeconv_quantize_chains(
             model_ir,

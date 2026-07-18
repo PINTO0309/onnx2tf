@@ -1640,3 +1640,10 @@ gate/dequant-TransposeConv boundary, the nested invocation, and absence of a
 consumer are frozen. The focused gate passes
 `325 passed, 1 xfailed in 17.98s`; the branch-changed broad gate passes
 `1618 passed, 1 xfailed in 29.14s`.
+
+The direct quantized-PReLU call now retains its unchanged four-key dictionary
+as `_layout_pass_set_1_quantized_prelu_stats`. It remains unconsumed and
+observation-only; the nested duplicate-fanout selection and shared state scope
+are unchanged. The focused gate passes `326 passed in 17.98s`, the branch-
+changed broad gate passes `1619 passed in 29.96s`, and targeted static
+validation passes.

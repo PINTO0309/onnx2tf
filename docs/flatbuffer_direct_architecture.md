@@ -12271,3 +12271,9 @@ the exact direct arguments, attention-gate/dequant-TransposeConv boundaries,
 nested invocation arguments, fixed result schema, and an unconsumed
 observation-only policy. The nested callback and its shared state scope remain
 owned by the existing orchestration.
+
+The direct call now retains that dictionary as
+`_layout_pass_set_1_quantized_prelu_stats`. The target is unconsumed and
+observation-only. No pass implementation, selection, ordering, transaction,
+preflight, shared state scope, nested invocation, live context, surrounding
+call, dependency, public API, or TensorFlow boundary changed.
