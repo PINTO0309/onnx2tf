@@ -9496,6 +9496,40 @@ boundaries. Its parent runner still discards its ordered child tuple. Preserve
 the newly retained pass-set-2 attention result that follows the second call.
 Commit and push only; do not create, reopen, or update a pull request.
 
+## Pre-add/mean/attention parent result characterization checkpoint
+
+`run_preadd_mean_attention_recovery()` selects seven ordered children: pre-add,
+two residual-affine variants, direct affine, pre-unary affine, mean-affine, and
+the nested mean-attention cluster. The runner and its zero-argument lowerer
+helper currently discard both pass-set-2 result tuples.
+
+The first direct call lies between the layout-recovery prefix and the newly
+retained `_layout_pass_set_2_attention_gate_qdq_results`. The second lies
+between `_layout_opt_channel_shuffle_gather_results` and
+`_layout_opt_sa_pa_mirrorpad_stats`. Neither call has a current consumer,
+summary, or guard.
+
+A strict expected-failure contract instruments all seven result identities,
+including a nested mean-attention tuple. It selects observation-only targets
+`_layout_pass_set_2_preadd_mean_attention_results` and
+`_layout_opt_preadd_mean_attention_results`. It freezes runner/helper return,
+shared context, exact zero-argument call count, both boundary pairs, and the
+unconsumed policy.
+
+The focused pre-add parent, nested mean-attention, layout recovery,
+channel-shuffle, SA/PA, retained attention boundary, architecture, and
+pass-efficiency gate is `355 passed, 1 xfailed in 18.12s`. Ruff, Python
+bytecode compilation, and whitespace validation pass. The sole strict xfail is
+runner/helper/two-call propagation; production is unchanged at this
+checkpoint.
+
+At implementation, return the existing seven-slot tuple from the runner and
+helper and replace only the two discarded expressions with the selected
+assignments. Do not normalize or consume the nested mean-attention result and
+do not change any child, context, order, boundary, summary, or guard. Validate
+sequentially, commit, and push only; do not create, reopen, or update a pull
+request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

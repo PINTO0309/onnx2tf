@@ -43,6 +43,10 @@ ATTENTION_GATE_RESULT_TARGETS = (
     "_layout_pass_set_1_attention_gate_qdq_results",
     "_layout_pass_set_2_attention_gate_qdq_results",
 )
+PREADD_RESULT_TARGETS = (
+    "_layout_pass_set_2_preadd_mean_attention_results",
+    "_layout_opt_preadd_mean_attention_results",
+)
 
 
 def _lowerer_and_helper(helper_name: str) -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -558,6 +562,110 @@ def test_attention_gate_qdq_propagates_nested_results_to_both_direct_calls(
         ATTENTION_GATE_QDQ,
         "_run_duplicate_quantized_prelu_pass_cluster",
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="both ordered pre-add/mean/attention results are discarded",
+)
+def test_preadd_mean_attention_propagates_nested_results_to_both_direct_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mean_attention_results = (
+        {"mean_slot": 0},
+        {"mean_slot": 1},
+    )
+    expected_results: tuple[Any, ...] = tuple(
+        mean_attention_results if index == 6 else {"slot": index}
+        for index in range(len(PREADD_MEAN_ATTENTION_PASS_IDS))
+    )
+
+    def result_callback(index: int):
+        def result(*args: Any, **kwargs: Any) -> Any:
+            value = expected_results[index]
+            return tuple(value) if isinstance(value, tuple) else dict(value)
+
+        return result
+
+    model_ir = ModelIR("preadd_mean_attention_results_test")
+    context = AttentionRecoveryContext(
+        pass_context=ModelIRPassContext(
+            model_ir=model_ir,
+            layout_state=LayoutState.from_model_ir(model_ir),
+            diagnostics=[],
+        ),
+        mean_attention_cluster=result_callback(6),
+        gate_layout_cluster=lambda: None,
+        transpose_unary_fanout_cluster=lambda: None,
+    )
+    probe_steps = build_preadd_mean_attention_invocations(context)
+    for index, step in enumerate(probe_steps):
+        if step.callback is context.mean_attention_cluster:
+            continue
+        module_name = next(
+            name
+            for name, value in vars(attention_recovery_orchestration).items()
+            if value is step.callback
+        )
+        monkeypatch.setattr(
+            attention_recovery_orchestration,
+            module_name,
+            result_callback(index),
+        )
+
+    assert run_preadd_mean_attention_recovery(context) == expected_results
+
+    orchestration_functions = {
+        node.name: node
+        for node in ast.parse(
+            ORCHESTRATION_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    runner = orchestration_functions["run_preadd_mean_attention_recovery"]
+    assert ast.unparse(runner.returns) == "Tuple[Any, ...]"
+    assert isinstance(runner.body[-1], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper(PREADD_MEAN_ATTENTION)
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    direct_results: list[tuple[list[ast.stmt], int]] = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if _direct_call_name(candidate) == PREADD_MEAN_ATTENTION:
+                direct_results.append((statement.body, index))
+    assert len(direct_results) == 2
+    assert tuple(
+        _single_target(body[index]) for body, index in direct_results
+    ) == PREADD_RESULT_TARGETS
+    assert all(
+        body[index].value.args == [] and body[index].value.keywords == []
+        for body, index in direct_results
+        if isinstance(body[index].value, ast.Call)
+    )
+    assert _direct_call_name(
+        direct_results[0][0][direct_results[0][1] - 1]
+    ) == "_run_layout_recovery_prefix_pass_sequence"
+    assert _single_target(direct_results[0][0][direct_results[0][1] + 1]) == (
+        "_layout_pass_set_2_attention_gate_qdq_results"
+    )
+    assert _single_target(direct_results[1][0][direct_results[1][1] - 1]) == (
+        "_layout_opt_channel_shuffle_gather_results"
+    )
+    assert _single_target(direct_results[1][0][direct_results[1][1] + 1]) == (
+        "_layout_opt_sa_pa_mirrorpad_stats"
+    )
+    for target in PREADD_RESULT_TARGETS:
+        assert not any(
+            isinstance(node, ast.Name)
+            and node.id == target
+            and isinstance(node.ctx, ast.Load)
+            for node in ast.walk(lowerer)
+        )
 
 
 def test_shared_recovery_runner_rejects_id_drift_before_execution() -> None:

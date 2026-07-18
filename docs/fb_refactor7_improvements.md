@@ -1439,6 +1439,16 @@ suite passes `1590 passed in 28.69s`, and targeted static validation passes.
 The next unit should audit both direct pre-add/mean/attention recovery results
 and preserve the new pass-set-2 attention result immediately following the
 second call.
+
+That seven-slot parent is now characterized with its nested mean-attention
+result. Selected observation-only targets are
+`_layout_pass_set_2_preadd_mean_attention_results` and
+`_layout_opt_preadd_mean_attention_results`. Exact instrumented result
+identity, shared context, zero-argument calls, layout-prefix/attention and
+channel-shuffle/SA-PA boundaries, and the unconsumed policy are frozen before
+implementation. The focused gate passes
+`355 passed, 1 xfailed in 18.12s`; the strict xfail is runner/helper/two-call
+propagation.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

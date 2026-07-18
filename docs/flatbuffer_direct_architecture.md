@@ -12074,3 +12074,15 @@ All parent and suffix results remain unconsumed and observation-only. This
 propagation changes no child, callback, nested tuple identity, shared context,
 order, cleanup timing, summary, guard, dependency, public behavior, or
 TensorFlow isolation.
+
+The pre-add/mean/attention parent selects seven ordered slots: pre-add, two
+residual-affine forms, direct affine, pre-unary affine, mean-affine, and the
+nested mean-attention cluster result. Its runner and zero-argument lowerer
+helper currently discard the tuple at both pass-set-2 direct calls.
+
+Strict characterization selects
+`_layout_pass_set_2_preadd_mean_attention_results` and
+`_layout_opt_preadd_mean_attention_results`. It freezes all instrumented slot
+identities including the nested mean-attention tuple, shared context, exact
+two-call count, layout-prefix/retained-attention and channel-shuffle/SA-PA
+boundaries, and unconsumed observation-only policy.
