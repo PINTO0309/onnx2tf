@@ -10910,8 +10910,10 @@ LayoutState and diagnostics. The value has no consumer and adds no graph work.
 and returns one rewrite counter. The final occurrence follows indexed final
 convergence and retains its result as
 `_final_boundary_input_normalization_stats`; the earlier occurrence remains a
-separate raw call. The final value has no consumer. Both invocations preserve
-the shared live LayoutState and diagnostics arguments.
+separate raw call. The final value has no consumer. Strict characterization of
+the earlier occurrence requires a terminal-only target between terminal
+Softmax/Transpose cleanup and boundary-input Transpose/channel-slice rewriting.
+Both invocations preserve the shared live LayoutState and diagnostics arguments.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

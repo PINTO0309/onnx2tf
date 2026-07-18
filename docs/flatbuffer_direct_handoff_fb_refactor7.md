@@ -5670,3 +5670,39 @@ At resume, audit the earlier raw
 boundary-channel-slice boundaries before adding characterization. Keep the
 final target fixed. Commit and push only; do not create, reopen, or update a
 pull request.
+
+## Terminal boundary-input normalization result characterization checkpoint
+
+The earlier `run_boundary_input_normalization_cleanup()` production occurrence
+returns the same stable one-counter dictionary as the already captured final
+occurrence and receives the same live Session LayoutState and diagnostics. Its
+result is still discarded.
+
+A strict expected-failure orchestration contract requires
+`_terminal_boundary_input_normalization_stats` for only the earlier occurrence.
+It fixes the terminal Softmax/Transpose predecessor, exact ModelIR/LayoutState/
+diagnostics callback, following boundary-input Transpose/channel-slice owner,
+and the existing `_final_boundary_input_normalization_stats` target.
+
+At implementation, replace only the earlier expression with an assignment. Do
+not change the final occurrence, owner, one-key schema, transaction or
+preflight behavior, GraphIndex/layout synchronization, pass order, callback
+arguments, neighbor targets, diagnostics, guards, dependencies, or TensorFlow
+behavior. Validate the normalization and adjacent indexed owners, both
+occurrence contracts, terminal orchestration, architecture, and broad related
+gates sequentially, then commit and push only; do not create, reopen, or update
+a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused normalization owner, terminal Softmax and boundary channel-slice
+  neighbors, both occurrence contracts, terminal-orchestration, architecture,
+  and pass-efficiency gate: `359 passed, 1 xfailed in 18.23s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, window/final convergence, boundary normalization, terminal
+  Softmax, layout recovery, and pass-efficiency coverage:
+  `1718 passed, 1 xfailed in 24.30s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented terminal-
+occurrence result retention contract above.
