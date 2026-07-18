@@ -1572,3 +1572,11 @@ unchanged. The focused implementation gate passes
 
 The next unit should audit the raw dequantize/mean/quantize bridge result before
 the newly retained pass-set-1 QLinear parent result.
+
+That sole bridge result is now characterized as the one-key
+`moved_transpose_dequantize_mean_quantize_bridges` dictionary. Selected
+observation-only target is `_layout_pass_set_1_dequant_mean_quantize_stats`.
+Wrapper forwarding, early and final prune paths, sole exact call,
+safe-binary/QLinear boundaries, and unconsumed policy are frozen. The focused
+gate passes `357 passed, 1 xfailed in 17.88s`; the branch-changed broad gate
+passes `1612 passed, 1 xfailed in 29.37s`.

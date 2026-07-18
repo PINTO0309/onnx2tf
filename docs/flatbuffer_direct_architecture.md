@@ -12181,6 +12181,17 @@ existing owner. No schema, pass selection, preflight, transaction, nested
 occurrence, live context, ordering, guard, dependency, public API, or
 TensorFlow boundary changes.
 
+The dequantize/keepdims-Mean/quantize bridge owner returns the one-key
+`moved_transpose_dequantize_mean_quantize_bridges` dictionary. It prunes unused
+tensors both on missing-type early exits and after candidate processing, so a
+zero counter does not exclude cleanup-only mutation. Its lowerer wrapper
+forwards only ModelIR and has one production call.
+
+Strict characterization selects
+`_layout_pass_set_1_dequant_mean_quantize_stats`, freezes the owner/wrapper
+schema and unconditional pruning paths, sole exact call, retained safe-binary/
+QLinear boundaries, and an unconsumed observation-only policy.
+
 The QLinear/mean/Concat recovery parent selects five ordered dictionary
 results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
 pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and

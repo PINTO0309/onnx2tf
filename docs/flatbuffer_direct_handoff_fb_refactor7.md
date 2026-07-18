@@ -10601,3 +10601,36 @@ At resume, audit the raw direct
 before `_layout_pass_set_1_qlinear_mean_concat_results`. Preserve its owner
 schema, cleanup semantics, sole production occurrence, and QLinear boundary.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Dequantize/mean/quantize bridge result characterization checkpoint
+
+`_optimize_transpose_dequantize_mean_quantize_bridges()` returns the fixed
+one-key dictionary `moved_transpose_dequantize_mean_quantize_bridges`. The owner
+prunes unused tensors in both missing-required-type early exits and after
+candidate processing. Its lowerer wrapper transparently forwards only ModelIR.
+
+There is one production call. It is a raw expression between the retained
+`_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_qlinear_mean_concat_results`. A zero rewrite count does not
+exclude cleanup-only pruning, so the result cannot safely drive a guard.
+
+A passing contract freezes wrapper forwarding, the one-key schema, both early
+zero-return paths, and all three prune sites. A strict expected-failure
+contract selects observation-only target
+`_layout_pass_set_1_dequant_mean_quantize_stats`, exact ModelIR-only call,
+sole-call count, both retained boundaries, and absence of a consumer.
+
+Characterization validation completed sequentially under `uv`:
+
+- bridge owner fixtures, wrapper/schema/prune contract, safe-binary and QLinear
+  boundaries, architecture, and pass-efficiency coverage:
+  `357 passed, 1 xfailed in 17.88s`
+- branch-changed broad suite including the new result contract:
+  `1612 passed, 1 xfailed in 29.37s`
+
+The sole strict expected failure is the intentionally unimplemented direct
+assignment. Replace only the raw expression with the selected target. Do not
+change the wrapper, owner, schema, graph-index allocation, cleanup, pass order,
+surrounding results, guard, dependency, public API, or TensorFlow behavior.
+Keep the value unconsumed, validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.
