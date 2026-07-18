@@ -6724,3 +6724,47 @@ call consumes its counter. Characterize the very-late direct call adjacent to
 `_very_late_instancenorm_post_bias_stats` without conflating those other
 occurrences. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## Very-late InstanceNorm residual/Mul/Concat result characterization checkpoint
+
+`_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains()`
+returns the stable one-counter dictionary
+`optimized_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains`. The
+counter is complete mutation evidence because unused-tensor pruning and
+LayoutState synchronization occur only after a positive rewrite.
+
+The owner has three direct production calls plus one nested convergence call.
+The first terminal and second very-late direct results are raw, the third is
+retained as
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`, and the nested
+call consumes its counter from the shared `residual_graph_index` invocation.
+
+A strict expected-failure orchestration contract requires only the second
+direct result to be retained as
+`_very_late_instancenorm_residual_mul_concat_stats`. It fixes the captured
+`_very_late_instancenorm_post_bias_stats` predecessor and following live-
+LayoutState dual-statistics InstanceNorm owner. It also fixes the other two
+direct forms and proves that exactly one nested occurrence continues to receive
+`residual_graph_index` and the live Session LayoutState.
+
+At implementation, replace only the second direct expression with an
+assignment and update the existing three-direct occurrence-shape assertion.
+Do not change the first direct or nested calls, existing staged target, wrapper
+or indexed owner, one-key schema, rewrite guards, positive-only pruning,
+GraphIndex/LayoutState/candidate/max-rewrite controls, callback arguments,
+pass order, adjacent targets, dependencies, diagnostics, or TensorFlow
+behavior. The retained value must have no consumer or additional graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- indexed owner, concrete owner rewrite, direct/nested occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency gate:
+  `468 passed, 1 xfailed in 19.92s`
+- branch-changed broad suite plus indexed owner, occurrence accounting,
+  terminal/final boundaries, architecture, and pass-efficiency coverage:
+  `1420 passed, 1 xfailed in 24.22s`
+
+The sole strict expected failure is the intentionally unimplemented very-late
+InstanceNorm residual/Mul/Concat result retention contract above. Implement
+that assignment, rerun the same gates sequentially, then commit and push only;
+do not create, reopen, or update a pull request.
