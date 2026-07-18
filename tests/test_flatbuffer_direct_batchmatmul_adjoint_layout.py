@@ -5,7 +5,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -198,10 +197,6 @@ def test_flatbuffer_direct_batchmatmul_transpose_input_to_adj_flags() -> None:
     assert _fingerprint(owner_model_ir) == before_noop
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BatchMatMul adj-flags results are not retained",
-)
 def test_batchmatmul_adj_flags_results_are_retained_at_both_boundaries() -> None:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     lowerer = next(

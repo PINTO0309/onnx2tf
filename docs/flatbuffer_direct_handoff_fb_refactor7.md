@@ -7884,6 +7884,35 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## BatchMatMul adj-flags result retention implementation checkpoint
+
+The guarded terminal call now retains
+`_terminal_batchmatmul_adj_flags_stats`, and the post-SiNet call retains
+`_post_sinet_batchmatmul_adj_flags_stats`. Both preserve the dedicated owner's
+unchanged complete one-counter mutation dictionary.
+
+These are assignment-only observation changes. No consumer or guard was added.
+The wrapper, owner, schema, positive-only pruning, captured reshape/SE
+predecessors, QKV successors, option guard, pass order, dependencies,
+diagnostics, and TensorFlow behavior remain unchanged. The QKV boundary test
+helper now accepts either a raw call or an assigned call as its predecessor.
+
+Implementation validation completed sequentially under `uv`:
+
+- adj-flags and reshape/SE owner fixtures, both production boundaries, QKV
+  orchestration, architecture, terminal result contracts, and pass-efficiency
+  coverage: `372 passed in 19.41s`
+- branch-changed broad suite plus the same two-boundary/QKV coverage:
+  `1463 passed in 25.65s`
+
+These are unit, contract, and orchestration checks; this result retention does
+not claim a new model-corpus run.
+
+At resume, audit the raw QKV attention cluster results immediately after the
+newly retained adj-flags dictionaries. Preserve all QKV production policies and
+callback ordering before propagating or capturing any result. Commit and push
+only; do not create, reopen, or update a pull request.
+
 ## BatchMatMul reshape/SE result retention implementation checkpoint
 
 The guarded terminal call now retains

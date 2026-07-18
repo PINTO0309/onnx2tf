@@ -11230,9 +11230,8 @@ conversion plus the corresponding `adjX`/`adjY` toggle. Unused tensors are
 pruned only after a positive rewrite, so the counter is complete owner mutation
 evidence.
 
-Two raw direct occurrences follow the captured terminal and post-SiNet
-reshape/SE results and precede QKV attention clusters. A strict contract fixes
-future `_terminal_batchmatmul_adj_flags_stats` and
-`_post_sinet_batchmatmul_adj_flags_stats` targets, both predecessors, both QKV
-successors, exact arguments, and the terminal option guard. This unit retains
-the dictionaries without adding a consumer, guard, or graph work.
+Two direct occurrences follow the captured terminal and post-SiNet reshape/SE
+results and retain `_terminal_batchmatmul_adj_flags_stats` and
+`_post_sinet_batchmatmul_adj_flags_stats`, respectively. Both precede QKV
+attention clusters. The dictionaries have no consumer or new guard and add no
+graph work.

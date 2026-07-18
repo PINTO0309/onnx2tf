@@ -946,13 +946,22 @@ The focused reshape/SE and affine-input gate passes `356 passed in 19.80s`, and
 the branch-changed broad suite passes `1461 passed in 25.43s`. Both adj-flags
 successors and surrounding option policy remain fixed.
 
+Both BatchMatMul transpose-input-to-adj-flags results are now retained as
+`_terminal_batchmatmul_adj_flags_stats` and
+`_post_sinet_batchmatmul_adj_flags_stats`. The one-counter result is complete
+owner mutation evidence, but remains unconsumed in this unit.
+
+The focused owner/QKV-boundary gate passes `372 passed in 19.41s`, and the
+branch-changed broad suite passes `1463 passed in 25.65s`. No child execution,
+guard, graph traversal, dependency, or TensorFlow import path was added.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit both raw BatchMatMul transpose-input-to-adj-flags owner calls
-immediately after the captured reshape/SE results. Mean/attention tuples and
-the preceding BatchMatMul results must remain observation-only and policy
-guarded. The retained
+unit should audit the raw QKV attention cluster results immediately after the
+captured adj-flags dictionaries. All QKV policy forms and callback ordering
+must remain fixed. Mean/attention tuples and the preceding BatchMatMul results
+must remain observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
 omits cleanup-only pruning. Any change must preserve current pass order,
 TensorFlow-free boundary, dependency set, and sequential validation policy.
