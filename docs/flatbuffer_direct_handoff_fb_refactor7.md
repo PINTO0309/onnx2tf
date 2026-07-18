@@ -5165,3 +5165,36 @@ At resume, audit the immediately following
 result, owner schema, live LayoutState contract, and channel-shuffle/next-owner
 boundaries before retaining evidence. Commit and push only; do not create,
 reopen, or update a pull request.
+
+## Late attention-QKV Reshape result characterization checkpoint
+
+The attention-QKV Reshape/Transpose compatibility owner returns the stable
+one-counter dictionary
+`optimized_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains`.
+It uses indexed-first/fallback handling, has one direct production occurrence,
+and receives the live Session LayoutState. Its result is currently discarded.
+
+A strict expected-failure orchestration contract requires
+`_late_attention_qkv_reshape_stats`. It fixes the captured base-only
+channel-shuffle/Gather tuple predecessor, exact ModelIR/LayoutState callback,
+and following attention Gather/Transpose/Reshape cleanup owner.
+
+At implementation, replace only this expression with an assignment. Do not
+change the compatibility/indexed owner or schema, fallback behavior,
+GraphIndex/pruning/layout synchronization, callback arguments, pass order,
+neighboring targets, add a guard, reconciliation, scan, sort, metadata write,
+result consumer, dependency, or TensorFlow behavior. Validate the indexed/
+compatibility owner, channel-shuffle and layout-recovery boundaries, terminal
+orchestration, architecture, and broad related gates sequentially, then commit
+and push only; do not create, reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused indexed/compatibility owner, channel-shuffle/layout-recovery
+  boundaries, terminal-orchestration, and architecture gate:
+  `325 passed, 1 xfailed in 18.76s`
+- expanded broad related gate: `1744 passed, 1 xfailed in 33.31s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented single-
+result retention contract above.

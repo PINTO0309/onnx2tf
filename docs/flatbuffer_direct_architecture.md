@@ -10852,6 +10852,12 @@ guarded full-post and unguarded late-base production invocations retain it under
 phase-specific targets without aggregation. Policy selection, ordering, shared
 scope, and boundaries remain unchanged.
 
+The following attention-QKV Reshape/Transpose compatibility owner returns one
+rewrite counter, has one direct production occurrence, and receives the live
+Session LayoutState. Its result is currently discarded. Strict characterization
+fixes a late attention-QKV target between the captured base-only
+channel-shuffle/Gather tuple and attention Gather/Transpose/Reshape cleanup.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
