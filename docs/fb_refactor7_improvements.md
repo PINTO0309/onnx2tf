@@ -2085,3 +2085,11 @@ following affine cleanup. Recurrent and unbound-input repair behavior,
 conditional shape reconciliation, call order, and arguments remain unchanged.
 The focused gate passes `373 passed in 19.26s`, the 114-file branch-changed
 suite passes `1701 passed in 32.80s`, and targeted static validation passes.
+
+The three repeated raw dead-op prune/static-shape reconcile boundaries are now
+characterized for a two-pass-only shared GraphIndex owner. Strict equivalence
+freezes the exact graph/tensor mutation, schemas, phase positions, LayoutState
+forwarding, one-index construction, and three unconsumed result targets. The
+focused gate passes `390 passed, 1 xfailed in 18.34s`, the 115-file branch-
+changed suite passes `1703 passed, 1 xfailed in 31.73s`, and targeted static
+validation passes.

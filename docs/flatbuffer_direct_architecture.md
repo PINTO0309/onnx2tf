@@ -12804,3 +12804,17 @@ The two direct repair calls retain their unchanged dictionaries as
 mutation, conditional shape reconciliation, arguments, order, and following
 affine cleanup are unchanged. Result retention therefore adds no scan, copy,
 aggregation, or control dependency.
+
+Core cleanup, conditional layout pass-set 2, and very-late residual-affine
+cleanup each contain the same raw dead-operator prune followed immediately by
+static-shape reconciliation. The six result dictionaries are discarded, and
+the pair has no shared GraphIndex contract.
+
+Strict characterization selects a two-pass-only indexed owner. It must reuse
+one `ModelIRGraphIndex`, preserve the exact legacy graph and tensor mutation,
+and return only `removed_dead_operators` plus
+`reconciled_static_tensor_shapes`. The three direct results are selected as
+unconsumed `_core_cleanup_prune_reconcile_stats`,
+`_layout_pass_set_2_prune_reconcile_stats`, and
+`_very_late_prune_reconcile_stats`. Dynamic reshape and fixed-point retries are
+explicitly outside this owner's contract.

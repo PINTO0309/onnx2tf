@@ -12512,3 +12512,38 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result-returning side-effect boundary before modifying production code.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Indexed prune/reconcile result characterization checkpoint
+
+Three phase boundaries still repeat raw dead-operator pruning followed by
+static-shape reconciliation: core cleanup, conditional layout pass-set 2, and
+the very-late residual-affine cleanup. All six dictionaries are discarded.
+When pruning removes operators, its temporary GraphIndex is not forwarded, so
+the immediately following reconciliation rebuilds producer evidence.
+
+Passing contracts freeze each pair's exact arguments, adjacency, phase-local
+predecessor and successor, and fixed result schemas. A mutation fixture freezes
+the legacy two-call graph/tensor result. A strict expected-failure contract
+requires a small `run_indexed_prune_reconcile_cleanup()` owner to execute only
+those same two passes with one `ModelIRGraphIndex`, reproduce the exact fixture
+mutation, and return the combined two-counter dictionary. It selects three
+unconsumed observation targets: `_core_cleanup_prune_reconcile_stats`,
+`_layout_pass_set_2_prune_reconcile_stats`, and
+`_very_late_prune_reconcile_stats`.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated indexed result contract: `2 passed, 1 xfailed in 0.54s`
+- graph cleanup, shape reconciliation, affected phase boundaries, indexed
+  convergence, dynamic reshape, core, architecture, and pass efficiency:
+  `390 passed, 1 xfailed in 18.34s`
+- 115 branch-changed test files: `1703 passed, 1 xfailed in 31.73s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally absent shared owner and direct
+assignments. Do not add dynamic-reshape resolution, a fixed-point retry, extra
+cleanup, a summary consumer, or any new branch. Preserve phase order,
+LayoutState forwarding, result counts, graph/tensor mutations, dependencies,
+public API, and TensorFlow behavior. Validate sequentially, commit, and push
+only; do not create, reopen, or update a pull request.
