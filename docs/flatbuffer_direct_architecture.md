@@ -10845,6 +10845,13 @@ captured flatten-HW dictionary and the channel-shuffle/Gather cluster with both
 optional shuffle families disabled. The model-only callback and boundaries are
 unchanged.
 
+The following channel-shuffle/Gather orchestrator selects two through seven
+transactional child passes and internally receives their ordered result tuple.
+Both the public runner and local helper currently discard that tuple, as do the
+guarded full-post and unguarded late-base production invocations. Strict
+characterization requires typed raw propagation through both layers and
+phase-specific targets without aggregation.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

@@ -330,6 +330,107 @@ def test_channel_shuffle_gather_runner_preserves_all_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="channel-shuffle/Gather runner discards ordered results",
+)
+def test_channel_shuffle_gather_runner_returns_all_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def recorder(pass_id: str):
+        def record(*args: Any, **kwargs: Any) -> dict[str, int]:
+            return {pass_id: 1}
+
+        return record
+
+    for pass_id in CHANNEL_SHUFFLE_GATHER_PASS_IDS:
+        monkeypatch.setattr(
+            channel_shuffle_gather_orchestration,
+            pass_id,
+            recorder(pass_id),
+        )
+
+    for policy in POLICIES:
+        expected_ids = _expected_ids(*policy)
+        result = run_channel_shuffle_gather(
+            _context(use_layout_state=True),
+            include_two_way_shuffle=policy[0],
+            include_nhwc_shuffle=policy[1],
+            include_post_gather_cleanup=policy[2],
+        )
+        assert result == tuple({pass_id: 1} for pass_id in expected_ids)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="local helper and both production calls discard ordered results",
+)
+def test_channel_shuffle_gather_helper_propagates_and_retains_results() -> None:
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_channel_shuffle_gather"
+
+    statements = sorted(
+        (
+            node
+            for node in ast.walk(lowerer)
+            if isinstance(node, (ast.Assign, ast.Expr))
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == CHANNEL_SHUFFLE_GATHER
+        ),
+        key=lambda statement: statement.lineno,
+    )
+    assert len(statements) == 2
+    expected = (
+        (
+            "_layout_opt_channel_shuffle_gather_results",
+            {"include_post_gather_cleanup": True},
+        ),
+        (
+            "_late_channel_shuffle_gather_results",
+            {
+                "include_two_way_shuffle": False,
+                "include_nhwc_shuffle": False,
+            },
+        ),
+    )
+    for statement, (target_name, expected_keywords) in zip(
+        statements,
+        expected,
+        strict=True,
+    ):
+        assert isinstance(statement, ast.Assign)
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        assert {
+            keyword.arg: _expression_path(keyword.value)
+            for keyword in statement.value.keywords
+        } == expected_keywords
+
+    full_post_guard = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If) and statements[0] in statement.body
+    )
+    assert ast.unparse(full_post_guard.test) == "optimize_layout_transpose_chains"
+    assert statements[1] in lowerer.body
+    late_index = lowerer.body.index(statements[1])
+    previous = lowerer.body[late_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_nhwc_reshape_collapse_stats"
+    assert _direct_call_name(lowerer.body[late_index + 1]) == (
+        "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
+    )
+
+
 def test_channel_shuffle_gather_preserves_full_post_policy_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     guard = next(

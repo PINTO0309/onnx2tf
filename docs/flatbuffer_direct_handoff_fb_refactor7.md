@@ -5102,3 +5102,40 @@ At resume, audit the return schema of `run_channel_shuffle_gather()`, the local
 contract, all helper invocations/policy combinations, and the late base-policy
 boundary before propagating and retaining its result. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Channel-shuffle/Gather result propagation characterization checkpoint
+
+`run_channel_shuffle_gather()` selects two through seven transactional child
+passes from three independent policy flags. `run_recovery_invocations()`
+already produces their ordered dictionaries, but the runner discards that
+tuple. The local `_run_channel_shuffle_gather_layout_pass_cluster()` helper is
+also annotated `None` and discards the runner result. Its two production calls
+therefore expose no mutation evidence.
+
+Two strict expected-failure contracts require the runner to return every
+policy's exact ordered tuple and the helper to propagate it as
+`Tuple[Dict[str, int], ...]`. The guarded full-post call must retain
+`_layout_opt_channel_shuffle_gather_results`; the late base-only call must
+retain `_late_channel_shuffle_gather_results`. Existing policy arguments,
+shared-scope construction, the captured NHWC-Reshape predecessor, and following
+QKV-attention boundary are fixed.
+
+At implementation, return the already-created tuple through both layers and
+replace only the two invocation expressions with assignments. Do not aggregate
+or consume results, alter policy selection, callback order/arguments,
+transactional behavior, shared scope, diagnostics, guards, boundaries,
+dependencies, or TensorFlow behavior. Validate all eight policies, helper AST,
+shared-state efficiency, boundaries, architecture, and broad related gates
+sequentially, then commit and push only; do not create, reopen, or update a pull
+request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused all-policy runner, helper AST, pass-efficiency, layout-recovery,
+  terminal-orchestration, and architecture gate:
+  `346 passed, 2 xfailed in 17.79s`
+- expanded broad related gate: `1734 passed, 2 xfailed in 32.30s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The two strict expected failures are the deliberately unimplemented runner/
+helper return propagation and the two production result assignments.
