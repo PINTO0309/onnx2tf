@@ -8,6 +8,9 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.channel_slice_layout import (
+    _optimize_boundary_input_transpose_channel_slice_blocks,
+)
 
 
 def _tensor(
@@ -86,3 +89,14 @@ def test_boundary_input_ordered_cleanup_shares_index_and_layout_state(
     assert "x_onnx_ncx_internal" not in layout_state.logical
     assert layout_state.logical_of("x") == "NHWC"
     assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_boundary_input_channel_slice_result_schema_is_stable() -> None:
+    model_ir = ModelIR("boundary_input_channel_slice_result_schema")
+
+    assert _optimize_boundary_input_transpose_channel_slice_blocks(model_ir) == {
+        "removed_boundary_input_transpose": 0,
+        "rewritten_boundary_channel_slices": 0,
+        "rewritten_boundary_axis_ops": 0,
+        "inserted_local_boundary_transposes": 0,
+    }

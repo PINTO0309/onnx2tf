@@ -5929,3 +5929,41 @@ At resume, audit the immediately following
 schema, live LayoutState contract, production occurrences, and captured
 normalization/internal-channel-slice boundaries before adding characterization.
 Commit and push only; do not create, reopen, or update a pull request.
+
+## Terminal boundary-input channel-slice result characterization checkpoint
+
+`_optimize_boundary_input_transpose_channel_slice_blocks()` returns the stable
+four-counter dictionary comprising removed boundary input Transposes, rewritten
+boundary channel Slices, rewritten boundary axis operations, and inserted local
+boundary Transposes. Its wrapper has one production call, which currently
+discards the dictionary while passing the live `session.layout_state`.
+
+The zero-mutation schema test now fixes the exact four-key result, while the
+existing indexed owner coverage validates the supplied GraphIndex and
+LayoutState after a rewrite. A strict expected-failure orchestration contract
+requires the production result to be retained as
+`_terminal_boundary_input_channel_slice_stats`. It also fixes the captured
+`_terminal_boundary_input_normalization_stats` predecessor and the first
+internal Transpose/channel-slice propagation successor with the same live
+LayoutState.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the wrapper or pass implementation, four-key result schema, rewrite
+guards, graph mutation, tensor pruning, shared GraphIndex/LayoutState behavior,
+callback arguments, pass order, adjacent targets, dependencies, diagnostics,
+or TensorFlow behavior. The retained value must have no consumer or additional
+graph work.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused boundary-input channel-slice owner, internal channel-slice successor,
+  boundary normalization/layout, terminal orchestration, architecture, and
+  pass-efficiency gate: `338 passed, 1 xfailed in 20.53s`
+- branch-changed broad suite plus boundary-input, channel-slice/pad-Mul,
+  terminal orchestration, architecture, and pass-efficiency coverage:
+  `1382 passed, 1 xfailed in 24.29s`
+
+The sole strict expected failure is the intentionally unimplemented terminal
+boundary-input channel-slice result retention contract above. Implement that
+assignment, rerun the same gates sequentially, then commit and push only; do
+not create, reopen, or update a pull request.

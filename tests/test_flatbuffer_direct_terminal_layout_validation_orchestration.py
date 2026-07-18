@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2199,6 +2201,60 @@ def test_primary_path_retains_terminal_boundary_input_normalization_result() -> 
     )
     assert successor_call is not None
     assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in successor_call.keywords
+    } == {"layout_state": "session.layout_state"}
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="terminal boundary-input channel-slice result is discarded",
+)
+def test_primary_path_retains_terminal_boundary_input_channel_slice_result() -> None:
+    body = _lowerer_body()
+    callback_name = "_optimize_boundary_input_transpose_channel_slice_blocks"
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement)) == callback_name
+    ]
+    assert len(indices) == 1
+    index = indices[0]
+
+    statement = body[index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == (
+        "_terminal_boundary_input_channel_slice_stats"
+    )
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"layout_state": "session.layout_state"}
+
+    predecessor = body[index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_terminal_boundary_input_normalization_stats"
+    )
+
+    successor_call = _statement_call(body[index + 1])
+    assert _call_name(successor_call) == (
+        "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains"
+    )
+    assert successor_call is not None
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "model_ir"
+    ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in successor_call.keywords
