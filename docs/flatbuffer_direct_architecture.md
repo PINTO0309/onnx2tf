@@ -10756,9 +10756,11 @@ unchanged; no guard, reconciliation, scan, or traversal is added.
 In the no-layout fallback only, the immediately preceding guarded final
 cleanup reruns SE/FC layout propagation and strict constant affine pre/post
 folding after an unconditional topological sort, then sorts again. Both owners
-return stable one-counter dictionaries, but this guarded occurrence currently
-discards them. Characterization selects this exact guard, fixes both callback
-contracts, and preserves the surrounding sort and signature-restore boundary.
+return stable one-counter dictionaries. This guarded occurrence now retains
+them as `_no_layout_final_se_fc_stats` and
+`_no_layout_final_affine_prepost_stats`. The guard, callback contracts,
+surrounding sorts, and signature-restore boundary are unchanged; no guard-
+external initialization or consumption is added.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

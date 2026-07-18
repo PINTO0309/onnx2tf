@@ -5664,14 +5664,16 @@ def lower_onnx_to_ir(
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # In no-layout fallback path, some strict MUL/ADD affine bridges become
         # reducible only after final topological normalization.
-        run_se_fc_layout_cleanup(
+        _no_layout_final_se_fc_stats = run_se_fc_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _no_layout_final_affine_prepost_stats = (
+            _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _topologically_sort_operators(model_ir)
     # Final boundary-signature restore:

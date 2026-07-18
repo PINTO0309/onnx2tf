@@ -4415,3 +4415,33 @@ Characterization validation completed sequentially under `uv`:
 
 The sole strict xfail is the deliberately unmet guarded two-result capture
 contract; there are no unexpected failures.
+
+## Guarded no-layout final cleanup result implementation checkpoint
+
+Inside the unchanged safe-transpose-reduction fallback guard, the final SE/FC
+layout cleanup now retains its raw dictionary as
+`_no_layout_final_se_fc_stats`, and the following indexed constant affine
+pre/post cleanup retains its raw dictionary as
+`_no_layout_final_affine_prepost_stats`. Neither variable is initialized or
+consumed outside that conditional path.
+
+The owners, schemas, guarded execution, callback arguments, diagnostics and
+layout-state handoff, preceding and guarded topological sorts, following
+boundary-signature restore, normal layout-optimized path, dependencies, and
+TensorFlow-free behavior are unchanged. No pass, guard, reconciliation, scan,
+sort, metadata write, or result summarizer is added.
+
+Implementation validation completed sequentially under `uv`:
+
+- SE/FC, indexed affine, terminal orchestration, architecture, and pass
+  efficiency: `417 passed in 17.82s`
+- expanded broad related gate: `1372 passed in 30.75s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+At resume, audit result propagation through the final precision cleanup
+sequence (`_rewrite_constant_divisors_to_multiplicative_reciprocals()`,
+`run_consecutive_mul_constants_cleanup()`, and
+`_restore_precision_sensitive_reciprocal_divisions()`) immediately before the
+post-progress topological sort. Characterize schemas, exact occurrence counts,
+and surrounding order before retaining any evidence. Commit and push only; do
+not create or update a pull request.

@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1106,10 +1104,6 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
     assert following.targets[0].id == "_absolute_final_affine_post_add_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="guarded no-layout final cleanup results are discarded",
-)
 def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
     body = _lowerer_body()
     guard_index = next(
