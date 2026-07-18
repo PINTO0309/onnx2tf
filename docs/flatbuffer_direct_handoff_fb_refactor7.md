@@ -12366,3 +12366,42 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Void orchestration result propagation characterization checkpoint
+
+Two extracted orchestration runners still discard ordered child results. The
+duplicate-fanout/quantized-PReLU runner owns two child passes and preserves the
+`include_transpose` policy. The boundary-BatchMatMul/input-unary runner owns two
+child passes. Each pair shares one `ModelIRPassStateScope` and forwards the live
+LayoutState and diagnostics.
+
+Both public runners and their lowerer helpers currently declare `None`, execute
+the recovery runner as a raw expression, and are callback-only. Layout/
+attention/quantized suffix selects the duplicate/PReLU helper at index 5;
+layout-recovery selects the boundary helper at index 1. Their parent result
+tuples already reserve one slot for each callback, currently containing
+`None`.
+
+Passing contracts freeze all child schemas for duplicate-transpose disabled
+and enabled policies, boundary schemas, shared-scope identity, runner/helper
+void shape, callback-only ownership, and both parent positions. A strict
+expected-failure contract requires both public runners and helpers to return
+`Tuple[Dict[str, int], ...]` and propagate the unchanged ordered child results.
+Parent tuple arity and pass order must remain unchanged.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated propagation contract: `2 passed, 1 xfailed in 0.55s`
+- both child orchestrations, both parent routes, callback-context composition,
+  architecture, and pass-efficiency coverage:
+  `332 passed, 1 xfailed in 18.00s`
+- 110 branch-changed test files: `1677 passed, 1 xfailed in 32.56s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+No test assertion failed. The sole expected failure is the intentionally
+unimplemented result propagation. Return only the existing ordered child
+tuples. Do not change child selection or order, shared scope, policy forwarding,
+callback ownership, parent positions or arity, dependencies, public API, or
+TensorFlow behavior. Validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.

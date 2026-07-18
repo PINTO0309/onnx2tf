@@ -2045,3 +2045,13 @@ positive-only cleanup, wrapper forwarding, and tencoder/pad-layout boundaries
 remain unchanged. The focused gate passes `447 passed in 18.88s`, the 109-file
 branch-changed suite passes `1675 passed in 32.85s`, and targeted static
 validation passes.
+
+The last two void orchestration boundaries are now characterized for result
+propagation. Duplicate-fanout/quantized-PReLU and boundary-BatchMatMul/input-
+unary each own two dictionary-returning children with one shared pass-state
+scope, but their runner/helper currently discards the ordered tuple. Strict
+propagation preserves parent positions, tuple arity, pass order, policy, and
+callback ownership while replacing only each `None` slot. The focused gate
+passes `332 passed, 1 xfailed in 18.00s`, the 110-file branch-changed suite
+passes `1677 passed, 1 xfailed in 32.56s`, and targeted static validation
+passes.

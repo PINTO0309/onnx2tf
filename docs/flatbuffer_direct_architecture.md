@@ -12759,3 +12759,15 @@ observation-only. Indexed matching and application, GraphIndex/LayoutState
 handling, positive-only cleanup, wrapper forwarding, direct arguments, and
 adjacency between tencoder and pad-layout results remain unchanged; the
 counters do not steer later cleanup.
+
+The duplicate-fanout/quantized-PReLU and boundary-BatchMatMul/input-unary
+orchestration runners each own two ordered child passes sharing one
+`ModelIRPassStateScope`. Their child callbacks return fixed dictionaries, but
+the runners and lowerer helpers currently declare `None` and discard the
+ordered child tuples.
+
+Strict characterization freezes both child schemas, duplicate-transpose policy,
+shared-scope identity, callback-only helper ownership, and parent positions:
+layout/attention/quantized suffix index 5 and layout-recovery index 1. The
+propagation contract replaces only each parent's existing `None` slot with the
+ordered two-dictionary tuple; parent tuple arity and pass order stay unchanged.
