@@ -5284,3 +5284,38 @@ At resume, audit the immediately following
 schema, live LayoutState contract, production occurrences, and cleanup/
 preprojection boundaries before adding characterization. Commit and push only;
 do not create, reopen, or update a pull request.
+
+## Late Gather-axis0 Reshape result characterization checkpoint
+
+The Gather-axis0 singleton-to-Reshape compatibility owner returns the stable
+one-counter dictionary
+`optimized_gather_axis0_singleton_to_reshape_input_chains`. It uses the indexed
+GraphIndex implementation, receives the live Session LayoutState, is selected
+once by the existing attention-recovery runner, and has one additional direct
+late production call. Only that direct call currently discards its result.
+
+A strict expected-failure orchestration contract requires
+`_late_gather_axis0_reshape_stats` for the direct call. It fixes the captured
+attention-cleanup predecessor, exact ModelIR/LayoutState callback, and following
+model-only attention-preprojection rank-lift owner.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the owner, one-key schema, recovery-runner selection or captured
+results, GraphIndex/layout synchronization, pass order, callback arguments,
+neighbor targets, guards, dependencies, or TensorFlow behavior. Validate the
+Gather owner, cleanup/preprojection boundaries, layout recovery, terminal
+orchestration, architecture, and broad related gates sequentially, then commit
+and push only; do not create, reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused Gather owner, cleanup/preprojection boundaries, layout recovery,
+  terminal-orchestration, and architecture gate:
+  `495 passed, 1 xfailed in 18.96s`
+- branch-changed broad related suite plus cleanup, indexed QKV/Gather-axis0,
+  preprojection, layout recovery, and pass-efficiency coverage:
+  `1580 passed, 1 xfailed in 24.26s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented direct
+late-result retention contract above.
