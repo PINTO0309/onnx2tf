@@ -5224,3 +5224,37 @@ At resume, audit the immediately following
 schema, production occurrences, and QKV/Gather-axis0 boundaries before adding
 characterization. Commit and push only; do not create, reopen, or update a pull
 request.
+
+## Late attention Gather cleanup result characterization checkpoint
+
+The attention Gather/Transpose/Reshape cleanup owner returns the stable
+two-counter dictionary for pattern A and pattern B rewrites. It accepts only the
+ModelIR. The owner is selected once by the existing attention-recovery runner
+and has one additional direct late production call; only the latter currently
+discards its result.
+
+A strict expected-failure orchestration contract requires
+`_late_attention_gather_cleanup_stats` for that direct call. It fixes the
+captured QKV dictionary predecessor, exact model-only callback, and following
+Gather-axis0 compatibility call with its live Session LayoutState.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change the owner, two-key schema, recovery-runner selection or captured
+results, GraphIndex/pruning behavior, pass order, callback arguments, neighbor
+targets, guards, dependencies, or TensorFlow behavior. Validate the cleanup
+owner, QKV/Gather-axis0 boundaries, terminal orchestration, architecture, and
+broad related gates sequentially, then commit and push only; do not create,
+reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused cleanup owner, QKV/Gather-axis0 boundaries, layout recovery,
+  terminal-orchestration, and architecture gate:
+  `436 passed, 1 xfailed in 18.94s`
+- branch-changed broad related suite plus cleanup, indexed QKV/Gather-axis0,
+  layout recovery, and pass-efficiency coverage:
+  `1513 passed, 1 xfailed in 23.86s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented direct
+late-result retention contract above.
