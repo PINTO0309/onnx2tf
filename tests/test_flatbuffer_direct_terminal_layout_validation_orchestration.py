@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1629,6 +1631,65 @@ def test_primary_path_retains_late_concat_scope_results() -> None:
         isinstance(statement, ast.Assign)
         for statement in layout_cleanup_statements
     ) == 1
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="guarded elementwise fanout results are discarded",
+)
+def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
+    body = _lowerer_body()
+    callback_name = (
+        "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    )
+    guards = [
+        statement
+        for statement in body
+        if isinstance(statement, ast.If)
+        and len(statement.body) == 1
+        and _call_name(_statement_call(statement.body[0])) == callback_name
+    ]
+    assert len(guards) == 2
+
+    expected = (
+        (
+            "_late_concat_elementwise_fanout_stats",
+            "_late_concat_transpose_layout_stats",
+            "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains",
+        ),
+        (
+            "_terminal_elementwise_fanout_stats",
+            "_optimize_transpose_shape_extract_nhwc_to_nchw_chains",
+            "_run_terminal_singleton_maxpool_reshape_pass_pair",
+        ),
+    )
+    for guard, (target_name, predecessor_name, successor_name) in zip(
+        guards,
+        expected,
+        strict=True,
+    ):
+        assert ast.unparse(guard.test) == "optimize_layout_transpose_chains"
+        assignment = guard.body[0]
+        assert isinstance(assignment, ast.Assign)
+        assert len(assignment.targets) == 1
+        assert isinstance(assignment.targets[0], ast.Name)
+        assert assignment.targets[0].id == target_name
+        call = assignment.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == callback_name
+        assert [ast.unparse(argument) for argument in call.args] == [
+            "model_ir"
+        ]
+        assert call.keywords == []
+
+        guard_index = body.index(guard)
+        assert _call_name(_statement_call(body[guard_index - 1])) == (
+            predecessor_name
+        )
+        assert _call_name(_statement_call(body[guard_index + 1])) == (
+            successor_name
+        )
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

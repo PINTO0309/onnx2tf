@@ -4933,3 +4933,36 @@ At resume, audit both guarded production occurrences of
 `_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains()` and their
 one-counter schema before retaining their results. Commit and push only; do not
 create or update a pull request.
+
+## Guarded elementwise-fanout result characterization checkpoint
+
+The elementwise NHWC→NCHW fanout-roundtrip owner returns the stable one-counter
+dictionary
+`optimized_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains`. Its two
+production occurrences are both guarded by
+`optimize_layout_transpose_chains`, and both results are currently discarded.
+
+A strict expected-failure orchestration contract requires
+`_late_concat_elementwise_fanout_stats` after the captured late-Concat
+Transpose dictionary and `_terminal_elementwise_fanout_stats` before terminal
+singleton-MaxPool/Reshape orchestration. It fixes both guards, the model-only
+callback contract, and their distinct preceding/following boundaries.
+
+At implementation, replace only the two guarded expressions with assignments.
+Do not initialize values outside the guards, consume the results, or change the
+owner/schema, guards, callback arguments, pass order, rollback/pruning,
+metadata, dependencies, TensorFlow behavior, or any surrounding owner. Validate
+the owner, terminal singleton boundary, terminal orchestration, architecture,
+and broad related gates sequentially, then commit and push only; do not create
+or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused elementwise-fanout owner, terminal-singleton boundary, terminal-
+  orchestration, layout-recovery, and architecture gate:
+  `298 passed, 1 xfailed in 19.61s`
+- expanded broad related gate: `1644 passed, 1 xfailed in 33.76s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented guarded
+two-result retention contract above.
