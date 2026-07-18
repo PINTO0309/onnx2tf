@@ -1903,3 +1903,15 @@ observation-only; gate full/reduced policy, absolute-final selection, shared
 state scopes, and underlying cleanup are unchanged. The focused gate passes
 `321 passed in 18.00s`, the 101-file branch-changed suite passes
 `1651 passed in 31.09s`, and targeted static validation passes.
+
+The adjacent late NDHWC gate and cost-volume scatter runners are now
+characterized as fixed two-key/one-key transactional results. Their raw direct
+calls share one explicit state scope; gate required policy selects them at
+indices 3/4 and full policy at indices 4/5. Strict retention selects
+`_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats` together. Both schemas, lower-level
+cleanup, direct arguments and common scope, neighbors, nested indices, and
+absence of consumers are frozen. After correcting one test-only loop-generated
+PassSpec assumption, the focused gate passes
+`416 passed, 1 xfailed in 19.41s`, the 102-file branch-changed suite passes
+`1653 passed, 1 xfailed in 31.98s`, and targeted static validation passes.

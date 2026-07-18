@@ -12189,6 +12189,21 @@ ownership, direct argument, retained predecessor/successor, nested route, call
 order, dependency, public API, or TensorFlow boundary changed. The counter is
 not used as complete mutation evidence or as a later-pass guard.
 
+The late NDHWC gate and cost-volume scatter runners expose fixed two-key and
+one-key dictionaries through transactional ModelIR passes. Their direct lowerer
+calls are adjacent and share one explicit `ModelIRPassStateScope`. Gate-layout
+required policy selects them at indices 3 and 4, while full policy selects them
+at indices 4 and 5 with the same parent scope. All three underlying optimizers
+prune unused tensors on exit, so zero counters are not complete mutation
+evidence.
+
+Strict characterization selects `_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats`. It freezes both schemas and
+transactional pass IDs, shared direct scope and exact arguments, retained
+dequant-HardSigmoid predecessor, retained cost-volume affine successor,
+required/full nested indices and shared-scope contracts, sole direct
+occurrences, and an unconsumed observation-only policy for both targets.
+
 The primary call now retains its unchanged dictionary as
 `_layout_pass_set_1_layout_transpose_cleanup_stats`. All three direct lowerer
 occurrences are therefore explicit assignments, while the late-binary nested

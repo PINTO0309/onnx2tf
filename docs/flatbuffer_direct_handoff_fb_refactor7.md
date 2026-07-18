@@ -11829,3 +11829,45 @@ Implementation validation completed sequentially under `uv`:
 These checks do not claim a new model-corpus run. At resume, inventory the next
 raw result boundary before modifying production code. Commit and push only; do
 not create, reopen, or update a pull request.
+
+## Late NDHWC/cost-volume direct results characterization checkpoint
+
+The late NDHWC gate runner returns two fixed counters from two transactional
+layout pass specs. The adjacent cost-volume scatter runner returns one fixed
+counter from one transactional pass spec. Their lower-level optimizers prune
+unused tensors on exit, so zero counters are not complete mutation evidence.
+
+The raw lowerer pair shares one explicit `late_ndhwc_cost_volume_state_scope`.
+It remains between retained post-SINet dequant-HardSigmoid statistics and
+retained cost-volume Conv-affine statistics. Gate-layout required policy selects
+the same owners at indices 3/4, and full policy at indices 4/5; each nested pair
+shares its parent scope.
+
+Passing contracts freeze both schemas, all transactional pass IDs, lower-level
+cleanup, exact direct arguments and common scope, neighbors, required/full
+nested indices and scope identity, and sole direct occurrences. A strict
+expected-failure contract selects the unconsumed observation targets
+`_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats` together.
+
+The first dedicated characterization run reported `1 passed, 1 failed, 1
+xfailed in 0.63s`; the new test treated the NDHWC loop-generated `pass_id` AST
+name as a literal. It now reads the two fixed IDs from the callbacks declaration
+while separately requiring the transactional PassSpec factory.
+
+Corrected characterization validation completed sequentially under `uv`:
+
+- dedicated pair contract: `2 passed, 1 xfailed in 0.59s`
+- both owners, gate orchestration, direct neighbors, terminal validation,
+  architecture, and pass-efficiency coverage:
+  `416 passed, 1 xfailed in 19.41s`
+- 102 branch-changed test files: `1653 passed, 1 xfailed in 31.98s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+The sole expected failure is the intentionally unimplemented pair of direct
+assignments. Retain only the existing dictionaries. Do not change transactional
+owners or schemas, underlying pruning, shared scope, nested selection, direct
+arguments, call order, dependencies, public API, or TensorFlow behavior. Keep
+both targets unconsumed, validate sequentially, commit, and push only; do not
+create, reopen, or update a pull request.
