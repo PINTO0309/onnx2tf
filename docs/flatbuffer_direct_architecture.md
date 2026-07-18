@@ -11466,3 +11466,14 @@ one-key schema, positive-only prune, arguments, both predecessors, shared
 successor, and surrounding retained results. Both dictionaries remain
 unconsumed in this unit; retention must add no guard, scan, dependency, or
 TensorFlow import path.
+
+The two direct calls now retain those unchanged one-counter dictionaries as
+`_post_sinet_relu_split_all_outputs_stats` and
+`_terminal_relu_split_all_outputs_stats`. Both remain unconsumed even though
+the counter is complete owner mutation evidence.
+
+These are assignment-only changes. The wrapper, indexed owner, successful-plan
+counting, positive-only unused-tensor pruning, live Session LayoutState,
+post-SiNet QKV and terminal pre-Concat predecessors, shared
+ReLU/Split/Conv/Concat successor, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged.

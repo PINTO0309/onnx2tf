@@ -7955,6 +7955,39 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## ReLU/Split all-outputs result retention implementation checkpoint
+
+The post-SiNet call now retains
+`_post_sinet_relu_split_all_outputs_stats`, and the terminal call retains
+`_terminal_relu_split_all_outputs_stats`. Both preserve the indexed owner's
+unchanged complete one-counter mutation dictionary and remain unconsumed in
+this unit.
+
+These are assignment-only changes. No consumer or guard was added. The lowerer
+wrapper, owner, one-key schema, successful-plan counting, positive-only
+unused-tensor pruning, graph-index behavior, live Session LayoutState,
+post-SiNet QKV and terminal pre-Concat predecessors, shared
+ReLU/Split/Conv/Concat successor, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- ReLU/Split result/schema semantics and indexed owner fixtures, QKV and
+  Split/Conv/Concat boundaries, architecture, and pass-efficiency coverage:
+  `387 passed in 18.81s`
+- branch-changed broad suite plus the same ReLU/Split coverage:
+  `1575 passed in 27.30s`
+
+These are unit, contract, owner-fixture, and orchestration checks; this result
+retention does not claim a new model-corpus run.
+
+At resume, audit both adjacent raw
+`_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains()`
+results. Preserve the two newly retained ReLU/Split all-output dictionaries,
+the following captured Split/Conv/Concat bridge result, live LayoutState,
+surrounding pass order, and observation-only evidence rules. Commit and push
+only; do not create, reopen, or update a pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

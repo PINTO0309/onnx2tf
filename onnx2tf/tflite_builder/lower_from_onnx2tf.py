@@ -4872,9 +4872,11 @@ def lower_onnx_to_ir(
     _post_sinet_qkv_attention_results = (
         _run_qkv_attention_layout_pass_cluster()
     )
-    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_sinet_relu_split_all_outputs_stats = (
+        _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
         model_ir,
@@ -5043,9 +5045,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_relu_split_all_outputs_stats = (
+        _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
         model_ir,

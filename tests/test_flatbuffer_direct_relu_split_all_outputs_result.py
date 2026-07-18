@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -113,10 +110,6 @@ def test_relu_split_all_outputs_schema_and_positive_cleanup_are_explicit() -> No
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the two direct ReLU/Split all-outputs results are not retained yet",
-)
 def test_lowerer_retains_both_relu_split_all_outputs_results() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = [

@@ -1040,15 +1040,26 @@ and the branch-changed broad suite passes `1584 passed in 26.18s`. Positive-only
 pruning and LayoutState sync, attention-recovery selection, option policy,
 dependencies, and TensorFlow behavior remain unchanged.
 
+Both direct ReLU/Split all-outputs results are now retained as
+`_post_sinet_relu_split_all_outputs_stats` and
+`_terminal_relu_split_all_outputs_stats`. Their one-counter dictionaries are
+complete owner mutation evidence but remain unconsumed in this unit.
+
+The focused owner/QKV/Split-Conv-Concat boundary gate passes
+`387 passed in 18.81s`, and the branch-changed broad suite passes
+`1575 passed in 27.30s`. Successful-plan counting, positive-only pruning, live
+LayoutState, both surrounding sequences, dependencies, and TensorFlow behavior
+remain unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the post-SiNet ReLU/Split all-outputs result after
-`_post_sinet_qkv_attention_results`. Its other production forms, live
-LayoutState wiring, following ReLU/Split/Conv/Concat recovery, and captured
-Split/Conv/Concat bridge result must remain fixed. All retained SiNet callback
-results, Singleton/Reshape policies, three QKV result forms, and the late
-summary must also remain fixed.
+unit should audit both adjacent raw
+`_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains()`
+results. Their live LayoutState wiring, the newly retained ReLU/Split
+all-output predecessors, and the captured Split/Conv/Concat bridge result must
+remain fixed. All retained SiNet callback results, Singleton/Reshape policies,
+three QKV result forms, and the late summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
