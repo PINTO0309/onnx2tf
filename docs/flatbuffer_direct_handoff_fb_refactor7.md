@@ -4870,3 +4870,39 @@ At resume, audit the four result schemas and occurrence contracts for
 `run_layout_transpose_cleanup()` inside `late_concat_layout_state_scope` before
 retaining evidence. Commit and push only; do not create or update a pull
 request.
+
+## Late Concat shared-scope result characterization checkpoint
+
+The four runners inside `late_concat_layout_state_scope` return stable mutation
+dictionaries: axis-3 constant-Concat and Dequantize/Concat/Quantize each return
+one counter, LayerNorm statistics returns two counters, and generic Transpose
+cleanup returns five counters including its non-mutating iteration count. All
+four results are currently discarded.
+
+A strict expected-failure orchestration contract requires, in order,
+`_late_concat_axis3_const_layout_stats`,
+`_late_concat_dequant_quantize_layout_stats`,
+`_late_concat_layernorm_layout_stats`, and
+`_late_concat_transpose_layout_stats`. It fixes the captured late cost-volume
+affine predecessor, exact shared-scope/diagnostic/layout arguments, and the
+following optimize-layout guard. The other two lowerer Transpose-cleanup
+occurrences remain expressions.
+
+At implementation, replace only these four adjacent expressions with
+assignments. Do not change any owner/schema, shared scope, callback argument,
+pass order, transactional mutation or rollback, GraphIndex/pruning/layout
+synchronization, diagnostic, guard, reconciliation, scan, sort, metadata write,
+result consumer, dependency, or TensorFlow behavior. Validate all four owners,
+the shared-scope efficiency and architecture contracts, terminal orchestration,
+and broad related gates sequentially, then commit and push only; do not create
+or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused four-owner, shared-scope efficiency, terminal-orchestration, and
+  architecture gate: `386 passed, 1 xfailed in 18.03s`
+- expanded broad related gate: `1629 passed, 1 xfailed in 31.76s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented four-result
+retention contract above.

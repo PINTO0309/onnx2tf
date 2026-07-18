@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -1552,6 +1554,87 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
     assert ast.unparse(following_scope.value) == (
         "ModelIRPassStateScope(model_ir, layout_state=session.layout_state)"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="late Concat shared-scope runner results are discarded",
+)
+def test_primary_path_retains_late_concat_scope_results() -> None:
+    body = _lowerer_body()
+    scope_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_concat_layout_state_scope"
+    )
+
+    previous = body[scope_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_cost_volume_conv_affine_stats"
+
+    expected = (
+        (
+            "_late_concat_axis3_const_layout_stats",
+            "run_axis3_const_concat_layout_cleanup",
+        ),
+        (
+            "_late_concat_dequant_quantize_layout_stats",
+            "run_dequant_concat_quantize_layout_cleanup",
+        ),
+        (
+            "_late_concat_layernorm_layout_stats",
+            "run_layernorm_statistics_layout_cleanup",
+        ),
+        (
+            "_late_concat_transpose_layout_stats",
+            "run_layout_transpose_cleanup",
+        ),
+    )
+    for offset, (target_name, callback_name) in enumerate(expected, start=1):
+        statement = body[scope_index + offset]
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        call = statement.value
+        assert isinstance(call, ast.Call)
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == callback_name
+        assert [ast.unparse(argument) for argument in call.args] == [
+            "model_ir"
+        ]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == {
+            "layout_state": "session.layout_state",
+            "diagnostics": "session.diagnostics",
+            "state_scope": "late_concat_layout_state_scope",
+        }
+
+    following = body[scope_index + len(expected) + 1]
+    assert isinstance(following, ast.If)
+    assert ast.unparse(following.test) == "optimize_layout_transpose_chains"
+    assert _call_name(_statement_call(following.body[0])) == (
+        "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    )
+
+    layout_cleanup_statements = [
+        statement
+        for root in body
+        for statement in ast.walk(root)
+        if isinstance(statement, (ast.Assign, ast.Expr))
+        and _call_name(_statement_call(statement)) == "run_layout_transpose_cleanup"
+    ]
+    assert len(layout_cleanup_statements) == 3
+    assert sum(
+        isinstance(statement, ast.Assign)
+        for statement in layout_cleanup_statements
+    ) == 1
 
 
 def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:

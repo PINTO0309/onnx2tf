@@ -10818,6 +10818,13 @@ cost-volume-specific target immediately after the shared NDHWC-gate/cost-volume
 state scope and immediately before construction of the late Concat layout-state
 scope. Both boundaries remain fixed.
 
+The late Concat state scope is consumed in order by axis-3 constant-Concat,
+Dequantize/Concat/Quantize, LayerNorm-statistics, and generic Transpose-cleanup
+runners. They return stable one-, one-, two-, and five-counter dictionaries,
+respectively, but the four results are currently discarded. Strict
+characterization requires cluster-specific targets while preserving the two
+other lowerer Transpose-cleanup occurrences as expressions.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes
