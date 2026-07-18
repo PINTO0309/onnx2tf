@@ -10921,6 +10921,12 @@ occurrence whose result is retained as `_terminal_softmax_transpose_stats`
 between the diagnostics-aware Gather-channel-fanout runner and captured
 terminal boundary-input normalization. The retained value has no consumer.
 
+The immediately preceding diagnostics-aware Gather-channel-fanout runner
+returns one rewrite counter. Its callback is also selected by two existing
+orchestrators, while its sole direct production result is currently discarded.
+Strict characterization fixes a direct-only terminal target between the
+live-LayoutState ArgMax owner and captured terminal Softmax dictionary.
+
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned
 write is applied, performs no pruning or topology mutation, and synchronizes

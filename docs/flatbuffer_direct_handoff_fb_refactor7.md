@@ -5800,3 +5800,38 @@ At resume, audit the immediately preceding direct
 two orchestrated selections, and fix its ArgMax/Softmax boundaries before
 adding characterization. Commit and push only; do not create, reopen, or update
 a pull request.
+
+## Direct terminal Gather-channel-fanout result characterization checkpoint
+
+`run_transpose_gather_channel_fanout_cleanup()` returns the stable one-counter
+dictionary `optimized_transpose_gather_transpose_nhwc_channel_chains`. The same
+callback is selected by two existing orchestrators and has one direct terminal
+production call. Only that direct result is currently discarded.
+
+A strict expected-failure orchestration contract requires
+`_terminal_transpose_gather_channel_fanout_stats` for the direct call. It fixes
+the diagnostics-aware ModelIR/LayoutState callback between the terminal ArgMax
+owner and captured `_terminal_softmax_transpose_stats` successor.
+
+At implementation, replace only the direct expression with an assignment. Do
+not change either orchestrated selection, the runner, one-key schema,
+transaction or preflight behavior, shared state, GraphIndex/layout
+synchronization, pass order, callback arguments, neighbor targets, diagnostics,
+guards, dependencies, or TensorFlow behavior. Validate the fanout and adjacent
+indexed owners, direct/orchestrated call accounting, terminal orchestration,
+architecture, and broad related gates sequentially, then commit and push only;
+do not create, reopen, or update a pull request.
+
+Characterization validation completed sequentially under `uv`:
+
+- focused ArgMax, direct Gather-channel-fanout, terminal Softmax, direct/
+  orchestrated accounting, terminal-orchestration, architecture, and pass-
+  efficiency gate: `399 passed, 1 xfailed in 19.18s`
+- branch-changed broad related suite plus cleanup, indexed attention/Gather,
+  preprojection, window/final convergence, boundary normalization, terminal
+  ArgMax/Softmax, Gather fanout, layout recovery, and pass-efficiency coverage:
+  `1762 passed, 1 xfailed in 24.63s`
+- Ruff, Python bytecode compilation, and `git diff --check`: passed
+
+The sole strict expected failure is the intentionally unimplemented direct
+fanout result retention contract above.
