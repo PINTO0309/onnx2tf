@@ -5216,7 +5216,10 @@ def lower_onnx_to_ir(
         > 0
         or len(model_ir.tensors) < late_binary_repair_tensor_count
     ):
-        _reconcile_static_tensor_shapes(model_ir)
+        _late_binary_repair_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
     if optimize_layout_transpose_chains or apply_safe_transpose_reduction_lite_on_no_layout_opt:
         late_binary_layout_recovery_stats = run_late_binary_layout_recovery(
             model_ir,

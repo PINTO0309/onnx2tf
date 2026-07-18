@@ -9248,10 +9248,19 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
     assert len(tensor_len_calls) == 1
     assert len(guard.body) == 1
     reconcile = guard.body[0]
-    assert isinstance(reconcile, ast.Expr)
+    assert isinstance(reconcile, ast.Assign)
+    assert len(reconcile.targets) == 1
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == (
+        "_late_binary_repair_static_shape_stats"
+    )
     assert isinstance(reconcile.value, ast.Call)
     assert isinstance(reconcile.value.func, ast.Name)
     assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
 
 
 def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> None:

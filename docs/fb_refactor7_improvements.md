@@ -833,6 +833,16 @@ function-scoped context. The three structural contracts pass
 `3 passed in 2.22s`, the focused gate passes `365 passed in 18.89s`, and the
 branch-changed broad related suite passes `1427 passed in 24.69s`.
 
+The guarded late-binary static-shape reconciliation now requests the complete
+mutation counter and retains `_late_binary_repair_static_shape_stats`. Its
+three-counter plus tensor-delta predicate is unchanged, and the existing
+runtime fixture still covers each positive and prune-only path. The complete
+result has no consumer.
+
+This checkpoint passes the focused runtime/reconciler/architecture gate with
+`353 passed in 21.19s`, plus the branch-changed broad related suite with
+`1428 passed in 24.96s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -840,8 +850,9 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the guarded late-binary `_reconcile_static_tensor_shapes()`
-call after signature sanitization and two binary repairs plus its tensor-count
-delta. Its execution guard must remain unchanged; only the complete opt-in
-result may be retained. Any change must preserve current pass order,
-TensorFlow-free boundary, dependency set, and sequential validation policy.
+unit should audit the guarded reconciliation after
+`late_binary_layout_recovery_stats`. Its existing aggregate already exposes
+complete mutation and prune evidence; the guard must remain unchanged and only
+the complete opt-in reconciliation result may be retained. Any change must
+preserve current pass order, TensorFlow-free boundary, dependency set, and
+sequential validation policy.

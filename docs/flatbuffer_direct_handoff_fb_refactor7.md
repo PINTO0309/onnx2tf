@@ -7321,3 +7321,32 @@ The sole strict expected failure is the intentionally unimplemented guarded
 late-binary result retention contract above. Implement only that assignment
 and opt-in counter, rerun the same gates sequentially, then commit and push
 only; do not create, reopen, or update a pull request.
+
+## Guarded late-binary static-shape result retention implementation checkpoint
+
+The existing three-counter plus tensor-count predicate remains unchanged. When
+it fires, static-shape reconciliation now requests
+`include_mutation_count=True` and retains
+`_late_binary_repair_static_shape_stats`. The complete result has no consumer.
+
+This change preserves every evidence and counter name, prune-only detection,
+execution count, reconciler fixed point, preceding repairs, following optional
+late-binary layout-recovery guard, pass order, dependencies, diagnostics, and
+TensorFlow behavior. The runtime fixture continues to force each positive
+counter and tensor-count delta independently.
+
+Implementation validation completed sequentially under `uv`:
+
+- runtime counter/prune guard, complete reconciler, terminal occurrence,
+  architecture, and pass-efficiency coverage: `353 passed in 21.19s`
+- branch-changed broad suite plus the same runtime and structural coverage:
+  `1428 passed in 24.96s`
+
+These are unit, contract, runtime-orchestration, and architecture checks; this
+result-retention change does not claim a new model-corpus run.
+
+At resume, audit the guarded reconciliation immediately after
+`late_binary_layout_recovery_stats`. Its aggregate already excludes iteration
+metrics and includes clamped net tensor reduction, so preserve the existing
+positive-count predicate and characterize only a complete opt-in result target.
+Commit and push only; do not create, reopen, or update a pull request.

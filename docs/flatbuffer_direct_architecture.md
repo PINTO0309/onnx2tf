@@ -11080,10 +11080,10 @@ singleton broadcast repair, and a tensor-count decrease that covers prune-only
 cleanup. Its runtime fixture independently exercises every counter and the
 prune path while preserving the all-zero skip.
 
-Strict characterization keeps that predicate unchanged and selects only its
-body for a future `_late_binary_repair_static_shape_stats` assignment with
-`include_mutation_count=True`. It fixes the following optional late-binary
-layout-recovery guard and introduces no result consumer.
+That predicate remains unchanged, and its body now retains
+`_late_binary_repair_static_shape_stats` with
+`include_mutation_count=True`. The following optional late-binary layout-
+recovery guard remains fixed, and the result has no consumer.
 
 The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
 rewrite counter, receives the live Session LayoutState, and has one production
