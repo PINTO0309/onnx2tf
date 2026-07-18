@@ -12482,3 +12482,14 @@ freezes all child IDs and schemas, shared-scope contracts, zero-argument helper
 use, the retained dequant-HardSigmoid predecessor, raw swish successor, sole
 occurrence, typed runner/helper propagation requirement, and an unconsumed
 observation-only direct policy.
+
+Late dequant/unary fan-out result propagation now returns the existing ordered
+three-child tuple from the runner and lowerer helper. The sole direct invocation
+retains it as `_late_dequant_unary_fanout_results`, which remains unconsumed and
+observation-only.
+
+All fixed child schemas and callbacks, pass order, one shared
+`ModelIRPassStateScope`, exact context and zero-argument helper use, retained
+dequant-HardSigmoid predecessor, swish-transpose successor, public API,
+dependencies, and TensorFlow boundary are unchanged. The result tuple does not
+control later lowering or claim complete mutation evidence.

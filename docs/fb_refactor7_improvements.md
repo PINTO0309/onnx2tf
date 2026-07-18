@@ -1825,3 +1825,11 @@ zero-argument helper use, retained dequant-HardSigmoid/raw-swish boundary, and
 sole occurrence are frozen. The focused gate passes
 `376 passed, 1 xfailed in 17.77s`, the 97-file branch-changed suite passes
 `1638 passed, 1 xfailed in 31.21s`, and targeted static validation passes.
+
+Late dequant/unary fan-out recovery now propagates its existing ordered three-
+child tuple through the runner and helper, retaining it as the unconsumed
+observation target `_late_dequant_unary_fanout_results`. Child schemas and
+order, shared state scope, zero-argument helper use, and the retained dequant-
+HardSigmoid/raw-swish boundary are unchanged. The focused gate passes
+`377 passed in 21.25s`, the 97-file branch-changed suite passes
+`1639 passed in 31.71s`, and targeted static validation passes.

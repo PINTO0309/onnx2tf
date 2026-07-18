@@ -5451,14 +5451,14 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
         "run_transpose_unary_passthrough_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == LATE_DEQUANT_UNARY_FANOUT_PASS_IDS
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    helper_statement = helper.body[0]
+    assert isinstance(helper_statement, ast.Return)
+    assert isinstance(helper_statement.value, ast.Call)
+    assert isinstance(helper_statement.value.func, ast.Name)
+    helper_calls = [helper_statement.value]
     assert [call.func.id for call in helper_calls] == [
         "run_late_dequant_unary_fanout"
     ]
@@ -5470,11 +5470,16 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_late_dequant_unary_fanout_results"
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1

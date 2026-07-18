@@ -107,20 +107,20 @@ def test_late_dequant_unary_fanout_result_contract_is_explicit() -> None:
     )
 
     runner = _functions(ORCHESTRATION_PATH)["run_late_dequant_unary_fanout"]
-    assert ast.unparse(runner.returns) == "None"
+    assert ast.unparse(runner.returns) == "Tuple[Dict[str, int], ...]"
     assert len(runner.body) == 1
-    assert isinstance(runner.body[0], ast.Expr)
+    assert isinstance(runner.body[0], ast.Return)
     assert _call_name(runner.body[0]) == "run_recovery_invocations"
 
     lowerer, helper = _lowerer_and_helper()
-    assert ast.unparse(helper.returns) == "None"
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
     assert len(helper.body) == 1
-    assert isinstance(helper.body[0], ast.Expr)
+    assert isinstance(helper.body[0], ast.Return)
     assert _call_name(helper.body[0]) == "run_late_dequant_unary_fanout"
 
     observed_lowerer, index = _direct_location()
     assert observed_lowerer.name == lowerer.name
-    assert isinstance(observed_lowerer.body[index], ast.Expr)
+    assert _single_target(observed_lowerer.body[index]) == RESULT_TARGET
     assert _single_target(observed_lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _call_name(observed_lowerer.body[index + 1]) == SUCCESSOR
     assert sum(
@@ -131,10 +131,6 @@ def test_late_dequant_unary_fanout_result_contract_is_explicit() -> None:
     ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late dequant/unary fan-out results are discarded",
-)
 def test_late_dequant_unary_fanout_results_propagate_to_direct_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

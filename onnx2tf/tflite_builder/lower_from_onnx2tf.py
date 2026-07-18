@@ -4114,8 +4114,10 @@ def lower_onnx_to_ir(
             include_unary_passthrough=include_unary_passthrough,
         )
 
-    def _run_late_dequant_unary_fanout_pass_cluster() -> None:
-        run_late_dequant_unary_fanout(
+    def _run_late_dequant_unary_fanout_pass_cluster() -> Tuple[
+        Dict[str, int], ...
+    ]:
+        return run_late_dequant_unary_fanout(
             late_dequant_unary_fanout_context
         )
 
@@ -5219,7 +5221,9 @@ def lower_onnx_to_ir(
     _late_dequant_hardsigmoid_bridge_stats = (
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     )
-    _run_late_dequant_unary_fanout_pass_cluster()
+    _late_dequant_unary_fanout_results = (
+        _run_late_dequant_unary_fanout_pass_cluster()
+    )
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
     _optimize_swish_transpose_passthrough_chains(

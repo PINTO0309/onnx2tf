@@ -11544,3 +11544,30 @@ the direct call. Do not change child callbacks or schemas, pass order, shared
 state scope, direct arguments, adjacent calls, dependencies, public API, or
 TensorFlow behavior. Keep the target unconsumed, validate sequentially,
 commit, and push only; do not create, reopen, or update a pull request.
+
+## Late dequant/unary fan-out result implementation checkpoint
+
+`run_late_dequant_unary_fanout()` now returns the ordered three-child tuple
+already created by `run_recovery_invocations()`. The lowerer helper returns the
+same `Tuple[Dict[str, int], ...]`, and the sole direct call retains it as
+`_late_dequant_unary_fanout_results`.
+
+The target remains unconsumed and observation-only. Child callbacks and fixed
+schemas, child order, one shared `ModelIRPassStateScope`, exact shared context,
+zero-argument helper use, retained dequant-HardSigmoid predecessor, raw swish-
+transpose successor, dependencies, public API, and TensorFlow behavior are
+unchanged. Existing structural contracts were updated in the same change, and
+no intermediate test failure occurred.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `2 passed in 0.62s`
+- child owners, orchestration, direct neighbors, shared context, architecture,
+  and pass-efficiency coverage: `377 passed in 21.25s`
+- 97 branch-changed test files: `1639 passed in 31.71s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a new model-corpus run. At resume, inventory the next
+small discarded-result boundary before modifying production code. Commit and
+push only; do not create, reopen, or update a pull request.
