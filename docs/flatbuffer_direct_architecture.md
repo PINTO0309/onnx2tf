@@ -11312,3 +11312,14 @@ Strict characterization selects
 form. It fixes the three-key schema, exact two-form count and arguments, nested
 consumer, predecessor, and successor. Retention must not add a result consumer,
 guard, graph traversal, mutation, dependency, or TensorFlow import path.
+
+The top-level call now retains its unchanged complete mutation dictionary as
+`_post_terminal_indexed_shape_convergence_stats`. The nested form remains
+`convergence_stats` and continues to supply later convergence guards and the
+final aggregate.
+
+This is an assignment-only retention change. The helper still creates exactly
+one graph index for the top-level form, reuses it across the same children,
+performs the same conditional final reconciliation, and supplies the same live
+LayoutState. The retained result has no new consumer or guard, and both
+surrounding recovery boundaries remain fixed.

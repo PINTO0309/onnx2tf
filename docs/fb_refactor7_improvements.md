@@ -987,13 +987,24 @@ and both terminal boundaries remain fixed. The focused gate passes
 `1503 passed in 25.34s`. The change adds no child execution, graph traversal,
 dependency, or TensorFlow import path.
 
+The raw top-level indexed shape-convergence result is now retained as
+`_post_terminal_indexed_shape_convergence_stats`. Its complete three-key
+mutation dictionary has no new consumer; the existing nested
+`convergence_stats` form remains consumed by final convergence.
+
+The focused schema/two-form/boundary gate passes `362 passed in 20.57s`, and
+the branch-changed broad suite passes `1512 passed in 26.73s`. One-index reuse,
+conditional final reconciliation, the live Session LayoutState, and both
+surrounding recovery boundaries are unchanged.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the raw top-level indexed shape-convergence result after
-`_post_terminal_singleton_reshape_results`. The nested indexed-convergence
-result is already consumed and must remain fixed. All Singleton/Reshape
-policies, three QKV result forms, and the late summary must also remain fixed.
+unit should audit the first very-late SiNet terminal-layout orchestration result
+after `_post_terminal_indexed_shape_convergence_stats`. Its other production
+occurrence, nested pre-add/resize callback, child order, and following top-level
+pre-add/resize call must remain fixed. All Singleton/Reshape policies, three
+QKV result forms, and the late summary must also remain fixed.
 Mean/attention tuples and the preceding BatchMatMul results must remain
 observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it

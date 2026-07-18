@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 INDEXED_SHAPE_CONVERGENCE = "_run_indexed_shape_convergence_cleanup"
@@ -101,10 +98,6 @@ def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> Non
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the top-level indexed shape-convergence result is not retained yet",
-)
 def test_lowerer_retains_top_level_indexed_shape_convergence_result() -> None:
     functions = _module_functions()
     lowerer = functions["lower_onnx_to_ir"]

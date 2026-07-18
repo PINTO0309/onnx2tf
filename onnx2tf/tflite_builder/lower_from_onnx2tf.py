@@ -4817,9 +4817,11 @@ def lower_onnx_to_ir(
             include_spatial_concat_post_transpose=False,
         )
     )
-    _run_indexed_shape_convergence_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_terminal_indexed_shape_convergence_stats = (
+        _run_indexed_shape_convergence_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Very late shape reconciliation can expose strict shuffle-residual patterns.
     # Re-run terminal transpose reducers once at absolute end.

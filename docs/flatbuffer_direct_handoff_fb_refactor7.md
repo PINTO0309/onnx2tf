@@ -7997,6 +7997,38 @@ result retention contract. Implement only that assignment, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Top-level indexed shape-convergence result retention implementation checkpoint
+
+The raw top-level call now retains its unchanged three-key mutation dictionary
+as `_post_terminal_indexed_shape_convergence_stats`. The nested call remains
+retained as `convergence_stats`, continues to receive the enclosing shared
+graph index, and remains consumed by the final convergence helper.
+
+This is an assignment-only change. No result consumer or guard was added. The
+indexed helper, fixed schema, one-index reuse, conditional final reconciliation,
+live Session LayoutState, captured Singleton predecessor, very-late SiNet
+successor, dependencies, diagnostics, and TensorFlow behavior remain
+unchanged. Two stale boundary tests were updated to verify the exact assigned
+target instead of requiring a raw expression.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed shape-convergence schema and both forms, dynamic-Reshape and indexed
+  final convergence, Singleton and SiNet boundaries, architecture, and
+  pass-efficiency coverage: `362 passed in 20.57s`
+- branch-changed broad suite plus the same indexed-convergence coverage:
+  `1512 passed in 26.73s`
+
+These are unit, contract, and orchestration checks; this result retention does
+not claim a new model-corpus run.
+
+At resume, audit the first very-late
+`_run_sinet_terminal_layout_recovery_sequence()` result immediately after
+`_post_terminal_indexed_shape_convergence_stats`. Preserve its other production
+occurrence, nested pre-add/resize callback, exact child order, and the following
+top-level pre-add/resize call. Commit and push only; do not create, reopen, or
+update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains
