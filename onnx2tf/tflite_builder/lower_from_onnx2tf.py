@@ -4673,9 +4673,11 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_pre_argmax_nhwc_terminal_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_pre_argmax_stats = (
+        _optimize_transpose_pre_argmax_nhwc_terminal_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _terminal_transpose_gather_channel_fanout_stats = (
         run_transpose_gather_channel_fanout_cleanup(

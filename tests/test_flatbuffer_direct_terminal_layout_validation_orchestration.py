@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 
@@ -2309,10 +2307,6 @@ def test_primary_path_retains_terminal_gather_channel_fanout_result() -> None:
     assert successor.targets[0].id == "_terminal_softmax_transpose_stats"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal pre-ArgMax result is discarded",
-)
 def test_primary_path_retains_terminal_pre_argmax_result() -> None:
     body = _lowerer_body()
     callback_name = "_optimize_transpose_pre_argmax_nhwc_terminal_chains"

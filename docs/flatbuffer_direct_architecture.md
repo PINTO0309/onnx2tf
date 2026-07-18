@@ -10930,10 +10930,10 @@ no consumer, and orchestrated selections are unchanged.
 
 The preceding terminal ArgMax owner returns the one-counter dictionary
 `optimized_transpose_pre_argmax_nhwc_terminal_chains` from its sole production
-call. That direct result is currently discarded between captured terminal
-Conv-activation cleanup and captured Gather-channel-fanout cleanup. Strict
-characterization fixes `_terminal_pre_argmax_stats` as the direct result target
-without changing its live Session LayoutState input.
+call. That direct result is retained as `_terminal_pre_argmax_stats` between
+captured terminal Conv-activation cleanup and captured Gather-channel-fanout
+cleanup. The retained value has no consumer, and the live Session LayoutState
+input is unchanged.
 
 The preceding final decomposed-InstanceNorm owner prevalidates every constant
 and tensor-shape plan, counts each candidate only after at least one planned

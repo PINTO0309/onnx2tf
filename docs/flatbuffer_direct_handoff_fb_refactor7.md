@@ -5899,3 +5899,33 @@ The sole strict expected failure is the intentionally unimplemented terminal
 pre-ArgMax result retention contract above. Implement that assignment, rerun
 the same gates sequentially, then commit and push only; do not create, reopen,
 or update a pull request.
+
+## Terminal pre-ArgMax result retention implementation checkpoint
+
+The sole production call now retains its existing one-counter dictionary as
+`_terminal_pre_argmax_stats`. This is an assignment-only orchestration change.
+The wrapper and pass implementation, one-key result schema, transaction and
+preflight guards, graph mutation, tensor pruning, shared state, GraphIndex/
+layout synchronization, callback arguments, pass order, captured terminal
+Conv-activation predecessor, captured Gather-channel-fanout successor,
+dependencies, and TensorFlow behavior are unchanged. The value has no consumer
+and triggers no additional graph work.
+
+Implementation validation completed sequentially under `uv`:
+
+- focused Conv-activation, terminal ArgMax, Gather-channel-fanout, terminal
+  Softmax, terminal orchestration, architecture, and pass-efficiency gate:
+  `417 passed in 19.64s`
+- branch-changed broad related suite plus activation fusion, attention/Gather,
+  preprojection, window/final convergence, boundary normalization, terminal
+  ArgMax/Softmax, Gather fanout, layout recovery, and pass-efficiency coverage:
+  `1764 passed in 25.32s`
+
+These are unit, contract, and orchestration checks; this accounting-only change
+does not claim a new model-corpus run.
+
+At resume, audit the immediately following
+`_optimize_boundary_input_transpose_channel_slice_blocks()` result, owner
+schema, live LayoutState contract, production occurrences, and captured
+normalization/internal-channel-slice boundaries before adding characterization.
+Commit and push only; do not create, reopen, or update a pull request.

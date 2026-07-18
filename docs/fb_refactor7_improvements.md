@@ -595,6 +595,17 @@ This checkpoint passes the focused ArgMax/fanout/Softmax accounting gate with
 `400 passed in 18.38s`, plus the branch-changed broad related suite with
 `1763 passed in 24.86s`.
 
+The sole terminal pre-ArgMax production call now retains its existing one-
+counter dictionary as `_terminal_pre_argmax_stats`. This assignment-only
+orchestration change preserves the live Session LayoutState, terminal Conv-
+activation predecessor, captured Gather-channel-fanout successor, pass
+implementation, schema, and TensorFlow-free boundary. The retained value has
+no consumer.
+
+This checkpoint passes the focused Conv-activation/ArgMax/fanout/Softmax
+accounting gate with `417 passed in 19.64s`, plus the branch-changed broad
+related suite with `1764 passed in 25.32s`.
+
 Focused Ruff, Python bytecode compilation, and `git diff --check` also pass.
 These results are contract and orchestration tests; they do not claim a new
 full model-corpus run for this observation and accounting unit.
@@ -602,7 +613,7 @@ full model-corpus run for this observation and accounting unit.
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the immediately preceding terminal ArgMax owner result and
-its Conv-activation/Gather-fanout boundaries. Any new mutation evidence must
-preserve current pass order, TensorFlow-free boundary, dependency set, and
-sequential validation policy.
+unit should audit the immediately following boundary-input Transpose/channel-
+slice owner result and its captured normalization/internal-channel-slice
+boundaries. Any new mutation evidence must preserve current pass order,
+TensorFlow-free boundary, dependency set, and sequential validation policy.
