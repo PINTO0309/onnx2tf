@@ -8101,6 +8101,48 @@ and a direct top-level call at three boundaries. Preserve all six child pass
 IDs, callback wiring, direct-call order, and surrounding recovery sequences.
 Commit and push only; do not create, reopen, or update a pull request.
 
+## SiNet pre-add/resize result characterization checkpoint
+
+`run_sinet_preadd_resize_recovery()` executes six fixed dictionary-returning
+children in order: two residual affine repairs, Concat/Resize affine repair,
+dual-Resize repair, tail-Concat repair, and Softmax-mask residual repair. The
+last four receive the live LayoutState. `run_recovery_invocations()` already
+returns all six dictionaries, while the phase runner and local helper discard
+the tuple.
+
+The helper is the middle callback of both retained SiNet terminal-layout tuples
+and also has exactly three zero-argument direct calls. Those direct calls occur
+after the terminal dequant bridge, after
+`_very_late_sinet_layout_recovery_results`, and after final static-shape
+reconciliation.
+
+A strict expected-failure contract selects
+`_terminal_sinet_preadd_resize_results`,
+`_very_late_sinet_preadd_resize_results`, and
+`_post_cleanup_sinet_preadd_resize_results` as the three direct retention
+targets. It fixes the ordered `Tuple[Dict[str, int], ...]`, six pass IDs,
+arguments and LayoutState keywords, callback identity, direct-call count, and
+all three boundary pairs.
+
+At implementation, transparently return the existing tuple through the phase
+runner and local helper, then replace only the three raw direct expressions
+with assignments. The two terminal-layout tuples will naturally retain this
+tuple as their middle callback result; they remain unconsumed. Do not change a
+child, callback identity, pass order, LayoutState wiring, surrounding recovery
+calls, dependencies, diagnostics, or TensorFlow behavior. Do not add a result
+consumer or guard.
+
+Characterization validation completed sequentially under `uv`:
+
+- SiNet pre-add/resize and terminal-layout orchestration, remaining context
+  composition, indexed-convergence and Singleton boundaries, architecture, and
+  pass-efficiency coverage: `350 passed, 1 xfailed in 17.83s`
+
+The sole strict expected failure is the intentionally unimplemented six-result
+propagation contract. Implement only that contract, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains

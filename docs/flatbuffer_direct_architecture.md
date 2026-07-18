@@ -11354,3 +11354,24 @@ exactly once in the original order, and the middle tuple element is exactly the
 injected pre-add/resize callback result. Context wiring, zero-argument call
 forms, indexed-convergence predecessor, terminal-clamp predecessor, both
 successors, dependencies, diagnostics, and TensorFlow behavior are unchanged.
+
+The injected SiNet pre-add/resize phase itself executes six fixed dictionary-
+returning children: two residual affine repairs followed by four SiNet Resize/
+tail repairs. Four children receive the live LayoutState. The generic recovery
+runner already returns the six dictionaries in pass-ID order, but
+`run_sinet_preadd_resize_recovery()` and its local helper currently discard the
+tuple.
+
+The local helper is the middle callback of both retained terminal-layout tuples
+and also has three zero-argument direct calls. Those direct calls follow the
+terminal dequant bridge, the very-late terminal-layout result, and final static
+shape reconciliation, respectively. Strict characterization selects
+`_terminal_sinet_preadd_resize_results`,
+`_very_late_sinet_preadd_resize_results`, and
+`_post_cleanup_sinet_preadd_resize_results` for only the direct forms.
+
+The contract fixes the ordered six-result `Tuple[Dict[str, int], ...]`, all
+arguments, live LayoutState wiring, callback identity, direct-call count,
+three targets, and all boundary pairs. Propagation must not add a consumer or
+guard, execute a child twice, alter terminal-layout child order, or add graph
+work, dependencies, or a TensorFlow import path.
