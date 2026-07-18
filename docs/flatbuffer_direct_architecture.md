@@ -11417,3 +11417,22 @@ This is an assignment-only change. The wrapper, indexed owner, unconditional
 prune, positive-only LayoutState synchronization, live Session LayoutState,
 captured SiNet predecessor, SA/PA successor, dependencies, diagnostics, and
 TensorFlow behavior remain unchanged.
+
+The adjacent SA/PA MirrorPad wrapper dispatches an indexed owner with the fixed
+one-counter dictionary
+`optimized_transpose_sa_pa_mirrorpad_nhwc_propagation_chains`. The owner prunes
+unused tensors and synchronizes LayoutState only inside its positive rewrite
+guard. Its counter is therefore complete owner mutation evidence.
+
+The wrapper has two direct primary calls: one inside the layout-option guard
+between pre-add/mean/attention recovery and reduced gate-layout recovery, and
+one after `_post_cleanup_csp_attention_stats` before the captured BatchMatMul
+affine-input result. Attention-gate/QDQ orchestration also selects the owner
+module directly and remains a separate form.
+
+Strict characterization selects `_layout_opt_sa_pa_mirrorpad_stats` and
+`_post_cleanup_sa_pa_mirrorpad_stats` for only the direct forms. It fixes both
+arguments, live LayoutState, result schema, positive-only prune/sync, option
+guard, four boundaries, direct-call count, and the independent orchestration
+selection. Both retained dictionaries must remain unconsumed in this unit so
+retention adds no guard, graph work, dependency, or TensorFlow import path.

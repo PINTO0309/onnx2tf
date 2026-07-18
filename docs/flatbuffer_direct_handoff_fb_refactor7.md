@@ -8244,6 +8244,45 @@ attention-recovery orchestration, the separate gate-layout boundary, live
 LayoutState wiring, and the captured BatchMatMul affine-input successor. Commit
 and push only; do not create, reopen, or update a pull request.
 
+## Direct SA/PA MirrorPad result characterization checkpoint
+
+The SA/PA MirrorPad wrapper dispatches one indexed owner and returns the fixed
+one-counter dictionary
+`optimized_transpose_sa_pa_mirrorpad_nhwc_propagation_chains`. The owner prunes
+unused tensors and synchronizes LayoutState only when its rewrite count is
+positive, so the counter covers every owner mutation path.
+
+There are exactly two direct wrapper calls. The first is inside the
+`optimize_layout_transpose_chains` guard between pre-add/mean/attention recovery
+and reduced gate-layout recovery. The second follows
+`_post_cleanup_csp_attention_stats` and precedes
+`_post_sinet_batchmatmul_affine_input_stats`. Attention-gate/QDQ orchestration
+selects the owner module directly as a third, distinct form.
+
+A strict expected-failure contract selects
+`_layout_opt_sa_pa_mirrorpad_stats` and
+`_post_cleanup_sa_pa_mirrorpad_stats` for only the direct calls. It fixes the
+two-call count, model and live LayoutState arguments, one-key schema,
+positive-only pruning and layout sync, option guard, four boundaries, captured
+neighbors, and independent orchestration selection.
+
+At implementation, replace only the two raw direct expressions with
+assignments. Do not add a consumer or guard and do not change the wrapper,
+owner, schema, pruning, layout sync, orchestration selection, gate policy,
+surrounding calls, dependencies, diagnostics, or TensorFlow behavior.
+
+Characterization validation completed sequentially under `uv`:
+
+- SA/PA result/schema semantics and indexed owner fixtures, gate-layout and
+  attention-recovery orchestration, CSP and BatchMatMul boundaries,
+  architecture, and pass-efficiency coverage:
+  `356 passed, 1 xfailed in 18.11s`
+
+The sole strict expected failure is the intentionally unimplemented two-result
+retention contract. Implement only those assignments, rerun focused and
+branch-changed broad gates sequentially, then commit and push only; do not
+create, reopen, or update a pull request.
+
 ## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
 
 The terminal-QKV call now retains
