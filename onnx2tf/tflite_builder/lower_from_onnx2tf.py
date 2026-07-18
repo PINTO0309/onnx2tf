@@ -5280,9 +5280,11 @@ def lower_onnx_to_ir(
     )
     # tencoder residual-gated branch variant:
     # dual (post-conv T->SQUEEZE) branches merge via ADD then EXPAND->T before next CONV.
-    _optimize_tencoder_add_expand_transpose_conv_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_tencoder_stats = (
+        _optimize_tencoder_add_expand_transpose_conv_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Conv1D tail patterns may still contain:
     # TRANSPOSE -> SQUEEZE -> UNARY* -> BATCH_MATMUL.

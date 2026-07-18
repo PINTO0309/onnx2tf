@@ -12650,6 +12650,13 @@ It freezes schema, wrapper defaults and forwarding, unconditional cleanup,
 exact arguments, retained InstanceNorm predecessor, BatchMatMul successor,
 sole occurrence, and an unconsumed observation-only policy.
 
+The raw Conv1D tencoder call now retains its unchanged dictionary as
+`_late_conv1d_tencoder_stats`. The target remains unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, unconditional pruning, wrapper forwarding, direct arguments, and
+neighboring InstanceNorm/BatchMatMul owners remain unchanged; the counter does
+not steer later cleanup.
+
 `run_singleton_consecutive_reshape()` returns a fixed three-dictionary tuple
 from singleton-channel transpose, duplicate-fanout, and consecutive-reshape
 cleanup. Its three child invocations share one `ModelIRPassStateScope`; the

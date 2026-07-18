@@ -2018,3 +2018,11 @@ retention selects `_late_conv1d_tencoder_stats` without changing the retained
 InstanceNorm predecessor or BatchMatMul successor. The focused gate passes
 `313 passed, 1 xfailed in 18.16s`, the 108-file branch-changed suite passes
 `1671 passed, 1 xfailed in 31.66s`, and targeted static validation passes.
+
+The raw late Conv1D tencoder call now retains its unchanged dictionary as
+`_late_conv1d_tencoder_stats`. It remains unconsumed and observation-only;
+indexed owner behavior, GraphIndex/LayoutState handling, unconditional
+pruning, wrapper forwarding, and adjacent InstanceNorm and BatchMatMul owners
+remain unchanged. The focused gate passes `314 passed in 17.65s`, the 108-file
+branch-changed suite passes `1672 passed in 32.65s`, and targeted static
+validation passes.

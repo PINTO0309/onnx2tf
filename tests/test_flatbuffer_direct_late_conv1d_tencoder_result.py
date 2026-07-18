@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_tencoder_add_expand_transpose_conv_nhwc_chains,
@@ -108,7 +106,7 @@ def test_late_conv1d_tencoder_schema_wrapper_and_cleanup_are_explicit() -> None:
 def test_late_conv1d_tencoder_direct_boundary_is_explicit() -> None:
     lowerer, index = _direct_location()
     invocation = lowerer.body[index]
-    assert isinstance(invocation, ast.Expr)
+    assert _single_target(invocation) == RESULT_TARGET
     call = _statement_call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -125,10 +123,6 @@ def test_late_conv1d_tencoder_direct_boundary_is_explicit() -> None:
     ) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late Conv1D tencoder result is discarded",
-)
 def test_late_conv1d_tencoder_result_is_retained_for_observation() -> None:
     lowerer, index = _direct_location()
     assert _single_target(lowerer.body[index]) == RESULT_TARGET
