@@ -4540,10 +4540,12 @@ def lower_onnx_to_ir(
                 diagnostics=session.diagnostics,
             )
         )
-        run_ndhwc_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_opt_ndhwc_concat_stats = (
+            run_ndhwc_concat_layout_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
         _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
             model_ir,

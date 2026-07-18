@@ -8907,6 +8907,34 @@ selected assignment and update stale boundary targets. Do not change the
 layout-recovery occurrence in the same unit. Validate sequentially, commit,
 and push only; do not create, reopen, or update a pull request.
 
+## Direct NDHWC Concat result retention implementation checkpoint
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_ndhwc_concat_stats`. It remains unconsumed in this unit even
+though positive-only cleanup makes it complete owner mutation evidence.
+
+This is an assignment-only production change. The transactional runner,
+inner owner, schema, cleanup guard, ModelIR/layout/diagnostics routing,
+independent layout-recovery occurrence, pass order, dependencies, public
+behavior, and TensorFlow-free direct path are unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- schema/cleanup, NDHWC fixture, layout-recovery selection,
+  pre-Concat/strided-Slice boundary, architecture, and pass-efficiency
+  coverage: `376 passed in 18.50s`
+- branch-changed broad suite: `1551 passed in 28.84s`
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed
+
+These checks do not claim a model-corpus run. At resume, audit the sole direct
+`_optimize_transpose_stridedslice_pre_concat_nhwc_chains()` call immediately
+after `_layout_opt_ndhwc_concat_stats`, plus its independent layout-recovery
+occurrence. Freeze the indexed schema, cleanup semantics, graph-index/layout
+arguments, NDHWC/split-mixed boundaries, and current result policy before
+changing production. Commit and push only; do not create, reopen, or update a
+pull request.
+
 ## Singleton/Reshape result characterization checkpoint
 
 `run_singleton_reshape()` selects seven to ten ordered child runners from the

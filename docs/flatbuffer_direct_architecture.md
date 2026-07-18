@@ -11867,3 +11867,11 @@ schema, positive-only cleanup, ModelIR/layout/diagnostics arguments,
 pre-Concat/strided-Slice boundaries, exact sole direct call, and independent
 layout-recovery selection. The orchestration occurrence is not changed by this
 retention unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_ndhwc_concat_stats`. It remains unconsumed in this unit. The
+transactional runner, positive-only cleanup, layout-recovery occurrence,
+arguments, call multiplicity, and both adjacent boundaries are unchanged.
+
+This assignment adds no summary, guard, dependency, public behavior change, or
+TensorFlow import path. Only the direct observation becomes available.
