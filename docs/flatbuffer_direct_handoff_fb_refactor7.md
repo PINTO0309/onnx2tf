@@ -7884,6 +7884,36 @@ retention contract. Implement only those assignments, rerun focused and
 branch-changed broad gates sequentially, then commit and push only; do not
 create, reopen, or update a pull request.
 
+## Earlier Split/Conv/Concat bridge result retention implementation checkpoint
+
+The terminal-QKV call now retains
+`_terminal_qkv_split_conv_concat_bridge_stats`, and the post-SiNet call retains
+`_post_sinet_split_conv_concat_bridge_stats`. The late call remains retained as
+`_terminal_split_conv_concat_bridge_stats`.
+
+These are assignment-only observation changes. No consumer or guard was added.
+The wrapper, indexed owner, one-key schema, positive-only pruning,
+transactional rewrite behavior, live LayoutState, QKV/Singleton/SiNet
+boundaries, existing late result, pass order, dependencies, diagnostics, and
+TensorFlow behavior remain unchanged. The Singleton boundary call extractor
+now accepts assigned predecessors.
+
+Implementation validation completed sequentially under `uv`:
+
+- indexed bridge owner, all three production occurrences, QKV and Singleton
+  orchestration, HardSwish-SE late boundary, architecture, and pass-efficiency
+  coverage: `401 passed in 18.59s`
+- branch-changed broad suite plus the same three-occurrence coverage:
+  `1502 passed in 25.50s`
+
+These are unit, contract, and orchestration checks; this result retention does
+not claim a new model-corpus run.
+
+At resume, audit the guarded terminal Singleton/Reshape cluster result after
+`_terminal_qkv_split_conv_concat_bridge_stats`. Preserve its exact policy and
+all other production occurrences before propagating or retaining a result.
+Commit and push only; do not create, reopen, or update a pull request.
+
 ## Terminal QKV result retention implementation checkpoint
 
 The default-policy calls now retain `_terminal_qkv_attention_results` and

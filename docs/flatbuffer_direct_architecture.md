@@ -8113,12 +8113,10 @@ evidence.
 
 Three direct calls exist. The late call is already retained as
 `_terminal_split_conv_concat_bridge_stats`; the terminal-QKV and post-SiNet
-calls remain raw. A strict contract fixes future
-`_terminal_qkv_split_conv_concat_bridge_stats` and
-`_post_sinet_split_conv_concat_bridge_stats` targets, both predecessors and
-successors, exact live LayoutState arguments, total occurrence count, and the
-existing late target. The two new dictionaries must remain unconsumed in this
-unit.
+calls now retain `_terminal_qkv_split_conv_concat_bridge_stats` and
+`_post_sinet_split_conv_concat_bridge_stats`. Both predecessors and successors,
+exact live LayoutState arguments, total occurrence count, and the existing late
+target remain fixed. The two new dictionaries are unconsumed in this unit.
 
 A model reported as `swap_detected` must be changed to
 `baseline_classification: excluded` in the managed regression profile before

@@ -782,10 +782,6 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
     assert following.targets[0].id == "terminal_hardswish_se_tensor_count"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="earlier split/conv/concat bridge results are not retained",
-)
 def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
     tree = ast.parse(
         (

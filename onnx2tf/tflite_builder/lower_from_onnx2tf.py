@@ -4788,9 +4788,11 @@ def lower_onnx_to_ir(
         _terminal_qkv_attention_results = (
             _run_qkv_attention_layout_pass_cluster()
         )
-        _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
-            model_ir,
-            layout_state=session.layout_state,
+        _terminal_qkv_split_conv_concat_bridge_stats = (
+            _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         # Run the multi-branch gate rewrite at terminal stage so earlier
         # generic passes do not re-wrap rewritten NHWC tensors.
@@ -4856,9 +4858,11 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_sinet_split_conv_concat_bridge_stats = (
+        _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
         model_ir,

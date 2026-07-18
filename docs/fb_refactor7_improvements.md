@@ -966,13 +966,24 @@ branch-changed broad suite passes `1464 passed in 25.62s`. A test-only call
 extractor was made tolerant of non-call lowerer statements after the retained
 assignment exposed that stale assumption.
 
+The two earlier indexed Split/Conv/Concat bridge results are now retained as
+`_terminal_qkv_split_conv_concat_bridge_stats` and
+`_post_sinet_split_conv_concat_bridge_stats`; the existing late target remains
+unchanged. All three complete one-counter dictionaries are distinct and the two
+new values have no consumers.
+
+The focused indexed-owner/boundary gate passes `401 passed in 18.59s`, and the
+branch-changed broad suite passes `1502 passed in 25.50s`. Singleton boundary
+tests now accept an assigned predecessor without changing cluster execution.
+
 ## Remaining work
 
 The broader `flatbuffer_direct` refactor remains active. The next characterized
-unit should audit the raw split/conv/concat bridge result after
-`_terminal_qkv_attention_results`. All three QKV result forms and the late
-summary must remain fixed. Mean/attention tuples and the preceding BatchMatMul
-results must remain observation-only and policy guarded. The retained
+unit should audit the guarded terminal Singleton/Reshape cluster result after
+`_terminal_qkv_split_conv_concat_bridge_stats`. All other Singleton/Reshape
+policies, three QKV result forms, and the late summary must remain fixed.
+Mean/attention tuples and the preceding BatchMatMul results must remain
+observation-only and policy guarded. The retained
 `_terminal_normalization_pad_stats` also remains observation-only because it
 omits cleanup-only pruning. Any change must preserve current pass order,
 TensorFlow-free boundary, dependency set, and sequential validation policy.

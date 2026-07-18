@@ -65,10 +65,13 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected expression: {ast.dump(node)}")
 
 
-def _direct_call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, ast.Expr)
-    assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    if not isinstance(statement.value.func, ast.Name):
+        return None
     return statement.value.func.id
 
 
