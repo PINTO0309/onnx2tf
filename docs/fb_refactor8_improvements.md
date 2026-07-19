@@ -983,6 +983,43 @@ diagnostic behavior, outer boundaries, owner arguments, and execution order;
 grow the store from 124 to 127 records, run sequential gates, document,
 commit, and push. Never create, update, or reopen a pull request.
 
+## Post-SiNet attention and activation result implementation
+
+The three characterized observations now record consecutively under:
+
+- `cleanup.post_sinet.mix_attention`;
+- `cleanup.post_sinet.mixed_attention_layout`;
+- `cleanup.post_sinet.dequant_hardsigmoid_bridge`.
+
+Only the unused local destinations changed. Owner calls, layout-state and
+diagnostics arguments, unconditional order, preceding Split/Conv/Concat
+phase, following shared state-scope creation, diagnostics events, ModelIR
+behavior, public outputs, artifacts, dependencies, and TensorFlow isolation
+remain unchanged. The bounded store now covers 127/128 phase IDs, leaving one
+slot.
+
+One architecture assertion initially failed because it treated the two calls
+immediately before the NDHWC/cost-volume scope as raw assignments. The
+failure was representation-only: all focused, core, and result suites passed.
+The assertion now unwraps phase records and additionally verifies both exact
+phase IDs before checking nested owners and shared-scope order. The full
+architecture suite then passed.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused attention/activation/state-scope/store contracts:
+  `17 passed in 1.23s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader result and phase-result contracts: `194 passed in 9.03s`;
+- focused repaired architecture contract: `1 passed in 2.17s`;
+- full lowerer architecture contracts after repair: `258 passed in 16.99s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and focused runtime contracts exercise
+all three owners.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

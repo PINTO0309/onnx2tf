@@ -240,7 +240,7 @@ def test_post_sinet_relu_split_results_use_phase_result_store() -> None:
     predecessor = lowerer.body[indices[0] - 1]
     assert _single_target(predecessor) == "_post_sinet_qkv_attention_results"
     successor = lowerer.body[indices[-1] + 1]
-    assert _single_target(successor) == "_post_sinet_mix_attention_stats"
+    assert _phase_id(successor) == "cleanup.post_sinet.mix_attention"
     assert not any(
         isinstance(node, ast.Name)
         and node.id in POST_SINET_RESULT_TARGETS

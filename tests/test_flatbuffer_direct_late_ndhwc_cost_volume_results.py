@@ -41,7 +41,7 @@ COST_VOLUME_OWNER = "run_cost_volume_scatter_layout_cleanup"
 NDHWC_TARGET = "_late_ndhwc_gate_layout_stats"
 COST_VOLUME_TARGET = "_late_cost_volume_scatter_layout_stats"
 SCOPE_TARGET = "late_ndhwc_cost_volume_state_scope"
-PREDECESSOR_TARGET = "_post_sinet_dequant_hardsigmoid_bridge_stats"
+PREDECESSOR_PHASE_ID = "cleanup.post_sinet.dequant_hardsigmoid_bridge"
 SUCCESSOR_TARGET = "_late_cost_volume_conv_affine_stats"
 
 
@@ -71,6 +71,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -233,7 +248,7 @@ def test_late_ndhwc_cost_volume_direct_pair_boundary_is_explicit() -> None:
             "diagnostics": "session.diagnostics",
             "state_scope": SCOPE_TARGET,
         }
-    assert _single_target(lowerer.body[scope_index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[scope_index - 1]) == PREDECESSOR_PHASE_ID
     assert _single_target(lowerer.body[scope_index + 3]) == SUCCESSOR_TARGET
     for owner in (NDHWC_OWNER, COST_VOLUME_OWNER):
         assert sum(

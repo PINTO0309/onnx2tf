@@ -7641,8 +7641,31 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     def _statement_call(statement: ast.stmt) -> ast.Call:
         assert isinstance(statement, (ast.Assign, ast.Expr))
         assert isinstance(statement.value, ast.Call)
-        assert isinstance(statement.value.func, ast.Name)
-        return statement.value
+        call = statement.value
+        if (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "session"
+            and call.func.attr == "record_phase_result"
+        ):
+            assert len(call.args) == 2
+            assert isinstance(call.args[1], ast.Call)
+            return call.args[1]
+        assert isinstance(call.func, ast.Name)
+        return call
+
+    def _phase_id(statement: ast.stmt) -> str | None:
+        assert isinstance(statement, (ast.Assign, ast.Expr))
+        assert isinstance(statement.value, ast.Call)
+        call = statement.value
+        if not (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "session"
+            and call.func.attr == "record_phase_result"
+        ):
+            return None
+        return ast.literal_eval(call.args[0])
 
     mixed_call = _statement_call(lowerer.body[assignment_index - 2])
     raw_boundary_call = _statement_call(lowerer.body[assignment_index - 1])
@@ -7650,6 +7673,12 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     cost_volume_call = _statement_call(lowerer.body[assignment_index + 2])
     next_raw_boundary_call = _statement_call(lowerer.body[assignment_index + 3])
 
+    assert _phase_id(lowerer.body[assignment_index - 2]) == (
+        "cleanup.post_sinet.mixed_attention_layout"
+    )
+    assert _phase_id(lowerer.body[assignment_index - 1]) == (
+        "cleanup.post_sinet.dequant_hardsigmoid_bridge"
+    )
     assert mixed_call.func.id == "run_mixed_attention_layout_cleanup"
     assert all(keyword.arg != "state_scope" for keyword in mixed_call.keywords)
     assert (

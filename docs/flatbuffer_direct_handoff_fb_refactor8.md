@@ -2082,3 +2082,35 @@ first. Implementation must change only the three destinations, preserve the
 diagnostics stream and state-scope boundary, move the store from 124 to 127
 records, run sequential gates, document, commit, and push. Never create,
 update, or reopen a pull request.
+
+## Post-SiNet attention and activation result implementation
+
+The three results now record under their characterized
+`cleanup.post_sinet.*` phase IDs. Only unused destinations changed. Owner
+calls, layout-state and diagnostics arguments, execution order, outer
+Split/Conv/Concat and NDHWC/cost-volume scope boundaries, diagnostic events,
+graph behavior, public contracts, dependencies, and TensorFlow isolation are
+unchanged.
+
+The store now contains 127/128 records, leaving one slot. During the broad
+gate, one architecture-only assertion failed because it assumed the two
+pre-scope calls were assignments. Focused, core, and result suites were green.
+The assertion was made phase-aware and now verifies exact phase IDs plus the
+nested owners; the full architecture suite then passed.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused attention/activation/state-scope/store contracts:
+  `17 passed in 1.23s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader result contracts: `194 passed in 9.03s`;
+- repaired architecture contract: `1 passed in 2.17s`;
+- full architecture contracts: `258 passed in 16.99s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because only three already-computed
+one-counter result destinations changed and focused runtime tests cover all
+owners. Commit and push this unit. With only one store slot remaining, audit
+the next candidate independently before using it; never create, update, or
+reopen a pull request.

@@ -5122,21 +5122,24 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         ),
     )
-    _post_sinet_mix_attention_stats = (
+    session.record_phase_result(
+        "cleanup.post_sinet.mix_attention",
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _post_sinet_mixed_attention_layout_stats = (
+    session.record_phase_result(
+        "cleanup.post_sinet.mixed_attention_layout",
         run_mixed_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
-        )
+        ),
     )
-    _post_sinet_dequant_hardsigmoid_bridge_stats = (
-        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    session.record_phase_result(
+        "cleanup.post_sinet.dequant_hardsigmoid_bridge",
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir),
     )
     late_ndhwc_cost_volume_state_scope = ModelIRPassStateScope(
         model_ir,

@@ -148,7 +148,7 @@ def test_dequant_hardsigmoid_schema_cleanup_and_selection_are_explicit() -> None
     )
 
 
-def test_lowerer_retains_all_dequant_hardsigmoid_results() -> None:
+def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = [
         statement
@@ -156,22 +156,25 @@ def test_lowerer_retains_all_dequant_hardsigmoid_results() -> None:
         if _call_name(statement) == DEQUANT_HARDSIGMOID
     ]
     assert len(direct_results) == 3
-    expected_targets = [
-        "_post_sinet_dequant_hardsigmoid_bridge_stats",
-        "_late_dequant_hardsigmoid_bridge_stats",
-    ]
     assert _phase_id(direct_results[0]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
-    assert [_single_target(statement) for statement in direct_results[1:]] == (
-        expected_targets
+    assert _phase_id(direct_results[1]) == (
+        "cleanup.post_sinet.dequant_hardsigmoid_bridge"
+    )
+    assert _single_target(direct_results[2]) == (
+        "_late_dequant_hardsigmoid_bridge_stats"
     )
     for statement in direct_results:
         call = _statement_call(statement)
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
         assert call.keywords == []
-    for target in ["_terminal_dequant_hardsigmoid_bridge_stats", *expected_targets]:
+    for target in [
+        "_terminal_dequant_hardsigmoid_bridge_stats",
+        "_post_sinet_dequant_hardsigmoid_bridge_stats",
+        "_late_dequant_hardsigmoid_bridge_stats",
+    ]:
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
