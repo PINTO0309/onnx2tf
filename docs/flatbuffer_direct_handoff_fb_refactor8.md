@@ -5894,3 +5894,33 @@ At resume, implement the owner with direct public child imports, retain both
 lowerer compatibility wrappers and the final-primary precision route, update
 stale entry assertions, and run all gates sequentially. Commit and push only;
 do not create, update, reopen, or otherwise modify a pull request.
+
+## Fallback precision/unbound implementation checkpoint
+
+`passes/fallback_precision_unbound_orchestration.py` now owns the characterized
+pair. It receives one `ModelIRPassContext` whose model is the recursively
+rebuilt `fallback_ir`, whose LayoutState is explicitly `None`, and whose
+diagnostics object is the active session list. It invokes the existing public
+precision owner first and model-only unbound-input repair second, returning the
+complete three-mapping tuple and one-key mapping unchanged and by identity.
+
+The fallback context is created immediately after recursive relowering, so the
+post-placeholder topology checkpoint remains the direct execution predecessor.
+The lowerer replaces only the two observation-only child locals with
+`_fallback_precision_unbound_results`; indexed Conv-input repair remains the
+direct successor. Both lowerer compatibility wrappers, the final-primary
+precision route, and the unbound repair module remain available.
+
+Sequential validation passes: focused `3`, affected `31`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, whitespace checks,
+runtime context/order/result-identity injection, TensorFlow import blocking,
+default direct conversion, and `-cotof` all pass. The phase store remains
+exactly 128 IDs and 128 owners, while the characterized unconsumed
+lowerer-result inventory decreases from 49 to 48. No real-model conversion was
+repeated for this straight-line ownership extraction.
+
+At resume, refresh the 48-result inventory and select the next smallest
+source-adjacent semantically closed boundary. Preserve fallback recursion,
+guards, result-driven reconciliation, and all independent wrappers. Continue
+with sequential core-only `uv` tests and complete commits/pushes only. Do not
+create, update, reopen, or otherwise modify a pull request.

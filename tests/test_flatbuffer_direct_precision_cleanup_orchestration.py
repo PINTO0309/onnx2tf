@@ -34,11 +34,11 @@ SITE_CONTRACTS = (
             "_fallback_precision_consecutive_mul_stats",
             "_fallback_precision_div_restore_stats",
         ),
-        "_fallback_precision_cleanup_results",
+        "_fallback_precision_unbound_results",
         "fallback_ir",
         "None",
         "topology.fallback.post_placeholder",
-        "_fallback_unbound_repair_stats",
+        "fallback_conv_input_stats",
     ),
     (
         (
@@ -105,9 +105,15 @@ def test_precision_cleanup_duplicate_raw_sequences_are_fixed() -> None:
         body = _containing_body(lowerer, sequence)
         index = body.index(sequence)
         assert isinstance(sequence, ast.Assign)
-        assert ast.unparse(sequence.value) == (
-            f"{SEQUENCE_HELPER}({model_name}, {layout_expression})"
-        )
+        if model_name == "fallback_ir":
+            assert ast.unparse(sequence.value) == (
+                "run_fallback_precision_unbound_cleanup("
+                "fallback_precision_unbound_context)"
+            )
+        else:
+            assert ast.unparse(sequence.value) == (
+                f"{SEQUENCE_HELPER}({model_name}, {layout_expression})"
+            )
 
         if predecessor_phase is not None:
             assert ast.unparse(body[index - 1]) == (
@@ -189,9 +195,15 @@ def test_precision_cleanup_uses_one_shared_ordered_sequence_owner() -> None:
         body = _containing_body(lowerer, sequence)
         index = body.index(sequence)
         assert isinstance(sequence, ast.Assign)
-        assert ast.unparse(sequence.value) == (
-            f"{SEQUENCE_HELPER}({model_name}, {layout_expression})"
-        )
+        if model_name == "fallback_ir":
+            assert ast.unparse(sequence.value) == (
+                "run_fallback_precision_unbound_cleanup("
+                "fallback_precision_unbound_context)"
+            )
+        else:
+            assert ast.unparse(sequence.value) == (
+                f"{SEQUENCE_HELPER}({model_name}, {layout_expression})"
+            )
         if predecessor_phase is not None:
             assert ast.unparse(body[index - 1]) == (
                 "session.record_phase_result("

@@ -6719,3 +6719,20 @@ remains unchanged pending one context-owned two-stage extraction. Focused and
 complete affected characterization report `1 passed, 1 xfailed` and
 `29 passed, 1 xfailed`; the sole expected failure is the intentionally absent
 owner.
+
+## Extract fallback precision and unbound-input cleanup
+
+`passes/fallback_precision_unbound_orchestration.py` now runs the two public
+child owners through one no-layout `ModelIRPassContext`. It preserves exact
+fallback ModelIR and diagnostics identity, precision-before-unbound order, and
+both complete raw result identities. The context is created only inside the
+safety-fallback branch after recursive relowering.
+
+The lowerer replaces only the two observation-only locals with one composite
+result. The post-placeholder topology checkpoint and indexed Conv-input
+summary remain the immediate execution boundaries. Lowerer compatibility
+wrappers and the independent final-primary precision route are unchanged.
+
+Focused `3`, affected `31`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. The phase store remains 128 IDs and 128 owners, and the
+characterized unconsumed lowerer-result inventory decreases from 49 to 48.

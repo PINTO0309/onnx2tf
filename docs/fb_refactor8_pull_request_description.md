@@ -1612,3 +1612,17 @@ following indexed Conv-input summary. Production remains unchanged pending a
 straight-line context-owned extraction. Focused and complete affected
 characterization report `1 passed, 1 xfailed` and `29 passed, 1 xfailed`; the
 sole expected failure is the intentionally absent owner.
+
+The latest checkpoint extracts fallback precision and unbound-input cleanup
+into one context-owned stage. The frozen no-layout pass context retains the
+recursively rebuilt fallback ModelIR and active diagnostics object; the owner
+then calls precision cleanup before model-only unbound repair and returns both
+raw results unchanged and by identity.
+
+Only the two observation-only lowerer assignments are replaced. The fallback
+post-placeholder topology checkpoint and indexed Conv-input summary remain the
+immediate boundaries, while both compatibility wrappers and the independent
+final-primary precision route remain intact. Focused `3`, affected `31`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. TensorFlow isolation,
+default direct conversion, `-cotof`, and the exactly 128-ID/128-owner phase
+store are unchanged; the unconsumed-result inventory decreases from 49 to 48.

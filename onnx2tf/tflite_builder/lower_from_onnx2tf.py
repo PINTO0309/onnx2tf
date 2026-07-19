@@ -62,6 +62,9 @@ from onnx2tf.tflite_builder.passes.precision import (
 from onnx2tf.tflite_builder.passes.precision_cleanup_orchestration import (
     run_precision_cleanup_sequence,
 )
+from onnx2tf.tflite_builder.passes.fallback_precision_unbound_orchestration import (
+    run_fallback_precision_unbound_cleanup,
+)
 from onnx2tf.tflite_builder.passes.no_layout_final_cleanup_orchestration import (
     run_no_layout_final_cleanup,
 )
@@ -5181,6 +5184,11 @@ def lower_onnx_to_ir(
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
             protected_boundary_tensor_names=protected_boundary_tensor_names,
         )
+        fallback_precision_unbound_context = ModelIRPassContext(
+            model_ir=fallback_ir,
+            layout_state=None,
+            diagnostics=session.diagnostics,
+        )
         fallback_norm_stats = run_norm_subgraph_pad_layout_summary(
             fallback_ir,
             diagnostics=session.diagnostics,
@@ -5254,15 +5262,9 @@ def lower_onnx_to_ir(
             "topology.fallback.post_placeholder",
             _topologically_sort_operators(fallback_ir),
         )
-        _fallback_precision_cleanup_results = (
-            _run_precision_cleanup_sequence(
-                fallback_ir,
-                None,
-            )
-        )
-        _fallback_unbound_repair_stats = (
-            _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
-                fallback_ir
+        _fallback_precision_unbound_results = (
+            run_fallback_precision_unbound_cleanup(
+                fallback_precision_unbound_context,
             )
         )
         fallback_conv_input_stats = (

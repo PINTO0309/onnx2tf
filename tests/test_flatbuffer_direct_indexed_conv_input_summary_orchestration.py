@@ -35,7 +35,7 @@ SITE_CONTRACTS = (
         "fallback_conv_input_tensor_count",
         "fallback_conv_input_stats",
         "fallback_ir",
-        "_fallback_unbound_repair_stats",
+        "_fallback_precision_unbound_results",
         None,
     ),
 )

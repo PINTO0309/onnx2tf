@@ -128,7 +128,7 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     )
 
 
-def test_safety_fallback_retains_precision_cleanup_results() -> None:
+def test_safety_fallback_retains_precision_unbound_composite_results() -> None:
     body = _safety_fallback_body(_lowerer())
     sequence_index = next(
         index
@@ -137,15 +137,17 @@ def test_safety_fallback_retains_precision_cleanup_results() -> None:
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_fallback_precision_cleanup_results"
+        == "_fallback_precision_unbound_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "_run_precision_cleanup_sequence"
+        and statement.value.func.id
+        == "run_fallback_precision_unbound_cleanup"
     )
     sequence = body[sequence_index]
     assert isinstance(sequence, ast.Assign)
     assert ast.unparse(sequence.value) == (
-        "_run_precision_cleanup_sequence(fallback_ir, None)"
+        "run_fallback_precision_unbound_cleanup("
+        "fallback_precision_unbound_context)"
     )
 
     previous = body[sequence_index - 1]
@@ -157,7 +159,7 @@ def test_safety_fallback_retains_precision_cleanup_results() -> None:
     following = body[sequence_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_fallback_unbound_repair_stats"
+    assert following.targets[0].id == "fallback_conv_input_stats"
 
 
 def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
@@ -296,17 +298,14 @@ def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_fallback_unbound_repair_stats"
+        and statement.targets[0].id == "_fallback_precision_unbound_results"
     )
 
     owner = body[owner_index]
     assert isinstance(owner, ast.Assign)
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id
-        == "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
-        for node in ast.walk(owner.value)
+    assert ast.unparse(owner.value) == (
+        "run_fallback_precision_unbound_cleanup("
+        "fallback_precision_unbound_context)"
     )
 
     following = body[owner_index + 1]
@@ -348,7 +347,7 @@ def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
     predecessor = body[stats_index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_fallback_unbound_repair_stats"
+    assert predecessor.targets[0].id == "_fallback_precision_unbound_results"
 
     guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)

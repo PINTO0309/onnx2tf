@@ -7,11 +7,8 @@ import pytest
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.precision_cleanup_orchestration import (
-    run_precision_cleanup_sequence,
-)
-from onnx2tf.tflite_builder.passes.unbound_input_repair_orchestration import (
-    repair_unbound_nonconstant_operator_inputs_with_layout_transpose,
+from onnx2tf.tflite_builder.passes import (
+    fallback_precision_unbound_orchestration,
 )
 
 
@@ -105,35 +102,21 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_fallback_precision_unbound_current_boundary_and_schema() -> None:
     body = _fallback_body()
-    assignments = [
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) in RESULT_TARGETS
-    ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indices = [body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-
-    precision_call = _call(assignments[0])
-    unbound_call = _call(assignments[1])
-    assert precision_call is not None
-    assert unbound_call is not None
-    assert [ast.unparse(argument) for argument in precision_call.args] == [
-        "fallback_ir",
-        "None",
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "fallback_precision_unbound_context"
     ]
-    assert precision_call.keywords == []
-    assert [ast.unparse(argument) for argument in unbound_call.args] == [
-        "fallback_ir"
-    ]
-    assert unbound_call.keywords == []
-    assert _phase_id(body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    successor = body[indices[-1] + 1]
+    assert call.keywords == []
+    assert _phase_id(body[index - 1]) == PREDECESSOR_PHASE_ID
+    successor = body[index + 1]
     assert _single_target(successor) == SUCCESSOR_TARGET
     assert _call_name(successor) == SUCCESSOR_OWNER
     assert not any(
@@ -150,11 +133,8 @@ def test_fallback_precision_unbound_current_boundary_and_schema() -> None:
         layout_state=None,
         diagnostics=[],
     )
-    results = (
-        run_precision_cleanup_sequence(context),
-        repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
-            model_ir
-        ),
+    results = fallback_precision_unbound_orchestration.run_fallback_precision_unbound_cleanup(
+        context
     )
     assert tuple(type(result) for result in results) == (tuple, dict)
     assert tuple(type(result) for result in results[0]) == (dict,) * 3
@@ -170,10 +150,6 @@ def test_fallback_precision_unbound_current_boundary_and_schema() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback precision/unbound composite owner is not implemented",
-)
 def test_fallback_precision_unbound_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -231,3 +207,49 @@ def test_fallback_precision_unbound_has_one_context_owner() -> None:
         "layout_state": "None",
         "diagnostics": "session.diagnostics",
     }
+
+
+def test_fallback_precision_unbound_runtime_order_context_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("fallback_precision_unbound_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=None,
+        diagnostics=[],
+    )
+    expected_results = (
+        tuple({f"precision_{index}": index} for index in range(3)),
+        {"unbound": 4},
+    )
+    observed: list[tuple[str, object]] = []
+
+    def precision(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return expected_results[0]
+
+    def unbound(active_model_ir: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        fallback_precision_unbound_orchestration,
+        CHILD_OWNERS[0],
+        precision,
+    )
+    monkeypatch.setattr(
+        fallback_precision_unbound_orchestration,
+        CHILD_OWNERS[1],
+        unbound,
+    )
+
+    actual = fallback_precision_unbound_orchestration.run_fallback_precision_unbound_cleanup(
+        context
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context),
+        (CHILD_OWNERS[1], model_ir),
+    ]
