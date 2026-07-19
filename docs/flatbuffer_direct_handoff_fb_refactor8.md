@@ -2608,3 +2608,30 @@ No graph, numerical, diagnostics, public API, or artifact behavior changed.
 Commit and push this implementation checkpoint. Resume by auditing the next
 non-store late/terminal source-order unit. Continue with coherent commits and
 pushes only; never create, update, or reopen a pull request.
+
+## Late Conv1D/decoder composite characterization
+
+The next audit selected eight adjacent unconditional layout repairs between
+late Swish passthrough and very-late Pad cleanup: three Conv1D unary variants,
+Conv1D InstanceNorm/unary, tencoder merge, Conv1D BatchMatMul, decoder
+deconvolution input, and terminal Squeeze/Mean. Each receives the same ModelIR
+and layout state, each already has a pass-module owner, and all result mappings
+are unconsumed.
+
+`tests/test_flatbuffer_direct_late_conv1d_decoder_layout_orchestration.py`
+fixes the exact order, argument policy, boundaries, and absence of consumers.
+Its strict expected failure requires one
+`run_late_conv1d_decoder_layout_cleanup(shared_model_ir_pass_context)` call
+and one ordered `_late_conv1d_decoder_layout_results` tuple outside the full
+store. No production source changed.
+
+Run the dedicated characterization, targeted Ruff, bytecode compilation, and
+whitespace checks, then commit and push before implementation. The owner must
+import all eight existing callbacks directly, preserve compatibility wrappers
+and tuple order, keep the store at 128/128, and never create, update, or reopen
+a pull request.
+
+The characterization gate completed with `1 passed, 1 xfailed in 0.17s`;
+the sole xfail is the intentionally absent composite owner. Targeted Ruff,
+bytecode compilation, and whitespace checks passed. Commit and push this
+checkpoint before production changes.

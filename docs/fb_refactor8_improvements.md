@@ -1576,6 +1576,31 @@ TensorFlow boundary changed. No root-model conversion was repeated because
 the focused runtime owner test and existing Slice/pre-post mutation suite cover
 the extracted dispatch. The store remains exactly 128/128.
 
+## Late Conv1D/decoder composite characterization
+
+The next non-store audit selected eight adjacent late layout repairs: three
+Conv1D unary variants, the Conv1D InstanceNorm/unary bridge, tencoder residual
+merge, Conv1D BatchMatMul tail, decoder deconvolution input, and terminal
+Squeeze/Mean tail. Every owner already lives in a pass module, every call is
+unconditional, every call receives the same ModelIR and conversion-local
+layout state, and all eight result mappings are unconsumed.
+
+The focused characterization fixes exact source order and arguments, the late
+Swish predecessor, very-late Pad successor, and absence of consumers. A strict
+expected failure requires one
+`run_late_conv1d_decoder_layout_cleanup(shared_model_ir_pass_context)` owner
+and an ordered `_late_conv1d_decoder_layout_results` tuple outside the full
+store. No production source changed.
+
+Implementation must import all eight existing owners directly, preserve their
+independent mappings and compatibility wrappers, and keep the phase-result
+store fixed at 128/128. Do not create, update, or reopen a pull request.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.17s`; the sole xfail is the intentionally absent
+composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
