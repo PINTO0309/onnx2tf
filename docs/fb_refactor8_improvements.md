@@ -389,3 +389,38 @@ Implementation validation completed sequentially under `uv`:
 
 No real-model conversion was run because this owner is differentially
 equivalent to the former terminal sequences.
+
+## Fallback topology checkpoint evidence
+
+After terminal validation ownership was extracted, the fallback path still had
+two unconditional topological sorts spanning different repair families. The
+first normalizes topology after the SE/FC/Gather and placeholder-MatMul repair
+sequence before precision cleanup. The second normalizes topology after the
+late Conv-input, Concat, Concat-axis, and binary-layout repair sequence before
+fallback metadata and high-rank BatchMatMul handling. They are intentionally
+kept as separate checkpoints because operators between them can mutate graph
+topology and may rely on producer-before-consumer order.
+
+The characterization checkpoint fixed both predecessor guards, successors,
+model arguments, and the two-key sort result schema. It passed as
+`2 passed in 0.50s` before production code changed.
+
+The lowerer now retains the existing results as
+`_fallback_post_placeholder_topology_stats` and
+`_fallback_post_layout_repair_topology_stats`. No helper, extra traversal,
+condition, graph mutation, repair order, fallback metadata, validation,
+artifact, dependency, public API, or TensorFlow boundary was added or changed.
+This is observation-only evidence for deciding whether future topology scans
+are redundant; neither checkpoint was removed, merged, or made conditional.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated checkpoint and fallback orchestration contracts:
+  `20 passed in 0.94s`;
+- affected fallback, terminal, shape, and topology contracts:
+  `119 passed in 2.77s`;
+- lowerer architecture contracts: `258 passed in 16.55s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run for these observation-only assignments.

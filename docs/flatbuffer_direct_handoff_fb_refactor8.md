@@ -399,3 +399,51 @@ the sorts is redundant; do not remove or guard a traversal without a
 differential test proving identical operator order and downstream behavior.
 Continue with coherent commits and pushes only; never create, update, or reopen
 a pull request.
+
+## Fallback topology checkpoint characterization
+
+The two unconditional fallback-wide sorts were audited separately from the
+other remaining sort calls. The first follows the guarded
+placeholder-MatMul reconciliation and precedes precision cleanup. The second
+follows the guarded late binary-layout reconciliation and precedes fallback
+metadata/high-rank BatchMatMul handling. Because repair owners between these
+checkpoints can mutate topology, this unit does not remove, merge, or guard
+either traversal.
+
+The characterization contract fixes both predecessor guards, successors,
+arguments, and the stable `reordered_operators` / `cycle_detected` schema. It
+passed as `2 passed in 0.50s` and was committed and pushed as `fe529c63` before
+the lowerer changed.
+
+## Fallback topology checkpoint implementation
+
+The existing sort results are now retained as:
+
+- `_fallback_post_placeholder_topology_stats`;
+- `_fallback_post_layout_repair_topology_stats`.
+
+Both assignments call the same sorter at the same unconditional locations.
+There is no additional graph scan and no result consumer. This phase evidence
+can support a future measured redundancy decision without changing current
+behavior.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated checkpoint and fallback orchestration contracts:
+  `20 passed in 0.94s`;
+- affected fallback, terminal, shape, and topology contracts:
+  `119 passed in 2.77s`;
+- lowerer architecture contracts: `258 passed in 16.55s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required for these observation-only assignments.
+Three topological-sort results remain discarded in the lowerer:
+
+1. the primary post-lowering baseline sort;
+2. the guarded no-layout safe-reduction sort;
+3. final placeholder-MatMul restoration.
+
+On resume, characterize these three primary-path checkpoints together only at
+the result-contract level, then decide separately whether each result should be
+retained. Do not change their guards or remove a sort. Continue with coherent
+commits and pushes only; never create, update, or reopen a pull request.

@@ -18,6 +18,10 @@ EXPECTED_PREDECESSOR_GUARDS = (
     "int(fallback_binary_layout_stats.get("
     "'repaired_stale_nchw_to_nhwc_channelwise_binary_transposes', 0)) > 0",
 )
+EXPECTED_RESULT_TARGETS = (
+    "_fallback_post_placeholder_topology_stats",
+    "_fallback_post_layout_repair_topology_stats",
+)
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -53,6 +57,13 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
+
+
 def _reversed_model_ir() -> ModelIR:
     model_ir = ModelIR("fallback_topology_checkpoint")
     model_ir.inputs = ["input"]
@@ -77,6 +88,9 @@ def test_two_fallback_topology_checkpoints_are_explicit() -> None:
     ]
 
     assert len(locations) == 2
+    assert tuple(_single_target(body[index]) for index in locations) == (
+        EXPECTED_RESULT_TARGETS
+    )
     assert tuple(
         ast.unparse(body[index - 1].test)
         for index in locations

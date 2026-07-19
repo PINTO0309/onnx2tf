@@ -5892,7 +5892,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-        _topologically_sort_operators(fallback_ir)
+        _fallback_post_placeholder_topology_stats = (
+            _topologically_sort_operators(fallback_ir)
+        )
         _fallback_precision_div_rewrite_stats = (
             _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
         )
@@ -5998,7 +6000,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-        _topologically_sort_operators(fallback_ir)
+        _fallback_post_layout_repair_topology_stats = (
+            _topologically_sort_operators(fallback_ir)
+        )
         fallback_ir.metadata["layout_optimize_fallback"] = {
             "reason": "dangling_dynamic_inputs_detected",
             "count": int(len(unbound_inputs)),

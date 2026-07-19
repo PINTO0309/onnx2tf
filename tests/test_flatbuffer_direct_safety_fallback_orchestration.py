@@ -198,7 +198,14 @@ def test_safety_fallback_retains_precision_cleanup_results() -> None:
         } == keywords
 
     previous = body[rewrite_index - 1]
-    assert ast.unparse(previous) == "_topologically_sort_operators(fallback_ir)"
+    assert isinstance(previous, ast.Assign)
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_fallback_post_placeholder_topology_stats"
+    )
+    assert ast.unparse(previous.value) == (
+        "_topologically_sort_operators(fallback_ir)"
+    )
     following = body[rewrite_index + 3]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
@@ -411,7 +418,11 @@ def test_safety_fallback_stages_placeholder_matmul_reconciliation_evidence() -> 
     } == {"include_mutation_count": "True"}
 
     following = body[owner_index + 3]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_fallback_post_placeholder_topology_stats"
+    )
     assert ast.unparse(following.value) == (
         "_topologically_sort_operators(fallback_ir)"
     )
@@ -746,7 +757,11 @@ def test_safety_fallback_stages_complete_binary_layout_evidence() -> None:
     } == {"include_mutation_count": "True"}
 
     following = body[stats_index + 3]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_fallback_post_layout_repair_topology_stats"
+    )
     assert ast.unparse(following.value) == (
         "_topologically_sort_operators(fallback_ir)"
     )
