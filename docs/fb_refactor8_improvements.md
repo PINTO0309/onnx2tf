@@ -1759,6 +1759,35 @@ coherent non-store boundary after the very-late broadcast reconciliation.
 Continue with commits and pushes only; never create, update, or reopen a pull
 request.
 
+## Shared-late reconciliation decision characterization
+
+The next boundary is not an observation-only tuple. It runs six owners that
+produce nine mutation dictionaries, compares the tensor count before and
+after cleanup to catch prune-only changes, and conditionally invokes the
+already-recorded shared-late static-shape reconciliation. The predicate is an
+actual execution guard and must remain invoked-phase-only.
+
+The focused characterization fixes all nine evidence positions, the initial
+tensor-count snapshot, exact positive-counter predicate, prune-delta fallback,
+direct reconciliation call, stable phase ID, and late-binary successor. A
+strict expected failure requires one boolean
+`run_shared_late_reconciliation_cleanup(shared_model_ir_pass_context)` result
+between the very-late broadcast record and the unchanged reconciliation
+guard.
+
+The proposed owner may absorb only the six cleanup calls and decision. It
+must call boundary-signature, HardSwish, Squeeze, Conv-input, indexed binary
+adapter, and singleton/consecutive-Reshape owners in the same order and with
+the same arguments. The lowerer must continue to own the conditional
+`session.record_phase_result` call so the nested reconciliation owner and
+invoked-phase-only store semantics remain unchanged. No production source
+changed in this checkpoint.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.13s`; the sole xfail is the intentionally absent
+boolean owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

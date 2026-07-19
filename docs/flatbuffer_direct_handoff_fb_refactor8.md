@@ -2785,3 +2785,30 @@ and push this checkpoint. At resume, audit the next coherent non-store unit
 after the very-late broadcast reconciliation without changing production
 behavior first. Continue with coherent commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Shared-late reconciliation decision characterization
+
+The next selected unit owns the cleanup decision immediately after the
+very-late broadcast reconciliation. Four direct sanitizers, the two-result
+indexed binary adapter owner, and the three-result singleton/consecutive-
+Reshape owner produce nine ordered dictionaries. Their positive counters or a
+decrease from the initial tensor count trigger the existing shared-late
+reconciliation record.
+
+`tests/test_flatbuffer_direct_shared_late_reconciliation_orchestration.py`
+fixes every evidence position, the prune-delta check, owner order, phase ID,
+direct reconciliation call, and late-binary successor. Its strict expected
+failure requires one
+`run_shared_late_reconciliation_cleanup(shared_model_ir_pass_context)` boolean
+assignment followed by the same conditional record.
+
+The owner must not record phase evidence or perform reconciliation itself.
+That keeps `session.record_phase_result` in the lowerer with the same nested
+`_reconcile_static_tensor_shapes` call and preserves invoked-phase-only store
+semantics. It must import the six pass-module owners directly and retain their
+exact argument policy. The characterization gate completed with
+`1 passed, 1 xfailed in 0.13s`; the sole xfail is the intentionally absent
+owner. Targeted Ruff, bytecode compilation, and whitespace checks passed.
+
+Commit and push this characterization before production changes. Keep the
+store at 128/128 and never create, update, or reopen a pull request.
