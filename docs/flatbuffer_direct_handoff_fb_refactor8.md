@@ -5184,6 +5184,39 @@ real-model conversion was repeated for this ownership-only move.
 At resume, rerun the read-only inventory of remaining unconsumed lowerer
 results. Characterize the next smallest source-adjacent, semantically closed
 cluster before changing production, and keep all validation sequential and
-single-process under `uv`. Commit and push each completed checkpoint. A pull
-request may be created only when the user explicitly requests it at that
-time.
+single-process under `uv`. Commit and push each completed checkpoint. Never
+create, update, or reopen a pull request.
+
+## Pre-terminal affine/Slice/SPP composite characterization checkpoint
+
+The read-only lowerer inventory found 61 remaining unconsumed underscore
+assignment targets. Earlier candidates in the late-layout tail were skipped
+because they cross optional guards or still depend on a lowerer-local indexed
+convergence helper. The first eligible adjacent pair whose children already
+have pass-module owners is `run_pre_terminal_cleanup(context)` followed by
+`run_terminal_affine_slice_spp_cleanup(context)`.
+
+The contract requires one shared-context owner, exact two-child order, the
+same `ModelIRPassContext` object, and preservation of the complete nested
+five-result and three-result schemas without copying or flattening. The
+preceding `_late_binary_layout_recovery_requires_reconciliation` guard and the
+following terminal QKV shape/attention composite are fixed outer boundaries
+and must remain outside the new owner.
+
+Focused characterization reports `1 passed, 1 xfailed`; complete affected
+characterization reports `512 passed, 1 xfailed`. The sole xfail is the
+intentionally absent
+`passes/pre_terminal_affine_slice_spp_orchestration.py`. Eight pre-existing
+stale AST expectations were corrected to resolve terminal QKV and later
+Shape-extract operations through their already-implemented owners. No
+production source, mutation route, or phase-store entry changed; the store
+remains exactly 128 IDs and 128 owners.
+
+At resume, implement
+`run_pre_terminal_affine_slice_spp_cleanup(context)` as a straight-line
+two-child owner. Return both raw nested tuples unchanged, replace only
+`_pre_terminal_cleanup_results` and `_terminal_affine_slice_spp_results`, and
+preserve both outer boundaries. Update child-family ownership tests, add
+runtime order/context/result-identity injection, run affected and standard
+gates sequentially, then commit and push only. Never create, update, or
+reopen a pull request.

@@ -40,6 +40,14 @@ RESULT_TARGETS = (
 COMPOSITE_TARGET = "_terminal_qkv_shape_attention_results"
 PREDECESSOR_TARGET = "_terminal_affine_slice_spp_results"
 SUCCESSOR_TARGET = "_terminal_activation_bridge_results"
+TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_LAYOUT_SHAPE_OWNER = "run_terminal_layout_shape_cleanup"
 SHAPE_SCHEMA = {"optimized_transpose_shape_extract_nhwc_to_nchw_chains": 0}
 QKV_SCHEMA = {
     "removed_identity_transpose": 0,
@@ -151,12 +159,7 @@ def test_terminal_qkv_shared_context_and_independent_shape_route_are_fixed() -> 
         ),
         key=lambda node: (node.lineno, node.col_offset),
     )
-    assert len(shape_calls) == 1
-    assert all(
-        [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        and call.keywords == []
-        for call in shape_calls
-    )
+    assert shape_calls == []
     owner = _functions(OWNER_PATH)[OWNER]
     owner_shape_calls = [
         node
@@ -169,6 +172,22 @@ def test_terminal_qkv_shared_context_and_independent_shape_route_are_fixed() -> 
     assert [
         ast.unparse(argument) for argument in owner_shape_calls[0].args
     ] == ["context.model_ir"]
+    terminal_layout_owner = _functions(TERMINAL_LAYOUT_SHAPE_OWNER_PATH)[
+        TERMINAL_LAYOUT_SHAPE_OWNER
+    ]
+    terminal_layout_shape_calls = [
+        node
+        for node in ast.walk(terminal_layout_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CHILD_OWNERS[0]
+    ]
+    assert len(terminal_layout_shape_calls) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in terminal_layout_shape_calls[0].args
+    ] == ["context.model_ir"]
+    assert terminal_layout_shape_calls[0].keywords == []
 
 
 def test_terminal_qkv_shape_attention_has_one_context_owner() -> None:

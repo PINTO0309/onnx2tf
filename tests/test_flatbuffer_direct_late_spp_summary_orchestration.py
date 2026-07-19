@@ -28,7 +28,7 @@ SUMMARY_FUNCTION = "summarize_late_spp_concat_unary_conv_mutations"
 RAW_TARGET = "late_spp_results"
 SUMMARY_TARGET = "_late_spp_stats"
 PREDECESSOR_TARGET = "_terminal_slice_pad_concat_stats"
-SUCCESSOR_TARGET = "_late_pre_qkv_shape_extract_stats"
+SUCCESSOR_TARGET = "_terminal_qkv_shape_attention_results"
 COMPOSITE_PATH = (
     REPO_ROOT
     / "onnx2tf"

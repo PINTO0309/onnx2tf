@@ -5982,3 +5982,38 @@ public API, artifact, dependency, or TensorFlow boundary changed. The bounded
 store remains exactly 128 IDs and 128 owners. No real-model conversion was
 repeated because this checkpoint is a straight-line ownership extraction
 with direct state, schema, order, boundary, and result-identity coverage.
+
+## Pre-terminal affine/Slice/SPP composite characterization
+
+The refreshed AST inventory found 61 remaining unconsumed underscore-prefixed
+lowerer assignments. The earlier late-layout tail was not selected because it
+still crosses an optional fanout guard and a lowerer-local indexed final
+convergence helper rather than two pass-module-owned children. The first
+smallest fully pass-owned adjacent pair is the existing pre-terminal cleanup
+composite followed by the existing terminal affine/Slice/SPP composite.
+
+Both children receive the exact same `shared_model_ir_pass_context`. Their raw
+results are nested tuples with fixed lengths five and three. The proposed
+owner must return both child tuples unchanged and in source order. It must not
+absorb the preceding optional late-binary layout-recovery reconciliation
+guard or the following terminal QKV shape/attention composite.
+
+`tests/test_flatbuffer_direct_pre_terminal_affine_slice_spp_orchestration.py`
+fixes direct source adjacency, shared-context arguments, complete empty-model
+schemas, absence of consumers, and both outer boundaries. Its only strict
+expected failure requires one new shared-context owner and replacement of
+only the two observation-only lowerer locals.
+
+The affected inventory exposed eight stale structural expectations left by
+the already-implemented terminal QKV and terminal layout/shape composites.
+They still expected the removed direct QKV Shape-extract result or direct
+late Shape-extract route. The tests now follow those unchanged operations
+through their current owners; production and route counts did not change.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.57s` focused and
+`512 passed, 1 xfailed in 19.94s` across pre-terminal, affine, Slice/Pad,
+SPP, QKV, late-binary recovery, shared-context, terminal-validation,
+architecture, and phase-store contracts. Production, public behavior,
+dependency boundaries, and the exactly 128-ID/128-owner store remain
+unchanged.

@@ -391,7 +391,7 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
     assert isinstance(lowerer.body[composite_index + 2].targets[0], ast.Name)
     assert (
         lowerer.body[composite_index + 2].targets[0].id
-        == "_late_pre_qkv_shape_extract_stats"
+        == "_terminal_qkv_shape_attention_results"
     )
 
 
@@ -547,7 +547,7 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
     assert lowerer.body[index + 1].targets[0].id == (
-        "_late_pre_qkv_shape_extract_stats"
+        "_terminal_qkv_shape_attention_results"
     )
     terminal_calls = _terminal_affine_slice_spp_calls(
         TERMINAL_AFFINE_SUMMARY

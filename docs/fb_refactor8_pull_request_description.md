@@ -1262,3 +1262,13 @@ outside the owner, while compatibility wrappers and independent affine routes
 remain intact. Runtime identity coverage, 378 affected tests, and all standard
 sequential gates pass; public behavior, graph rewrites, TensorFlow isolation,
 and the exactly 128-ID/128-owner store are unchanged.
+
+The next characterization selects the adjacent pre-terminal cleanup and
+terminal affine/Slice/SPP composites. Both receive the exact shared
+`ModelIRPassContext`; their nested five-result and three-result tuples have
+fixed schemas and order. The optional late-binary layout-recovery
+reconciliation guard remains the predecessor, and terminal QKV
+shape/attention remains the successor. Production is unchanged pending one
+straight-line two-child owner. Focused and affected sequential validation
+report `1 passed, 1 xfailed` and `512 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner.

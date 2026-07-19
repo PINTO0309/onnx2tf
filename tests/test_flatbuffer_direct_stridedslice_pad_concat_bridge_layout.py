@@ -1345,7 +1345,9 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+    assert following.targets[0].id == (
+        "_terminal_qkv_shape_attention_results"
+    )
 
     direct_statements = [
         statement
