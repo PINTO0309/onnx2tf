@@ -4576,7 +4576,9 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _resolve_dynamic_reshape_shapes(model_ir)
+    _core_cleanup_dynamic_reshape_stats = _resolve_dynamic_reshape_shapes(
+        model_ir
+    )
     _core_cleanup_squeeze_reshape_identity_stats = (
         run_squeeze_reshape_identity_cleanup(
             model_ir,

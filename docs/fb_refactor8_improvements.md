@@ -116,3 +116,23 @@ Characterization validation completed sequentially under `uv`:
 
 The sole expected failure is the intentionally unimplemented assignment. No
 production source changed in this checkpoint.
+
+## Core dynamic-Reshape result retention
+
+The core-cleanup invocation now retains its unchanged one-key dictionary as
+`_core_cleanup_dynamic_reshape_stats`. The target is unconsumed and
+observation-only. No call argument, graph index, guard, cleanup, pass order,
+mutation, layout state, or artifact behavior changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.54s`;
+- focused dynamic-Reshape, surrounding cleanup, indexed convergence, core,
+  architecture, pass-efficiency, terminal orchestration, and
+  TensorFlow-import-blocked gate: `452 passed in 28.87s`;
+- all test files changed on `fb-refactor8`: `20 passed in 0.76s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No model conversion was run because retaining an already-computed dictionary
+cannot change ModelIR or serialization.

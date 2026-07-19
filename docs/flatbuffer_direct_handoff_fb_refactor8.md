@@ -105,3 +105,26 @@ contract is `2 passed, 1 xfailed in 0.54s`, and targeted Ruff, bytecode
 compilation, and whitespace checks pass. The sole expected failure is the
 unimplemented assignment. Commit and push this characterization before
 changing production code; do not create or update a pull request.
+
+## Core dynamic-Reshape result implementation checkpoint
+
+The core-cleanup call now retains its unchanged dictionary as
+`_core_cleanup_dynamic_reshape_stats`. It remains unconsumed. Arguments,
+execution count, graph mutation, order, following Squeeze/Reshape cleanup,
+dependency set, public behavior, and TensorFlow isolation are unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated contract: `3 passed in 0.54s`;
+- focused affected-owner, convergence, core, architecture, pass-efficiency,
+  terminal orchestration, and TensorFlow-import-blocked gate:
+  `452 passed in 28.87s`;
+- all `fb-refactor8` changed test files: `20 passed in 0.76s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No model conversion was required for this observation-only assignment. After
+this checkpoint is committed and pushed, inventory the raw
+`_apply_safe_transpose_reduction_lite(model_ir)` result before changing it.
+Freeze its schema, mutation/cleanup semantics, surrounding conditional
+boundary, and whether the existing pass already owns all required state.
+Continue with commits and pushes only; do not create or update a pull request.

@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -57,13 +56,13 @@ def _core_invocation() -> tuple[ast.FunctionDef, int]:
         if _call_name(statement) == OWNER
     ]
     assert len(indices) == 2
-    raw_indices = [
+    core_indices = [
         index
         for index in indices
-        if _single_target(lowerer.body[index]) is None
+        if _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     ]
-    assert len(raw_indices) == 1
-    return lowerer, raw_indices[0]
+    assert len(core_indices) == 1
+    return lowerer, core_indices[0]
 
 
 def _dynamic_reshape_model_ir() -> ModelIR:
@@ -121,10 +120,10 @@ def test_core_dynamic_reshape_schema_and_mutation_are_explicit() -> None:
     assert model_ir.tensors["output"].shape_signature == [2, 2]
 
 
-def test_core_dynamic_reshape_raw_boundary_is_explicit() -> None:
+def test_core_dynamic_reshape_boundary_is_explicit() -> None:
     lowerer, index = _core_invocation()
     invocation = lowerer.body[index]
-    assert isinstance(invocation, ast.Expr)
+    assert _single_target(invocation) == RESULT_TARGET
     call = _statement_call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -133,10 +132,6 @@ def test_core_dynamic_reshape_raw_boundary_is_explicit() -> None:
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the core dynamic-reshape result is still discarded",
-)
 def test_core_dynamic_reshape_result_is_retained_for_observation() -> None:
     lowerer, index = _core_invocation()
     invocation = lowerer.body[index]
