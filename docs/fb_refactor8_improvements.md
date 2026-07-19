@@ -5676,3 +5676,33 @@ default-direct, and `-cotof` tests. The phase-result store remains exactly 128
 IDs and 128 owners. No real-model conversion was repeated because this is a
 straight-line ownership extraction with explicit runtime identity, boundary,
 schema, and independent-route coverage.
+
+## Terminal QKV shape/attention composite characterization
+
+The refreshed inventory selected the two adjacent unconditional observations
+immediately after the terminal affine/Slice-SPP composite: terminal QKV
+shape-extract cleanup and the terminal QKV attention summary. The latter keeps
+`include_prefix=False` and forwards the existing layout-Transpose option. Its
+context is an identity alias of `shared_model_ir_pass_context`; shape cleanup
+receives that context's model. The following indexed Split/Conv/Concat bridge
+defines the successor boundary.
+
+The characterization preserves the later independent shape-extract call, all
+raw QKV wrapper routes, exact current arguments, both outer boundaries,
+absence of result consumers, and both QKV layout-option variants. Empty-model
+schemas remain one shape counter and eleven QKV/prune counters. A strict
+expected failure requires one shared-context owner returning the two raw
+mappings in order, hard-coding only the existing `include_prefix=False`
+policy, and replacing the two lowerer locals.
+
+Sequential characterization under core-only `uv` completed with
+`3 passed, 1 xfailed in 0.61s` focused and
+`443 passed, 1 xfailed in 19.30s` across QKV, shape-extract, indexed bridge,
+shared-context, terminal validation, architecture, result-boundary, and
+phase-store contracts. The sole expected failure is the intentionally absent
+composite. Ruff and whitespace checks passed.
+
+No production callback, graph mutation, option, schema, context identity,
+pass order, public API, artifact, dependency, TensorFlow boundary, or store
+entry changed. No real-model conversion was run; the phase-result store
+remains exactly 128 IDs and 128 owners.

@@ -1160,3 +1160,12 @@ wrappers and context aliases remain available. Runtime identity coverage and
 520 affected tests pass, as do the full standard sequential gates; public
 behavior, mutation schemas, dependency isolation, and the 128-ID/128-owner
 phase store are unchanged.
+
+The next characterization selects the adjacent terminal QKV shape-extract and
+QKV summary results. It preserves shared-context/model identity, the existing
+layout option and `include_prefix=False` policy, both raw schemas and source
+order, the independent later shape-extract route, raw QKV wrappers, terminal
+affine predecessor, indexed Split/Conv/Concat successor, and the full
+128-ID/128-owner store. Production remains unchanged pending a separate
+two-stage owner implementation. Focused and affected validation report
+`3 passed, 1 xfailed` and `443 passed, 1 xfailed`.

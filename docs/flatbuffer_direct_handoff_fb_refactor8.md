@@ -741,6 +741,31 @@ before production changes, and keep all `uv` validation sequential and
 single-process. Commit and push each checkpoint only. Never create, update,
 reopen, or otherwise modify a pull request.
 
+## Terminal QKV shape/attention composite characterization checkpoint
+
+The post-removal inventory selected the adjacent QKV shape-extract result and
+terminal QKV summary immediately after
+`_terminal_affine_slice_spp_results`. Both are unconditional and unconsumed.
+The QKV summary uses the exact shared context with
+`include_layout_transpose=optimize_layout_transpose_chains` and
+`include_prefix=False`; shape cleanup receives the shared model. The indexed
+Split/Conv/Concat bridge is the fixed successor.
+
+The new strict contract also preserves the later independent shape-extract
+call and existing raw QKV wrapper routes. It fixes exact arguments, outer
+boundaries, result schemas, both layout-option variants, and absence of
+consumers. Focused validation reports `3 passed, 1 xfailed`; affected
+sequential validation reports `443 passed, 1 xfailed`. The sole expected
+failure requires `passes/terminal_qkv_shape_attention_orchestration.py`.
+
+At resume, implement that module as a two-stage owner accepting the shared
+`ModelIRPassContext` and keyword-only `include_layout_transpose`. Pass
+`context.model_ir` to shape cleanup and `context` to the QKV summary, preserve
+`include_prefix=False`, return both raw mapping objects unchanged, and replace
+only the two unconsumed locals. Keep the later shape call and raw QKV wrappers
+independent. Run affected and standard gates sequentially, then commit and
+push only. Never create or modify a pull request.
+
 ## Primary final layout-refresh reconciliation implementation
 
 The final ConvInteger, InstanceNorm, and broadcast reconciliations now use
