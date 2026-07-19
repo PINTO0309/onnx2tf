@@ -1278,6 +1278,25 @@ No root-model conversion was run because this is a characterized four-call
 owner extraction with focused runtime equivalence and unchanged serialization
 inputs.
 
+## Late window-layout composite characterization
+
+The next non-store unit covers the adjacent window-partition and window-reverse
+layout repairs. Both return one unconsumed integer mapping and receive the same
+ModelIR and conversion-local `LayoutState`.
+
+The focused characterization fixes their order, exact arguments, late
+attention-composite predecessor, final shape/activation convergence successor,
+and absence of consumers. A strict expected failure requires one
+`run_late_window_layout_cleanup` owner and one ordered
+`_late_window_layout_results` tuple outside the full phase store. No production
+source changed.
+
+Sequential validation under core-only `uv` completed with
+`103 passed, 1 xfailed in 0.84s`; the sole xfail is the intentionally absent
+composite. Targeted Ruff, bytecode compilation, and whitespace checks passed.
+Commit and push characterization before implementation, keep the store fixed
+at 128/128, and never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

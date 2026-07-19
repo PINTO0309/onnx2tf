@@ -2338,3 +2338,23 @@ Final sequential validation under core-only `uv`:
 The store remains fixed at 128/128. Commit and push this implementation unit.
 Resume with the next non-store late orchestration audit; do not create, update,
 or reopen a pull request.
+
+## Late window-layout composite characterization
+
+The next selected unit owns the adjacent late window-partition and
+window-reverse repairs. Their mappings are unconsumed, and both receive the
+same ModelIR and conversion-local layout state.
+
+`tests/test_flatbuffer_direct_late_window_layout_orchestration.py` fixes their
+order and arguments, the late attention-composite predecessor, final
+shape/activation convergence successor, and absence of consumers. Its strict
+expected failure requires
+`run_late_window_layout_cleanup(shared_model_ir_pass_context)` and removal of
+the two old locals, while keeping the ordered tuple outside the full store.
+
+The gate completed with `103 passed, 1 xfailed in 0.84s`; Ruff, bytecode
+compilation, and whitespace checks passed. Commit and push this checkpoint
+first. Implementation must add runtime order/context/layout/tuple coverage,
+update structural boundaries and ownership, run sequential gates, document,
+commit, and push. Keep the store at 128/128 and never create, update, or reopen
+a pull request.
