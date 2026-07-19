@@ -45,6 +45,12 @@ Characterization validation completed sequentially under `uv`:
 The sole expected failure is the intentionally unimplemented result
 assignment. No production source changed in this checkpoint.
 
+The first all-direct-test collection subsequently stopped on an inherited
+test-only import error. `test_flatbuffer_direct_shape_resolution.py` still
+looked for `_set_operator_outputs` in the central lowerer, while the canonical
+owner is `core.model_ir_utils`. `main` has the same stale import. The test
+reference is repaired without restoring a production compatibility alias.
+
 After the characterization tests pass with exactly one strict xfail, commit
 and push the characterization checkpoint. Then implement only the selected
 assignment, remove the xfail marker, repeat the focused and branch-wide gates,

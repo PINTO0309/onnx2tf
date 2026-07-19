@@ -51,3 +51,14 @@ Characterization validation completed sequentially under `uv`:
 The sole expected failure is the intentionally unimplemented result
 assignment. No production source, public API, dependency, pass order,
 TensorFlow boundary, or model artifact changed in this checkpoint.
+
+## Inherited shape-resolution test import repair
+
+The first all-direct-test collection exposed an inherited test-only stale
+import: `test_flatbuffer_direct_shape_resolution.py` still imported
+`_set_operator_outputs` from the central lowerer after that helper had moved to
+`core.model_ir_utils`. `main` contains the same stale import.
+
+The test now imports the canonical owner used throughout production pass
+modules. No lowerer compatibility alias is restored, and no production code or
+runtime behavior changes in this repair.
