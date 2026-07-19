@@ -2385,3 +2385,24 @@ Final sequential validation under core-only `uv`:
 The store remains fixed at 128/128. Commit and push this implementation unit.
 Resume by auditing the next non-store late boundary; do not create, update, or
 reopen a pull request.
+
+## Final boundary-channel composite characterization
+
+The next selected unit owns final boundary-input normalization, internal
+channel-slice propagation, and the channel-slice Mul/Add bridge. The first
+call receives layout and diagnostics; the latter two final calls intentionally
+remain model-only, unlike the earlier terminal instances.
+
+`tests/test_flatbuffer_direct_final_boundary_channel_layout_orchestration.py`
+fixes the exact order and argument policy, final shape/activation predecessor,
+slice/Concat recovery successor, and absence of consumers. Its strict expected
+failure requires one
+`run_final_boundary_channel_layout_cleanup(shared_model_ir_pass_context)`
+tuple outside the full store and removal of the three old locals.
+
+The gate completed with `77 passed, 1 xfailed in 2.20s`; Ruff, bytecode
+compilation, and whitespace checks passed. Commit and push this checkpoint
+first. Implementation must add runtime order/context/argument/tuple coverage,
+update structural boundaries and ownership, run sequential gates, document,
+commit, and push. Keep the store at 128/128 and never create, update, or reopen
+a pull request.

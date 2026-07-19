@@ -1330,6 +1330,27 @@ No root-model conversion was run because this is a characterized two-call
 owner extraction with focused runtime equivalence and unchanged serialization
 inputs.
 
+## Final boundary-channel composite characterization
+
+The next non-store unit covers final boundary-input normalization, internal
+channel-slice propagation, and the channel-slice Mul/Add bridge. The first
+owner receives layout state and diagnostics; unlike their earlier terminal
+invocations, the final two owners intentionally remain model-only. All three
+result mappings are unconsumed.
+
+The focused characterization fixes this exact argument policy and order, the
+final shape/activation convergence predecessor, the slice/Concat recovery
+successor, and absence of consumers. A strict expected failure requires one
+`run_final_boundary_channel_layout_cleanup` owner and one ordered
+`_final_boundary_channel_layout_results` tuple outside the full store. No
+production source changed.
+
+Sequential validation under core-only `uv` completed with
+`77 passed, 1 xfailed in 2.20s`; the sole xfail is the intentionally absent
+composite. Targeted Ruff, bytecode compilation, and whitespace checks passed.
+Commit and push characterization first, keep the store fixed at 128/128, and
+never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
