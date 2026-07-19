@@ -1500,3 +1500,26 @@ changed and the runtime suite exercises the guarded path. After committing and
 pushing, retain the 90/128 phase-cap audit and keep composite results outside
 the bounded integer mapping store. Never create, update, or reopen a pull
 request.
+
+## Terminal boundary cleanup characterization
+
+The next family is restricted to seven consecutive unconditional terminal
+mapping results: pre-ArgMax, Transpose/Gather fan-out, Softmax/Transpose,
+boundary normalization, two channel-slice cleanups, and channel-slice Mul/Add
+bridge cleanup. Existing tests fix their bounded integer schemas; none has a
+default or consumer.
+
+The contract fixes exact owner expressions, adjacency, the preceding terminal
+Conv-activation phase record, the following Slice/Concat composite, and absence
+of loads. Its strict expected failure requires seven stable
+`cleanup.terminal.*` records.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `152 passed in 2.31s`; characterization plus related contracts is
+`153 passed, 1 xfailed in 2.51s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only the seven mapping
+destinations. Preserve adjacency and both boundaries, then update terminal
+orchestration and bounded-store contracts, validate, document, commit, and
+push. Never create, update, or reopen a pull request.
