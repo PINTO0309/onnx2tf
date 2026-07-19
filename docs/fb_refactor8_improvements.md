@@ -4387,3 +4387,45 @@ This checkpoint changes no production source, graph mutation, pass order,
 phase-result entry, public API, artifact, dependency, or TensorFlow boundary.
 No real-model conversion was repeated because it is a characterization-only
 change.
+
+## SiNet SE-FC/Gather shared-summary implementation
+
+`run_sinet_se_fc_gather_summary(context)` now owns the tensor-count snapshot,
+one SiNet shuffle-tail optimizer call, and the existing ordered SE-FC/Gather
+fanout pair. It forwards the exact ModelIR and `LayoutState` to the SiNet
+owner, forwards the unchanged `ModelIRPassContext` (including diagnostics) to
+the pair owner, and returns the three normalized rewrite counters plus a
+non-negative `pruned_unused_tensors` counter.
+
+The fallback and absolute-final sites each replace one tensor snapshot, one
+SiNet result, and two pair-result locals with one bounded summary mapping. Both
+sites use the existing `_stats_have_positive_count` predicate, preserving
+reconciliation after any of the three rewrites or prune-only cleanup. Their
+path-specific ModelIR/LayoutState arguments, SiNet-before-pair order,
+reconciliation phase IDs, and neighboring pass boundaries are unchanged.
+
+The raw lowerer SiNet wrapper and raw SE-FC/Gather context helper remain
+defined for compatibility. The shared summary is deliberately outside the
+already-full phase-result store, which remains exactly 128 phase IDs and 128
+owners. Public behavior, artifacts, dependencies, TensorFlow isolation, and
+single-process validation policy are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-summary contracts: `4 passed in 0.54s`;
+- affected SE-FC/Gather, fallback, terminal-layout, core runtime, store, and
+  architecture contracts: `410 passed in 21.87s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.83s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.32s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.66s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves ordered owner invocation, exact context forwarding, stable schema, all
+three rewrite-evidence paths, and prune-only reconciliation, while affected
+structural gates preserve both production boundaries and compatibility
+wrappers.

@@ -735,7 +735,7 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
     following = body[restore_index + 3]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "final_se_fc_gather_tensor_count"
+    assert following.targets[0].id == "final_se_fc_gather_stats"
 
 
 def test_primary_path_stages_final_mixed_singleton_concat_reconciliation() -> None:

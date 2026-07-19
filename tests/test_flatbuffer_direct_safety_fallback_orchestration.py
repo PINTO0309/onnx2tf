@@ -230,30 +230,24 @@ def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
 
 def test_safety_fallback_stages_se_fc_gather_reconciliation_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
-    cluster_index = next(
+    summary_index = next(
         index
         for index, statement in enumerate(body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Tuple)
-        and {
-            element.id
-            for element in statement.targets[0].elts
-            if isinstance(element, ast.Name)
-        }
-        == {"fallback_se_fc_stats", "fallback_gather_stats"}
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_se_fc_gather_stats"
     )
 
-    guard = body[cluster_index + 1]
+    summary = body[summary_index]
+    assert isinstance(summary, ast.Assign)
+    assert ast.unparse(summary.value) == (
+        "_run_sinet_se_fc_gather_summary(fallback_ir, None)"
+    )
+    guard = body[summary_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
-        "int(fallback_sinet_shuffle_stats.get("
-        "'optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains', 0)) "
-        "+ int(fallback_se_fc_stats.get("
-        "'optimized_transpose_se_fc_mul_prepost_nhwc_chains', 0)) + "
-        "int(fallback_gather_stats.get("
-        "'optimized_transpose_gather_transpose_nhwc_channel_chains', 0)) > 0 "
-        "or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count"
+        "_stats_have_positive_count(fallback_se_fc_gather_stats)"
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
@@ -266,7 +260,7 @@ def test_safety_fallback_stages_se_fc_gather_reconciliation_evidence() -> None:
         ),
     )
 
-    following = body[cluster_index + 2]
+    following = body[summary_index + 2]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)

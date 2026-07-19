@@ -12,6 +12,9 @@ from onnx2tf.tflite_builder.passes.recovery_orchestration import (
     run_recovery_invocations,
 )
 from onnx2tf.tflite_builder.passes.se_layout import run_se_fc_layout_cleanup
+from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
+    optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains,
+)
 
 
 SE_FC_GATHER_CHANNEL_FANOUT_PASS_IDS = (
@@ -62,3 +65,38 @@ def run_se_fc_gather_channel_fanout(
             phase_name="SE-FC/gather-channel-fanout",
         ),
     )
+
+
+def run_sinet_se_fc_gather_summary(
+    context: SEFCGatherChannelFanoutContext,
+) -> Dict[str, int]:
+    initial_tensor_count = len(context.model_ir.tensors)
+    sinet_stats = optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+        context.model_ir,
+        layout_state=context.layout_state,
+    )
+    se_fc_stats, gather_stats = run_se_fc_gather_channel_fanout(context)
+    return {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": int(
+            sinet_stats.get(
+                "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+                0,
+            )
+        ),
+        "optimized_transpose_se_fc_mul_prepost_nhwc_chains": int(
+            se_fc_stats.get(
+                "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
+                0,
+            )
+        ),
+        "optimized_transpose_gather_transpose_nhwc_channel_chains": int(
+            gather_stats.get(
+                "optimized_transpose_gather_transpose_nhwc_channel_chains",
+                0,
+            )
+        ),
+        "pruned_unused_tensors": max(
+            0,
+            initial_tensor_count - len(context.model_ir.tensors),
+        ),
+    }

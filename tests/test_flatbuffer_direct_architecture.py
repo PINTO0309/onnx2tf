@@ -5684,14 +5684,45 @@ def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert helper_invocations == []
+
+    summary_helper_name = "_run_sinet_se_fc_gather_summary"
+    summary_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == summary_helper_name
+    )
+    assert [argument.arg for argument in summary_helper.args.args] == [
+        "target_model_ir",
+        "target_layout_state",
+    ]
+    assert len(summary_helper.body) == 1
+    summary_return = summary_helper.body[0]
+    assert isinstance(summary_return, ast.Return)
+    assert isinstance(summary_return.value, ast.Call)
+    assert isinstance(summary_return.value.func, ast.Name)
+    assert summary_return.value.func.id == "run_sinet_se_fc_gather_summary"
+    assert len(summary_return.value.args) == 1
+    assert isinstance(summary_return.value.args[0], ast.Call)
+    assert isinstance(summary_return.value.args[0].func, ast.Name)
+    assert summary_return.value.args[0].func.id == "ModelIRPassContext"
+    assert summary_return.value.keywords == []
+
+    summary_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == summary_helper_name
+    ]
+    assert len(summary_invocations) == 2
     assert sum(
         len(call.args) == 2
         and isinstance(call.args[0], ast.Name)
         and call.args[0].id == "fallback_ir"
         and isinstance(call.args[1], ast.Constant)
         and call.args[1].value is None
-        for call in helper_invocations
+        for call in summary_invocations
     ) == 1
     assert sum(
         len(call.args) == 2
@@ -5699,7 +5730,7 @@ def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
         and call.args[0].id == "model_ir"
         and isinstance(call.args[1], ast.Attribute)
         and call.args[1].attr == "layout_state"
-        for call in helper_invocations
+        for call in summary_invocations
     ) == 1
 
 
@@ -6976,23 +7007,32 @@ def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> 
         and isinstance(node.func, ast.Name)
         and node.func.id == postmul_wrapper_name
     ]
-    assert len(postmul_production_calls) == 2
-    postmul_layout_values = [
-        next(
-            keyword.value
-            for keyword in call.keywords
-            if keyword.arg == "layout_state"
-        )
-        for call in postmul_production_calls
+    assert postmul_production_calls == []
+    summary_path = (
+        pass_root / "se_fc_gather_channel_fanout_orchestration.py"
+    )
+    summary_tree = ast.parse(summary_path.read_text(encoding="utf-8"))
+    summary_owner = next(
+        node
+        for node in summary_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_sinet_se_fc_gather_summary"
+    )
+    postmul_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
     ]
-    assert any(
-        isinstance(value, ast.Constant) and value.value is None
-        for value in postmul_layout_values
+    assert len(postmul_owner_calls) == 1
+    layout_keyword = next(
+        keyword
+        for keyword in postmul_owner_calls[0].keywords
+        if keyword.arg == "layout_state"
     )
-    assert any(
-        isinstance(value, ast.Attribute) and value.attr == "layout_state"
-        for value in postmul_layout_values
-    )
+    assert ast.unparse(layout_keyword.value) == "context.layout_state"
 
     late_wrapper_name = (
         "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains"

@@ -12,6 +12,7 @@ import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 from onnx2tf.tflite_builder.passes import (
     binary_layout_adapter as binary_layout_adapter_module,
     optional_late_binary_layout_recovery_orchestration as optional_recovery_module,
+    se_fc_gather_channel_fanout_orchestration as se_fc_gather_module,
 )
 
 from onnx2tf.tflite_builder.core import (
@@ -1723,12 +1724,12 @@ def test_final_se_fc_gather_reconciles_after_rewrite_or_prune(monkeypatch) -> No
             )
 
         monkeypatch.setattr(
-            lowering_module,
-            "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+            se_fc_gather_module,
+            "optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains",
             sinet_result,
         )
         monkeypatch.setattr(
-            lowering_module,
+            se_fc_gather_module,
             "run_se_fc_gather_channel_fanout",
             cluster_result,
         )

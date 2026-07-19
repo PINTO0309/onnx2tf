@@ -247,6 +247,7 @@ from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orche
 )
 from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
     run_se_fc_gather_channel_fanout,
+    run_sinet_se_fc_gather_summary,
 )
 from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import (
     run_terminal_boundary_layout,
@@ -4101,6 +4102,18 @@ def lower_onnx_to_ir(
             )
         )
 
+    def _run_sinet_se_fc_gather_summary(
+        target_model_ir: ModelIR,
+        target_layout_state: LayoutState | None,
+    ) -> Dict[str, int]:
+        return run_sinet_se_fc_gather_summary(
+            ModelIRPassContext(
+                model_ir=target_model_ir,
+                layout_state=target_layout_state,
+                diagnostics=session.diagnostics,
+            )
+        )
+
     def _run_terminal_boundary_layout_pass_cluster() -> Tuple[Dict[str, int], ...]:
         return run_terminal_boundary_layout(terminal_boundary_layout_context)
 
@@ -5565,41 +5578,11 @@ def lower_onnx_to_ir(
                 "topology_layout.fallback.broadcast",
                 run_topology_layout_refresh(fallback_ir),
             )
-        fallback_se_fc_gather_tensor_count = len(fallback_ir.tensors)
-        fallback_sinet_shuffle_stats = (
-            _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
-                fallback_ir,
-                layout_state=None,
-            )
+        fallback_se_fc_gather_stats = _run_sinet_se_fc_gather_summary(
+            fallback_ir,
+            None,
         )
-        fallback_se_fc_stats, fallback_gather_stats = (
-            _run_se_fc_gather_channel_fanout_pass_cluster(
-                fallback_ir,
-                None,
-            )
-        )
-        if (
-            int(
-                fallback_sinet_shuffle_stats.get(
-                    "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains",
-                    0,
-                )
-            )
-            + int(
-                fallback_se_fc_stats.get(
-                    "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
-                    0,
-                )
-            )
-            + int(
-                fallback_gather_stats.get(
-                    "optimized_transpose_gather_transpose_nhwc_channel_chains",
-                    0,
-                )
-            )
-            > 0
-            or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count
-        ):
+        if _stats_have_positive_count(fallback_se_fc_gather_stats):
             session.record_phase_result(
                 "shape_reconciliation.fallback.se_fc_gather",
                 _reconcile_static_tensor_shapes(
@@ -5937,41 +5920,11 @@ def lower_onnx_to_ir(
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.
-    final_se_fc_gather_tensor_count = len(model_ir.tensors)
-    final_sinet_shuffle_stats = (
-        _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
+    final_se_fc_gather_stats = _run_sinet_se_fc_gather_summary(
+        model_ir,
+        session.layout_state,
     )
-    final_se_fc_stats, final_gather_stats = (
-        _run_se_fc_gather_channel_fanout_pass_cluster(
-            model_ir,
-            session.layout_state,
-        )
-    )
-    if (
-        int(
-            final_sinet_shuffle_stats.get(
-                "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains",
-                0,
-            )
-        )
-        + int(
-            final_se_fc_stats.get(
-                "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
-                0,
-            )
-        )
-        + int(
-            final_gather_stats.get(
-                "optimized_transpose_gather_transpose_nhwc_channel_chains",
-                0,
-            )
-        )
-        > 0
-        or len(model_ir.tensors) < final_se_fc_gather_tensor_count
-    ):
+    if _stats_have_positive_count(final_se_fc_gather_stats):
         session.record_phase_result(
             "shape_reconciliation.primary.final_se_fc_gather",
             _reconcile_static_tensor_shapes(

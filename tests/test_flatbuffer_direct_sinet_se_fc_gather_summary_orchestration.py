@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import (
+    se_fc_gather_channel_fanout_orchestration,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -16,9 +23,6 @@ OWNER_PATH = (
     / "tflite_builder"
     / "passes"
     / "se_fc_gather_channel_fanout_orchestration.py"
-)
-SINET_WRAPPER = (
-    "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
 )
 RAW_PAIR_HELPER = "_run_se_fc_gather_channel_fanout_pass_cluster"
 RAW_SINET_OWNER = (
@@ -70,17 +74,6 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
-def _tuple_targets(statement: ast.stmt) -> tuple[str, ...]:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return ()
-    target = statement.targets[0]
-    if not isinstance(target, ast.Tuple):
-        return ()
-    return tuple(
-        element.id for element in target.elts if isinstance(element, ast.Name)
-    )
-
-
 def _containing_body(root: ast.AST, target: ast.stmt) -> list[ast.stmt]:
     for node in ast.walk(root):
         for _, value in ast.iter_fields(node):
@@ -105,51 +98,45 @@ def _assert_predecessor(
 
 def test_sinet_se_fc_gather_rewrite_or_prune_boundaries_are_fixed() -> None:
     lowerer = _lowerer()
+    old_targets = {
+        target
+        for count, sinet, pair, _, _, _, _, _ in SITE_CONTRACTS
+        for target in (count, sinet, *pair)
+    }
     for (
-        count_target,
-        sinet_target,
-        pair_targets,
         _,
+        _,
+        _,
+        summary_target,
         model_name,
         layout_expression,
         predecessor,
         successor,
     ) in SITE_CONTRACTS:
-        count = next(
+        summary = next(
             statement
             for statement in ast.walk(lowerer)
-            if _single_target(statement) == count_target
+            if _single_target(statement) == summary_target
         )
-        body = _containing_body(lowerer, count)
-        index = body.index(count)
-        sinet = body[index + 1]
-        pair = body[index + 2]
-        guard = body[index + 3]
-        assert isinstance(count, ast.Assign)
-        assert ast.unparse(count.value) == f"len({model_name}.tensors)"
-        assert _single_target(sinet) == sinet_target
-        assert isinstance(sinet, ast.Assign)
-        assert ast.unparse(sinet.value) == (
-            f"{SINET_WRAPPER}({model_name}, "
-            f"layout_state={layout_expression})"
-        )
-        assert _tuple_targets(pair) == pair_targets
-        assert isinstance(pair, ast.Assign)
-        assert ast.unparse(pair.value) == (
-            f"{RAW_PAIR_HELPER}({model_name}, {layout_expression})"
+        body = _containing_body(lowerer, summary)
+        index = body.index(summary)
+        assert isinstance(summary, ast.Assign)
+        assert ast.unparse(summary.value) == (
+            f"{SUMMARY_HELPER}({model_name}, {layout_expression})"
         )
         _assert_predecessor(body[index - 1], predecessor)
+        guard = body[index + 1]
         assert isinstance(guard, ast.If)
-        guard_source = ast.unparse(guard.test)
-        for target in (sinet_target, *pair_targets, count_target):
-            assert target in guard_source
-        assert _single_target(body[index + 4]) == successor
+        assert ast.unparse(guard.test) == (
+            f"_stats_have_positive_count({summary_target})"
+        )
+        assert _single_target(body[index + 2]) == successor
+    assert not any(
+        isinstance(node, ast.Name) and node.id in old_targets
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="SE-FC/Gather sites lack one shared prune-aware summary owner",
-)
 def test_sinet_se_fc_gather_uses_one_shared_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     owner_calls = [
@@ -224,3 +211,71 @@ def test_sinet_se_fc_gather_uses_one_shared_prune_aware_summary_owner() -> None:
         isinstance(node, ast.Name) and node.id in old_targets
         for node in ast.walk(lowerer)
     )
+
+
+@pytest.mark.parametrize("prune", (False, True))
+def test_sinet_se_fc_gather_summary_preserves_order_context_schema_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("sinet_se_fc_gather_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict[str, object]] = []
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+    events: list[tuple[str, object, object]] = []
+
+    def _run_sinet(
+        candidate: ModelIR,
+        *,
+        layout_state: LayoutState | None = None,
+    ) -> dict[str, int]:
+        events.append(("sinet", candidate, layout_state))
+        if prune:
+            del candidate.tensors["probe"]
+        return {
+            "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 3
+        }
+
+    def _run_pair(
+        candidate_context: ModelIRPassContext,
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        events.append(("pair", candidate_context, candidate_context.diagnostics))
+        return (
+            {"optimized_transpose_se_fc_mul_prepost_nhwc_chains": 4},
+            {
+                "optimized_transpose_gather_transpose_nhwc_channel_chains": 5
+            },
+        )
+
+    monkeypatch.setattr(
+        se_fc_gather_channel_fanout_orchestration,
+        RAW_SINET_OWNER,
+        _run_sinet,
+    )
+    monkeypatch.setattr(
+        se_fc_gather_channel_fanout_orchestration,
+        RAW_PAIR_OWNER,
+        _run_pair,
+    )
+
+    assert se_fc_gather_channel_fanout_orchestration.run_sinet_se_fc_gather_summary(
+        context
+    ) == {
+        "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 3,
+        "optimized_transpose_se_fc_mul_prepost_nhwc_chains": 4,
+        "optimized_transpose_gather_transpose_nhwc_channel_chains": 5,
+        "pruned_unused_tensors": int(prune),
+    }
+    assert events == [
+        ("sinet", model_ir, layout_state),
+        ("pair", context, diagnostics),
+    ]

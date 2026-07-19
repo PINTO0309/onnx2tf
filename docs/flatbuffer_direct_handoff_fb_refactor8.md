@@ -3887,3 +3887,36 @@ the shared owner and these two compatible sites, preserve the raw pair helper
 and every other caller, update owner-aware structural/runtime contracts, and
 validate sequentially. Continue with commits and pushes only; never create,
 update, or reopen a pull request.
+
+## SiNet SE-FC/Gather shared-summary implementation
+
+The SE-FC/Gather pass module now exposes
+`run_sinet_se_fc_gather_summary(context)`. It captures tensor count, invokes
+the SiNet shuffle-tail owner once, invokes the existing ordered SE-FC/Gather
+pair once with the same context, and returns the three normalized rewrite
+counters plus prune evidence.
+
+The fallback and absolute-final sites now consume one summary mapping each and
+use the existing generic positive-count predicate. Their path-specific
+ModelIR/LayoutState arguments, rewrite-or-prune reconciliation semantics,
+phase IDs, and neighboring boundaries are unchanged. The raw lowerer SiNet
+wrapper and raw pair helper remain defined, and the phase-result store remains
+exactly 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-summary contracts: `4 passed in 0.54s`;
+- affected boundary, owner, runtime, store, and architecture contracts:
+  `410 passed in 21.87s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.83s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.32s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.66s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, audit the next
+compatible repeated lowerer evidence family before production changes. Keep
+all validation sequential and continue with commits and pushes only; never
+create, update, or reopen a pull request.
