@@ -3993,20 +3993,34 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    helper_invocations = [
+    summary_invocations = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == helper_name
+        and node.func.id == "run_indexed_conv_input_adapter_repairs_summary"
     ]
     assert [
         call.args[0].id
         for call in sorted(
-            helper_invocations,
+            summary_invocations,
             key=lambda candidate: candidate.lineno,
         )
     ] == ["model_ir", "fallback_ir"]
+    summary_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_indexed_conv_input_adapter_repairs_summary"
+    )
+    summary_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(summary_owner_calls) == 1
     direct_transpose_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -5501,16 +5515,17 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert next_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"
-    conv_input_count = lowerer.body[invocation_index + 2]
-    assert isinstance(conv_input_count, ast.Assign)
-    assert isinstance(conv_input_count.targets[0], ast.Name)
-    assert conv_input_count.targets[0].id == "very_late_conv_input_tensor_count"
-    conv_input_stats = lowerer.body[invocation_index + 3]
+    conv_input_stats = lowerer.body[invocation_index + 2]
     assert isinstance(conv_input_stats, ast.Assign)
     assert isinstance(conv_input_stats.targets[0], ast.Name)
     assert conv_input_stats.targets[0].id == "_very_late_conv_input_stats"
-    assert isinstance(conv_input_stats.value, ast.Dict)
-    channel_shuffle_stats = lowerer.body[invocation_index + 4]
+    assert isinstance(conv_input_stats.value, ast.Call)
+    assert isinstance(conv_input_stats.value.func, ast.Name)
+    assert (
+        conv_input_stats.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
+    )
+    channel_shuffle_stats = lowerer.body[invocation_index + 3]
     assert isinstance(channel_shuffle_stats, ast.Assign)
     assert isinstance(channel_shuffle_stats.targets[0], ast.Name)
     assert channel_shuffle_stats.targets[0].id == (
@@ -5522,7 +5537,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         channel_shuffle_stats.value.func.id
         == "run_stale_nchw_channel_shuffle_repair"
     )
-    concat_axis_stats = lowerer.body[invocation_index + 5]
+    concat_axis_stats = lowerer.body[invocation_index + 4]
     assert isinstance(concat_axis_stats, ast.Assign)
     assert isinstance(concat_axis_stats.targets[0], ast.Name)
     assert concat_axis_stats.targets[0].id == (
@@ -5534,7 +5549,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         concat_axis_stats.value.func.id
         == "_repair_nchw_concat_transpose_conv_axes"
     )
-    concat_pool_axis_stats = lowerer.body[invocation_index + 6]
+    concat_pool_axis_stats = lowerer.body[invocation_index + 5]
     assert isinstance(concat_pool_axis_stats, ast.Assign)
     assert isinstance(concat_pool_axis_stats.targets[0], ast.Name)
     assert concat_pool_axis_stats.targets[0].id == (
@@ -5546,7 +5561,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         concat_pool_axis_stats.value.func.id
         == "_repair_nchw_concat_global_pool_conv_axes"
     )
-    dynamic_rank1_stats = lowerer.body[invocation_index + 7]
+    dynamic_rank1_stats = lowerer.body[invocation_index + 6]
     assert isinstance(dynamic_rank1_stats, ast.Assign)
     assert isinstance(dynamic_rank1_stats.targets[0], ast.Name)
     assert dynamic_rank1_stats.targets[0].id == (
@@ -5557,7 +5572,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert dynamic_rank1_stats.value.func.id == (
         "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
     )
-    static_shape_stats = lowerer.body[invocation_index + 8]
+    static_shape_stats = lowerer.body[invocation_index + 7]
     assert isinstance(static_shape_stats, ast.Expr)
     assert ast.unparse(static_shape_stats) == (
         "session.record_phase_result("

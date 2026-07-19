@@ -266,3 +266,19 @@ def _run_indexed_conv_input_adapter_repairs(model_ir: ModelIR) -> Dict[str, int]
             )
         ),
     }
+
+
+def run_indexed_conv_input_adapter_repairs_summary(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Run indexed Conv-input repairs and include prune-only evidence."""
+
+    initial_tensor_count = len(model_ir.tensors)
+    result = _run_indexed_conv_input_adapter_repairs(model_ir)
+    return {
+        **result,
+        "pruned_unused_tensors": max(
+            0,
+            int(initial_tensor_count - len(model_ir.tensors)),
+        ),
+    }

@@ -573,6 +573,7 @@ from onnx2tf.tflite_builder.passes.conv_input_adapter_repair import (
     _repair_singleton_nhwc_conv_input_reshapes as _repair_singleton_nhwc_conv_input_reshapes_pass,
     _repair_stale_nchw_to_nhwc_conv_input_transposes as _repair_stale_nchw_to_nhwc_conv_input_transposes_pass,
     _run_indexed_conv_input_adapter_repairs as _run_indexed_conv_input_adapter_repairs_pass,
+    run_indexed_conv_input_adapter_repairs_summary,
 )
 from onnx2tf.tflite_builder.passes.mixed_concat_input_repair import (
     _repair_mixed_nhwc_inputs_for_nchw_concat as _repair_mixed_nhwc_inputs_for_nchw_concat_pass,
@@ -5439,14 +5440,9 @@ def lower_onnx_to_ir(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
     )
-    very_late_conv_input_tensor_count = len(model_ir.tensors)
-    _very_late_conv_input_stats = {
-        **_run_indexed_conv_input_adapter_repairs(model_ir),
-        "pruned_unused_tensors": max(
-            0,
-            int(very_late_conv_input_tensor_count - len(model_ir.tensors)),
-        ),
-    }
+    _very_late_conv_input_stats = (
+        run_indexed_conv_input_adapter_repairs_summary(model_ir)
+    )
     _very_late_stale_channel_shuffle_stats = (
         run_stale_nchw_channel_shuffle_repair(
             model_ir,
@@ -5653,14 +5649,9 @@ def lower_onnx_to_ir(
                 fallback_ir
             )
         )
-        fallback_conv_input_tensor_count = len(fallback_ir.tensors)
-        fallback_conv_input_stats = {
-            **_run_indexed_conv_input_adapter_repairs(fallback_ir),
-            "pruned_unused_tensors": max(
-                0,
-                fallback_conv_input_tensor_count - len(fallback_ir.tensors),
-            ),
-        }
+        fallback_conv_input_stats = (
+            run_indexed_conv_input_adapter_repairs_summary(fallback_ir)
+        )
         if int(
             fallback_conv_input_stats.get(
                 "repaired_stale_nchw_to_nhwc_conv_input_transposes",

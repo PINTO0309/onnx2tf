@@ -433,7 +433,13 @@ def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "very_late_conv_input_tensor_count"
+    assert following.targets[0].id == "_very_late_conv_input_stats"
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert (
+        following.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
+    )
 
     direct_statements = [
         statement
@@ -461,31 +467,20 @@ def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> No
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id == "_very_late_dynamic_reshape_stats"
     )
-    tensor_count = lowerer.body[dynamic_index + 1]
-    stats = lowerer.body[dynamic_index + 2]
-    following = lowerer.body[dynamic_index + 3]
+    stats = lowerer.body[dynamic_index + 1]
+    following = lowerer.body[dynamic_index + 2]
 
-    assert isinstance(tensor_count, ast.Assign)
-    assert len(tensor_count.targets) == 1
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "very_late_conv_input_tensor_count"
     assert isinstance(stats, ast.Assign)
     assert len(stats.targets) == 1
     assert isinstance(stats.targets[0], ast.Name)
     assert stats.targets[0].id == "_very_late_conv_input_stats"
-    assert isinstance(stats.value, ast.Dict)
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == "_run_indexed_conv_input_adapter_repairs"
-    assert len(owner.args) == 1
-    assert isinstance(owner.args[0], ast.Name)
-    assert owner.args[0].id == "model_ir"
-    assert owner.keywords == []
-    assert len(stats.value.keys) == 2
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
+    assert isinstance(stats.value, ast.Call)
+    assert isinstance(stats.value.func, ast.Name)
+    assert stats.value.func.id == "run_indexed_conv_input_adapter_repairs_summary"
+    assert [ast.unparse(argument) for argument in stats.value.args] == [
+        "model_ir"
+    ]
+    assert stats.value.keywords == []
 
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -505,11 +500,15 @@ def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> No
     ]
     assert len(fallback_assignments) == 1
     fallback = fallback_assignments[0]
-    assert isinstance(fallback.value, ast.Dict)
-    fallback_owner = fallback.value.values[0]
-    assert isinstance(fallback_owner, ast.Call)
-    assert isinstance(fallback_owner.func, ast.Name)
-    assert fallback_owner.func.id == "_run_indexed_conv_input_adapter_repairs"
+    assert isinstance(fallback.value, ast.Call)
+    assert isinstance(fallback.value.func, ast.Name)
+    assert (
+        fallback.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
+    )
+    assert [ast.unparse(argument) for argument in fallback.value.args] == [
+        "fallback_ir"
+    ]
 
 
 def test_very_late_stale_channel_shuffle_captures_mutation_evidence() -> None:

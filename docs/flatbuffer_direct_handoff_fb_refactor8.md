@@ -3556,3 +3556,32 @@ the shared owner and the two compatible sites, retain the raw lowerer wrapper,
 leave the final one-key site unchanged, update owner-aware contracts, and
 validate sequentially. Continue with commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Indexed Conv-input prune-aware summary family implementation
+
+The pass module now exposes
+`run_indexed_conv_input_adapter_repairs_summary(model_ir)`. It captures tensor
+count, invokes the existing one-index two-repair owner, and returns the exact
+raw mapping plus prune evidence. The very-late and fallback stats targets
+remain, while their count locals and inline mapping extensions are removed.
+
+The raw lowerer wrapper remains intact. The fallback reconciliation guard,
+very-late neighboring repairs, indexed graph behavior, two-key schema, final
+one-key site, and 128/128 store are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-summary contracts: `4 passed in 0.57s`;
+- affected family, boundary, store, and architecture contracts:
+  `376 passed in 21.20s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.81s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 8.93s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.58s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next compatible repeated evidence family before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

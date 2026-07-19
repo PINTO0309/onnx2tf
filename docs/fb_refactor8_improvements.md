@@ -4027,3 +4027,38 @@ Sequential characterization under core-only `uv` completed with
 related indexed Conv-input, very-late normalization, fallback, terminal-layout,
 and phase-store contracts. The sole expected failure is the intentionally
 absent shared summary owner.
+
+## Indexed Conv-input prune-aware summary family implementation
+
+`run_indexed_conv_input_adapter_repairs_summary(model_ir)` now owns the tensor
+snapshot, shared indexed two-repair invocation, and non-negative prune delta.
+The very-late primary and fallback sites retain their existing stats targets
+and model arguments while removing both lowerer-local count variables and
+inline mapping extensions.
+
+The raw lowerer compatibility wrapper remains defined. The indexed owner still
+constructs one `ModelIRGraphIndex` and returns the same two repair counters.
+The fallback mutation-positive reconciliation guard, very-late dynamic-Reshape
+predecessor, stale-channel successor, public behavior, artifacts, dependencies,
+and TensorFlow isolation are unchanged. The final primary site continues to
+invoke only the stale-Transpose repair and retains its distinct one-key-plus-
+prune schema. Both shared summaries remain outside the full 128/128 store.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-summary contracts: `4 passed in 0.57s`;
+- affected family, boundary, store, and architecture contracts:
+  `376 passed in 21.20s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.81s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 8.93s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.58s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves stable and prune-only schema preservation, while family and architecture
+gates preserve the one-index owner, both compatible sites, fallback guard, and
+excluded final site.

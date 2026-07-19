@@ -376,11 +376,13 @@ def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "fallback_conv_input_tensor_count"
-    stats = body[owner_index + 2]
-    assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.targets[0], ast.Name)
-    assert stats.targets[0].id == "fallback_conv_input_stats"
+    assert following.targets[0].id == "fallback_conv_input_stats"
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert (
+        following.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
+    )
 
 
 def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
@@ -394,29 +396,22 @@ def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
         and statement.targets[0].id == "fallback_conv_input_stats"
     )
 
-    tensor_count = body[stats_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert len(tensor_count.targets) == 1
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "fallback_conv_input_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(fallback_ir.tensors)"
-
     stats = body[stats_index]
     assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.value, ast.Dict)
-    assert stats.value.keys[0] is None
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == "_run_indexed_conv_input_adapter_repairs"
-    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
-    assert owner.keywords == []
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(stats.value.values[1]) == (
-        "max(0, fallback_conv_input_tensor_count - len(fallback_ir.tensors))"
+    assert isinstance(stats.value, ast.Call)
+    assert isinstance(stats.value.func, ast.Name)
+    assert (
+        stats.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
     )
+    assert [ast.unparse(argument) for argument in stats.value.args] == [
+        "fallback_ir"
+    ]
+    assert stats.value.keywords == []
+    predecessor = body[stats_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_fallback_unbound_repair_stats"
 
     guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
