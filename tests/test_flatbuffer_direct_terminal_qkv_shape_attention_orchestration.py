@@ -39,7 +39,7 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_terminal_qkv_shape_attention_results"
 PREDECESSOR_TARGET = "_terminal_affine_slice_spp_results"
-SUCCESSOR_TARGET = "_terminal_split_conv_concat_bridge_stats"
+SUCCESSOR_TARGET = "_terminal_activation_bridge_results"
 SHAPE_SCHEMA = {"optimized_transpose_shape_extract_nhwc_to_nchw_chains": 0}
 QKV_SCHEMA = {
     "removed_identity_transpose": 0,

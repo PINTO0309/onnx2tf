@@ -8,14 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
-    run_hardswish_se_layout_summary,
-)
-from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
-    run_late_hard_activation_layout_summary,
-)
-from onnx2tf.tflite_builder.passes.split_conv_concat_bridge_layout import (
-    optimize_split_conv_concat_transpose_bridge_to_single_post_nchw,
+from onnx2tf.tflite_builder.passes import (
+    terminal_activation_bridge_orchestration,
 )
 
 
@@ -106,45 +100,24 @@ def test_terminal_activation_bridge_current_boundary_and_schema(
     include_layout_transpose: bool,
 ) -> None:
     lowerer = _lowerer()
-    indices = tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    assert indices == tuple(range(indices[0], indices[0] + len(indices)))
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    assert tuple(_call_name(lowerer.body[index]) for index in indices) == (
-        CURRENT_CHILD_OWNERS
-    )
-
-    split_call = _call(lowerer.body[indices[0]])
-    hardswish_call = _call(lowerer.body[indices[1]])
-    hard_activation_call = _call(lowerer.body[indices[2]])
-    assert split_call is not None
-    assert hardswish_call is not None
-    assert hard_activation_call is not None
-    assert [ast.unparse(argument) for argument in split_call.args] == [
-        "model_ir"
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in split_call.keywords
-    } == {"layout_state": "session.layout_state"}
-    assert [ast.unparse(argument) for argument in hardswish_call.args] == [
-        "model_ir"
-    ]
-    assert hardswish_call.keywords == []
-    assert [
-        ast.unparse(argument) for argument in hard_activation_call.args
-    ] == ["late_hard_activation_layout_context"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in hard_activation_call.keywords
+        for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -159,16 +132,12 @@ def test_terminal_activation_bridge_current_boundary_and_schema(
         diagnostics=[],
     )
     assert (
-        optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
-            model_ir,
-            layout_state=context.layout_state,
-        ),
-        run_hardswish_se_layout_summary(model_ir),
-        run_late_hard_activation_layout_summary(
+        terminal_activation_bridge_orchestration.run_terminal_activation_bridge_cleanup(
             context,
             include_layout_transpose=include_layout_transpose,
-        ),
-    ) == EXPECTED_SCHEMAS
+        )
+        == EXPECTED_SCHEMAS
+    )
 
 
 def test_terminal_activation_shared_context_alias_is_fixed() -> None:
@@ -181,10 +150,6 @@ def test_terminal_activation_shared_context_alias_is_fixed() -> None:
     assert ast.unparse(alias.value) == "shared_model_ir_pass_context"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal Split/HardSwish/hard-activation tail has no context owner",
-)
 def test_terminal_activation_bridge_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -239,3 +204,77 @@ def test_terminal_activation_bridge_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_terminal_activation_bridge_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("terminal_activation_bridge_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = tuple(
+        {f"stage_{index}": index} for index in range(len(CHILD_OWNERS))
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def _split(
+        active_model_ir: ModelIR,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[0], active_model_ir, kwargs))
+        return expected_results[0]
+
+    def _hardswish(active_model_ir: ModelIR) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[1], active_model_ir, {}))
+        return expected_results[1]
+
+    def _hard_activation(
+        active_context: ModelIRPassContext,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[2], active_context, kwargs))
+        return expected_results[2]
+
+    monkeypatch.setattr(
+        terminal_activation_bridge_orchestration,
+        CHILD_OWNERS[0],
+        _split,
+    )
+    monkeypatch.setattr(
+        terminal_activation_bridge_orchestration,
+        CHILD_OWNERS[1],
+        _hardswish,
+    )
+    monkeypatch.setattr(
+        terminal_activation_bridge_orchestration,
+        CHILD_OWNERS[2],
+        _hard_activation,
+    )
+
+    actual = (
+        terminal_activation_bridge_orchestration.run_terminal_activation_bridge_cleanup(
+            context,
+            include_layout_transpose=True,
+        )
+    )
+    assert actual == expected_results
+    assert all(
+        actual[index] is expected_results[index]
+        for index in range(len(expected_results))
+    )
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context.model_ir,
+            {"layout_state": context.layout_state},
+        ),
+        (CHILD_OWNERS[1], context.model_ir, {}),
+        (
+            CHILD_OWNERS[2],
+            context,
+            {"include_layout_transpose": True},
+        ),
+    ]

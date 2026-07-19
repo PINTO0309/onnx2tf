@@ -1185,3 +1185,22 @@ schemas and order, terminal QKV and absolute-final pre-ConCat boundaries, and
 the 128-ID/128-owner store. Production remains unchanged pending a separate
 three-stage context owner. Focused and affected validation report
 `3 passed, 1 xfailed` and `443 passed, 1 xfailed`.
+
+The latest checkpoint implements that terminal activation-bridge owner. The
+indexed Split/Conv/Concat bridge receives the shared model and LayoutState,
+the prune-aware HardSwish-SE summary receives the same model, and the late
+hard-activation summary receives the exact shared context and unchanged
+layout-Transpose option. The lowerer replaces only three unconsumed result
+locals with one ordered tuple, and the owner returns every child mapping
+without copying or normalization.
+
+The terminal QKV predecessor, absolute-final pre-ConCat successor, raw
+compatibility wrappers, and all earlier independent routes remain fixed.
+Owner-aware structural tests and runtime injection verify exact order,
+argument identity, option forwarding, result identity, schemas, and outer
+boundaries. This checkpoint passes 445 affected tests and the complete
+sequential standard gates: 92 terminal-layout/efficiency, 55 core, 196 result
+contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests. Public behavior, conversion policy, graph rewrites, artifacts,
+dependencies, TensorFlow isolation, and the exactly 128-ID/128-owner store are
+unchanged.

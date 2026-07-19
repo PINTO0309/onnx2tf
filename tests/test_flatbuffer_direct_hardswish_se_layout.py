@@ -20,6 +20,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TERMINAL_HARDSWISH_SE_OWNER = (
     "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
+TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_activation_bridge_orchestration.py"
+)
 
 
 def _tensor(
@@ -360,52 +367,37 @@ def test_hardswish_se_layout_prunes_unused_tensors_on_zero_rewrite() -> None:
 
 
 def test_terminal_hardswish_se_call_captures_complete_mutation_evidence() -> None:
-    tree = ast.parse(
-        (
-            REPO_ROOT
-            / "onnx2tf"
-            / "tflite_builder"
-            / "lower_from_onnx2tf.py"
-        ).read_text(encoding="utf-8")
+    owner_tree = ast.parse(
+        TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH.read_text(encoding="utf-8")
     )
-    lowerer = next(
+    owner = next(
         node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_activation_bridge_cleanup"
     )
-    first_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_hardswish_se_stats"
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
     )
-    statement = lowerer.body[first_index]
-    assert isinstance(statement, ast.Assign)
-    summary = statement.value
-    assert isinstance(summary, ast.Call)
+    summary = calls[1]
     assert isinstance(summary.func, ast.Name)
     assert summary.func.id == "run_hardswish_se_layout_summary"
-    assert [ast.unparse(argument) for argument in summary.args] == ["model_ir"]
+    assert [ast.unparse(argument) for argument in summary.args] == [
+        "context.model_ir"
+    ]
     assert summary.keywords == []
 
-    previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
+    previous = calls[0]
+    assert isinstance(previous.func, ast.Name)
     assert (
-        previous.value.func.id
-        == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+        previous.func.id
+        == "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
-    following = lowerer.body[first_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_late_hard_activation_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_late_hard_activation_layout_summary"
+    following = calls[2]
+    assert isinstance(following.func, ast.Name)
+    assert following.func.id == "run_late_hard_activation_layout_summary"

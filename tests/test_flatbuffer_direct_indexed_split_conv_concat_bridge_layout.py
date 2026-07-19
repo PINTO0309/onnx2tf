@@ -34,6 +34,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
     "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
 )
+TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_activation_bridge_orchestration.py"
+)
+TERMINAL_ACTIVATION_BRIDGE_OWNER = (
+    "run_terminal_activation_bridge_cleanup"
+)
+PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
+    "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+)
 
 
 def _tensor(
@@ -734,6 +747,30 @@ def test_indexed_split_conv_concat_bridge_rejects_unsafe_candidate_transactional
 
 
 def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence() -> None:
+    owner_tree = ast.parse(
+        TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_ACTIVATION_BRIDGE_OWNER
+    )
+    invocation = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    )
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert [keyword.arg for keyword in invocation.keywords] == [
+        "layout_state"
+    ]
+    assert ast.unparse(invocation.keywords[0].value) == "context.layout_state"
+
     tree = ast.parse(
         (
             REPO_ROOT
@@ -753,20 +790,13 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
+        and statement.targets[0].id == "_terminal_activation_bridge_results"
     )
-    invocation = lowerer.body[invocation_index]
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert [keyword.arg for keyword in invocation.value.keywords] == [
-        "layout_state"
-    ]
-
+    composite = lowerer.body[invocation_index]
+    assert isinstance(composite, ast.Assign)
+    assert isinstance(composite.value, ast.Call)
+    assert isinstance(composite.value.func, ast.Name)
+    assert composite.value.func.id == TERMINAL_ACTIVATION_BRIDGE_OWNER
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
@@ -788,10 +818,13 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_hardswish_se_stats"
+    assert following.targets[0].id == "_absolute_final_pre_concat_stats"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_hardswish_se_layout_summary"
+    assert (
+        following.value.func.id
+        == "_optimize_transpose_pre_concat_nhwc_chains"
+    )
 
 
 def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
@@ -832,14 +865,31 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
             return None
         return call.func.id
 
-    all_calls = [
+    lowerer_calls = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
     ]
-    assert len(all_calls) == 3
+    assert len(lowerer_calls) == 2
+    owner_tree = ast.parse(
+        TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_ACTIVATION_BRIDGE_OWNER
+    )
+    owner_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    ]
+    assert len(owner_calls) == 1
 
     terminal_guard = next(
         statement
@@ -911,11 +961,11 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
             for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
 
-    late = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
-    )
-    assert _call_name(late) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    late = owner_calls[0]
+    assert [ast.unparse(argument) for argument in late.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late.keywords
+    } == {"layout_state": "context.layout_state"}

@@ -12,6 +12,13 @@ OWNER_PATH = (
     / "passes"
     / "hardswish_se_layout.py"
 )
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_activation_bridge_orchestration.py"
+)
 HARDSWISH_SE = (
     "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
@@ -142,20 +149,24 @@ def test_hardswish_se_has_exactly_two_production_forms() -> None:
     assert [ast.unparse(argument) for argument in first_call.args] == ["model_ir"]
     assert first_call.keywords == []
 
-    late_statement = next(
-        statement
-        for statement in lowerer.body
-        if _single_target(statement) == LATE_RESULT_TARGET
-    )
-    assert _single_target(late_statement) == LATE_RESULT_TARGET
-    assert isinstance(late_statement, ast.Assign)
-    assert isinstance(late_statement.value, ast.Call)
-    assert isinstance(late_statement.value.func, ast.Name)
-    assert late_statement.value.func.id == "run_hardswish_se_layout_summary"
-    assert [ast.unparse(argument) for argument in late_statement.value.args] == [
-        "model_ir"
+    terminal_owner = _functions(TERMINAL_OWNER_PATH)[
+        "run_terminal_activation_bridge_cleanup"
     ]
-    assert late_statement.value.keywords == []
+    late_call = next(
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_hardswish_se_layout_summary"
+    )
+    assert [ast.unparse(argument) for argument in late_call.args] == [
+        "context.model_ir"
+    ]
+    assert late_call.keywords == []
+    assert not any(
+        isinstance(node, ast.Name) and node.id == LATE_RESULT_TARGET
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_terminal_hardswish_hardsigmoid_results_use_phase_result_store() -> None:

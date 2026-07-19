@@ -239,7 +239,6 @@ from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
     run_late_hard_activation_layout,
-    run_late_hard_activation_layout_summary,
 )
 from onnx2tf.tflite_builder.passes.absolute_final_cleanup_orchestration import (
     run_absolute_final_cleanup,
@@ -289,6 +288,9 @@ from onnx2tf.tflite_builder.passes.terminal_affine_slice_spp_orchestration impor
 )
 from onnx2tf.tflite_builder.passes.terminal_qkv_shape_attention_orchestration import (
     run_terminal_qkv_shape_attention_cleanup,
+)
+from onnx2tf.tflite_builder.passes.terminal_activation_bridge_orchestration import (
+    run_terminal_activation_bridge_cleanup,
 )
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     run_shared_late_reconciliation_cleanup,
@@ -771,7 +773,6 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
 )
 from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
     optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains as _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains_pass,
-    run_hardswish_se_layout_summary,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     _optimize_boundary_input_layout_transposes as _optimize_boundary_input_layout_transposes_pass,
@@ -5261,19 +5262,14 @@ def lower_onnx_to_ir(
             include_layout_transpose=optimize_layout_transpose_chains,
         )
     )
-    _terminal_split_conv_concat_bridge_stats = (
-        _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _terminal_hardswish_se_stats = run_hardswish_se_layout_summary(model_ir)
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.
-    _late_hard_activation_stats = run_late_hard_activation_layout_summary(
-        late_hard_activation_layout_context,
-        include_layout_transpose=optimize_layout_transpose_chains,
+    _terminal_activation_bridge_results = (
+        run_terminal_activation_bridge_cleanup(
+            shared_model_ir_pass_context,
+            include_layout_transpose=optimize_layout_transpose_chains,
+        )
     )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.

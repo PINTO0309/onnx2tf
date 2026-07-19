@@ -24,6 +24,14 @@ OWNER_PATH = (
     / "passes"
     / "late_hard_activation_layout_orchestration.py"
 )
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_activation_bridge_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_activation_bridge_cleanup"
 RAW_WRAPPER = "_run_late_hard_activation_layout_pass_pair"
 RAW_OWNER = "run_late_hard_activation_layout"
 SUMMARY_OWNER = "run_late_hard_activation_layout_summary"
@@ -31,7 +39,8 @@ SUMMARY_FUNCTION = "summarize_late_hard_activation_layout_mutations"
 COUNT_TARGET = "late_hard_activation_tensor_count"
 RAW_TARGET = "late_hard_activation_results"
 SUMMARY_TARGET = "_late_hard_activation_stats"
-PREDECESSOR_TARGET = "_terminal_hardswish_se_stats"
+COMPOSITE_TARGET = "_terminal_activation_bridge_results"
+PREDECESSOR_TARGET = "_terminal_qkv_shape_attention_results"
 SUCCESSOR_TARGET = "_absolute_final_pre_concat_stats"
 
 
@@ -55,18 +64,28 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 
 def test_late_hard_activation_prune_aware_summary_boundary_is_fixed() -> None:
+    terminal_owner = _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER]
+    summary_call = next(
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    )
+    assert ast.unparse(summary_call) == (
+        f"{SUMMARY_OWNER}(context, "
+        "include_layout_transpose=include_layout_transpose)"
+    )
+
     lowerer = _lowerer()
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(late_hard_activation_layout_context, "
-        "include_layout_transpose=optimize_layout_transpose_chains)"
-    )
+    assert ast.unparse(summary.value).startswith(f"{TERMINAL_OWNER}(")
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
@@ -104,20 +123,26 @@ def test_late_hard_activation_uses_one_prune_aware_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(late_hard_activation_layout_context, "
-        "include_layout_transpose=optimize_layout_transpose_chains)"
-    )
+    assert ast.unparse(summary.value).startswith(f"{TERMINAL_OWNER}(")
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)
     )
+    terminal_owner = _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER]
+    summary_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+    assert len(summary_calls) == 1
 
     wrapper = next(
         node

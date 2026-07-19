@@ -388,6 +388,30 @@ def _terminal_qkv_shape_attention_call_count(function_name: str) -> int:
     )
 
 
+def _terminal_activation_bridge_calls(function_name: str) -> list[ast.Call]:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_activation_bridge_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_activation_bridge_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -5052,13 +5076,9 @@ def test_hardswish_se_layout_optimizer_has_one_module_owner() -> None:
         and node.func.id == owner_name
     ]
     assert len(summary_owner_calls) == 1
-    summary_production_calls = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "run_hardswish_se_layout_summary"
-    ]
+    summary_production_calls = _terminal_activation_bridge_calls(
+        "run_hardswish_se_layout_summary"
+    )
     assert len(summary_production_calls) == 1
 
 
@@ -5813,13 +5833,13 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
     assert next_boundary.targets[0].id == (
-        "_terminal_split_conv_concat_bridge_stats"
+        "_terminal_activation_bridge_results"
     )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
         next_boundary.value.func.id
-        == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+        == "run_terminal_activation_bridge_cleanup"
     )
     assert (
         _terminal_qkv_shape_attention_call_count(
@@ -6680,14 +6700,16 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_hard_activation_stats"
+        and statement.targets[0].id == "_terminal_activation_bridge_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "run_late_hard_activation_layout_summary"
+        and statement.value.func.id == "run_terminal_activation_bridge_cleanup"
     )
-    invocation = lowerer.body[invocation_index].value
+    invocation = _terminal_activation_bridge_calls(
+        "run_late_hard_activation_layout_summary"
+    )[0]
     assert [ast.unparse(argument) for argument in invocation.args] == [
-        "late_hard_activation_layout_context"
+        "context"
     ]
     include_layout = next(
         keyword
@@ -6695,19 +6717,24 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         if keyword.arg == "include_layout_transpose"
     )
     assert isinstance(include_layout.value, ast.Name)
-    assert include_layout.value.id == "optimize_layout_transpose_chains"
+    assert include_layout.value.id == "include_layout_transpose"
 
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_terminal_hardswish_se_stats"
+    assert previous_boundary.targets[0].id == (
+        "_terminal_qkv_shape_attention_results"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
-    assert previous_boundary.value.func.id == "run_hardswish_se_layout_summary"
+    assert (
+        previous_boundary.value.func.id
+        == "run_terminal_qkv_shape_attention_cleanup"
+    )
     assert [
         ast.unparse(argument) for argument in previous_boundary.value.args
-    ] == ["model_ir"]
+    ] == ["shared_model_ir_pass_context"]
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
@@ -17528,7 +17555,7 @@ def test_indexed_split_conv_concat_bridge_owner_is_bounded_and_transactional() -
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) == 2
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -17539,6 +17566,16 @@ def test_indexed_split_conv_concat_bridge_owner_is_bounded_and_transactional() -
         assert isinstance(layout_keyword.value.value, ast.Name)
         assert layout_keyword.value.value.id == "session"
         assert layout_keyword.value.attr == "layout_state"
+    terminal_calls = _terminal_activation_bridge_calls(
+        "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+    )
+    assert len(terminal_calls) == 1
+    terminal_layout_keyword = next(
+        keyword
+        for keyword in terminal_calls[0].keywords
+        if keyword.arg == "layout_state"
+    )
+    assert ast.unparse(terminal_layout_keyword.value) == "context.layout_state"
 
 
 def test_indexed_activation_passthrough_owner_is_bounded_and_transactional() -> None:

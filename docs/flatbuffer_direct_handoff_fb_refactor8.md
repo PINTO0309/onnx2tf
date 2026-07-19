@@ -4979,3 +4979,43 @@ three raw mapping objects unchanged, replace only the three unconsumed lowerer
 locals, and preserve both outer boundaries. Run all affected and standard
 gates sequentially. Commit and push only; never create or modify a pull
 request.
+
+## Terminal activation-bridge composite implementation checkpoint
+
+The terminal affine/Slice-SPP and terminal QKV characterization checkpoints
+have now both been implemented and committed. The newest implementation adds
+`passes/terminal_activation_bridge_orchestration.py`, a straight-line owner
+for the indexed Split/Conv/Concat bridge, prune-aware HardSwish-SE cleanup, and
+late hard-activation layout summary.
+
+Important design decisions:
+
+- the exact shared `ModelIRPassContext`, its `model_ir`, and its `layout_state`
+  are forwarded; no replacement context or graph copy is created;
+- `include_layout_transpose` is forwarded unchanged to the hard-activation
+  child;
+- all three child mapping objects are returned unchanged and in source order;
+- the lowerer replaces only three unconsumed observation locals;
+- raw compatibility wrappers and earlier independent routes remain available;
+- terminal QKV and absolute-final pre-ConCat cleanup remain the exact outer
+  boundaries;
+- no phase result was added or removed, so the bounded store remains exactly
+  128 IDs and 128 owners.
+
+Changed production files in this checkpoint are
+`onnx2tf/tflite_builder/lower_from_onnx2tf.py` and
+`onnx2tf/tflite_builder/passes/terminal_activation_bridge_orchestration.py`.
+Owner-aware tests were updated for the indexed bridge, HardSwish-SE, hard
+activation, terminal QKV successor, pre-ConCat predecessor, shared context,
+architecture, terminal validation, and result retention.
+
+Sequential `uv` validation passed: focused 5, complete affected 445,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase-store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. No test is failing,
+no new production issue is known, and no real-model conversion was repeated
+for this ownership-only move.
+
+At resume, first rerun the read-only inventory of remaining unconsumed lowerer
+results. Characterize the next smallest source-adjacent, semantically closed
+cluster before changing production, then implement it as a separate
+checkpoint with all validation sequential and single-process under `uv`.

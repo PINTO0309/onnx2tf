@@ -5767,3 +5767,36 @@ No production callback, graph mutation, option, schema, context identity,
 pass order, public API, artifact, dependency, TensorFlow boundary, or store
 entry changed. No real-model conversion was run; the phase-result store
 remains exactly 128 IDs and 128 owners.
+
+## Terminal activation-bridge composite implementation
+
+`passes/terminal_activation_bridge_orchestration.py` now owns the
+characterized three-stage terminal sequence: indexed Split/Conv/Concat bridge
+cleanup, prune-aware HardSwish-SE cleanup, and late hard-activation layout
+cleanup. It forwards `context.model_ir` and the exact shared
+`context.layout_state` to the indexed bridge, forwards `context.model_ir` to
+the HardSwish-SE summary, and forwards the same `ModelIRPassContext` plus the
+unchanged layout-Transpose option to the hard-activation summary.
+
+The lowerer replaces `_terminal_split_conv_concat_bridge_stats`,
+`_terminal_hardswish_se_stats`, and `_late_hard_activation_stats` with one
+`_terminal_activation_bridge_results` tuple. The new owner returns the three
+raw mapping objects unchanged and in the original order. Existing raw
+compatibility wrappers and their earlier independent callers remain in place.
+The terminal QKV composite remains the immediate predecessor and
+absolute-final pre-ConCat cleanup remains the immediate successor.
+
+Owner-aware child, architecture, result-boundary, and mutation-evidence tests
+now inspect the specialized calls through the new outer owner. Runtime
+injection proves exact call order, model/context/LayoutState identity, keyword
+forwarding, and raw-result identity. No match, guard, rewrite, graph mutation,
+counter schema, pass ID, public API, artifact, dependency, or TensorFlow
+boundary changed.
+
+Final sequential validation under core-only `uv` passed with 5 focused tests,
+445 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. The phase-result store remains exactly 128
+IDs and 128 owners. No real-model conversion was repeated because this is a
+straight-line ownership extraction with explicit state, schema, order, and
+boundary coverage.
