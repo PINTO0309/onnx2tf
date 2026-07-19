@@ -365,6 +365,7 @@ from onnx2tf.tflite_builder.passes.leakyrelu_passthrough_layout import (
 )
 from onnx2tf.tflite_builder.passes.prelu_passthrough_layout import (
     optimize_prelu_transpose_passthrough_chains as _optimize_prelu_transpose_passthrough_chains_pass,
+    run_prelu_transpose_passthrough_summary,
 )
 from onnx2tf.tflite_builder.passes.elementwise_concat_layout import (
     optimize_transpose_elementwise_concat_conv_nhwc_groups as _optimize_transpose_elementwise_concat_conv_nhwc_groups_pass,
@@ -5992,21 +5993,11 @@ def lower_onnx_to_ir(
     # Absolute-final PRELU cleanup:
     # late layout/broadcast/singleton repairs can still recreate strict
     # TRANSPOSE->PRELU->inverse-TRANSPOSE wrappers (e.g. SiNet entry blocks).
-    final_prelu_tensor_count = len(model_ir.tensors)
-    final_prelu_stats = _optimize_prelu_transpose_passthrough_chains(
+    final_prelu_stats = run_prelu_transpose_passthrough_summary(
         model_ir,
         layout_state=session.layout_state,
     )
-    if (
-        int(
-            final_prelu_stats.get(
-                "rewritten_prelu_transpose_passthrough_chains",
-                0,
-            )
-        )
-        > 0
-        or len(model_ir.tensors) < final_prelu_tensor_count
-    ):
+    if _stats_have_positive_count(final_prelu_stats):
         session.record_phase_result(
             "shape_reconciliation.primary.final_prelu",
             _reconcile_static_tensor_shapes(

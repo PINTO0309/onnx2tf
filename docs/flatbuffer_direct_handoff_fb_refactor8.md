@@ -3720,3 +3720,33 @@ the dedicated PRELU summary owner and final-primary site, retain the raw
 lowerer wrapper and all other PRELU callers, update owner-aware structural
 contracts, and validate sequentially. Continue with commits and pushes only;
 never create, update, or reopen a pull request.
+
+## Final PRELU prune-aware summary implementation
+
+The pass module now exposes
+`run_prelu_transpose_passthrough_summary(model_ir, layout_state=...)`. It
+captures tensor count, invokes the existing raw PRELU owner once with the exact
+layout state, and returns the raw mapping plus prune evidence. The final stats
+target remains, while its count local is removed and the existing generic
+positive-count predicate now owns the rewrite-or-prune decision.
+
+The raw lowerer wrapper and both other PRELU production paths remain intact.
+The SE-FC/Gather predecessor, consecutive-Reshape successor, reconciliation
+phase ID, and 128/128 store are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused dedicated-summary contracts: `4 passed in 0.56s`;
+- affected boundary, runtime, store, and architecture contracts:
+  `392 passed in 21.86s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.37s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.68s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next compatible repeated evidence family before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

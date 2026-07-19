@@ -4201,3 +4201,40 @@ Sequential characterization under core-only `uv` completed with
 terminal-layout, SE-FC/Gather, core runtime, phase-store, and architecture
 contracts. The sole expected failure is the intentionally absent dedicated
 summary owner. Targeted Ruff and whitespace checks passed.
+
+## Final PRELU prune-aware summary implementation
+
+`run_prelu_transpose_passthrough_summary(model_ir, layout_state=...)` now owns
+the tensor-count snapshot, one raw PRELU passthrough invocation, exact
+`LayoutState` forwarding, and the non-negative prune delta. The final stats
+target remains while its lowerer-local count variable is removed. The lowerer
+uses the existing integer-mapping `_stats_have_positive_count` predicate, so a
+rewrite or prune-only cleanup still triggers the same reconciliation phase.
+
+The raw lowerer wrapper and its graph-index/layout/max-rewrite/candidate
+forwarding remain defined. The layout-recovery and late-binary-recovery PRELU
+paths remain raw and unchanged; architecture coverage fixes the total raw
+owner use at those two paths plus the new summary owner. The preceding
+SE-FC/Gather guard, following consecutive-Reshape cleanup, public behavior,
+artifacts, dependencies, TensorFlow isolation, and the full 128/128
+phase-result store are unchanged. The summary remains outside that store.
+
+Final sequential validation under core-only `uv`:
+
+- focused dedicated-summary contracts: `4 passed in 0.56s`;
+- affected terminal-layout, SE-FC/Gather, core runtime, store, and architecture
+  contracts: `392 passed in 21.86s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.37s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.68s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact layout-state forwarding plus stable and prune-only schema
+preservation, while affected and architecture gates preserve the raw owner use
+count, both other production paths, reconciliation semantics, and neighboring
+boundaries.

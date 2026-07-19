@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Twenty-eight late lowerer clusters now have focused orchestration owners. The first
+Twenty-nine late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -253,11 +253,16 @@ one-key raw schema, raw wrapper and optional graph-index forwarding, final-Pad
 predecessor, reconciliation guard, and mixed-Concat successor while leaving
 the indexed two-repair summary sites unchanged.
 
+The twenty-ninth provides a dedicated prune-aware summary for absolute-final
+PRELU passthrough cleanup. It preserves exact layout-state forwarding, the raw
+wrapper and both other raw PRELU paths, rewrite-or-prune reconciliation
+semantics, and both neighboring cleanup boundaries.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
 lowerer scope locals. They also replace twenty-one consumed mutation-evidence
-or aggregate-result locals and fifteen tensor-count snapshots with three
-explicit boolean decisions, fourteen reusable summary calls, and one prune-aware
+or aggregate-result locals and sixteen tensor-count snapshots with three
+explicit boolean decisions, fifteen reusable summary calls, and one prune-aware
 cleanup call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -576,6 +581,11 @@ Final checkpoint results:
 - final stale Conv-input dedicated-summary contracts: **4 passed**;
 - affected indexed Conv-input, terminal-layout, store, and architecture
   contracts: **339 passed**;
+- final PRELU dedicated-summary characterization and related contracts:
+  **389 passed, 1 intentional strict xfail**;
+- final PRELU dedicated-summary contracts: **4 passed**;
+- affected terminal-layout, SE-FC/Gather, core runtime, store, and architecture
+  contracts: **392 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -721,3 +731,8 @@ boundary. It preserves ModelIR/LayoutState forwarding, the preceding
 SE-FC/Gather guard, rewrite-or-prune reconciliation semantics, the following
 consecutive-Reshape cleanup, and the raw wrapper. Production remains unchanged
 until its dedicated prune-aware summary owner is implemented separately.
+
+The latest checkpoint implements that dedicated final PRELU summary owner. It
+removes the tensor snapshot, adds bounded prune evidence to the raw mapping,
+and uses the existing positive-count predicate while retaining the raw wrapper,
+both other PRELU paths, neighboring boundaries, and the full 128/128 store.

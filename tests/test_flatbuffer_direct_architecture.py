@@ -9752,7 +9752,7 @@ def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    owner_name = "_optimize_prelu_transpose_passthrough_chains"
+    owner_name = "run_prelu_transpose_passthrough_summary"
     assignment_index = next(
         index
         for index, statement in enumerate(lowerer.body)
@@ -9762,50 +9762,12 @@ def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
         and statement.value.func.id == owner_name
     )
 
-    tensor_count_assignment = lowerer.body[assignment_index - 1]
-    assert isinstance(tensor_count_assignment, ast.Assign)
-    assert len(tensor_count_assignment.targets) == 1
-    tensor_count_target = tensor_count_assignment.targets[0]
-    assert isinstance(tensor_count_target, ast.Name)
-    assert tensor_count_target.id == "final_prelu_tensor_count"
-    assert isinstance(tensor_count_assignment.value, ast.Call)
-    assert isinstance(tensor_count_assignment.value.func, ast.Name)
-    assert tensor_count_assignment.value.func.id == "len"
-    assert len(tensor_count_assignment.value.args) == 1
-    counted_tensors = tensor_count_assignment.value.args[0]
-    assert isinstance(counted_tensors, ast.Attribute)
-    assert isinstance(counted_tensors.value, ast.Name)
-    assert counted_tensors.value.id == "model_ir"
-    assert counted_tensors.attr == "tensors"
-
     guard = lowerer.body[assignment_index + 1]
     assert isinstance(guard, ast.If)
     assert guard.orelse == []
-    get_calls = [
-        node
-        for node in ast.walk(guard.test)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-    ]
-    assert len(get_calls) == 1
-    assert isinstance(get_calls[0].args[0], ast.Constant)
-    assert (
-        get_calls[0].args[0].value
-        == "rewritten_prelu_transpose_passthrough_chains"
+    assert ast.unparse(guard.test) == (
+        "_stats_have_positive_count(final_prelu_stats)"
     )
-    guard_names = {
-        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
-    }
-    assert "final_prelu_tensor_count" in guard_names
-    tensor_len_calls = [
-        node
-        for node in ast.walk(guard.test)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "len"
-    ]
-    assert len(tensor_len_calls) == 1
     assert len(guard.body) == 1
     reconcile = guard.body[0]
     assert isinstance(reconcile, ast.Expr)
@@ -17278,6 +17240,7 @@ def test_indexed_prelu_passthrough_owner_is_bounded_and_transactional() -> None:
         / "prelu_passthrough_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -17328,15 +17291,38 @@ def test_indexed_prelu_passthrough_owner_is_bounded_and_transactional() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
+    summary_name = "run_prelu_transpose_passthrough_summary"
+    summary_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == summary_name
+    ]
+    assert len(summary_calls) == 1
+    summary_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == summary_name
+    )
+    summary_raw_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "optimize_prelu_transpose_passthrough_chains"
+    ]
+    assert len(summary_raw_calls) == 1
+    assert production_calls == []
     assert (
-        len(production_calls)
+        len(summary_raw_calls)
         + _orchestrated_pass_count(wrapper_name)
         + _late_binary_layout_recovery_call_count(
             "optimize_prelu_transpose_passthrough_chains"
         )
         == 3
     )
-    for production_call in production_calls:
+    for production_call in summary_calls:
         layout_keyword = next(
             keyword
             for keyword in production_call.keywords

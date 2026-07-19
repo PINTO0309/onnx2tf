@@ -372,7 +372,7 @@ def test_main_se_fc_gather_stages_complete_reconciliation_result() -> None:
     following = lowerer.body[invocation_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "final_prelu_tensor_count"
+    assert following.targets[0].id == "final_prelu_stats"
 
 
 def test_terminal_se_fc_gather_reconciles_only_after_change_or_prune() -> None:

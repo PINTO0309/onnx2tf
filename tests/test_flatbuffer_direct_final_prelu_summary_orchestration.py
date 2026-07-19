@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import prelu_passthrough_layout
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -47,19 +51,19 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_final_prelu_rewrite_or_prune_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    count = next(
+    stats = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COUNT_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    index = lowerer.body.index(count)
-    stats = lowerer.body[index + 1]
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
-    assert _single_target(stats) == SUMMARY_TARGET
+    index = lowerer.body.index(stats)
     assert isinstance(stats, ast.Assign)
     assert ast.unparse(stats.value) == (
-        f"{RAW_WRAPPER}(model_ir, layout_state=session.layout_state)"
+        f"{SUMMARY_OWNER}(model_ir, layout_state=session.layout_state)"
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == COUNT_TARGET
+        for node in ast.walk(lowerer)
     )
 
     predecessor = lowerer.body[index - 1]
@@ -70,20 +74,14 @@ def test_final_prelu_rewrite_or_prune_boundary_is_fixed() -> None:
         and node.id == PREDECESSOR_TARGET
         for node in ast.walk(predecessor.test)
     )
-    guard = lowerer.body[index + 2]
+    guard = lowerer.body[index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
-        "int(final_prelu_stats.get("
-        "'rewritten_prelu_transpose_passthrough_chains', 0)) > 0 or "
-        "len(model_ir.tensors) < final_prelu_tensor_count"
+        "_stats_have_positive_count(final_prelu_stats)"
     )
-    assert _single_target(lowerer.body[index + 3]) == SUCCESSOR_TARGET
+    assert _single_target(lowerer.body[index + 2]) == SUCCESSOR_TARGET
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final PRELU boundary lacks its prune-aware summary owner",
-)
 def test_final_prelu_uses_dedicated_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     raw_calls = [
@@ -137,3 +135,40 @@ def test_final_prelu_uses_dedicated_prune_aware_summary_owner() -> None:
         and node.func.id == f"{RAW_WRAPPER}_pass"
         for node in ast.walk(wrapper)
     )
+
+
+@pytest.mark.parametrize("prune", (False, True))
+def test_final_prelu_summary_preserves_layout_schema_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("final_prelu_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    layout_state = LayoutState.from_model_ir(model_ir)
+    raw_result = {"rewritten_prelu_transpose_passthrough_chains": 3}
+    observed: list[tuple[ModelIR, LayoutState | None]] = []
+
+    def _run(
+        candidate: ModelIR,
+        *,
+        layout_state: LayoutState | None = None,
+    ) -> dict[str, int]:
+        observed.append((candidate, layout_state))
+        if prune:
+            del candidate.tensors["probe"]
+        return raw_result
+
+    monkeypatch.setattr(prelu_passthrough_layout, RAW_OWNER, _run)
+
+    assert prelu_passthrough_layout.run_prelu_transpose_passthrough_summary(
+        model_ir,
+        layout_state=layout_state,
+    ) == {
+        **raw_result,
+        "pruned_unused_tensors": int(prune),
+    }
+    assert observed == [(model_ir, layout_state)]
