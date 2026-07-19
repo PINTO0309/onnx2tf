@@ -1339,3 +1339,14 @@ contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
 tests. Public behavior, artifacts, dependencies, TensorFlow isolation, and the
 exactly 128-ID/128-owner phase-result store are unchanged; the unconsumed
 lowerer assignment inventory decreases from 59 to 58.
+
+The next characterization selects late transpose/dequant/hard-sigmoid/
+quantize bridge cleanup followed by the existing late dequant/unary/fan-out
+composite. The new owner must pass `context.model_ir` to the public bridge
+owner, pass the exact same context to the three-stage child, and preserve both
+complete raw results and their order. The preceding layout/no-layout guard and
+following swish passthrough remain outside the owner, while both lowerer
+wrappers remain compatibility routes. Production is unchanged pending one
+straight-line two-child owner. Focused and affected sequential validation
+report `1 passed, 1 xfailed` and `374 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner.

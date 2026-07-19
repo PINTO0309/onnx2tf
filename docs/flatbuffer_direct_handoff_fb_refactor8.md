@@ -5382,3 +5382,35 @@ closed cluster whose children already have pass-module owners before changing
 production. Keep all tests sequential and single-process under `uv`, and
 commit/push completed checkpoints only. Never create, update, or reopen a pull
 request.
+
+## Late dequant hard-sigmoid/unary characterization checkpoint
+
+The current inventory contains 58 unconsumed underscore assignment targets.
+The next characterized pair is late transpose/dequant/hard-sigmoid/quantize
+bridge cleanup followed by the existing three-stage late
+dequant/unary/fan-out composite. The current calls use a model-only
+compatibility wrapper and a zero-argument helper backed by the exact shared
+`ModelIRPassContext`.
+
+The contract requires one two-child owner, fixed order, exact shared context,
+and identity preservation for the bridge mapping and nested three-result
+tuple. The preceding layout/no-layout conditional and following swish
+transpose-passthrough call remain fixed outer boundaries. Both existing
+lowerer wrappers remain compatibility routes outside the new owner.
+
+Focused characterization reports `1 passed, 1 xfailed`; complete affected
+characterization reports `374 passed, 1 xfailed`. The sole xfail is the
+intentionally absent
+`passes/late_dequant_hardsigmoid_unary_orchestration.py`. Production, graph
+mutations, wrappers, independent routes, and the 128-ID/128-owner phase store
+are unchanged.
+
+At resume, implement
+`run_late_dequant_hardsigmoid_unary_cleanup(context)` as a straight-line
+two-child owner. Call the public hard-sigmoid bridge pass with
+`context.model_ir`, pass the same context to late dequant/unary/fan-out, return
+both raw results unchanged, replace only the two characterized locals, and
+preserve both outer boundaries and wrappers. Add runtime
+order/context/result-identity injection, run affected and standard gates
+sequentially, then commit and push only. Never create, update, or reopen a
+pull request.

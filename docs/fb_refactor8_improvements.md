@@ -6203,3 +6203,36 @@ The unconsumed lowerer assignment inventory decreases from 59 to 58. No
 real-model conversion was repeated because this is a straight-line ownership
 extraction with exact state, option, order, schema, result-identity,
 route-count, phase-boundary, and progress-boundary coverage.
+
+## Late dequant hard-sigmoid/unary composite characterization
+
+The refreshed inventory contains 58 unconsumed underscore-prefixed lowerer
+assignments. The next selected pair is the late transpose/dequantize/
+hard-sigmoid/quantize bridge cleanup followed immediately by the existing late
+dequant/unary/fan-out composite. The first current call passes `model_ir`
+through its compatibility wrapper; the second zero-argument compatibility
+helper resolves to the exact shared `ModelIRPassContext`.
+
+The proposed pass-module owner must call the same public hard-sigmoid bridge
+owner with `context.model_ir`, then pass the exact same context to late
+dequant/unary/fan-out cleanup. It must preserve the bridge mapping and complete
+three-result fan-out tuple unchanged and in source order. The preceding
+layout/no-layout conditional remains the fixed predecessor. The following
+swish transpose-passthrough call, including its shared LayoutState, remains the
+fixed successor.
+
+`tests/test_flatbuffer_direct_late_dequant_hardsigmoid_unary_orchestration.py`
+fixes exact child order, current wrapper forms, complete empty-model schemas,
+observation-only results, and both outer boundaries. Its sole strict expected
+failure requires one new shared-context owner replacing only the two current
+unconsumed lowerer locals. Existing lowerer wrappers must remain available as
+compatibility routes.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.57s` focused and
+`374 passed, 1 xfailed in 18.80s` across hard-sigmoid bridge, quantized
+activation, attention recovery, late dequant/unary/fan-out, swish,
+ConvPool/SINet boundaries, shared-context, pass-efficiency, architecture, and
+phase-store contracts. The sole xfail is the intentionally absent owner.
+Production, public behavior, dependencies, TensorFlow isolation, and the
+exactly 128-ID/128-owner store remain unchanged.
