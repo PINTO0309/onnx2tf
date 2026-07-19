@@ -23,10 +23,10 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 OWNER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "pad_layout.py"
 OWNER = "run_pad_layout_cleanup"
 RESULT_TARGET = "_very_late_pad_layout_stats"
-COMPOSITE_TARGET = "_very_late_pad_instancenorm_layout_results"
-COMPOSITE_OWNER = "run_very_late_pad_instancenorm_layout_cleanup"
-PREDECESSOR_TARGET = "_late_conv1d_decoder_layout_results"
-SUCCESSOR_TARGET = "_very_late_singleton_consecutive_reshape_results"
+COMPOSITE_TARGET = "_very_late_layout_tail_results"
+COMPOSITE_OWNER = "run_very_late_layout_tail_cleanup"
+PREDECESSOR_TARGET = "_late_swish_transpose_passthrough_stats"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 RESULT_SCHEMA = {
     "optimized_transpose_pad_prepost_nhwc_chains": 0,
     "optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains": 0,
@@ -60,6 +60,18 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -169,7 +181,7 @@ def test_very_late_pad_moves_to_composite_and_keeps_consumed_fallback() -> None:
     index = lowerer.body.index(composite)
     assert _call_name(composite) == COMPOSITE_OWNER
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
 
     owner_calls = [
         node

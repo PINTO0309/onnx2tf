@@ -5569,3 +5569,39 @@ No production callback, graph mutation, nested schema, context identity, pass
 order, public API, artifact, dependency, TensorFlow boundary, or store entry
 changed. No real-model conversion was run; the phase-result store remains
 exactly 128 IDs and 128 owners.
+
+## Very-late layout-tail composite implementation
+
+`passes/very_late_layout_tail_orchestration.py` now owns the characterized
+four-stage tail after late Swish cleanup. It forwards the exact shared
+`ModelIRPassContext` object to Conv1D/decoder cleanup, Pad/InstanceNorm
+cleanup, singleton/consecutive Reshape cleanup, and layout/broadcast cleanup
+in the original order. The option-dependent layout-Transpose policy is
+forwarded unchanged through the keyword-only `include_layout_transpose`
+argument.
+
+The lowerer replaces four observation-only result locals with the single
+`_very_late_layout_tail_results` tuple and removes only the three imports made
+redundant by that ownership move. Every child returns its original raw tuple;
+the new owner preserves those tuple objects and their nested empty-model
+schema lengths `(8, 4, 3, 2)`. The late-Swish result remains the immediate
+predecessor and phase-recorded static-shape reconciliation remains the
+immediate successor.
+
+The lowerer-local singleton compatibility wrapper remains available for the
+independent fallback path. Its `fallback_ir` invocation still supplies no
+`LayoutState`, while the primary route now calls the pass-module owner with
+the shared context directly. Existing specialized owners, callback policies,
+pass IDs, graph mutations, public APIs, artifacts, dependency boundaries, and
+TensorFlow-free default direct/`-cotof` behavior are unchanged.
+
+Owner-aware structural tests were updated to distinguish the new top-level
+owner from its specialized child owners. Runtime callback injection proves
+the four-stage order, shared-context identity, result identity, and exact
+broadcast flag. Sequential validation under `uv` completed with 437 affected
+tests, 92 terminal-layout/efficiency tests, 55 core tests, 196 result-contract
+tests, 2 phase-store tests, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests all passing. The phase-result store remains exactly 128 IDs and 128
+owners. No real-model conversion was repeated because the change is a
+straight-line ownership extraction with explicit state, boundary, schema,
+fallback, and result-identity coverage.

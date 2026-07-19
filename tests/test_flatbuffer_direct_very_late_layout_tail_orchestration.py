@@ -8,17 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
-    run_late_conv1d_decoder_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
-    run_singleton_consecutive_reshape,
-)
-from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration import (
-    run_very_late_layout_broadcast_cleanup,
-)
-from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestration import (
-    run_very_late_pad_instancenorm_layout_cleanup,
+from onnx2tf.tflite_builder.passes import (
+    very_late_layout_tail_orchestration,
 )
 
 
@@ -110,43 +101,26 @@ def test_very_late_layout_tail_current_boundary_and_schema(
     include_layout_transpose: bool,
 ) -> None:
     lowerer = _lowerer()
-    indices = tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    assert indices == tuple(range(indices[0], indices[0] + len(indices)))
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE
-    assert tuple(_call_name(lowerer.body[index]) for index in indices) == (
-        CURRENT_CHILD_OWNERS
-    )
-    calls = tuple(_call(lowerer.body[index]) for index in indices)
-    assert all(call is not None for call in calls)
-    for call in calls[:2]:
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "shared_model_ir_pass_context"
-        ]
-        assert call.keywords == []
-    assert [ast.unparse(argument) for argument in calls[2].args] == [
-        "model_ir",
-        "session.layout_state",
-    ]
-    assert calls[2].keywords == []
-    assert [ast.unparse(argument) for argument in calls[3].args] == [
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in calls[3].keywords
+        for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE
     assert not any(
-        isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id in RESULT_TARGETS
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
 
@@ -156,14 +130,9 @@ def test_very_late_layout_tail_current_boundary_and_schema(
         layout_state=LayoutState.from_model_ir(model_ir),
         diagnostics=[],
     )
-    results = (
-        run_late_conv1d_decoder_layout_cleanup(context),
-        run_very_late_pad_instancenorm_layout_cleanup(context),
-        run_singleton_consecutive_reshape(context),
-        run_very_late_layout_broadcast_cleanup(
-            context,
-            include_layout_transpose=include_layout_transpose,
-        ),
+    results = very_late_layout_tail_orchestration.run_very_late_layout_tail_cleanup(
+        context,
+        include_layout_transpose=include_layout_transpose,
     )
     assert tuple(type(result) for result in results) == (tuple,) * 4
     assert tuple(len(result) for result in results) == (8, 4, 3, 2)
@@ -186,13 +155,11 @@ def test_singleton_consecutive_wrapper_independent_route_is_fixed() -> None:
         ),
         key=lambda node: (node.lineno, node.col_offset),
     )
-    assert len(calls) == 2
-    assert tuple(
-        [ast.unparse(argument) for argument in call.args] for call in calls
-    ) == (
-        ["model_ir", "session.layout_state"],
-        ["fallback_ir", "None"],
-    )
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == [
+        "fallback_ir",
+        "None",
+    ]
     assert all(call.keywords == [] for call in calls)
     wrapper = next(
         node
@@ -207,10 +174,6 @@ def test_singleton_consecutive_wrapper_independent_route_is_fixed() -> None:
     assert call.func.id == CHILD_OWNERS[2]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late Conv1D/Pad/Reshape/Broadcast tail has no context owner",
-)
 def test_very_late_layout_tail_has_one_context_owner() -> None:
     owner = _functions(OWNER_PATH)[OWNER]
     calls = sorted(
@@ -257,3 +220,51 @@ def test_very_late_layout_tail_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_very_late_layout_tail_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("very_late_layout_tail_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    results = tuple({"stage": index} for index in range(len(CHILD_OWNERS)))
+    calls: list[tuple[str, ModelIRPassContext, dict[str, bool]]] = []
+
+    def callback(index: int):
+        def run(
+            active_context: ModelIRPassContext,
+            **kwargs: bool,
+        ) -> dict[str, int]:
+            calls.append((CHILD_OWNERS[index], active_context, kwargs))
+            return results[index]
+
+        return run
+
+    for index, name in enumerate(CHILD_OWNERS):
+        monkeypatch.setattr(
+            very_late_layout_tail_orchestration,
+            name,
+            callback(index),
+        )
+
+    actual = very_late_layout_tail_orchestration.run_very_late_layout_tail_cleanup(
+        context,
+        include_layout_transpose=True,
+    )
+
+    assert actual == results
+    assert all(actual[index] is results[index] for index in range(len(results)))
+    assert calls == [
+        (CHILD_OWNERS[0], context, {}),
+        (CHILD_OWNERS[1], context, {}),
+        (CHILD_OWNERS[2], context, {}),
+        (
+            CHILD_OWNERS[3],
+            context,
+            {"include_layout_transpose": True},
+        ),
+    ]

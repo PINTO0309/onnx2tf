@@ -1119,3 +1119,24 @@ the independent earlier wrapper route, all raw tuple schemas and order, the
 indexed final-shape predecessor, the optional elementwise-fanout successor,
 and the full 128-ID/128-owner store. Production remains unchanged pending a
 separate context-owner implementation.
+
+The latest checkpoints implement both the final boundary/Slice/Concat owner
+and the very-late layout-tail owner. The former forwards the callback-bearing
+terminal recovery context and its exact nested shared pass context across four
+final-boundary children while retaining the earlier independent recovery
+route. The latter runs Conv1D/decoder, Pad/InstanceNorm,
+singleton/consecutive Reshape, and optional layout-Transpose/broadcast cleanup
+with one shared `ModelIRPassContext`, forwards the layout option unchanged,
+and preserves the independent no-LayoutState singleton fallback. In both
+cases, the lowerer replaces only unconsumed observation locals, every child
+raw result is returned unchanged, and the original outer boundaries remain
+fixed.
+
+Owner-aware AST contracts and runtime callback injection verify exact call
+order, context identity, option policy, fallback independence, raw-result
+identity, and nested schemas. The current very-late checkpoint passes 437
+affected tests and the complete sequential standard gates: 92
+terminal-layout/efficiency, 55 core, 196 result-contract, 2 phase-store, and 11
+TensorFlow-isolation/default-direct/`-cotof` tests. Public APIs, artifacts,
+dependency boundaries, graph-rewrite behavior, and the exactly 128-ID/
+128-owner phase-result store remain unchanged.

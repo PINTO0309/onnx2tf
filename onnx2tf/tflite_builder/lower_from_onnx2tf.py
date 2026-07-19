@@ -284,14 +284,8 @@ from onnx2tf.tflite_builder.passes.late_reshape_shuffle_attention_window_orchest
 from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration import (
     run_final_boundary_slice_concat_cleanup,
 )
-from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
-    run_late_conv1d_decoder_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestration import (
-    run_very_late_pad_instancenorm_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration import (
-    run_very_late_layout_broadcast_cleanup,
+from onnx2tf.tflite_builder.passes.very_late_layout_tail_orchestration import (
+    run_very_late_layout_tail_cleanup,
 )
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     run_shared_late_reconciliation_cleanup,
@@ -5180,29 +5174,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    # Keep related Conv1D and decoder tail repairs in their fixed late order.
-    _late_conv1d_decoder_layout_results = (
-        run_late_conv1d_decoder_layout_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
-    # Very-late rewrites can recreate Pad and InstanceNorm layout wrappers.
-    _very_late_pad_instancenorm_layout_results = (
-        run_very_late_pad_instancenorm_layout_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
-    # Norm-subgraph fallback rewrites can introduce channelwise
-    # [1,C,1,1]->[1,1,1,C] adapters as TRANSPOSE in no-layout mode.
-    # Re-canonicalize them to RESHAPE at the very end.
-    _very_late_singleton_consecutive_reshape_results = (
-        _run_singleton_consecutive_reshape_pass_cluster(
-            model_ir,
-            session.layout_state,
-        )
-    )
-    _very_late_layout_broadcast_results = (
-        run_very_late_layout_broadcast_cleanup(
+    # Keep Conv1D/decoder, Pad/InstanceNorm, singleton Reshape, and broadcast
+    # repairs in their fixed very-late order. Norm fallback can recreate
+    # channelwise [1,C,1,1]->[1,1,1,C] adapters in no-layout mode.
+    _very_late_layout_tail_results = (
+        run_very_late_layout_tail_cleanup(
             shared_model_ir_pass_context,
             include_layout_transpose=optimize_layout_transpose_chains,
         )

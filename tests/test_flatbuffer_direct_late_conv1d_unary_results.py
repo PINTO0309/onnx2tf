@@ -39,8 +39,8 @@ RESULT_SCHEMAS = (
         "optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains": 0,
     },
 )
-COMPOSITE_TARGET = "_late_conv1d_decoder_layout_results"
-COMPOSITE_OWNER = "run_late_conv1d_decoder_layout_cleanup"
+COMPOSITE_TARGET = "_very_late_layout_tail_results"
+COMPOSITE_OWNER = "run_very_late_layout_tail_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

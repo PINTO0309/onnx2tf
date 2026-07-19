@@ -25,6 +25,15 @@ VERY_LATE_LAYOUT_BROADCAST_OWNER = (
     "run_very_late_layout_broadcast_cleanup"
 )
 VERY_LATE_LAYOUT_BROADCAST_RESULT = "_very_late_layout_broadcast_results"
+VERY_LATE_LAYOUT_TAIL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_tail_orchestration.py"
+)
+VERY_LATE_LAYOUT_TAIL_OWNER = "run_very_late_layout_tail_cleanup"
+VERY_LATE_LAYOUT_TAIL_RESULT = "_very_late_layout_tail_results"
 SHARED_LATE_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -243,21 +252,39 @@ def _very_late_owner_call_count(function_name: str) -> int:
 
 
 def _very_late_assignment(body: list[ast.stmt]) -> ast.Assign:
+    tree = ast.parse(
+        VERY_LATE_LAYOUT_TAIL_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_LAYOUT_TAIL_OWNER
+    )
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == VERY_LATE_OWNER
+        for node in ast.walk(owner)
+    ) == 1
     assignment = next(
         statement
         for statement in body
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_RESULT
+        and statement.targets[0].id == VERY_LATE_LAYOUT_TAIL_RESULT
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == VERY_LATE_OWNER
+    assert assignment.value.func.id == VERY_LATE_LAYOUT_TAIL_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert assignment.value.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in assignment.value.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     return assignment
 
 
@@ -285,26 +312,39 @@ def _very_late_layout_broadcast_owner_call_count(
 def _very_late_layout_broadcast_assignment(
     body: list[ast.stmt],
 ) -> ast.Assign:
+    tree = ast.parse(
+        VERY_LATE_LAYOUT_TAIL_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_LAYOUT_TAIL_OWNER
+    )
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == VERY_LATE_LAYOUT_BROADCAST_OWNER
+        for node in ast.walk(owner)
+    ) == 1
     assignment = next(
         statement
         for statement in body
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_LAYOUT_BROADCAST_RESULT
+        and statement.targets[0].id == VERY_LATE_LAYOUT_TAIL_RESULT
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == VERY_LATE_LAYOUT_BROADCAST_OWNER
+    assert assignment.value.func.id == VERY_LATE_LAYOUT_TAIL_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "shared_model_ir_pass_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in assignment.value.keywords
-    } == {
-        "include_layout_transpose": "optimize_layout_transpose_chains",
-    }
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     return assignment
 
 
@@ -1779,9 +1819,7 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
     predecessor = body[very_late_index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_very_late_singleton_consecutive_reshape_results"
-    )
+    assert predecessor.targets[0].id == "_late_swish_transpose_passthrough_stats"
 
     successor = body[very_late_index + 1]
     _assert_phase_result_record(
@@ -1914,7 +1952,7 @@ def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     predecessor = body[broadcast_index]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == VERY_LATE_LAYOUT_BROADCAST_RESULT
+    assert predecessor.targets[0].id == VERY_LATE_LAYOUT_TAIL_RESULT
 
     successor = body[broadcast_index + 2]
     assert isinstance(successor, ast.Assign)
@@ -2734,11 +2772,14 @@ def test_primary_path_retains_very_late_instancenorm_post_bias_result() -> None:
     )
     assert isinstance(body[index - 1], ast.Assign)
     assert isinstance(body[index - 1].targets[0], ast.Name)
-    assert body[index - 1].targets[0].id == "_late_conv1d_decoder_layout_results"
-    assert isinstance(body[index + 1], ast.Assign)
-    assert isinstance(body[index + 1].targets[0], ast.Name)
-    assert body[index + 1].targets[0].id == (
-        "_very_late_singleton_consecutive_reshape_results"
+    assert body[index - 1].targets[0].id == "_late_swish_transpose_passthrough_stats"
+    _assert_phase_result_record(
+        body[index + 1],
+        phase_id="shape_reconciliation.primary.very_late_broadcast",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
     )
 
 

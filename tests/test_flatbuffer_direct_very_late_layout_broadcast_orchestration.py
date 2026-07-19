@@ -28,8 +28,16 @@ OWNER_PATH = (
     / "very_late_layout_broadcast_orchestration.py"
 )
 OWNER = "run_very_late_layout_broadcast_cleanup"
-RESULT_TARGET = "_very_late_layout_broadcast_results"
-PREDECESSOR_TARGET = "_very_late_singleton_consecutive_reshape_results"
+COMPOSITE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_tail_orchestration.py"
+)
+COMPOSITE_OWNER = "run_very_late_layout_tail_cleanup"
+RESULT_TARGET = "_very_late_layout_tail_results"
+PREDECESSOR_TARGET = "_late_swish_transpose_passthrough_stats"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 OLD_RESULT_TARGETS = (
     "_very_late_layout_transpose_cleanup_stats",
@@ -102,11 +110,7 @@ def test_very_late_layout_broadcast_boundary_uses_composite_outside_store() -> (
         if _single_target(statement) == RESULT_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert ast.unparse(assignment.value) == (
-        "run_very_late_layout_broadcast_cleanup("
-        "shared_model_ir_pass_context, "
-        "include_layout_transpose=optimize_layout_transpose_chains)"
-    )
+    assert _call_name(assignment) == COMPOSITE_OWNER
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
@@ -133,6 +137,14 @@ def test_very_late_layout_broadcast_boundary_uses_one_composite_owner() -> None:
     ]
     assert owner_calls == list(PASS_IDS)
 
+    composite_owner = _functions(COMPOSITE_OWNER_PATH)[COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+        for node in ast.walk(composite_owner)
+    ) == 1
+
     lowerer = _lowerer()
     assignment = next(
         statement
@@ -140,11 +152,7 @@ def test_very_late_layout_broadcast_boundary_uses_one_composite_owner() -> None:
         if _single_target(statement) == RESULT_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert ast.unparse(assignment.value) == (
-        "run_very_late_layout_broadcast_cleanup("
-        "shared_model_ir_pass_context, "
-        "include_layout_transpose=optimize_layout_transpose_chains)"
-    )
+    assert _call_name(assignment) == COMPOSITE_OWNER
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(

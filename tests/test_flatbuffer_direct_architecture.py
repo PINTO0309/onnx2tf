@@ -342,6 +342,29 @@ def _final_boundary_slice_concat_call_count(function_name: str) -> int:
     )
 
 
+def _very_late_layout_tail_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "very_late_layout_tail_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_very_late_layout_tail_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -8973,6 +8996,9 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     assert (
         len(short_invocations)
         + _orchestrated_pass_count(short_helper_name)
+        + _very_late_layout_tail_call_count(
+            "run_singleton_consecutive_reshape"
+        )
         == 3
     )
     assert (
@@ -8985,6 +9011,9 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
             for call in short_invocations
         )
         + _orchestrated_pass_count(short_helper_name)
+        + _very_late_layout_tail_call_count(
+            "run_singleton_consecutive_reshape"
+        )
         == 2
     )
     assert sum(

@@ -4803,3 +4803,49 @@ directly with that exact context, retain the lowerer wrapper and fallback
 caller, preserve the broadcast flag and all raw tuples, and retain both outer
 boundaries. Run affected and standard gates sequentially. Never create,
 update, or reopen a pull request.
+
+## Very-late layout-tail composite implementation checkpoint
+
+The characterized owner is now implemented in
+`passes/very_late_layout_tail_orchestration.py`. It runs Conv1D/decoder,
+Pad/InstanceNorm, singleton/consecutive Reshape, and optional
+layout-Transpose/broadcast cleanup in fixed order with the exact shared
+`ModelIRPassContext`. The lowerer retains the late-Swish predecessor, the
+phase-recorded broadcast-reconciliation successor, and the independent
+fallback singleton wrapper, but replaces the four unconsumed child locals
+with `_very_late_layout_tail_results`.
+
+Important design decisions:
+
+- the new owner is a straight-line orchestration boundary and does not change
+  matching, rewriting, graph mutation, or result schemas;
+- child raw tuples are returned without copying or normalization;
+- `include_layout_transpose` is forwarded exactly to the broadcast child;
+- the primary singleton route uses the shared context directly, while the
+  fallback wrapper keeps `(fallback_ir, None)`;
+- specialized child owners remain independently tested and all ownership
+  assertions are now aware of the outer composite;
+- no phase result was added or removed, so the bounded store remains exactly
+  128 IDs and 128 owners.
+
+Changed production files are
+`onnx2tf/tflite_builder/lower_from_onnx2tf.py` and
+`onnx2tf/tflite_builder/passes/very_late_layout_tail_orchestration.py`.
+Characterization and owner-aware contract tests were updated across the four
+child orchestration families, singleton fallback coverage, terminal layout
+validation, architecture coverage, mutation-evidence accounting, and affected
+result-boundary tests. This handoff and the branch improvement/description
+documents record the checkpoint.
+
+Sequential `uv` validation passed: focused previously failing contracts 380,
+complete affected contracts 437, terminal-layout/efficiency 92, core 55,
+result contracts 196, phase-store 2, and TensorFlow import-blocking/default
+direct/`-cotof` 11. No test is failing and no new known production issue was
+introduced. No real-model conversion was run for this ownership-only move.
+
+At resume, first rerun the read-only unconsumed-result inventory against the
+committed lowerer. Select the next smallest source-adjacent, semantically
+closed cluster whose children are already pass-module-owned, add a strict
+characterization checkpoint before production changes, and keep all tests
+sequential and single-process under `uv`. Continue with scoped commits and
+pushes only. Never create, update, reopen, or otherwise modify a pull request.

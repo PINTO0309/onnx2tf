@@ -41,6 +41,14 @@ ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH = (
 VERY_LATE_PAD_INSTANCENORM = (
     "run_very_late_pad_instancenorm_layout_cleanup"
 )
+VERY_LATE_LAYOUT_TAIL_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_tail_orchestration.py"
+)
+VERY_LATE_LAYOUT_TAIL = "run_very_late_layout_tail_cleanup"
 PRE_TERMINAL_INSTANCENORM_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -113,12 +121,22 @@ def _absolute_final_cleanup_calls(function_name: str) -> list[ast.Call]:
     ]
 
 
-def _very_late_pad_instancenorm_call_count(lowerer: ast.FunctionDef) -> int:
+def _very_late_pad_instancenorm_call_count(
+    lowerer: ast.FunctionDef,
+) -> int:
+    del lowerer
+    tree = ast.parse(VERY_LATE_LAYOUT_TAIL_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_LAYOUT_TAIL
+    )
     return sum(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == VERY_LATE_PAD_INSTANCENORM
-        for node in ast.walk(lowerer)
+        for node in ast.walk(owner)
     )
 
 
