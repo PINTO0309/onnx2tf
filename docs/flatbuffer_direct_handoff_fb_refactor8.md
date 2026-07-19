@@ -1166,3 +1166,25 @@ changed and the runtime suite executes the terminal-cleanup stage. After
 committing and pushing, select the next family by common execution guard and
 mapping schema. Keep the 64 current records and 128-phase hard limit visible
 when sizing further migrations. Never create, update, or reopen a pull request.
+
+## Layout pass-set 2 cleanup characterization
+
+The selected pair contains only Squeeze/Reshape identity cleanup and indexed
+prune/reconcile cleanup at the end of the second layout recovery pass-set. Both
+are bounded integer mappings behind the same
+`optimize_layout_transpose_chains` guard, with no defaults or consumers.
+
+The contract fixes the guard, owner arguments and keywords, source order,
+preceding two-iteration normalization convergence loop, progress successor,
+and absence of loads. Its strict expected failure requires two
+`cleanup.layout_pass_set_2.*` records with invoked-only semantics.
+
+Validation completed sequentially under core-only `uv`: the characterization
+and existing owner contracts are `6 passed, 1 xfailed in 0.77s`; Ruff,
+bytecode compilation, and whitespace checks pass. No production source changed.
+
+Commit and push this characterization before replacing only the two result
+destinations. Preserve the outer guard, convergence predecessor, owner calls,
+and progress successor. Then update the two existing multi-occurrence owner
+contracts and bounded-store inventory, validate, document, commit, and push.
+Never create, update, or reopen a pull request.

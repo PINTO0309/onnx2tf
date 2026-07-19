@@ -1097,6 +1097,30 @@ No root-model corpus conversion was run because this is an observation-
 destination-only change and the synthetic runtime suite executes all four
 stored owners.
 
+## Layout pass-set 2 cleanup characterization
+
+The next family is the adjacent Squeeze/Reshape identity and indexed
+prune/reconcile cleanup pair at the end of layout pass-set 2. Both return the
+already-validated bounded integer mapping schemas, run only inside the existing
+`optimize_layout_transpose_chains` guard, have no defaults, and have no
+consumers.
+
+The characterization fixes the common guard, owner expressions and keywords,
+source order, preceding two-iteration normalization convergence loop,
+following progress advance, and absence of loads. A strict expected failure
+requires stable `cleanup.layout_pass_set_2.*` records with invoked-phase-only
+semantics. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization plus Squeeze/Reshape and indexed prune/reconcile
+  contracts: `6 passed, 1 xfailed in 0.77s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented two-result
+destination migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
