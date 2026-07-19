@@ -198,6 +198,9 @@ from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
 from onnx2tf.tflite_builder.passes.layout_pass_set_1_mean_attention_gate_orchestration import (
     run_layout_pass_set_1_mean_attention_gate_cleanup,
 )
+from onnx2tf.tflite_builder.passes.layout_pass_set_2_preadd_attention_gate_orchestration import (
+    run_layout_pass_set_2_preadd_attention_gate_recovery,
+)
 from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
     run_quantized_activation_binary_recovery,
     run_safe_binary_recovery,
@@ -4492,11 +4495,10 @@ def lower_onnx_to_ir(
                 layout_recovery_context
             )
         )
-        _layout_pass_set_2_preadd_mean_attention_results = (
-            _run_preadd_mean_attention_recovery_sequence()
-        )
-        _layout_pass_set_2_attention_gate_qdq_results = (
-            _run_attention_gate_qdq_recovery_sequence()
+        _layout_pass_set_2_preadd_attention_gate_results = (
+            run_layout_pass_set_2_preadd_attention_gate_recovery(
+                attention_recovery_context
+            )
         )
         session.record_phase_result(
             "cleanup.layout_pass_set_2.dequant_transposeconv_quantize",

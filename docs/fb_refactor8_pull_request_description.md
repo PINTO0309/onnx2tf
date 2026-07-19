@@ -1772,3 +1772,16 @@ Focused and reference-based affected sequential validation report
 the deliberately absent future owner. Production behavior, dependencies,
 TensorFlow isolation, the 42-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a dedicated layout-pass-set-2
+pre-add/attention-gate owner. Both public children receive the exact original
+callback-bearing attention context, and their complete seven-slot and ten-slot
+results retain source order and object identity.
+
+Only the two observation-only lowerer assignments are replaced. The existing
+QLinear/layout predecessor, recorded dequantize/TransposeConv/quantize
+successor, compatibility wrappers, nested callbacks, graph behavior, APIs,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. Focused
+`4`, affected `418`, and standard `92 / 55 / 196 / 2 / 11` sequential tests
+pass. The phase store remains exactly 128 IDs and 128 owners, and the
+unconsumed-result inventory decreases from 42 to 41.

@@ -6973,3 +6973,24 @@ Focused and reference-based affected sequential validation report
 `2 passed, 1 xfailed` and `416 passed, 1 xfailed`; the sole expected failure is
 the deliberately absent owner module. The characterized inventory remains 42,
 and the phase-result store remains exactly 128 IDs and 128 owners.
+
+## Extract the layout-pass-set-2 pre-add/attention-gate boundary
+
+`passes/layout_pass_set_2_preadd_attention_gate_orchestration.py` now owns the
+characterized pair. It forwards the original callback-bearing
+`AttentionRecoveryContext` first to public pre-add/mean/attention recovery and
+then to public attention-gate/QDQ recovery, returning both complete nested
+tuples in source order and by identity.
+
+The lowerer replaces only the two observation-only locals with
+`_layout_pass_set_2_preadd_attention_gate_results`. The preceding QLinear/
+layout owner and following recorded dequantize/TransposeConv/quantize phase
+remain adjacent. Both compatibility wrappers and every independent callback,
+nested suffix, set-1, and later pre-add route remain intact.
+
+Nine stale structural assertions now follow the public children through the
+outer owner while retaining total route counts and neighbor coverage.
+Sequential validation passes: focused `4`, affected `418`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
+pass. The phase store remains exactly 128 IDs and 128 owners, while the
+unconsumed lowerer-result inventory decreases from 42 to 41.

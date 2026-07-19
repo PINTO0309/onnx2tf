@@ -6439,3 +6439,39 @@ and update only structural expectations made stale by the new outer route.
 Run affected and standard gates sequentially under `uv`, confirm the expected
 inventory reduction from 42 to 41, then commit and push the complete unit.
 Do not create, update, reopen, or otherwise modify a pull request.
+
+## Layout-pass-set-2 pre-add/attention-gate implementation checkpoint
+
+`passes/layout_pass_set_2_preadd_attention_gate_orchestration.py` now provides
+`run_layout_pass_set_2_preadd_attention_gate_recovery()`. It calls
+`run_preadd_mean_attention_recovery(context)` and then
+`run_attention_gate_qdq_recovery(context)`, returning both complete tuples
+unchanged. Runtime injection proves exact child order, shared callback-bearing
+context identity, absence of extra options, and both result identities.
+
+The lowerer replaces only `_layout_pass_set_2_preadd_mean_attention_results`
+and `_layout_pass_set_2_attention_gate_qdq_results` with
+`_layout_pass_set_2_preadd_attention_gate_results`. The existing QLinear/layout
+composite remains the direct predecessor, and the recorded
+`cleanup.layout_pass_set_2.dequant_transposeconv_quantize` phase remains the
+direct successor. Both compatibility wrappers, the later direct pre-add route,
+the nested layout-attention suffix callback, the set-1 owner, and every child
+route remain available.
+
+Nine stale direct-call, route-count, or neighbor expectations were updated to
+follow the public children through the new owner while retaining total route
+coverage. Sequential validation passes: focused `4`, complete affected `418`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase store
+`2`, and TensorFlow import-blocking/default-direct/`-cotof` `11`. Ruff,
+bytecode compilation, and whitespace checks pass. The phase-result store
+remains exactly 128 IDs and 128 owners, and the read-only unconsumed-result
+inventory decreases from 42 to 41. No real-model conversion was repeated for
+this straight-line ownership-only extraction.
+
+At resume, refresh the 41-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, recorded phase boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.

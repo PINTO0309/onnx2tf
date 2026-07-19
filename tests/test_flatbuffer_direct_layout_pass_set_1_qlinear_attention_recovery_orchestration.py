@@ -82,7 +82,7 @@ SET_2_RESULT_TARGETS = (
 SET_2_COMPOSITE_TARGET = "_layout_pass_set_2_qlinear_layout_recovery_results"
 SET_2_PREDECESSOR = "_set_post_progress_desc"
 SET_2_PREDECESSOR_ARGUMENT = "layout recovery pass-set 2"
-SET_2_SUCCESSOR_TARGET = "_layout_pass_set_2_preadd_mean_attention_results"
+SET_2_SUCCESSOR_TARGET = "_layout_pass_set_2_preadd_attention_gate_results"
 
 QLINEAR_SCHEMA = (
     ("optimized_transpose_mean_hardsigmoid_muladd_chains",),

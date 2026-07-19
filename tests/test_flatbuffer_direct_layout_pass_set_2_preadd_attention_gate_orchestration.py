@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    layout_pass_set_2_preadd_attention_gate_orchestration,
+)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     ATTENTION_GATE_QDQ_PASS_IDS,
     PREADD_MEAN_ATTENTION_PASS_IDS,
@@ -165,27 +168,24 @@ def _dict_schema(values: tuple[Any, ...]) -> tuple[tuple[str, ...], ...]:
 
 def test_layout_pass_set_2_preadd_attention_gate_current_contract() -> None:
     body = _guard_body()
-    assignments = [
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "attention_recovery_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indexes = [body.index(statement) for statement in assignments]
-    assert indexes[1] == indexes[0] + 1
-    assert _single_target(body[indexes[0] - 1]) == PREDECESSOR_TARGET
-    assert _call_name(body[indexes[0] - 1]) == PREDECESSOR_OWNER
-    assert _phase_id(body[indexes[-1] + 1]) == SUCCESSOR_PHASE_ID
-    assert all(_call(statement).args == [] for statement in assignments)
-    assert all(_call(statement).keywords == [] for statement in assignments)
+    assert call.keywords == []
+    assert _single_target(body[index - 1]) == PREDECESSOR_TARGET
+    assert _call_name(body[index - 1]) == PREDECESSOR_OWNER
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for node in ast.walk(_lowerer())
     )
@@ -234,10 +234,6 @@ def test_layout_pass_set_2_preadd_attention_gate_child_schemas() -> None:
     assert attention_results[5] is transpose_results
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout-pass-set-2 pre-add/attention-gate owner is not implemented",
-)
 def test_layout_pass_set_2_preadd_attention_gate_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -293,3 +289,44 @@ def test_layout_pass_set_2_preadd_attention_gate_has_one_context_owner() -> None
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_layout_pass_set_2_preadd_attention_gate_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, _, _, _ = _context()
+    expected_results = (
+        tuple({f"preadd_{index}": index} for index in range(7)),
+        tuple({f"attention_{index}": index} for index in range(10)),
+    )
+    observed: list[tuple[str, object]] = []
+
+    def preadd(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return expected_results[0]
+
+    def attention(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        layout_pass_set_2_preadd_attention_gate_orchestration,
+        CHILD_OWNERS[0],
+        preadd,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_2_preadd_attention_gate_orchestration,
+        CHILD_OWNERS[1],
+        attention,
+    )
+
+    actual = layout_pass_set_2_preadd_attention_gate_orchestration.run_layout_pass_set_2_preadd_attention_gate_recovery(
+        context
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context),
+        (CHILD_OWNERS[1], context),
+    ]
