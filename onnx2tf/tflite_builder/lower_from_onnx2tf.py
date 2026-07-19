@@ -6329,21 +6329,18 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _final_sinet_late_residual_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_sinet_late_residual_stats.get(
             "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains",
             0,
         )
     ) > 0:
-        _final_sinet_late_residual_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_sinet_late_residual",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     final_sinet_preadd_fanout_stats = (
         _optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains(
@@ -6351,21 +6348,18 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _final_sinet_preadd_fanout_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_sinet_preadd_fanout_stats.get(
             "optimized_sinet_deep_skip_pre_add_concat_prelu_fanout_chains",
             0,
         )
     ) > 0:
-        _final_sinet_preadd_fanout_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_sinet_preadd_fanout",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     final_sinet_dual_resize_stats = (
         _optimize_sinet_deep_skip_dual_resize_affine_transpose_chains(
@@ -6373,21 +6367,18 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _final_sinet_dual_resize_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_sinet_dual_resize_stats.get(
             "optimized_sinet_deep_skip_dual_resize_affine_transpose_chains",
             0,
         )
     ) > 0:
-        _final_sinet_dual_resize_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_sinet_dual_resize",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     final_sinet_shared_post_stats = (
         _optimize_sinet_shared_post_prelu_transpose_fanout_chains(
@@ -6395,21 +6386,18 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _final_sinet_shared_post_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_sinet_shared_post_stats.get(
             "optimized_sinet_shared_post_prelu_transpose_fanout_chains",
             0,
         )
     ) > 0:
-        _final_sinet_shared_post_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_sinet_shared_post",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     final_sinet_deep_skip_stats = (
         _optimize_sinet_deep_skip_concat_resize_affine_tail_chains(
@@ -6417,21 +6405,18 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _final_sinet_deep_skip_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_sinet_deep_skip_stats.get(
             "optimized_sinet_deep_skip_concat_resize_affine_tail_chains",
             0,
         )
     ) > 0:
-        _final_sinet_deep_skip_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_sinet_deep_skip",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     # Keep this after all late SiNet residual/deep-skip folds: those passes can
     # still recreate the mid-stage concat+resize affine NHWC/NCHW bridge.
@@ -6441,21 +6426,18 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _final_sinet_concat_resize_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_sinet_concat_resize_stats.get(
             "optimized_sinet_concat_resize_affine_transpose_chains",
             0,
         )
     ) > 0:
-        _final_sinet_concat_resize_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_sinet_concat_resize",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     final_high_rank_bmm_stats = _compress_static_high_rank_batch_matmul(
         model_ir,

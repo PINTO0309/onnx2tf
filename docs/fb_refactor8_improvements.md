@@ -652,6 +652,37 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented bounded-store
 migration.
 
+## Primary final SiNet reconciliation implementation
+
+The six ordered SiNet results now record under:
+
+- `shape_reconciliation.primary.final_sinet_late_residual`;
+- `shape_reconciliation.primary.final_sinet_preadd_fanout`;
+- `shape_reconciliation.primary.final_sinet_dual_resize`;
+- `shape_reconciliation.primary.final_sinet_shared_post`;
+- `shape_reconciliation.primary.final_sinet_deep_skip`;
+- `shape_reconciliation.primary.final_sinet_concat_resize`.
+
+Each record remains directly behind its original dedicated mutation guard and
+between the same neighboring SiNet repairs. The six zero defaults and local
+targets were removed. No earlier late/static-shape observation was included.
+
+No owner argument, guard, reconciliation, repair order, graph scan, mutation,
+successor, public result, report, artifact, dependency, or TensorFlow boundary
+changed. The bounded store now covers 45 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct ordered-chain, terminal, and store contracts:
+  `67 passed in 2.32s`;
+- broader affected contracts: `146 passed in 3.84s`;
+- lowerer architecture contracts: `258 passed in 18.28s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because only six already-computed
+two-counter result destinations changed.
+
 ## Primary generic final reconciliation implementation
 
 The three selected results now record as:

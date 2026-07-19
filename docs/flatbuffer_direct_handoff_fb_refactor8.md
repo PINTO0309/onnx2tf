@@ -852,3 +852,25 @@ Commit and push before replacing only these six guarded assignments and
 removing their defaults. Update the parameterized SiNet terminal and
 architecture contracts plus the bounded-store inventory, then validate,
 document, commit, and push. Never create, update, or reopen a pull request.
+
+## Primary final SiNet reconciliation implementation
+
+All six final SiNet reconciliations now use stable invoked-only
+`shape_reconciliation.primary.final_sinet_*` records. Their dedicated guards,
+repair order, owner arguments, and successors are unchanged. The old zero
+defaults and local targets are removed, and the bounded store now covers 45
+phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct ordered-chain, terminal, and store contracts:
+  `67 passed in 2.32s`;
+- broader affected contracts: `146 passed in 3.84s`;
+- lowerer architecture contracts: `258 passed in 18.28s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required. After committing and pushing, re-run
+the unconsumed static-shape inventory. The remaining earlier late boundaries
+have different unconditional, split-fallback, shared-mutation, and binary
+recovery semantics; classify them before selecting another family. Never
+create, update, or reopen a pull request.

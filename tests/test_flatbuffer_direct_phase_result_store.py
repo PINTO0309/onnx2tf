@@ -45,6 +45,12 @@ EXPECTED_RESULT_TARGETS = (
     "_final_se_fc_gather_static_shape_stats",
     "_final_prelu_static_shape_stats",
     "_final_consecutive_reshape_static_shape_stats",
+    "_final_sinet_late_residual_static_shape_stats",
+    "_final_sinet_preadd_fanout_static_shape_stats",
+    "_final_sinet_dual_resize_static_shape_stats",
+    "_final_sinet_shared_post_static_shape_stats",
+    "_final_sinet_deep_skip_static_shape_stats",
+    "_final_sinet_concat_resize_static_shape_stats",
     "_final_high_rank_bmm_static_shape_stats",
     "_final_pad_layout_static_shape_stats",
     "_final_conv_input_static_shape_stats",
@@ -86,6 +92,12 @@ EXPECTED_OWNERS = (
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
     "run_static_shape_topology_reconciliation",
     "run_static_shape_topology_reconciliation",
     "run_static_shape_topology_reconciliation",
@@ -97,7 +109,7 @@ EXPECTED_OWNERS = (
 EXPECTED_MODEL_ARGUMENTS = (
     *("model_ir",) * 3,
     *("fallback_ir",) * 14,
-    *("model_ir",) * 22,
+    *("model_ir",) * 28,
 )
 EXPECTED_PHASE_IDS = (
     "shape_resolution.core.dynamic_reshape",
@@ -132,6 +144,12 @@ EXPECTED_PHASE_IDS = (
     "shape_reconciliation.primary.final_se_fc_gather",
     "shape_reconciliation.primary.final_prelu",
     "shape_reconciliation.primary.final_consecutive_reshape",
+    "shape_reconciliation.primary.final_sinet_late_residual",
+    "shape_reconciliation.primary.final_sinet_preadd_fanout",
+    "shape_reconciliation.primary.final_sinet_dual_resize",
+    "shape_reconciliation.primary.final_sinet_shared_post",
+    "shape_reconciliation.primary.final_sinet_deep_skip",
+    "shape_reconciliation.primary.final_sinet_concat_resize",
     "shape_topology.primary.final_high_rank_batch_matmul",
     "shape_topology.primary.final_pad_layout",
     "shape_topology.primary.final_conv_input",
@@ -179,7 +197,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_thirty_nine_observations_use_the_bounded_session_store() -> None:
+def test_forty_five_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -190,7 +208,7 @@ def test_thirty_nine_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 39
+    assert len(records) == 45
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER = "_reconcile_static_tensor_shapes"
@@ -33,12 +30,6 @@ EXPECTED_REPAIR_TARGETS = (
     "final_sinet_deep_skip_stats",
     "final_sinet_concat_resize_stats",
 )
-ZERO_RESULT = {
-    "reconciled_static_tensor_shapes": 0,
-    "reconciled_static_shape_mutations": 0,
-}
-
-
 def _lowerer() -> ast.FunctionDef:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     return next(
@@ -76,9 +67,8 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     return call.args[1]
 
 
-def test_six_final_sinet_reconciliations_form_one_ordered_family() -> None:
-    lowerer = _lowerer()
-    repair_assignments = sorted(
+def _repair_assignments(lowerer: ast.FunctionDef) -> list[ast.Assign]:
+    return sorted(
         (
             node
             for node in ast.walk(lowerer)
@@ -87,59 +77,10 @@ def test_six_final_sinet_reconciliations_form_one_ordered_family() -> None:
         ),
         key=lambda node: node.lineno,
     )
-    assignments = sorted(
-        (
-            node
-            for node in ast.walk(lowerer)
-            if isinstance(node, ast.Assign)
-            and _single_target(node) in EXPECTED_RESULT_TARGETS
-        ),
-        key=lambda node: node.lineno,
-    )
-
-    assert tuple(_single_target(node) for node in repair_assignments) == (
-        EXPECTED_REPAIR_TARGETS
-    )
-    assert len(assignments) == 12
-    defaults = assignments[::2]
-    observations = assignments[1::2]
-    assert tuple(_single_target(node) for node in defaults) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert tuple(_single_target(node) for node in observations) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert all(
-        isinstance(node.value, ast.Dict)
-        and ast.literal_eval(node.value) == ZERO_RESULT
-        for node in defaults
-    )
-    for repair, observation in zip(repair_assignments, observations):
-        assert repair.lineno < observation.lineno
-        call = _statement_call(observation)
-        assert call is not None
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == OWNER
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {"include_mutation_count": "True"}
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id in EXPECTED_RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final SiNet reconciliations have not moved to phase results",
-)
-def test_six_final_sinet_reconciliations_use_phase_results() -> None:
-    lowerer = _lowerer()
-    records = sorted(
+def _phase_records(lowerer: ast.FunctionDef) -> list[ast.Expr]:
+    return sorted(
         (
             node
             for node in ast.walk(lowerer)
@@ -155,10 +96,34 @@ def test_six_final_sinet_reconciliations_use_phase_results() -> None:
         key=lambda node: node.lineno,
     )
 
+
+def test_six_final_sinet_reconciliations_form_one_ordered_family() -> None:
+    lowerer = _lowerer()
+    repair_assignments = _repair_assignments(lowerer)
+    records = _phase_records(lowerer)
+
+    assert tuple(_single_target(node) for node in repair_assignments) == (
+        EXPECTED_REPAIR_TARGETS
+    )
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
+    for repair, record in zip(repair_assignments, records):
+        assert repair.lineno < record.lineno
+        owner = _phase_result_owner(record)
+        assert owner is not None
+        assert [ast.unparse(argument) for argument in owner.args] == ["model_ir"]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in owner.keywords
+        } == {"include_mutation_count": "True"}
+
+
+def test_six_final_sinet_defaults_and_locals_are_removed() -> None:
+    lowerer = _lowerer()
+
     assert not any(
-        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        isinstance(node, ast.Name)
+        and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
