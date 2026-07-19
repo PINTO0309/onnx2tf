@@ -4199,3 +4199,30 @@ Focused validation is `29 passed in 0.55s`; no production behavior or 128/128
 store entry changed. Commit and push this repair separately before the next
 characterization checkpoint. Continue with commits and pushes only; never
 create, update, or reopen a pull request.
+
+## Absolute-final normalization/attention rank-one characterization
+
+The next selected cluster is the existing absolute-final normalization/pad and
+mixed-attention owner followed by dynamic rank-one Unsqueeze/Reshape repair.
+Both share the primary ModelIR/LayoutState context and run immediately before
+the absolute-final topology/layout refresh. The intended result is a nested
+ordered pair that preserves the existing two-mapping tuple and one-counter
+mapping without flattening either schema.
+
+The focused contract fixes both current targets, callback order and arguments,
+the affine/InstanceNorm predecessor, topology/layout successor, lowerer closure
+and context alias, and raw dynamic-rank-one wrapper. One strict xfail requires
+`run_absolute_final_normalization_attention_rank1_cleanup(shared_model_ir_pass_context)`.
+
+Sequential validation under core-only `uv` completed with
+`423 passed, 1 xfailed in 19.29s` across all affected context, boundary,
+dynamic-Reshape, terminal, store, and architecture contracts. The sole
+expected failure is the missing composite owner. Focused Ruff and whitespace
+checks passed.
+
+Commit and push this characterization separately. At resume, add the composite
+function to the existing normalization/attention module, replace the two
+lowerer results with one nested pair, remove only the now-redundant lowerer
+closure and context alias, retain the raw dynamic-rank-one wrapper and all
+other callers, then validate sequentially. Keep the store at 128/128 and never
+create, update, or reopen a pull request.

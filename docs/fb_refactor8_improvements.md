@@ -4738,3 +4738,32 @@ target LayoutState, and session diagnostics arguments. The focused file passes
 (`29 passed in 0.55s`). No production source, context lifetime, graph behavior,
 pass order, API, artifact, dependency, TensorFlow boundary, or 128/128 store
 entry changed.
+
+## Absolute-final normalization/attention rank-one characterization
+
+The next selected cluster is the existing absolute-final normalization/pad and
+mixed-attention owner followed immediately by dynamic rank-one
+Unsqueeze/Reshape shape-input repair. The first result is already an ordered
+two-mapping tuple; the second is an independent one-counter mapping. Both use
+the same primary ModelIR/LayoutState context and precede the absolute-final
+topology/layout refresh.
+
+`tests/test_flatbuffer_direct_absolute_final_normalization_attention_rank1_orchestration.py`
+fixes the two current result targets, exact owner-before-rank-one order,
+ModelIR/layout arguments, the affine/InstanceNorm predecessor, topology/layout
+successor, current lowerer closure and context alias, and retention of the raw
+dynamic-rank-one wrapper. Its one strict expected failure requires
+`run_absolute_final_normalization_attention_rank1_cleanup(shared_model_ir_pass_context)`
+to return the existing normalization/attention tuple and rank-one mapping as a
+nested ordered pair.
+
+Sequential characterization under core-only `uv` completed with
+`423 passed, 1 xfailed in 19.29s` across the dedicated contract and affected
+normalization/attention, affine/InstanceNorm, shared-context, topology/layout,
+safety-fallback, dynamic-Reshape, terminal-layout, store, and architecture
+contracts. The sole expected failure is the intentionally absent composite
+context owner. Focused Ruff and whitespace checks passed.
+
+This checkpoint changes no production source, callback, context lifetime,
+graph mutation, pass order, result schema, store entry, API, artifact,
+dependency, or TensorFlow boundary. No real-model conversion was repeated.

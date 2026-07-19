@@ -890,3 +890,11 @@ and the full 128/128 store.
 An inherited shared-context test now identifies all four existing
 target-specific context-building helpers instead of relying on the stale count
 of two. This is a test-only contract repair with no production change.
+
+The next characterization fixes the existing absolute-final
+normalization/attention owner plus the following dynamic rank-one
+Unsqueeze/Reshape repair. It preserves the nested raw result schemas, shared
+ModelIR/LayoutState identity, exact callback order, affine/InstanceNorm
+predecessor, topology/layout successor, dynamic-rank-one compatibility wrapper,
+and the full 128/128 store. Production remains unchanged until the composite
+context owner is implemented separately.
