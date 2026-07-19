@@ -6053,10 +6053,11 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_spp_results"
+        and statement.targets[0].id == "_late_spp_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id
+        == "run_late_spp_concat_unary_conv_summary"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
@@ -6069,7 +6070,7 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         previous_boundary.value.func.id
         == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 2]
+    next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
@@ -6080,6 +6081,28 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         next_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_spp_concat_unary_conv_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    summary_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_spp_concat_unary_conv_summary"
+    )
+    raw_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_spp_concat_unary_conv"
+    ]
+    assert len(raw_owner_calls) == 1
 
 
 def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:

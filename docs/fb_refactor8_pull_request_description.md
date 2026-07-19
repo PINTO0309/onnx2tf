@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Nineteen late lowerer clusters now have focused orchestration owners. The first
+Twenty late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -205,11 +205,15 @@ StridedSlice/Pad/Concat cleanup as one ordered pre-terminal tail. It preserves
 the layout-aware/model-only argument policy and returns both mappings outside
 the full store.
 
+The twentieth composes the direct late SPP/Concat/Unary raw pair with its
+strict two-counter summary. It preserves the raw wrapper and shared pass-state
+scope while removing one consumed raw-result local.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
-lowerer scope locals. They also replace sixteen consumed mutation-evidence or
+lowerer scope locals. They also replace seventeen consumed mutation-evidence or
 aggregate-result locals and five tensor-count snapshots with three explicit
-boolean decisions, three reusable summary calls, and one prune-aware cleanup
+boolean decisions, four reusable summary calls, and one prune-aware cleanup
 call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -487,8 +491,9 @@ Final checkpoint results:
 - pre-terminal affine-tail owner contracts: **3 passed**;
 - affected affine-tail, terminal recovery, very-late, and related contracts:
   **237 passed**;
-- late SPP/Concat/Unary direct-summary characterization:
-  **1 passed, 1 intentional strict xfail**;
+- late SPP/Concat/Unary direct-summary owner contracts: **3 passed**;
+- affected late SPP, shape-extract, terminal recovery, and related contracts:
+  **187 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -542,5 +547,6 @@ StridedSlice/Pad/Concat pair as one ordered owner. It preserves the
 layout-aware/model-only argument policy, all other call sites, and the full
 128/128 store.
 
-The next characterization fixes the adjacent late SPP/Concat/Unary raw tuple
-and normalized summary while explicitly retaining the existing raw wrapper.
+The latest checkpoint implements the adjacent late SPP/Concat/Unary raw tuple
+and normalized summary owner while explicitly retaining the existing raw
+wrapper and shared pass-state scope.

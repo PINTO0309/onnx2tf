@@ -23,6 +23,9 @@ from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration impo
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 LATE_SPP_CONCAT_UNARY_CONV = "_run_late_spp_concat_unary_conv_pass_pair"
+LATE_SPP_CONCAT_UNARY_CONV_SUMMARY = (
+    "run_late_spp_concat_unary_conv_summary"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -152,9 +155,19 @@ def test_late_spp_concat_unary_conv_invocation_remains_zero_argument() -> None:
         and node.func.id == LATE_SPP_CONCAT_UNARY_CONV
     ]
 
-    assert len(invocations) == 1
-    assert invocations[0].args == []
-    assert invocations[0].keywords == []
+    assert invocations == []
+    summary_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
+    ]
+    assert len(summary_invocations) == 1
+    assert [ast.unparse(arg) for arg in summary_invocations[0].args] == [
+        "late_spp_concat_unary_conv_context"
+    ]
+    assert summary_invocations[0].keywords == []
 
 
 def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
@@ -165,14 +178,14 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_spp_results"
+        and statement.targets[0].id == "_late_spp_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == LATE_SPP_CONCAT_UNARY_CONV
+        and statement.value.func.id == LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
     )
 
     previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 2]
+    following = lowerer.body[invocation_index + 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
@@ -295,32 +308,23 @@ def test_late_spp_concat_unary_conv_returns_and_summarizes_mutations(
 
 def test_lowerer_captures_late_spp_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = ("late_spp_results", "_late_spp_stats")
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-    }
-    result_call = assignments[target_names[0]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == LATE_SPP_CONCAT_UNARY_CONV
-    summary_call = assignments[target_names[1]]
+    summary = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_late_spp_stats"
+    )
+    first_index = lowerer.body.index(summary)
+    summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == (
-        "summarize_late_spp_concat_unary_conv_mutations"
-    )
+    assert summary_call.func.id == LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
+    assert [ast.unparse(arg) for arg in summary_call.args] == [
+        "late_spp_concat_unary_conv_context"
+    ]
+    assert summary_call.keywords == []
 
     previous = lowerer.body[first_index - 1]
     assert isinstance(previous, ast.Assign)
@@ -332,7 +336,7 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
     assert previous.value.func.id == (
         "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
     )
-    following = lowerer.body[first_index + 2]
+    following = lowerer.body[first_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)

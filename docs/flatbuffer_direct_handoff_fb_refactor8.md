@@ -3242,3 +3242,31 @@ Commit and push this characterization separately. At resume, add only the
 direct summary owner, preserve the raw wrapper, update owner-aware neighboring
 contracts, and validate sequentially. Continue with commits and pushes only;
 never create, update, or reopen a pull request.
+
+## Late SPP/Concat/Unary direct-summary implementation
+
+The pass module now exposes
+`run_late_spp_concat_unary_conv_summary(context)`. It runs the existing raw
+pair and normalizes its tuple through the existing strict two-key summary. The
+lowerer retains `_late_spp_stats` but removes the consumed raw-result local.
+
+The nested raw wrapper, shared pass scope, terminal Slice/Pad/Concat
+predecessor, pre-QKV shape-extract successor, raw result schema, and total
+owner count remain unchanged. The summary stays outside the 128/128 store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `3 passed in 0.60s`;
+- affected boundary and owner contracts: `187 passed in 1.97s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.91s`;
+- synthetic core runtime contracts: `55 passed in 0.98s`;
+- result contracts: `196 passed in 9.42s`;
+- architecture contracts: `258 passed in 18.89s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.86s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next adjacent non-store evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

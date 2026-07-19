@@ -1263,7 +1263,7 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "late_spp_results"
+    assert following.targets[0].id == "_late_spp_stats"
 
     direct_statements = [
         statement

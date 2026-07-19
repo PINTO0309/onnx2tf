@@ -3683,3 +3683,41 @@ Sequential characterization under core-only `uv` completed with
 `1 passed, 1 xfailed in 0.14s`; targeted Ruff, bytecode compilation, and
 whitespace checks passed. The sole expected failure is the intentionally
 absent direct-summary owner.
+
+## Late SPP/Concat/Unary direct-summary implementation
+
+`run_late_spp_concat_unary_conv_summary(context)` now composes the existing
+raw ordered owner with its existing strict two-counter normalizer. The lowerer
+direct site retains `_late_spp_stats` at the same boundary and passes the same
+conversion-local context, while the consumed `late_spp_results` local and
+duplicate two-statement composition are removed.
+
+The nested `_run_late_spp_concat_unary_conv_pass_pair` wrapper remains defined
+and still dispatches to the raw owner. The terminal Slice/Pad/Concat
+predecessor, pre-QKV shape-extract successor, shared pass-state scope, and raw
+result schema remain unchanged.
+
+No pass execution, order, state-scope lifetime, graph scan, mutation, layout
+or diagnostics identity, public API, artifact, dependency, or TensorFlow
+boundary changed. The normalized summary remains outside the already-full
+128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `3 passed in 0.60s`;
+- affected late SPP, shape-extract, StridedSlice/Pad/Concat, terminal recovery,
+  core, and store contracts: `187 passed in 1.97s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.91s`;
+- synthetic core runtime contracts: `55 passed in 0.98s`;
+- result contracts: `196 passed in 9.42s`;
+- full lowerer architecture contracts: `258 passed in 18.89s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.86s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact context and normalization, while affected and architecture gates
+preserve the wrapper, adjacent boundaries, shared scope, and total pass
+ownership.

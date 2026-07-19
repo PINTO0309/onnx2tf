@@ -14,6 +14,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.shape_extract_layout import (
     optimize_transpose_shape_extract_nhwc_to_nchw_chains,
 )
+from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
+    TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -351,9 +354,11 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert previous.targets[0].id == "_late_spp_stats"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "summarize_late_spp_concat_unary_conv_mutations"
-    )
+    assert previous.value.func.id == "run_late_spp_concat_unary_conv_summary"
+    assert [ast.unparse(argument) for argument in previous.value.args] == [
+        "late_spp_concat_unary_conv_context"
+    ]
+    assert previous.value.keywords == []
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -367,4 +372,8 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
         and isinstance(node.func, ast.Name)
         and node.func.id == SHAPE_EXTRACT_OWNER
     ]
-    assert len(all_calls) == 3
+    assert (
+        len(all_calls)
+        + TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS.count(SHAPE_EXTRACT_OWNER)
+        == 3
+    )

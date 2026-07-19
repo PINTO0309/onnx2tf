@@ -218,7 +218,7 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
     run_late_spp_concat_unary_conv,
-    summarize_late_spp_concat_unary_conv_mutations,
+    run_late_spp_concat_unary_conv_summary,
 )
 from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
     run_boundary_batchmatmul_unary,
@@ -5354,9 +5354,8 @@ def lower_onnx_to_ir(
             model_ir
         )
     )
-    late_spp_results = _run_late_spp_concat_unary_conv_pass_pair()
-    _late_spp_stats = summarize_late_spp_concat_unary_conv_mutations(
-        late_spp_results
+    _late_spp_stats = run_late_spp_concat_unary_conv_summary(
+        late_spp_concat_unary_conv_context,
     )
     _late_pre_qkv_shape_extract_stats = (
         _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
