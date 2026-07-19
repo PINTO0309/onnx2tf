@@ -4323,3 +4323,39 @@ Sequential characterization under core-only `uv` completed with
 indexed binary-adapter, terminal-layout, core runtime, phase-store, and
 architecture contracts. The sole expected failure is the intentionally absent
 merged summary owner. Targeted Ruff and whitespace checks passed.
+
+## Final placeholder binary-adapter summary implementation
+
+`run_indexed_binary_layout_adapter_summary(model_ir, graph_index=...,
+layout_state=...)` now owns the tensor-count snapshot, one indexed pair
+invocation, optional graph-index and layout-state forwarding, ordered merge of
+the two disjoint raw counter mappings, and the non-negative prune delta. The
+final placeholder site replaces its count and two raw-result locals with one
+merged mapping. Its guard still combines the preceding placeholder
+reconciliation mapping with all binary rewrite and prune evidence.
+
+The raw pair owner remains available and unchanged. Shared-late, late-binary,
+and fallback callers continue to consume independent ordered results;
+owner-aware tests preserve four total raw pair uses including the new summary.
+The following topology checkpoint, public behavior, artifacts, dependencies,
+TensorFlow isolation, and full 128/128 phase-result store are unchanged. The
+summary remains outside that store.
+
+Final sequential validation under core-only `uv`:
+
+- focused merged-summary contracts: `4 passed in 0.55s`;
+- affected indexed adapter, terminal-layout, core runtime, store, and
+  architecture contracts: `383 passed in 19.66s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.83s`;
+- synthetic core runtime contracts: `55 passed in 0.95s`;
+- result contracts: `196 passed in 9.25s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.92s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact schema merge, context forwarding, and stable/prune-only behavior,
+while affected and architecture gates preserve pair order, raw use count,
+other callers, reconciliation semantics, and topology order.

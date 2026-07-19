@@ -10,6 +10,7 @@ import onnx2tf.tflite_builder.core.validation as validation_module
 import onnx2tf.tflite_builder.core.shape_readiness as shape_readiness_module
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 from onnx2tf.tflite_builder.passes import (
+    binary_layout_adapter as binary_layout_adapter_module,
     optional_late_binary_layout_recovery_orchestration as optional_recovery_module,
 )
 
@@ -1859,7 +1860,7 @@ def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
             reconcile_result,
         )
         monkeypatch.setattr(
-            lowering_module,
+            binary_layout_adapter_module,
             "run_indexed_binary_layout_adapter_cleanup",
             adapter_result,
         )

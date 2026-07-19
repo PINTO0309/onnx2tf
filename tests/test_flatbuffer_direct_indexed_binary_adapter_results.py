@@ -51,20 +51,16 @@ SINGLETON_OWNER = "repair_rank4_binary_singleton_broadcast_layout_mismatch"
 EXACT_WRAPPER = f"_{EXACT_OWNER}"
 SINGLETON_WRAPPER = f"_{SINGLETON_OWNER}"
 RUNNER = "run_indexed_binary_layout_adapter_cleanup"
+SUMMARY_RUNNER = "run_indexed_binary_layout_adapter_summary"
 EXPECTED_PAIR_TARGETS = (
     ("shared_binary_adapter_stats", "shared_singleton_adapter_stats"),
     ("late_binary_adapter_stats", "late_singleton_adapter_stats"),
     ("_fallback_binary_adapter_stats", "_fallback_singleton_adapter_stats"),
-    (
-        "final_placeholder_exact_binary_stats",
-        "final_placeholder_singleton_binary_stats",
-    ),
 )
 EXPECTED_MODEL_ARGUMENTS = (
     "model_ir",
     "model_ir",
     "fallback_ir",
-    "model_ir",
 )
 RESULT_SCHEMA = (
     {"inserted_rank4_binary_layout_fix_transpose": 0},
@@ -182,6 +178,17 @@ def _late_binary_repair_runner_calls() -> list[ast.Call]:
     ]
 
 
+def _summary_runner_calls() -> list[ast.Call]:
+    owner = _functions(OWNER_PATH)[SUMMARY_RUNNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == RUNNER
+    ]
+
+
 def _tensor(
     name: str,
     shape: tuple[int, ...],
@@ -285,8 +292,12 @@ def test_binary_adapter_owner_schemas_and_indexed_contracts_are_explicit() -> No
     locations = _runner_locations(lowerer)
     shared_late_calls = _shared_late_runner_calls()
     late_binary_calls = _late_binary_repair_runner_calls()
+    summary_calls = _summary_runner_calls()
     assert (
-        len(locations) + len(shared_late_calls) + len(late_binary_calls)
+        len(locations)
+        + len(shared_late_calls)
+        + len(late_binary_calls)
+        + len(summary_calls)
         == 4
     )
     assert tuple(
@@ -312,6 +323,10 @@ def test_binary_adapter_owner_schemas_and_indexed_contracts_are_explicit() -> No
         ast.unparse(argument) for argument in late_binary_calls[0].args
     ] == ["context.model_ir"]
     assert late_binary_calls[0].keywords == []
+    assert len(summary_calls) == 1
+    assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
+        "model_ir"
+    ]
 
 
 def test_binary_adapter_compatibility_wrappers_preserve_current_contract() -> None:
@@ -379,8 +394,12 @@ def test_indexed_binary_adapter_runner_reuses_one_index_and_retains_results(
     locations = _runner_locations(lowerer)
     shared_late_calls = _shared_late_runner_calls()
     late_binary_calls = _late_binary_repair_runner_calls()
+    summary_calls = _summary_runner_calls()
     assert (
-        len(locations) + len(shared_late_calls) + len(late_binary_calls)
+        len(locations)
+        + len(shared_late_calls)
+        + len(late_binary_calls)
+        + len(summary_calls)
         == 4
     )
     assert tuple(
@@ -407,6 +426,10 @@ def test_indexed_binary_adapter_runner_reuses_one_index_and_retains_results(
         ast.unparse(argument) for argument in late_binary_calls[0].args
     ] == ["context.model_ir"]
     assert late_binary_calls[0].keywords == []
+    assert len(summary_calls) == 1
+    assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
+        "model_ir"
+    ]
     assert _raw_pair_locations(lowerer) == []
     for target in EXPECTED_PAIR_TARGETS[2]:
         assert not any(

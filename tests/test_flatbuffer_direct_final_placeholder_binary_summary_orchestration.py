@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import binary_layout_adapter
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -76,35 +81,30 @@ def _assert_topology_successor(statement: ast.stmt) -> None:
 
 def test_final_placeholder_binary_prune_aware_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    count = next(
+    summary = next(
         statement
         for statement in ast.walk(lowerer)
-        if _single_target(statement) == COUNT_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    body = _containing_body(lowerer, count)
-    index = body.index(count)
-    pair = body[index + 1]
-    guard = body[index + 2]
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
-    assert _tuple_targets(pair) == RAW_TARGETS
-    assert isinstance(pair, ast.Assign)
-    assert ast.unparse(pair.value) == f"{RAW_OWNER}(model_ir)"
+    body = _containing_body(lowerer, summary)
+    index = body.index(summary)
+    guard = body[index + 1]
+    assert isinstance(summary, ast.Assign)
+    assert ast.unparse(summary.value) == f"{SUMMARY_OWNER}(model_ir)"
     assert _single_target(body[index - 1]) == PREDECESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in {COUNT_TARGET, *RAW_TARGETS}
+        for node in ast.walk(lowerer)
+    )
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "_stats_have_positive_count(final_placeholder_reconcile_stats, "
-        "final_placeholder_exact_binary_stats, "
-        "final_placeholder_singleton_binary_stats) or "
-        "len(model_ir.tensors) < final_placeholder_binary_tensor_count"
+        "final_placeholder_binary_stats)"
     )
-    _assert_topology_successor(body[index + 3])
+    _assert_topology_successor(body[index + 2])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final placeholder binary site lacks one prune-aware summary owner",
-)
 def test_final_placeholder_binary_uses_merged_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     raw_calls = [
@@ -146,3 +146,49 @@ def test_final_placeholder_binary_uses_merged_prune_aware_summary_owner() -> Non
         "final_placeholder_binary_stats)"
     )
     _assert_topology_successor(body[index + 2])
+
+
+@pytest.mark.parametrize("prune", (False, True))
+def test_indexed_binary_adapter_summary_preserves_schema_context_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("final_placeholder_binary_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    graph_index = ModelIRGraphIndex(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    raw_results = (
+        {"inserted_rank4_binary_layout_fix_transpose": 3},
+        {"repaired_rank4_binary_singleton_broadcast_layout_mismatch": 4},
+    )
+    observed: list[
+        tuple[ModelIR, ModelIRGraphIndex | None, LayoutState | None]
+    ] = []
+
+    def _run(
+        candidate: ModelIR,
+        *,
+        graph_index: ModelIRGraphIndex | None = None,
+        layout_state: LayoutState | None = None,
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        observed.append((candidate, graph_index, layout_state))
+        if prune:
+            del candidate.tensors["probe"]
+        return raw_results
+
+    monkeypatch.setattr(binary_layout_adapter, RAW_OWNER, _run)
+
+    assert binary_layout_adapter.run_indexed_binary_layout_adapter_summary(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    ) == {
+        **raw_results[0],
+        **raw_results[1],
+        "pruned_unused_tensors": int(prune),
+    }
+    assert observed == [(model_ir, graph_index, layout_state)]

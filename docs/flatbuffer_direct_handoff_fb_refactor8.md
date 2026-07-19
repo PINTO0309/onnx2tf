@@ -3831,3 +3831,33 @@ the merged indexed binary-adapter summary and final-placeholder site, retain
 the raw pair owner and all other pair callers, update owner-aware structural
 contracts, and validate sequentially. Continue with commits and pushes only;
 never create, update, or reopen a pull request.
+
+## Final placeholder binary-adapter summary implementation
+
+The binary-adapter pass module now exposes
+`run_indexed_binary_layout_adapter_summary(model_ir, graph_index=...,
+layout_state=...)`. It captures tensor count, invokes the existing indexed pair
+once, merges both disjoint counter mappings, and adds prune evidence. The final
+placeholder site replaces its count and two raw-result locals with one summary
+mapping while retaining the preceding placeholder reconciliation mapping.
+
+The raw pair owner and its shared-late, late-binary, and fallback callers remain
+unchanged. The rewrite-or-prune guard, topology successor, and 128/128 store are
+unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused merged-summary contracts: `4 passed in 0.55s`;
+- affected boundary, indexed adapter, runtime, store, and architecture
+  contracts: `383 passed in 19.66s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.83s`;
+- synthetic core runtime contracts: `55 passed in 0.95s`;
+- result contracts: `196 passed in 9.25s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.92s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next compatible repeated evidence family before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

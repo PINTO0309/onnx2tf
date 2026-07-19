@@ -333,6 +333,7 @@ from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     repair_rank4_binary_layout_mismatch_with_transpose_adapter as _repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass,
     repair_rank4_binary_singleton_broadcast_layout_mismatch as _repair_rank4_binary_singleton_broadcast_layout_mismatch_pass,
     run_indexed_binary_layout_adapter_cleanup,
+    run_indexed_binary_layout_adapter_summary,
 )
 from onnx2tf.tflite_builder.passes.conv_output_passthrough_layout import (
     optimize_transposeconv_output_channel1_terminal_transpose_chains as _optimize_transposeconv_output_channel1_terminal_transpose_chains_pass,
@@ -5915,16 +5916,13 @@ def lower_onnx_to_ir(
                 )
             )
         }
-        final_placeholder_binary_tensor_count = len(model_ir.tensors)
-        (
-            final_placeholder_exact_binary_stats,
-            final_placeholder_singleton_binary_stats,
-        ) = run_indexed_binary_layout_adapter_cleanup(model_ir)
+        final_placeholder_binary_stats = (
+            run_indexed_binary_layout_adapter_summary(model_ir)
+        )
         if _stats_have_positive_count(
             final_placeholder_reconcile_stats,
-            final_placeholder_exact_binary_stats,
-            final_placeholder_singleton_binary_stats,
-        ) or len(model_ir.tensors) < final_placeholder_binary_tensor_count:
+            final_placeholder_binary_stats,
+        ):
             session.record_phase_result(
                 "shape_reconciliation.primary.final_placeholder_binary",
                 _reconcile_static_tensor_shapes(

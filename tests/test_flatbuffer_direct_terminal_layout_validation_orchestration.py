@@ -671,7 +671,7 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
 
     outer_guard = body[restore_index + 2]
     assert isinstance(outer_guard, ast.If)
-    assert len(outer_guard.body) == 6
+    assert len(outer_guard.body) == 5
 
     first_reconciliation = outer_guard.body[0]
     assert isinstance(first_reconciliation, ast.Assign)
@@ -696,38 +696,23 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
         "'reconciled_static_tensor_shapes', 0))}"
     )
 
-    assert isinstance(outer_guard.body[2], ast.Assign)
-    assert isinstance(outer_guard.body[2].targets[0], ast.Name)
-    assert outer_guard.body[2].targets[0].id == (
-        "final_placeholder_binary_tensor_count"
-    )
-    binary_adapter = outer_guard.body[3]
+    binary_adapter = outer_guard.body[2]
     assert isinstance(binary_adapter, ast.Assign)
     assert len(binary_adapter.targets) == 1
-    binary_adapter_targets = binary_adapter.targets[0]
-    assert isinstance(binary_adapter_targets, ast.Tuple)
-    assert [
-        target.id
-        for target in binary_adapter_targets.elts
-        if isinstance(target, ast.Name)
-    ] == [
-        "final_placeholder_exact_binary_stats",
-        "final_placeholder_singleton_binary_stats",
-    ]
+    assert isinstance(binary_adapter.targets[0], ast.Name)
+    assert binary_adapter.targets[0].id == "final_placeholder_binary_stats"
     assert isinstance(binary_adapter.value, ast.Call)
     assert isinstance(binary_adapter.value.func, ast.Name)
     assert (
         binary_adapter.value.func.id
-        == "run_indexed_binary_layout_adapter_cleanup"
+        == "run_indexed_binary_layout_adapter_summary"
     )
 
-    binary_guard = outer_guard.body[4]
+    binary_guard = outer_guard.body[3]
     assert isinstance(binary_guard, ast.If)
     assert ast.unparse(binary_guard.test) == (
         "_stats_have_positive_count(final_placeholder_reconcile_stats, "
-        "final_placeholder_exact_binary_stats, "
-        "final_placeholder_singleton_binary_stats) or "
-        "len(model_ir.tensors) < final_placeholder_binary_tensor_count"
+        "final_placeholder_binary_stats)"
     )
     assert len(binary_guard.body) == 1
     second_reconciliation = binary_guard.body[0]
@@ -740,7 +725,7 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
         ),
     )
 
-    topology_checkpoint = outer_guard.body[5]
+    topology_checkpoint = outer_guard.body[4]
     _assert_phase_result_record(
         topology_checkpoint,
         phase_id="topology.primary.final_placeholder",
