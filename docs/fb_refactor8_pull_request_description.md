@@ -1397,3 +1397,22 @@ gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
 phase-result store remains exactly 128 IDs and 128 owners, while the
 characterized unconsumed lowerer-result inventory decreases from 57 to 56.
+
+The next characterization selects the adjacent pre-terminal
+affine/Slice/SPP and terminal QKV/activation/layout/shape composites. Both use
+the exact shared context; the terminal child also receives the unchanged
+layout-Transpose option. The new owner must preserve their order, complete
+nested results, and raw identities. The optional late-binary-layout
+reconciliation branch remains the predecessor, while the phase-recorded
+terminal Expand/Squeeze reconciliation and post-progress callback remain
+successors outside the owner. Production is unchanged pending one
+straight-line two-child owner.
+
+The expanded characterization suite also corrected 24 stale structural tests
+that still named the already-replaced terminal QKV/shape/attention boundary.
+They now resolve the current terminal QKV/activation/layout/shape owner while
+continuing to verify nested owners. Focused and expanded sequential validation
+report `2 passed, 1 xfailed` and `1140 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner. Production behavior, dependencies,
+TensorFlow isolation, and the exactly 128-ID/128-owner phase store remain
+unchanged.

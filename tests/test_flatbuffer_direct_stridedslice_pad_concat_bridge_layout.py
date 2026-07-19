@@ -1368,7 +1368,7 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_layout_shape_results"
     )
     assert len(_outer_calls(TERMINAL_AFFINE_SLICE_SPP)) == 1
 
@@ -1438,7 +1438,9 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert following.targets[0].id == (
+        "_terminal_qkv_activation_layout_shape_results"
+    )
     assert len(_outer_calls(PRE_TERMINAL_CLEANUP)) == 1
 
     owner_calls = _pre_terminal_cleanup_calls(
@@ -1506,7 +1508,9 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
 
     following = lowerer.body[slice_index + 1]
     assert isinstance(following, ast.Assign)
-    assert following.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert following.targets[0].id == (
+        "_terminal_qkv_activation_layout_shape_results"
+    )
     assert len(_outer_calls(PRE_TERMINAL_CLEANUP)) == 1
 
     owner_calls = _pre_terminal_cleanup_calls(

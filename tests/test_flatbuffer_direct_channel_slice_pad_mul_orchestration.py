@@ -267,7 +267,9 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert following.targets[0].id == (
+        "_terminal_qkv_activation_layout_shape_results"
+    )
     assert len(_outer_calls()) == 1
     assert len(_pre_terminal_cleanup_calls(PRE_TERMINAL_PRE_ADD)) == 1
     assert len(_pre_terminal_cleanup_calls(CHANNEL_SLICE_PAD_MUL_SUMMARY)) == 1

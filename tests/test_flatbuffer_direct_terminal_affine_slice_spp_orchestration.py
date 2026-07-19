@@ -37,7 +37,7 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_terminal_affine_slice_spp_results"
 PREDECESSOR_TARGET = "_pre_terminal_cleanup_results"
-SUCCESSOR_TARGET = "_terminal_qkv_shape_attention_results"
+SUCCESSOR_TARGET = "_terminal_qkv_activation_layout_shape_results"
 OUTER_PATH = (
     REPO_ROOT
     / "onnx2tf"

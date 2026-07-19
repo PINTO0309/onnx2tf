@@ -5514,3 +5514,36 @@ Characterize it before changing production, keep every test sequential under
 `uv`, and commit/push only at complete checkpoints. Do not create or modify a
 pull request unless the user explicitly requests that operation in the active
 turn.
+
+## Terminal affine/QKV/layout-shape characterization checkpoint
+
+The current characterized inventory contains 56 unconsumed lowerer results.
+The next selected adjacent pair is pre-terminal affine/Slice/SPP followed by
+terminal QKV/activation/layout/shape. Both use the exact shared context, and
+the second child receives the unchanged layout-Transpose option. There is no
+intervening phase record, branch, progress update, result consumer, or other
+mutation.
+
+The contract requires one two-child owner with fixed order, exact context and
+option forwarding, and identity preservation for both complete nested result
+tuples. The optional late-binary-layout reconciliation branch remains the
+predecessor. The terminal Expand/Squeeze reconciliation phase record and
+post-progress callback remain successors outside the owner.
+
+Focused characterization reports `2 passed, 1 xfailed`; the expanded affected
+suite reports `1140 passed, 1 xfailed`. The sole xfail is the intentionally
+absent `passes/terminal_affine_qkv_layout_shape_orchestration.py`. The expanded
+suite also identified 24 stale tests still naming the already-replaced
+terminal QKV/shape/attention boundary. Their expectations now resolve the
+current terminal QKV/activation/layout/shape owner without changing production.
+The phase store remains exactly 128 IDs and 128 owners.
+
+At resume, implement
+`run_terminal_affine_qkv_layout_shape_cleanup(context, *,
+include_layout_transpose)` as a straight-line owner. Pass the exact context to
+both children, forward the option only to the terminal child, return both raw
+results unchanged, and replace only the two characterized lowerer locals.
+Preserve the guard, phase record, progress callback, and all child owners. Add
+runtime order/context/option/result-identity injection, run affected and
+standard gates sequentially, then commit and push only. Do not create, update,
+or reopen a pull request.

@@ -6125,6 +6125,39 @@ inventory decreases from 57 to 56. No real-model conversion was repeated for
 this ownership-only extraction because state, order, schemas, identities,
 routes, and both outer boundaries are directly covered.
 
+## Terminal affine/QKV/layout-shape composite characterization
+
+The characterized unconsumed-result inventory contains 56 entries. The next
+selected boundary is the adjacent pre-terminal affine/Slice/SPP composite and
+terminal QKV/activation/layout/shape composite. Both receive the exact shared
+`ModelIRPassContext`; the terminal child additionally receives the unchanged
+layout-Transpose option. No phase record, guard, progress callback, result
+consumer, or unrelated mutation occurs between the two calls.
+
+The proposed owner must invoke both existing owners in source order, preserve
+the exact shared context and option, and return both complete nested results
+without copying, flattening, inspection, or result-driven control flow. The
+optional late-binary-layout reconciliation branch remains the immediate
+predecessor. The phase-recorded terminal Expand/Squeeze reconciliation and
+post-progress callback remain immediate successors outside the owner. Existing
+child contract tests retain the complete nested schemas, while the new outer
+contract fixes their pair structure, state, order, and both boundaries.
+
+The expanded characterization suite exposed 24 stale structural expectations
+that still named the older terminal QKV/shape/attention result even though the
+current production boundary had already moved through the implemented terminal
+QKV/activation/layout/shape composite. Those tests now resolve the current
+outer owner and result while continuing to verify their nested child owners.
+No production code or route count changed.
+
+Sequential core-only `uv` characterization passed with
+`2 passed, 1 xfailed` focused and `1140 passed, 1 xfailed` across pre-terminal,
+terminal, QKV, hard-activation, layout/shape, SPP, Slice/Pad, reconciliation,
+architecture, pass-efficiency, shared-context, and phase-store contracts. The
+sole xfail is the intentionally absent composite owner. Production behavior,
+public APIs, artifacts, dependencies, TensorFlow isolation, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
 ## Terminal QKV/activation-bridge composite implementation
 
 `passes/terminal_qkv_activation_bridge_orchestration.py` now owns the

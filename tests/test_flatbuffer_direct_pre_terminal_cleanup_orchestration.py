@@ -50,7 +50,7 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
 OUTER_TARGET = "_pre_terminal_affine_slice_spp_results"
-OUTER_SUCCESSOR_TARGET = "_terminal_qkv_shape_attention_results"
+OUTER_SUCCESSOR_TARGET = "_terminal_qkv_activation_layout_shape_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

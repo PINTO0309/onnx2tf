@@ -120,7 +120,7 @@ def test_pre_terminal_instancenorm_layout_boundary_is_fixed() -> None:
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_layout_shape_results"
     )
     assert len(_outer_calls()) == 1
     assert [ast.unparse(argument) for argument in _outer_calls()[0].args] == [
@@ -168,7 +168,7 @@ def test_pre_terminal_instancenorm_layout_uses_one_composite_owner() -> None:
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_layout_shape_results"
     )
     assert len(_outer_calls()) == 1
     assert len(_composite_calls()) == 1

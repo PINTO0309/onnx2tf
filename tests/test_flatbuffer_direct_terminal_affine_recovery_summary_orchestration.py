@@ -44,6 +44,12 @@ TERMINAL_COMPOSITE_PATH = (
 )
 TERMINAL_COMPOSITE_OWNER = "run_terminal_affine_slice_spp_cleanup"
 TERMINAL_COMPOSITE_TARGET = "_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+LOWERER_TARGET = "_pre_terminal_affine_slice_spp_results"
+LOWERER_PREDECESSOR_GUARD = (
+    "_late_binary_layout_recovery_requires_reconciliation"
+)
+LOWERER_SUCCESSOR_TARGET = "_terminal_qkv_activation_layout_shape_results"
 SUMMARY_TARGETS = (
     "_pre_terminal_affine_stats",
     "_terminal_affine_stats",
@@ -100,7 +106,7 @@ def _terminal_summary(lowerer: ast.FunctionDef) -> ast.Assign:
     return next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == TERMINAL_COMPOSITE_TARGET
+        if _single_target(statement) == LOWERER_TARGET
         and isinstance(statement, ast.Assign)
     )
 
@@ -136,13 +142,13 @@ def test_terminal_affine_recovery_summary_boundaries_are_fixed() -> None:
     summary = _terminal_summary(lowerer)
     index = lowerer.body.index(summary)
     assert ast.unparse(summary.value) == (
-        "run_terminal_affine_slice_spp_cleanup("
+        "run_pre_terminal_affine_slice_spp_cleanup("
         "shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == COMPOSITE_TARGET
-    assert _single_target(lowerer.body[index + 1]) == (
-        "_late_pre_qkv_shape_extract_stats"
-    )
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
+    assert _single_target(lowerer.body[index + 1]) == LOWERER_SUCCESSOR_TARGET
     terminal_calls = _terminal_composite_summary_calls()
     assert len(terminal_calls) == 1
     assert [ast.unparse(argument) for argument in terminal_calls[0].args] == [
@@ -175,13 +181,13 @@ def test_terminal_affine_recovery_uses_one_summary_owner_twice() -> None:
     summary = _terminal_summary(lowerer)
     index = lowerer.body.index(summary)
     assert ast.unparse(summary.value) == (
-        "run_terminal_affine_slice_spp_cleanup("
+        "run_pre_terminal_affine_slice_spp_cleanup("
         "shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == COMPOSITE_TARGET
-    assert _single_target(lowerer.body[index + 1]) == (
-        "_late_pre_qkv_shape_extract_stats"
-    )
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
+    assert _single_target(lowerer.body[index + 1]) == LOWERER_SUCCESSOR_TARGET
 
     assert not any(
         isinstance(node, ast.Name)

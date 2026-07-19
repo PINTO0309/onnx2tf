@@ -246,13 +246,13 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_layout_shape_results"
     )
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert (
         following.value.func.id
-        == "run_terminal_qkv_shape_attention_cleanup"
+        == "run_terminal_qkv_activation_layout_shape_cleanup"
     )
     assert len(_outer_calls()) == 1
 
@@ -382,7 +382,7 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_layout_shape_results"
     )
     assert len(_outer_calls()) == 1
     owner_calls = _terminal_affine_slice_spp_calls(

@@ -106,7 +106,7 @@ def test_pre_terminal_pre_add_prune_evidence_boundary_is_fixed() -> None:
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_layout_shape_results"
     )
     assert len(_outer_calls()) == 1
     assert len(_composite_calls()) == 1
@@ -143,7 +143,7 @@ def test_pre_terminal_pre_add_uses_one_prune_aware_owner() -> None:
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_layout_shape_results"
     )
     assert len(_outer_calls()) == 1
     assert len(_composite_calls()) == 1
