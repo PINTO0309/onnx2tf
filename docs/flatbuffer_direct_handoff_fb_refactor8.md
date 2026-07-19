@@ -3981,3 +3981,17 @@ Commit and push this implementation checkpoint. At resume, audit the next
 compatible adjacent unconsumed-result cluster before production changes. Keep
 all validation sequential and continue with commits and pushes only; never
 create, update, or reopen a pull request.
+
+## Inherited shared-late successor contract repair
+
+The broader signature-characterization gate exposed a stale test-only
+successor constant. It still named the removed
+`late_binary_repair_tensor_count` snapshot, while the earlier late-binary
+decision extraction replaced that boundary with
+`_late_binary_repair_requires_reconciliation`.
+
+The constant now follows the existing production boundary. The focused file is
+`13 passed in 0.56s`; no production behavior or 128/128 store entry changed.
+Commit and push this repair separately, then resume the boundary-signature
+characterization. Continue with commits and pushes only; never create, update,
+or reopen a pull request.

@@ -4503,3 +4503,16 @@ No real-model corpus conversion was repeated because runtime coverage proves
 exact raw schema/order, both layout policies, and diagnostics forwarding,
 while affected structural gates preserve all neighboring boundaries and the
 independent core caller.
+
+## Inherited shared-late successor contract repair
+
+An expanded characterization gate exposed one stale test-only boundary from
+before the late-binary boolean-owner extraction. The shared-late contract still
+expected the removed `late_binary_repair_tensor_count` snapshot even though
+production, the late-binary owner tests, and all neighboring orchestration now
+use `_late_binary_repair_requires_reconciliation`.
+
+The single test constant now names the current boolean successor. Both affected
+assertions pass (`13 passed in 0.56s`). No production source, graph behavior,
+public API, artifact, dependency, TensorFlow boundary, or phase-result store
+changed.

@@ -31,7 +31,7 @@ OWNER = "run_shared_late_reconciliation_cleanup"
 RESULT_TARGET = "_shared_late_requires_reconciliation"
 PREDECESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 PHASE_ID = "shape_reconciliation.primary.shared_late"
-SUCCESSOR_TARGET = "late_binary_repair_tensor_count"
+SUCCESSOR_TARGET = "_late_binary_repair_requires_reconciliation"
 TENSOR_COUNT_TARGET = "shared_late_tensor_count"
 EVIDENCE_TARGETS = (
     "shared_boundary_signature_stats",

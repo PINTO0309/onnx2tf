@@ -820,3 +820,7 @@ It replaces six individual unconsumed result locals with two ordered tuples
 while preserving exact raw schemas, callback order, path-specific layout and
 diagnostics policy, the independent core consecutive-MUL caller, compatibility
 re-exports, neighboring boundaries, and the full 128/128 store.
+
+An inherited shared-late structural test now follows the already-established
+late-binary boolean successor instead of the removed tensor-count snapshot.
+This is a test-only contract repair with no production change.
