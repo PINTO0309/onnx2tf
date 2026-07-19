@@ -16,7 +16,7 @@ EXPECTED_PHASE_IDS = (
 )
 EXPECTED_PREDECESSOR_TARGETS = (
     "_very_late_layout_tail_results",
-    "_very_late_dynamic_adapter_results",
+    "_final_input_dynamic_results",
 )
 EXPECTED_SUCCESSOR_TARGETS = (
     "_shared_late_requires_reconciliation",

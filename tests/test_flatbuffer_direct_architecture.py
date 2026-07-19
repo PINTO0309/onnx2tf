@@ -554,6 +554,30 @@ def _very_late_dynamic_adapter_calls(function_name: str) -> list[ast.Call]:
     ]
 
 
+def _final_input_dynamic_calls(function_name: str) -> list[ast.Call]:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "final_input_dynamic_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_final_input_dynamic_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
 def _no_layout_final_cleanup_call_count(function_name: str) -> int:
     owner_path = (
         REPO_ROOT
@@ -5975,11 +5999,11 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_late_input_affine_normalization_results"
+        == "_final_input_dynamic_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_late_input_affine_normalization_cleanup"
+        == "run_final_input_dynamic_cleanup"
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
@@ -5987,6 +6011,14 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert [ast.unparse(argument) for argument in invocation.value.args] == [
         "shared_model_ir_pass_context"
     ]
+    assert len(
+        _final_input_dynamic_calls(
+            "run_late_input_affine_normalization_cleanup"
+        )
+    ) == 1
+    assert len(
+        _final_input_dynamic_calls("run_very_late_dynamic_adapter_cleanup")
+    ) == 1
     assert (
         _late_input_affine_normalization_call_count(
             "run_very_late_gather_constant_normalization_summary"
@@ -5997,18 +6029,11 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert isinstance(previous_boundary, ast.Expr)
     assert ast.unparse(previous_boundary) == "_advance_post_progress()"
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert len(next_boundary.targets) == 1
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_very_late_dynamic_adapter_results"
+    assert isinstance(next_boundary, ast.Expr)
     assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert next_boundary.value.func.id == (
-        "run_very_late_dynamic_adapter_cleanup"
-    )
-    assert ast.unparse(next_boundary.value) == (
-        "run_very_late_dynamic_adapter_cleanup("
-        "shared_model_ir_pass_context)"
+    assert isinstance(next_boundary.value.func, ast.Attribute)
+    assert ast.unparse(next_boundary.value.func) == (
+        "session.record_phase_result"
     )
     owner_call_names = (
         "resolve_dynamic_reshape_shapes",
@@ -6022,7 +6047,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         len(_very_late_dynamic_adapter_calls(name)) == 1
         for name in owner_call_names
     )
-    static_shape_stats = lowerer.body[invocation_index + 2]
+    static_shape_stats = lowerer.body[invocation_index + 1]
     assert isinstance(static_shape_stats, ast.Expr)
     assert ast.unparse(static_shape_stats) == (
         "session.record_phase_result("

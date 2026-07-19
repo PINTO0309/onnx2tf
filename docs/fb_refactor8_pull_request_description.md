@@ -1233,3 +1233,12 @@ progress predecessor, phase-recorded final static-shape reconciliation
 successor, and following Split fallback. Production remains unchanged pending
 a two-stage owner. Focused and affected validation report
 `1 passed, 1 xfailed` and `399 passed, 1 xfailed`.
+
+The latest checkpoint implements that final input/dynamic owner. The exact
+shared context is forwarded through both existing child composites, and their
+nested raw tuples are returned unchanged in source order. The lowerer replaces
+only the two unconsumed locals; progress, phase-recorded final static-shape
+reconciliation, Split fallback, and all specialized child contracts remain
+fixed. Runtime identity coverage, 401 affected tests, and every standard
+sequential gate pass; public behavior, TensorFlow isolation, and the exactly
+128-ID/128-owner store are unchanged.

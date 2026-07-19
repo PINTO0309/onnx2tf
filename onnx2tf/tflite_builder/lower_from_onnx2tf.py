@@ -65,8 +65,8 @@ from onnx2tf.tflite_builder.passes.precision_cleanup_orchestration import (
 from onnx2tf.tflite_builder.passes.no_layout_final_cleanup_orchestration import (
     run_no_layout_final_cleanup,
 )
-from onnx2tf.tflite_builder.passes.late_input_affine_normalization_orchestration import (
-    run_late_input_affine_normalization_cleanup,
+from onnx2tf.tflite_builder.passes.final_input_dynamic_orchestration import (
+    run_final_input_dynamic_cleanup,
 )
 from onnx2tf.tflite_builder.passes.recurrent_alias_repair_orchestration import (
     repair_orphan_recurrent_step_tensors_summary,
@@ -82,9 +82,6 @@ from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains as _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains_pass,
     _optimize_shufflenet_transpose_shuffle_chains as _optimize_shufflenet_transpose_shuffle_chains_pass,
     _repair_nchw_channel_shuffle_concat_gathers as _repair_nchw_channel_shuffle_concat_gathers_pass,
-)
-from onnx2tf.tflite_builder.passes.very_late_dynamic_adapter_orchestration import (
-    run_very_late_dynamic_adapter_cleanup,
 )
 from onnx2tf.tflite_builder.passes.mean_layout import (
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains as _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains_pass,
@@ -5293,15 +5290,10 @@ def lower_onnx_to_ir(
     # The late unbound-input repair can inject strict
     # NHWC->NCHW->NHWC MUL/ADD wrappers (repair_perm tensors).
     # Fold them again before final shape/topology reconciliation.
-    _late_input_affine_normalization_results = (
-        run_late_input_affine_normalization_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
-    # Very late terminal bridge/transpose rewrites above can still stale out
-    # RESHAPE constant inputs. Re-resolve once immediately before final sort.
-    _very_late_dynamic_adapter_results = (
-        run_very_late_dynamic_adapter_cleanup(shared_model_ir_pass_context)
+    # Very late terminal bridge/transpose rewrites above can also stale out
+    # RESHAPE constant inputs. Re-resolve before the final static-shape pass.
+    _final_input_dynamic_results = run_final_input_dynamic_cleanup(
+        shared_model_ir_pass_context,
     )
     session.record_phase_result(
         "shape_reconciliation.primary.very_late_final",

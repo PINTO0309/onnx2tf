@@ -5895,3 +5895,32 @@ terminal validation, architecture, shape-phase, and phase-store contracts.
 The sole expected failure requires one new shared-context owner. Production,
 public behavior, dependency boundaries, and the exactly 128-ID/128-owner
 phase store remain unchanged.
+
+## Final input/dynamic composite implementation
+
+`passes/final_input_dynamic_orchestration.py` now owns the characterized
+two-stage sequence. It forwards the exact same `ModelIRPassContext` first to
+late input/affine/normalization cleanup and then to very-late dynamic adapter
+cleanup, returning both raw nested tuples unchanged and in source order.
+
+The lowerer replaces `_late_input_affine_normalization_results` and
+`_very_late_dynamic_adapter_results` with `_final_input_dynamic_results`.
+Only the two now-unused direct imports were removed. Both child owners and all
+of their specialized pass contracts remain unchanged. The preceding progress
+update, phase-recorded complete final static-shape reconciliation, and
+following Split fallback stay in the lowerer at their original boundaries.
+
+Owner-aware late-input, recurrent-alias, unbound-input, normalization,
+dynamic-adapter, shape-phase, architecture, and reconciliation tests inspect
+the two specialized owners through the new outer owner. Runtime injection
+proves exact two-stage order, shared-context identity, and both nested tuple
+identities.
+
+Final sequential validation under core-only `uv` passed with 3 focused tests,
+401 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. Ruff, bytecode compilation, and whitespace
+checks passed. No guard, mutation, reconciliation, fallback, phase result,
+public API, artifact, dependency, or TensorFlow boundary changed; the store
+remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
+for this straight-line ownership extraction.

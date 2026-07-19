@@ -21,6 +21,15 @@ COMPOSITE_PATH = (
 )
 COMPOSITE_OWNER = "run_late_input_affine_normalization_cleanup"
 COMPOSITE_TARGET = "_late_input_affine_normalization_results"
+FINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_input_dynamic_orchestration.py"
+)
+FINAL_COMPOSITE_OWNER = "run_final_input_dynamic_cleanup"
+FINAL_COMPOSITE_TARGET = "_final_input_dynamic_results"
 OWNERS = (
     "_repair_orphan_recurrent_step_tensors",
     "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
@@ -34,7 +43,7 @@ RESULT_SCHEMAS = (
     {"repaired_unbound_nonconstant_inputs_with_layout_transpose": 0},
 )
 PREDECESSOR = "_advance_post_progress"
-SUCCESSOR_TARGET = "_very_late_dynamic_adapter_results"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_final"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -71,6 +80,20 @@ def _lowerer() -> ast.FunctionDef:
 
 def _composite_owner() -> ast.FunctionDef:
     return _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def test_late_input_repair_result_schemas_are_explicit() -> None:
@@ -112,11 +135,23 @@ def test_late_input_repair_direct_boundary_is_explicit() -> None:
     index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
     )
-    assert _call_name(lowerer.body[index]) == COMPOSITE_OWNER
+    assert _call_name(lowerer.body[index]) == FINAL_COMPOSITE_OWNER
     assert _call_name(lowerer.body[index - 1]) == PREDECESSOR
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    final_owner = _functions(FINAL_COMPOSITE_PATH)[FINAL_COMPOSITE_OWNER]
+    child_calls = [
+        node
+        for node in ast.walk(final_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == COMPOSITE_OWNER
+    ]
+    assert len(child_calls) == 1
+    assert [ast.unparse(argument) for argument in child_calls[0].args] == [
+        "context"
+    ]
 
 
 def test_late_input_repair_results_are_retained_for_observation() -> None:
@@ -126,8 +161,6 @@ def test_late_input_repair_results_are_retained_for_observation() -> None:
         for node in ast.walk(lowerer)
     )
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == COMPOSITE_TARGET
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == COMPOSITE_TARGET
         for node in ast.walk(lowerer)
     )

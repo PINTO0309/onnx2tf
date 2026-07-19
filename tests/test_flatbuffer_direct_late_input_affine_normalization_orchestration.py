@@ -25,6 +25,14 @@ OWNER_PATH = (
     / "late_input_affine_normalization_orchestration.py"
 )
 OWNER = "run_late_input_affine_normalization_cleanup"
+FINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_input_dynamic_orchestration.py"
+)
+FINAL_OWNER = "run_final_input_dynamic_cleanup"
 PASS_OWNERS = (
     "repair_orphan_recurrent_step_tensors_summary",
     "repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
@@ -37,7 +45,7 @@ RESULT_TARGETS = (
     "_very_late_affine_post_add_stats",
     "_very_late_normalization_stats",
 )
-COMPOSITE_TARGET = "_late_input_affine_normalization_results"
+FINAL_COMPOSITE_TARGET = "_final_input_dynamic_results"
 EXPECTED_EMPTY_RESULTS = (
     {"repaired_orphan_recurrent_step_tensors": 0},
     {"repaired_unbound_nonconstant_inputs_with_layout_transpose": 0},
@@ -88,19 +96,47 @@ def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
 
 
+def _final_owner() -> ast.FunctionDef:
+    return _functions(FINAL_OWNER_PATH)[FINAL_OWNER]
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_late_input_affine_normalization_current_boundary_and_schemas() -> None:
     lowerer = _lowerer()
     index, invocation = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
     )
-    assert _call_name(invocation) == OWNER
+    assert _call_name(invocation) == FINAL_OWNER
     assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
-    assert (
-        _single_target(lowerer.body[index + 1])
-        == "_very_late_dynamic_adapter_results"
+    assert _phase_id(lowerer.body[index + 1]) == (
+        "shape_reconciliation.primary.very_late_final"
     )
+    child_calls = [
+        node
+        for node in ast.walk(_final_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(child_calls) == 1
+    assert [ast.unparse(argument) for argument in child_calls[0].args] == [
+        "context"
+    ]
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -152,9 +188,9 @@ def test_late_input_affine_normalization_has_one_context_owner() -> None:
     index, invocation = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
     )
-    assert _call_name(invocation) == OWNER
+    assert _call_name(invocation) == FINAL_OWNER
     call = _call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -162,10 +198,20 @@ def test_late_input_affine_normalization_has_one_context_owner() -> None:
     ]
     assert call.keywords == []
     assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
-    assert (
-        _single_target(lowerer.body[index + 1])
-        == "_very_late_dynamic_adapter_results"
+    assert _phase_id(lowerer.body[index + 1]) == (
+        "shape_reconciliation.primary.very_late_final"
     )
+    child_calls = [
+        node
+        for node in ast.walk(_final_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(child_calls) == 1
+    assert [ast.unparse(argument) for argument in child_calls[0].args] == [
+        "context"
+    ]
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

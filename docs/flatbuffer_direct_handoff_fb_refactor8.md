@@ -5105,3 +5105,28 @@ replace only the two unconsumed lowerer locals. Preserve progress,
 reconciliation, Split fallback, all child owners, and all independent routes.
 Run affected and standard gates sequentially, then commit and push only. Never
 create, update, or reopen a pull request.
+
+## Final input/dynamic composite implementation checkpoint
+
+`passes/final_input_dynamic_orchestration.py` now owns the fixed two-child
+tail. It passes the exact shared `ModelIRPassContext` to the existing late
+input/affine/normalization and very-late dynamic-adapter owners in source order
+and returns both raw nested tuples without copying or flattening them.
+
+The lowerer replaces only the two unconsumed locals with
+`_final_input_dynamic_results`. `_advance_post_progress`, the
+`shape_reconciliation.primary.very_late_final` phase record, and Split
+fallback remain outside the owner. Child owners, specialized pass contracts,
+public behavior, and the 128-ID/128-owner phase store are unchanged.
+
+Sequential `uv` validation passed: focused 3, complete affected 401,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase-store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. Ruff, bytecode, and
+whitespace checks passed. No test is failing and no new production issue is
+known. No real-model conversion was repeated for this ownership-only move.
+
+At resume, rerun the read-only unconsumed-result inventory. Select the next
+smallest source-adjacent, semantically closed cluster whose children are
+already pass-module-owned, characterize it before changing production, and
+keep all testing sequential and single-process under `uv`. Commit and push
+only; never create, update, or reopen a pull request.

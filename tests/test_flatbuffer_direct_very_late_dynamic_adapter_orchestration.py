@@ -21,7 +21,15 @@ OWNER_PATH = (
     / "very_late_dynamic_adapter_orchestration.py"
 )
 OWNER = "run_very_late_dynamic_adapter_cleanup"
-RESULT_NAME = "_very_late_dynamic_adapter_results"
+FINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_input_dynamic_orchestration.py"
+)
+FINAL_OWNER = "run_final_input_dynamic_cleanup"
+FINAL_RESULT_NAME = "_final_input_dynamic_results"
 RAW_CONTRACTS = (
     (
         "_very_late_dynamic_reshape_stats",
@@ -158,6 +166,17 @@ def _assert_reconciliation_successor(
     assert split.value.func.id == "_replace_unsupported_split_with_slice"
 
 
+def _final_dynamic_child_call() -> ast.Call:
+    owner = _function(FINAL_OWNER_PATH, FINAL_OWNER)
+    return next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    )
+
+
 def test_very_late_dynamic_adapter_context_owner_preserves_raw_contracts() -> None:
     owner = _function(OWNER_PATH, OWNER)
     assert [argument.arg for argument in owner.args.args] == ["context"]
@@ -182,15 +201,22 @@ def test_very_late_dynamic_adapter_context_owner_preserves_raw_contracts() -> No
     matches = [
         (index, statement)
         for index, statement in enumerate(body)
-        if _assignment_name(statement) == RESULT_NAME
+        if _assignment_name(statement) == FINAL_RESULT_NAME
     ]
     assert len(matches) == 1
     index, statement = matches[0]
     assert isinstance(statement, ast.Assign)
     _assert_call(
         statement.value,
-        name=OWNER,
+        name=FINAL_OWNER,
         arguments=("shared_model_ir_pass_context",),
+        keywords={},
+    )
+    child_call = _final_dynamic_child_call()
+    _assert_call(
+        child_call,
+        name=OWNER,
+        arguments=("context",),
         keywords={},
     )
     _assert_reconciliation_successor(body, index + 1)
@@ -208,15 +234,22 @@ def test_very_late_dynamic_adapter_lowerer_retains_one_composite_result() -> Non
     matches = [
         (index, statement)
         for index, statement in enumerate(body)
-        if _assignment_name(statement) == RESULT_NAME
+        if _assignment_name(statement) == FINAL_RESULT_NAME
     ]
     assert len(matches) == 1
     index, statement = matches[0]
     assert isinstance(statement, ast.Assign)
     _assert_call(
         statement.value,
-        name=OWNER,
+        name=FINAL_OWNER,
         arguments=("shared_model_ir_pass_context",),
+        keywords={},
+    )
+    child_call = _final_dynamic_child_call()
+    _assert_call(
+        child_call,
+        name=OWNER,
+        arguments=("context",),
         keywords={},
     )
     _assert_reconciliation_successor(body, index + 1)

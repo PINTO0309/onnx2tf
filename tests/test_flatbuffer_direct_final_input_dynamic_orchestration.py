@@ -8,11 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.late_input_affine_normalization_orchestration import (
-    run_late_input_affine_normalization_cleanup,
-)
-from onnx2tf.tflite_builder.passes.very_late_dynamic_adapter_orchestration import (
-    run_very_late_dynamic_adapter_cleanup,
+from onnx2tf.tflite_builder.passes import (
+    final_input_dynamic_orchestration,
 )
 
 
@@ -118,31 +115,22 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_final_input_dynamic_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    statements = tuple(
-        next(
-            statement
-            for statement in lowerer.body
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    indices = tuple(lowerer.body.index(statement) for statement in statements)
-    assert indices == (indices[0], indices[0] + 1)
-    assert _call_name(lowerer.body[indices[0] - 1]) == "_advance_post_progress"
-    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
-    assert _single_target(lowerer.body[indices[-1] + 2]) == (
-        "split_fallback_stats"
-    )
-    assert tuple(_call_name(statement) for statement in statements) == (
-        CHILD_OWNERS
-    )
-    for statement in statements:
-        call = _call(statement)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "shared_model_ir_pass_context"
-        ]
-        assert call.keywords == []
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert call.keywords == []
+    assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _single_target(lowerer.body[index + 2]) == "split_fallback_stats"
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -157,15 +145,13 @@ def test_final_input_dynamic_current_boundary_and_schema() -> None:
         diagnostics=[],
     )
     assert (
-        run_late_input_affine_normalization_cleanup(context),
-        run_very_late_dynamic_adapter_cleanup(context),
-    ) == EXPECTED_SCHEMAS
+        final_input_dynamic_orchestration.run_final_input_dynamic_cleanup(
+            context
+        )
+        == EXPECTED_SCHEMAS
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final input/dynamic tail has no shared-context owner",
-)
 def test_final_input_dynamic_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -205,3 +191,53 @@ def test_final_input_dynamic_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_final_input_dynamic_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("final_input_dynamic_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        tuple({f"input_stage_{index}": index} for index in range(4)),
+        tuple({f"dynamic_stage_{index}": index} for index in range(6)),
+    )
+    observed: list[tuple[str, ModelIRPassContext]] = []
+
+    def _input(
+        active_context: ModelIRPassContext,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return expected_results[0]
+
+    def _dynamic(
+        active_context: ModelIRPassContext,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[1], active_context))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        final_input_dynamic_orchestration,
+        CHILD_OWNERS[0],
+        _input,
+    )
+    monkeypatch.setattr(
+        final_input_dynamic_orchestration,
+        CHILD_OWNERS[1],
+        _dynamic,
+    )
+
+    actual = final_input_dynamic_orchestration.run_final_input_dynamic_cleanup(
+        context
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context),
+        (CHILD_OWNERS[1], context),
+    ]

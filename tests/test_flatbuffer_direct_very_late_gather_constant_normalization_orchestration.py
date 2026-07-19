@@ -69,6 +69,15 @@ LATE_INPUT_AFFINE_NORMALIZATION_PATH = (
 LATE_INPUT_AFFINE_NORMALIZATION = (
     "run_late_input_affine_normalization_cleanup"
 )
+FINAL_INPUT_DYNAMIC_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_input_dynamic_orchestration.py"
+)
+FINAL_INPUT_DYNAMIC = "run_final_input_dynamic_cleanup"
+FINAL_INPUT_DYNAMIC_RESULT = "_final_input_dynamic_results"
 
 
 def _absolute_final_affine_instancenorm_call_count(
@@ -151,6 +160,23 @@ def _late_input_affine_normalization_calls(
     ]
 
 
+def _final_input_dynamic_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(FINAL_INPUT_DYNAMIC_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == FINAL_INPUT_DYNAMIC
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
 def _very_late_dynamic_adapter_invocation(
     lowerer: ast.FunctionDef,
 ) -> tuple[int, ast.Assign]:
@@ -160,7 +186,7 @@ def _very_late_dynamic_adapter_invocation(
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_dynamic_adapter_results"
+        and statement.targets[0].id == FINAL_INPUT_DYNAMIC_RESULT
     )
 
 
@@ -484,16 +510,21 @@ def test_very_late_flatten_owner_can_prune_without_a_rewrite(
 
 def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    adapter_index, adapter = _very_late_dynamic_adapter_invocation(lowerer)
-    composite = lowerer.body[adapter_index - 1]
-    assert isinstance(composite, ast.Assign)
-    assert isinstance(composite.targets[0], ast.Name)
-    assert composite.targets[0].id == (
-        "_late_input_affine_normalization_results"
-    )
+    adapter_index, composite = _very_late_dynamic_adapter_invocation(lowerer)
     assert isinstance(composite.value, ast.Call)
     assert isinstance(composite.value.func, ast.Name)
-    assert composite.value.func.id == LATE_INPUT_AFFINE_NORMALIZATION
+    assert composite.value.func.id == FINAL_INPUT_DYNAMIC
+    assert [ast.unparse(argument) for argument in composite.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert ast.unparse(lowerer.body[adapter_index - 1]) == (
+        "_advance_post_progress()"
+    )
+    input_calls = _final_input_dynamic_calls(LATE_INPUT_AFFINE_NORMALIZATION)
+    assert len(input_calls) == 1
+    assert [ast.unparse(argument) for argument in input_calls[0].args] == [
+        "context"
+    ]
     summary_calls = _late_input_affine_normalization_calls(
         "run_very_late_gather_constant_normalization_summary"
     )
@@ -501,13 +532,12 @@ def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
         "context"
     ]
-    assert isinstance(adapter.value, ast.Call)
-    assert isinstance(adapter.value.func, ast.Name)
-    assert adapter.value.func.id == VERY_LATE_DYNAMIC_ADAPTER
-    assert [ast.unparse(argument) for argument in adapter.value.args] == [
-        "shared_model_ir_pass_context"
+    adapter_calls = _final_input_dynamic_calls(VERY_LATE_DYNAMIC_ADAPTER)
+    assert len(adapter_calls) == 1
+    assert [ast.unparse(argument) for argument in adapter_calls[0].args] == [
+        "context"
     ]
-    assert adapter.value.keywords == []
+    assert adapter_calls[0].keywords == []
     assert not any(
         isinstance(node, ast.Name)
         and node.id
@@ -782,19 +812,21 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_late_input_affine_normalization_results"
+        == FINAL_INPUT_DYNAMIC_RESULT
     )
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
     assert isinstance(previous, ast.Expr)
     assert ast.unparse(previous) == "_advance_post_progress()"
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_very_late_dynamic_adapter_results"
+    assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == VERY_LATE_DYNAMIC_ADAPTER
+    assert isinstance(following.value.func, ast.Attribute)
+    assert ast.unparse(following.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(following.value.args[0]) == (
+        "shape_reconciliation.primary.very_late_final"
+    )
+    assert len(_final_input_dynamic_calls(LATE_INPUT_AFFINE_NORMALIZATION)) == 1
+    assert len(_final_input_dynamic_calls(VERY_LATE_DYNAMIC_ADAPTER)) == 1
 
 
 def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None:
