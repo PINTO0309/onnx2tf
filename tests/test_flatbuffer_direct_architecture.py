@@ -137,6 +137,9 @@ from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestratio
 from onnx2tf.tflite_builder.passes.pre_terminal_pre_add_orchestration import (
     PRE_TERMINAL_PRE_ADD_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
+    PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -231,6 +234,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS,
     *PRE_TERMINAL_INSTANCENORM_LAYOUT_PASS_IDS,
     *PRE_TERMINAL_PRE_ADD_PASS_IDS,
+    *PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -2168,7 +2172,7 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     )
     predecessors = (
         "_pre_terminal_instancenorm_layout_results",
-        "_pre_terminal_affine_slice_pad_concat_stats",
+        "_pre_terminal_affine_tail_results",
     )
     successors = (
         "_pre_terminal_pre_add_stats",

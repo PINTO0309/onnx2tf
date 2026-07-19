@@ -3624,3 +3624,43 @@ Sequential characterization under core-only `uv` completed with
 `1 passed, 1 xfailed in 0.14s`; targeted Ruff, bytecode compilation, and
 whitespace checks passed. The sole expected failure is the intentionally
 absent ordered owner.
+
+## Pre-terminal affine-tail composite implementation
+
+`run_pre_terminal_affine_tail_cleanup(context)` now owns the two characterized
+repairs. It calls affine post-Add cleanup with the shared ModelIR/LayoutState,
+then calls strict StridedSlice/Pad/Concat cleanup with ModelIR only, returning
+both original mappings as an ordered tuple.
+
+The lowerer replaces the two unconsumed direct result targets with
+`_pre_terminal_affine_tail_results` at the same boundary. The normalized
+channel Slice/Pad/Mul summary remains the predecessor and the second
+terminal-affine recovery summary remains the successor. Both lowerer
+compatibility wrappers, all other direct sites, and total production call
+counts remain unchanged through the declared orchestration pass IDs.
+
+No pass execution, order, graph scan, mutation, result mapping, layout or
+diagnostics identity, public API, artifact, dependency, or TensorFlow boundary
+changed. The ordered tuple remains outside the already-full 128/128
+phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner, order, argument, and boundary contracts: `3 passed in 0.56s`;
+- affected affine-tail, channel Slice/Pad/Mul, StridedSlice/Pad/Concat,
+  terminal recovery, very-late, absolute-final, core, and store contracts:
+  `237 passed in 3.14s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.88s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.23s`;
+- full lowerer architecture contracts: `258 passed in 18.98s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.81s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because the focused runtime
+contract proves exact order, argument identity, and tuple preservation, while
+the affected and architecture gates cover the other production call sites and
+total invocation counts.

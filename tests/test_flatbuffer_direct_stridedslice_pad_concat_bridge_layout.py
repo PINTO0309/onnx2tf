@@ -28,6 +28,9 @@ from onnx2tf.tflite_builder.passes.stridedslice_pad_concat_bridge_layout import 
 from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
     TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
+    PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1200,6 +1203,9 @@ def test_slice_pad_concat_keeps_owner_wrapper_and_ordered_calls() -> None:
         + TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS.count(
             "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
         )
+        + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+        )
         == 3
     )
     for call in calls:
@@ -1270,12 +1276,15 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 2
-    assert isinstance(direct_statements[0], ast.Assign)
-    first_target = direct_statements[0].targets[0]
-    assert isinstance(first_target, ast.Name)
-    assert first_target.id == "_pre_terminal_affine_slice_pad_concat_stats"
-    assert direct_statements[1] is invocation
+    assert len(direct_statements) == 1
+    assert direct_statements[0] is invocation
+    assert (
+        len(direct_statements)
+        + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+        )
+        == 2
+    )
 
 
 def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -> None:
@@ -1298,31 +1307,28 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_pre_terminal_affine_slice_pad_concat_stats"
+        and statement.targets[0].id == "_pre_terminal_affine_tail_results"
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
-        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
-    )
+    assert invocation.value.func.id == "run_pre_terminal_affine_tail_cleanup"
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
+    assert invocation.value.args[0].id == "shared_model_ir_pass_context"
     assert invocation.value.keywords == []
 
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert previous.targets[0].id == (
+        "_pre_terminal_channel_slice_pad_mul_stats"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
-    )
+    assert previous.value.func.id == "run_channel_slice_pad_mul_summary"
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -1340,10 +1346,9 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 2
-    assert direct_statements[0] is invocation
-    assert isinstance(direct_statements[1], ast.Assign)
-    second_target = direct_statements[1].targets[0]
+    assert len(direct_statements) == 1
+    assert isinstance(direct_statements[0], ast.Assign)
+    second_target = direct_statements[0].targets[0]
     assert isinstance(second_target, ast.Name)
     assert second_target.id == "_terminal_slice_pad_concat_stats"
 
@@ -1368,31 +1373,22 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_pre_terminal_affine_slice_pad_concat_stats"
+        and statement.targets[0].id == "_pre_terminal_affine_tail_results"
     )
-    invocation = lowerer.body[slice_index - 1]
+    invocation = lowerer.body[slice_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert invocation.targets[0].id == "_pre_terminal_affine_tail_results"
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
-        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
-    )
+    assert invocation.value.func.id == "run_pre_terminal_affine_tail_cleanup"
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
-    assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert invocation.value.args[0].id == "shared_model_ir_pass_context"
+    assert invocation.value.keywords == []
 
-    channel_slice_summary = lowerer.body[slice_index - 2]
+    channel_slice_summary = lowerer.body[slice_index - 1]
     assert isinstance(channel_slice_summary, ast.Assign)
     assert len(channel_slice_summary.targets) == 1
     assert isinstance(channel_slice_summary.targets[0], ast.Name)
@@ -1408,7 +1404,7 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
         ast.unparse(argument) for argument in channel_slice_summary.value.args
     ] == ["channel_slice_pad_mul_context"]
     assert channel_slice_summary.value.keywords == []
-    previous = lowerer.body[slice_index - 3]
+    previous = lowerer.body[slice_index - 2]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
@@ -1421,9 +1417,9 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
         "shared_model_ir_pass_context"
     ]
     assert pre_add_owner.keywords == []
-    following = lowerer.body[slice_index]
+    following = lowerer.body[slice_index + 1]
     assert isinstance(following, ast.Assign)
-    assert following.targets[0].id == "_pre_terminal_affine_slice_pad_concat_stats"
+    assert following.targets[0].id == "_terminal_affine_stats"
 
     direct_statements = [
         statement
@@ -1437,13 +1433,19 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 3
-    assert direct_statements[0] is invocation
-    assert isinstance(direct_statements[1], ast.Assign)
-    second_target = direct_statements[1].targets[0]
+    assert len(direct_statements) == 2
+    assert isinstance(direct_statements[0], ast.Assign)
+    second_target = direct_statements[0].targets[0]
     assert isinstance(second_target, ast.Name)
     assert second_target.id == "_very_late_affine_post_add_stats"
-    assert isinstance(direct_statements[2], ast.Assign)
-    third_target = direct_statements[2].targets[0]
+    assert isinstance(direct_statements[1], ast.Assign)
+    third_target = direct_statements[1].targets[0]
     assert isinstance(third_target, ast.Name)
     assert third_target.id == "_absolute_final_affine_post_add_stats"
+    assert (
+        len(direct_statements)
+        + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        == 3
+    )

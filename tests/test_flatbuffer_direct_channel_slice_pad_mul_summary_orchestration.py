@@ -28,7 +28,7 @@ SUMMARY_FUNCTION = "summarize_channel_slice_pad_mul_mutations"
 RAW_TARGET = "channel_slice_pad_mul_results"
 SUMMARY_TARGET = "_pre_terminal_channel_slice_pad_mul_stats"
 PREDECESSOR_TARGET = "_pre_terminal_pre_add_stats"
-SUCCESSOR_TARGET = "_pre_terminal_affine_post_add_stats"
+SUCCESSOR_TARGET = "_pre_terminal_affine_tail_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

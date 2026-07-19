@@ -18,6 +18,9 @@ from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orches
     build_absolute_final_normalization_attention_invocations,
     run_absolute_final_normalization_attention,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
+    PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -436,16 +439,18 @@ def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() ->
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 3
+    assert (
+        len(direct_statements)
+        + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        == 3
+    )
     assert isinstance(direct_statements[0], ast.Assign)
     first_target = direct_statements[0].targets[0]
     assert isinstance(first_target, ast.Name)
-    assert first_target.id == "_pre_terminal_affine_post_add_stats"
-    assert isinstance(direct_statements[1], ast.Assign)
-    second_target = direct_statements[1].targets[0]
-    assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_very_late_affine_post_add_stats"
-    assert direct_statements[2] is invocation
+    assert first_target.id == "_very_late_affine_post_add_stats"
+    assert direct_statements[1] is invocation
 
 
 def test_absolute_final_normalization_attention_context_and_wrapper_are_explicit() -> (

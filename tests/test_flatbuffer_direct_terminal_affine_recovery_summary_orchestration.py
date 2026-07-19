@@ -40,7 +40,7 @@ RAW_RESULT_TARGETS = (
 )
 PREDECESSOR_TARGETS = (
     "_pre_terminal_instancenorm_layout_results",
-    "_pre_terminal_affine_slice_pad_concat_stats",
+    "_pre_terminal_affine_tail_results",
 )
 SUCCESSOR_TARGETS = (
     "_pre_terminal_pre_add_stats",

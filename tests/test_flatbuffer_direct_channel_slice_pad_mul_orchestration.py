@@ -224,13 +224,14 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert following.targets[0].id == "_pre_terminal_affine_tail_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert (
-        following.value.func.id
-        == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
-    )
+    assert following.value.func.id == "run_pre_terminal_affine_tail_cleanup"
+    assert [ast.unparse(argument) for argument in following.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert following.value.keywords == []
 
 
 def test_channel_slice_pad_mul_preserves_stable_callback_boundary() -> None:
@@ -394,7 +395,7 @@ def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert following.targets[0].id == "_pre_terminal_affine_tail_results"
 
     assert len(helper.body) == 1
     assert isinstance(helper.body[0], ast.Return)

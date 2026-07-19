@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import pre_terminal_affine_tail_orchestration
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
+    PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -56,34 +63,25 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_pre_terminal_affine_tail_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    first = next(
+    result = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OLD_RESULT_TARGETS[0]
+        if _single_target(statement) == RESULT_TARGET
     )
-    index = lowerer.body.index(first)
-    second = lowerer.body[index + 1]
-    assert ast.unparse(first.value) == (
-        "_optimize_transpose_mul_posttranspose_add_nhwc_chains("
-        "model_ir, layout_state=session.layout_state)"
+    index = lowerer.body.index(result)
+    assert isinstance(result, ast.Assign)
+    assert ast.unparse(result.value) == (
+        f"{OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(second) == OLD_RESULT_TARGETS[1]
-    assert isinstance(second, ast.Assign)
-    assert ast.unparse(second.value) == f"{PASS_IDS[1]}(model_ir)"
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 2]) == SUCCESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pre-terminal affine tail lacks one ordered owner",
-)
 def test_pre_terminal_affine_tail_uses_one_ordered_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -119,3 +117,51 @@ def test_pre_terminal_affine_tail_uses_one_ordered_owner() -> None:
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_pre_terminal_affine_tail_owner_preserves_order_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("pre_terminal_affine_tail")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = ({"post_add": 1}, {"slice_pad_concat": 2})
+    observed: list[tuple[str, object, object | None]] = []
+
+    def _post_add(
+        candidate: ModelIR,
+        *,
+        layout_state: object,
+    ) -> dict[str, int]:
+        observed.append((OWNER_CALLS[0], candidate, layout_state))
+        return expected_results[0]
+
+    def _slice_pad_concat(candidate: ModelIR) -> dict[str, int]:
+        observed.append((OWNER_CALLS[1], candidate, None))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        pre_terminal_affine_tail_orchestration,
+        OWNER_CALLS[0],
+        _post_add,
+    )
+    monkeypatch.setattr(
+        pre_terminal_affine_tail_orchestration,
+        OWNER_CALLS[1],
+        _slice_pad_concat,
+    )
+
+    assert (
+        pre_terminal_affine_tail_orchestration.run_pre_terminal_affine_tail_cleanup(
+            context
+        )
+        == expected_results
+    )
+    assert [entry[0] for entry in observed] == list(OWNER_CALLS)
+    assert all(entry[1] is context.model_ir for entry in observed)
+    assert observed[0][2] is context.layout_state
+    assert observed[1][2] is None
+    assert PRE_TERMINAL_AFFINE_TAIL_PASS_IDS == PASS_IDS

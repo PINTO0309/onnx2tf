@@ -308,6 +308,9 @@ from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestratio
 from onnx2tf.tflite_builder.passes.pre_terminal_pre_add_orchestration import (
     run_pre_terminal_pre_add_cleanup,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
+    run_pre_terminal_affine_tail_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5334,16 +5337,8 @@ def lower_onnx_to_ir(
     _pre_terminal_channel_slice_pad_mul_stats = run_channel_slice_pad_mul_summary(
         channel_slice_pad_mul_context,
     )
-    _pre_terminal_affine_post_add_stats = (
-        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _pre_terminal_affine_slice_pad_concat_stats = (
-        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
-            model_ir
-        )
+    _pre_terminal_affine_tail_results = run_pre_terminal_affine_tail_cleanup(
+        shared_model_ir_pass_context,
     )
     # Strict slice/merge cleanup above can recreate simple affine bridge tails:
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).

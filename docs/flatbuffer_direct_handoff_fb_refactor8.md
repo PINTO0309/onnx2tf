@@ -3196,3 +3196,32 @@ the ordered pair, retain both lowerer compatibility wrappers and all other
 call sites, update owner-aware neighboring contracts, and validate
 sequentially. Continue with commits and pushes only; never create, update, or
 reopen a pull request.
+
+## Pre-terminal affine-tail composite implementation
+
+The new pass-module owner runs affine post-Add cleanup with
+ModelIR/LayoutState and then strict StridedSlice/Pad/Concat cleanup with
+ModelIR only. It returns both mappings in source order. The lowerer now keeps
+one ordered composite target instead of the two old unconsumed targets.
+
+The channel Slice/Pad/Mul summary predecessor, terminal-affine summary
+successor, lowerer wrappers, other direct call sites, and declared total call
+counts remain unchanged. The composite remains outside the 128/128 phase
+store.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `3 passed in 0.56s`;
+- affected boundary and call-count contracts: `237 passed in 3.14s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.88s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.23s`;
+- architecture contracts: `258 passed in 18.98s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.81s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next adjacent non-store evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.
