@@ -886,3 +886,7 @@ affine/InstanceNorm owner. It replaces two unconsumed result locals with one
 ordered tuple while preserving shared context identity, raw schemas and order,
 both neighboring owners, every independent raw caller, compatibility wrappers,
 and the full 128/128 store.
+
+An inherited shared-context test now identifies all four existing
+target-specific context-building helpers instead of relying on the stale count
+of two. This is a test-only contract repair with no production change.

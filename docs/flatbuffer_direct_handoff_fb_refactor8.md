@@ -4185,3 +4185,17 @@ and push this checkpoint. On resume, inventory the next small semantically
 closed unconsumed-result cluster before changing production. Keep all
 validation sequential and continue with commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Inherited target-context construction contract repair
+
+The following characterization gate found one stale test-only count for
+target-specific `ModelIRPassContext` construction. Production already has four
+such helpers: SE-FC/Gather, SiNet summary, precision cleanup, and
+singleton/consecutive-Reshape. Each constructs the same explicit target
+ModelIR/LayoutState plus session diagnostics contract.
+
+The test now names all four helpers and requires one construction per helper.
+Focused validation is `29 passed in 0.55s`; no production behavior or 128/128
+store entry changed. Commit and push this repair separately before the next
+characterization checkpoint. Continue with commits and pushes only; never
+create, update, or reopen a pull request.

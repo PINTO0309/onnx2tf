@@ -4723,3 +4723,18 @@ No real-model corpus conversion was repeated because injected runtime tests
 prove exact context identity, callback order, arguments, and raw schemas,
 while the owner-aware affected suite preserves all independent occurrences and
 neighboring boundaries.
+
+## Inherited target-context construction contract repair
+
+The next characterization gate exposed one stale test-only construction
+count. The lowerer already contains four target-specific
+`ModelIRPassContext(...)` constructions for SE-FC/Gather, SiNet summary,
+precision cleanup, and singleton/consecutive-Reshape helpers; the old test
+still expected only two.
+
+The contract now identifies all four owning helpers explicitly, requires
+exactly one construction in each, and preserves the identical target ModelIR,
+target LayoutState, and session diagnostics arguments. The focused file passes
+(`29 passed in 0.55s`). No production source, context lifetime, graph behavior,
+pass order, API, artifact, dependency, TensorFlow boundary, or 128/128 store
+entry changed.
