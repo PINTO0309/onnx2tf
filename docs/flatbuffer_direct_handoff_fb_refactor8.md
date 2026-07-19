@@ -5414,3 +5414,36 @@ preserve both outer boundaries and wrappers. Add runtime
 order/context/result-identity injection, run affected and standard gates
 sequentially, then commit and push only. Never create, update, or reopen a
 pull request.
+
+## Late dequant hard-sigmoid/unary implementation checkpoint
+
+`passes/late_dequant_hardsigmoid_unary_orchestration.py` now owns the fixed
+hard-sigmoid-bridge-then-unary/fan-out sequence. The public bridge owner
+receives `context.model_ir`; the existing three-stage composite receives the
+exact same shared `ModelIRPassContext`. Their mapping and nested tuple are
+returned unchanged in one ordered outer tuple, preserving both raw identities
+and every result schema.
+
+The lowerer replaces only the two unconsumed child locals with
+`_late_dequant_hardsigmoid_unary_results`. The layout/no-layout conditional and
+following swish passthrough remain separate immediate boundaries. The
+model-only hard-sigmoid wrapper and zero-argument fan-out helper remain intact
+as compatibility routes. Independent callers, callbacks, graph behavior,
+public behavior, and TensorFlow isolation remain unchanged. The unconsumed
+assignment inventory is now 57; the phase-result store remains exactly 128 IDs
+and 128 owners.
+
+Sequential core-only `uv` validation passed: focused 3, complete affected 376,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase-store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. Ruff, bytecode
+compilation, and whitespace checks pass. Runtime injection proves exact order,
+model/context identity, nested schemas, wrapper preservation, outer boundaries,
+and both raw-result identities. No test is failing and no new production issue
+is known. No real-model conversion was repeated for this ownership-only move.
+
+At resume, rerun the read-only inventory of the 57 remaining unconsumed
+lowerer results. Characterize the next smallest source-adjacent, semantically
+closed cluster whose children already have pass-module owners before changing
+production. Keep all tests sequential and single-process under `uv`, and
+commit/push completed checkpoints only. Never create, update, or reopen a pull
+request.

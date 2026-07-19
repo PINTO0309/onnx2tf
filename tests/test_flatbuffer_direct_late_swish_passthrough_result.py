@@ -28,7 +28,7 @@ OWNER_PATH = (
 WRAPPER = "_optimize_swish_transpose_passthrough_chains"
 DISPATCH = "_optimize_swish_transpose_passthrough_chains_pass"
 RESULT_TARGET = "_late_swish_transpose_passthrough_stats"
-PREDECESSOR_TARGET = "_late_dequant_unary_fanout_results"
+PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
 SUCCESSOR = "run_very_late_layout_tail_cleanup"
 RESULT_SCHEMA = {"rewritten_swish_transpose_passthrough_chains": 0}
 

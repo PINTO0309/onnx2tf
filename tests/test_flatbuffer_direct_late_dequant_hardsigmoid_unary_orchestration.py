@@ -8,11 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
-    run_late_dequant_unary_fanout,
-)
-from onnx2tf.tflite_builder.passes.quantized_activation import (
-    optimize_transpose_dequant_hardsigmoid_quantize_bridges,
+from onnx2tf.tflite_builder.passes import (
+    late_dequant_hardsigmoid_unary_orchestration,
 )
 
 
@@ -90,35 +87,24 @@ def _call_name(statement: ast.stmt) -> str | None:
 
 def test_late_dequant_hardsigmoid_unary_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    statements = tuple(
-        next(
-            statement
-            for statement in lowerer.body
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    indices = tuple(lowerer.body.index(statement) for statement in statements)
-    assert indices == (indices[0], indices[0] + 1)
-    assert tuple(_call_name(statement) for statement in statements) == (
-        CURRENT_CHILD_OWNERS
-    )
-    predecessor = lowerer.body[indices[0] - 1]
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert call.keywords == []
+    predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    assert _call_name(lowerer.body[indices[-1] + 1]) == SUCCESSOR_OWNER
-
-    first_call = _call(statements[0])
-    assert first_call is not None
-    assert [ast.unparse(argument) for argument in first_call.args] == [
-        "model_ir"
-    ]
-    assert first_call.keywords == []
-    second_call = _call(statements[1])
-    assert second_call is not None
-    assert second_call.args == []
-    assert second_call.keywords == []
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _call_name(lowerer.body[index + 1]) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -133,15 +119,13 @@ def test_late_dequant_hardsigmoid_unary_current_boundary_and_schema() -> None:
         diagnostics=[],
     )
     assert (
-        optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir),
-        run_late_dequant_unary_fanout(context),
-    ) == EXPECTED_SCHEMAS
+        late_dequant_hardsigmoid_unary_orchestration.run_late_dequant_hardsigmoid_unary_cleanup(
+            context
+        )
+        == EXPECTED_SCHEMAS
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late dequant hard-sigmoid/unary pair has no shared-context owner",
-)
 def test_late_dequant_hardsigmoid_unary_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -164,6 +148,12 @@ def test_late_dequant_hardsigmoid_unary_has_one_context_owner() -> None:
     assert calls[1].keywords == []
 
     lowerer = _lowerer()
+    assert CURRENT_CHILD_OWNERS[0] in _functions(LOWERER_PATH)
+    assert any(
+        isinstance(statement, ast.FunctionDef)
+        and statement.name == CURRENT_CHILD_OWNERS[1]
+        for statement in lowerer.body
+    )
     assignment = next(
         statement
         for statement in lowerer.body
@@ -186,3 +176,53 @@ def test_late_dequant_hardsigmoid_unary_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_late_dequant_hardsigmoid_unary_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("late_dequant_hardsigmoid_unary_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        {"hard_sigmoid": 1},
+        tuple({f"fanout_{index}": index} for index in range(3)),
+    )
+    observed: list[tuple[str, object]] = []
+
+    def _hard_sigmoid(active_model_ir: ModelIR) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[0], active_model_ir))
+        return expected_results[0]
+
+    def _fanout(
+        active_context: ModelIRPassContext,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[1], active_context))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        late_dequant_hardsigmoid_unary_orchestration,
+        CHILD_OWNERS[0],
+        _hard_sigmoid,
+    )
+    monkeypatch.setattr(
+        late_dequant_hardsigmoid_unary_orchestration,
+        CHILD_OWNERS[1],
+        _fanout,
+    )
+
+    actual = (
+        late_dequant_hardsigmoid_unary_orchestration.run_late_dequant_hardsigmoid_unary_cleanup(
+            context
+        )
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context.model_ir),
+        (CHILD_OWNERS[1], context),
+    ]

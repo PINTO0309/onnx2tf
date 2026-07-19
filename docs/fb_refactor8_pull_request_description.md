@@ -1350,3 +1350,18 @@ wrappers remain compatibility routes. Production is unchanged pending one
 straight-line two-child owner. Focused and affected sequential validation
 report `1 passed, 1 xfailed` and `374 passed, 1 xfailed`; the sole expected
 failure is the intentionally absent owner.
+
+The latest checkpoint implements that late dequant hard-sigmoid/unary owner.
+It passes `context.model_ir` to the public bridge owner and the exact shared
+context to the existing three-stage dequant/unary/fan-out composite, returning
+both raw results unchanged in their original order. The lowerer replaces only
+the two observation-only locals. The preceding layout/no-layout conditional
+and following swish passthrough remain immediate outer boundaries, while both
+lowerer compatibility wrappers and all independent routes remain intact.
+
+Runtime identity coverage, 376 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. Public
+behavior, graph rewrites, artifacts, dependencies, TensorFlow isolation, and
+the exactly 128-ID/128-owner phase-result store are unchanged; the unconsumed
+lowerer assignment inventory decreases from 58 to 57.

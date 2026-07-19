@@ -24,6 +24,7 @@ MUL_ADD_CONST = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 DEQUANT_HARDSIGMOID = (
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
 )
+LATE_DEQUANT_COMPOSITE = "run_late_dequant_hardsigmoid_unary_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -139,7 +140,7 @@ def test_lowerer_retains_guarded_convpool_output_result() -> None:
     assert _call_name(lowerer.body[guard_index - 1]) == (
         TERMINAL_SINGLETON_MAXPOOL
     )
-    assert _call_name(lowerer.body[guard_index + 1]) == DEQUANT_HARDSIGMOID
+    assert _call_name(lowerer.body[guard_index + 1]) == LATE_DEQUANT_COMPOSITE
 
     assert len(guard.orelse) == 1
     fallback = guard.orelse[0]

@@ -30,6 +30,15 @@ OWNER = "_run_late_dequant_unary_fanout_pass_cluster"
 RESULT_TARGET = "_late_dequant_unary_fanout_results"
 PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_bridge_stats"
 SUCCESSOR = "_optimize_swish_transpose_passthrough_chains"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_dequant_hardsigmoid_unary_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
+COMPOSITE_TARGET = "_late_dequant_hardsigmoid_unary_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -84,7 +93,7 @@ def _direct_location() -> tuple[ast.FunctionDef, int]:
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == OWNER
+        if _call_name(statement) == COMPOSITE_OWNER
     )
 
 
@@ -120,14 +129,21 @@ def test_late_dequant_unary_fanout_result_contract_is_explicit() -> None:
 
     observed_lowerer, index = _direct_location()
     assert observed_lowerer.name == lowerer.name
-    assert _single_target(observed_lowerer.body[index]) == RESULT_TARGET
-    assert _single_target(observed_lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(observed_lowerer.body[index]) == COMPOSITE_TARGET
+    assert isinstance(observed_lowerer.body[index - 1], ast.If)
     assert _call_name(observed_lowerer.body[index + 1]) == SUCCESSOR
-    assert sum(
+    assert not any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == OWNER
         for node in ast.walk(lowerer)
+    )
+    composite = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_dequant_unary_fanout"
+        for node in ast.walk(composite)
     ) == 1
 
 
@@ -177,7 +193,7 @@ def test_late_dequant_unary_fanout_results_propagate_to_direct_target(
 
     observed_lowerer, index = _direct_location()
     assert observed_lowerer.name == lowerer.name
-    assert _single_target(observed_lowerer.body[index]) == RESULT_TARGET
+    assert _single_target(observed_lowerer.body[index]) == COMPOSITE_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET

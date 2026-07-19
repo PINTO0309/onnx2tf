@@ -23,6 +23,15 @@ from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration impor
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 LATE_DEQUANT_UNARY_FANOUT = "_run_late_dequant_unary_fanout_pass_cluster"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_dequant_hardsigmoid_unary_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
+COMPOSITE_RESULT = "_late_dequant_hardsigmoid_unary_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -57,6 +66,21 @@ def _context() -> LateDequantUnaryFanoutContext:
         layout_state=LayoutState.from_model_ir(model_ir),
         diagnostics=[],
     )
+
+
+def _composite_calls() -> list[ast.Call]:
+    owner = next(
+        node
+        for node in ast.parse(COMPOSITE_PATH.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == COMPOSITE_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_dequant_unary_fanout"
+    ]
 
 
 def _normalize_new_contract(
@@ -156,18 +180,19 @@ def test_late_dequant_unary_fanout_preserves_all_cleanup_contracts() -> None:
 
 
 def test_late_dequant_unary_fanout_invocation_remains_zero_argument() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    invocations = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
+    lowerer, helper = _lowerer_and_helper()
+    assert helper.args.args == []
+    assert helper.args.kwonlyargs == []
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == LATE_DEQUANT_UNARY_FANOUT
-    ]
-
-    assert len(invocations) == 1
-    assert invocations[0].args == []
-    assert invocations[0].keywords == []
+        for node in ast.walk(lowerer)
+    )
+    assert len(_composite_calls()) == 1
+    assert [
+        ast.unparse(argument) for argument in _composite_calls()[0].args
+    ] == ["context"]
 
 
 def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
@@ -178,27 +203,17 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == LATE_DEQUANT_UNARY_FANOUT
+        and statement.value.func.id == COMPOSITE_OWNER
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_late_dequant_unary_fanout_results"
+    assert invocation.targets[0].id == COMPOSITE_RESULT
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_late_dequant_hardsigmoid_bridge_stats"
-    )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
-    )
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == "optimize_layout_transpose_chains"
 
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
@@ -215,6 +230,7 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in following.value.keywords
     } == {"layout_state": "session.layout_state"}
+    assert len(_composite_calls()) == 1
 
 
 def test_late_dequant_unary_fanout_context_and_wrapper_are_explicit() -> None:

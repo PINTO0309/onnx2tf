@@ -6236,3 +6236,41 @@ ConvPool/SINet boundaries, shared-context, pass-efficiency, architecture, and
 phase-store contracts. The sole xfail is the intentionally absent owner.
 Production, public behavior, dependencies, TensorFlow isolation, and the
 exactly 128-ID/128-owner store remain unchanged.
+
+## Late dequant hard-sigmoid/unary composite implementation
+
+`passes/late_dequant_hardsigmoid_unary_orchestration.py` now owns the
+characterized two-stage late cleanup. It passes `context.model_ir` to the
+public transpose/dequant/hard-sigmoid/quantize bridge owner, then forwards the
+exact same `ModelIRPassContext` to the existing late dequant/unary/fan-out
+composite. It returns the raw bridge mapping and complete nested three-result
+tuple unchanged and in source order, without copying, flattening, inspection,
+or result-driven control flow.
+
+The lowerer replaces only `_late_dequant_hardsigmoid_bridge_stats` and
+`_late_dequant_unary_fanout_results` with
+`_late_dequant_hardsigmoid_unary_results`. The preceding layout/no-layout
+conditional remains the immediate predecessor. The swish
+transpose-passthrough call remains the immediate successor and still receives
+the shared LayoutState. The model-only hard-sigmoid wrapper and zero-argument
+fan-out helper remain available as compatibility routes, along with their
+other existing callers.
+
+Owner-aware hard-sigmoid, quantized activation, late fan-out, swish, guarded
+ConvPool, and architecture tests now resolve the terminal production call
+through the new pass-module owner while separately verifying both compatibility
+wrappers. Runtime monkeypatch injection proves exact two-child order,
+`context.model_ir` identity for the bridge, shared-context identity for the
+fan-out child, and identity of both raw results.
+
+Final sequential validation under core-only `uv` passed with 3 focused tests,
+376 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. Ruff, bytecode compilation, and whitespace
+checks also pass. No pass behavior, graph rewrite, wrapper, callback, guard,
+phase result, public API, artifact, dependency, or TensorFlow boundary changed.
+The bounded store remains exactly 128 IDs and 128 owners. The unconsumed
+lowerer assignment inventory decreases from 58 to 57. No real-model conversion
+was repeated because this is a straight-line ownership extraction with exact
+state, order, schema, result-identity, wrapper, route-count, and boundary
+coverage.

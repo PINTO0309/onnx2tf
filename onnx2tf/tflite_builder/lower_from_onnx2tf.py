@@ -222,6 +222,9 @@ from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestrat
 from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
     run_late_dequant_unary_fanout,
 )
+from onnx2tf.tflite_builder.passes.late_dequant_hardsigmoid_unary_orchestration import (
+    run_late_dequant_hardsigmoid_unary_cleanup,
+)
 from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
     run_transpose_unary_fanout,
 )
@@ -5147,11 +5150,10 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-    _late_dequant_hardsigmoid_bridge_stats = (
-        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-    )
-    _late_dequant_unary_fanout_results = (
-        _run_late_dequant_unary_fanout_pass_cluster()
+    _late_dequant_hardsigmoid_unary_results = (
+        run_late_dequant_hardsigmoid_unary_cleanup(
+            shared_model_ir_pass_context,
+        )
     )
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).

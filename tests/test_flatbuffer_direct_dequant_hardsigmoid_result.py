@@ -28,6 +28,15 @@ HARDSWISH_SE = (
 )
 MIXED_ATTENTION = "run_mixed_attention_layout_cleanup"
 LATE_DEQUANT_CLUSTER = "_run_late_dequant_unary_fanout_pass_cluster"
+LATE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_dequant_hardsigmoid_unary_orchestration.py"
+)
+LATE_OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
+LATE_RESULT = "_late_dequant_hardsigmoid_unary_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -155,15 +164,12 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
         for statement in lowerer.body
         if _call_name(statement) == DEQUANT_HARDSIGMOID
     ]
-    assert len(direct_results) == 3
+    assert len(direct_results) == 2
     assert _phase_id(direct_results[0]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
     assert _phase_id(direct_results[1]) == (
         "cleanup.post_sinet.dequant_hardsigmoid_bridge"
-    )
-    assert _single_target(direct_results[2]) == (
-        "_late_dequant_hardsigmoid_bridge_stats"
     )
     for statement in direct_results:
         call = _statement_call(statement)
@@ -194,11 +200,36 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
         "cleanup.late.ndhwc_cost_volume"
     )
 
-    late_index = lowerer.body.index(direct_results[2])
+    late_assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == LATE_RESULT
+    )
+    late_index = lowerer.body.index(late_assignment)
     branch = lowerer.body[late_index - 1]
     assert isinstance(branch, ast.If)
     assert ast.unparse(branch.test) == "optimize_layout_transpose_chains"
     assert _single_target(branch.body[0]) == (
         "_terminal_convpool_output_passthrough_stats"
     )
-    assert _call_name(lowerer.body[late_index + 1]) == LATE_DEQUANT_CLUSTER
+    assert _call_name(late_assignment) == LATE_OWNER
+    assert _call_name(lowerer.body[late_index + 1]) == (
+        "_optimize_swish_transpose_passthrough_chains"
+    )
+    late_owner = _functions(LATE_OWNER_PATH)[LATE_OWNER]
+    late_calls = [
+        node
+        for node in ast.walk(late_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER_NAME
+    ]
+    assert len(late_calls) == 1
+    assert [ast.unparse(argument) for argument in late_calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert any(
+        isinstance(statement, ast.FunctionDef)
+        and statement.name == LATE_DEQUANT_CLUSTER
+        for statement in lowerer.body
+    )
