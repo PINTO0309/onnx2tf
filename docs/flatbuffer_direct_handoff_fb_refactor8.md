@@ -692,3 +692,26 @@ the remaining primary-path static-shape-only result locals. Split them into
 bounded semantic families rather than migrating all model-specific final
 repairs at once, and preserve invoked-only semantics. Never create, update, or
 reopen a pull request.
+
+## Primary final layout-refresh reconciliation characterization
+
+The primary inventory found 20 remaining unconsumed static-shape-only results.
+The first selected family is deliberately limited to the three final
+ConvInteger, InstanceNorm, and broadcast reconciliations because each is
+immediately followed by its already-characterized topology/layout refresh.
+
+The new contract fixes the three zero defaults, target order, mutation guards,
+`model_ir` argument, `include_mutation_count=True`, successor refresh order,
+and absence of consumers. Its strict expected failure requires stable
+`shape_reconciliation.primary.final_*` phase records without changing the
+existing refresh records.
+
+Validation completed sequentially under core-only `uv`: the dedicated test is
+`1 passed, 1 xfailed in 0.16s`, and targeted Ruff, bytecode compilation, and
+whitespace checks pass. No production source changed.
+
+Commit and push this characterization, then migrate only these three guarded
+assignments and remove only their zero defaults. Update the topology/layout
+predecessor contract and bounded-store inventory, run focused and architecture
+gates, document, commit, and push. Never create, update, or reopen a pull
+request.

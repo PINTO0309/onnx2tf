@@ -689,3 +689,32 @@ Validation completed sequentially under core-only `uv`:
 
 No real-model conversion was run because this implementation only changes the
 destination of already-computed two-counter dictionaries.
+
+## Primary final layout-refresh reconciliation characterization
+
+The primary-path inventory found 20 remaining unconsumed static-shape-only
+results. They were split by semantic boundary rather than treated as one large
+mechanical migration. The next selected family contains only the three
+reconciliations immediately preceding the final ConvInteger, InstanceNorm, and
+broadcast topology/layout refreshes.
+
+All three currently share an all-zero default, a single mutation-positive
+guard, the complete two-counter
+`_reconcile_static_tensor_shapes(model_ir, include_mutation_count=True)` owner,
+and a same-guard `run_topology_layout_refresh(model_ir)` successor. Their
+results are never loaded.
+
+The characterization fixes the target and source order, zero schema, owner
+arguments, keyword arguments, refresh phase order, and absence of consumers.
+A strict expected failure requires three stable
+`shape_reconciliation.primary.final_*` records before their existing refresh
+records. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated family contract: `1 passed, 1 xfailed in 0.16s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented session-store
+migration.
