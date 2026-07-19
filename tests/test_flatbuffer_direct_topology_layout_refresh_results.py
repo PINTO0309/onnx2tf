@@ -25,13 +25,13 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 RUNNER = "run_topology_layout_refresh"
 SORT_OWNER = "_topologically_sort_operators"
 LAYOUT_OWNER = "infer_model_ir_logical_layouts"
-EXPECTED_TARGETS = (
-    "_fallback_dynamic_rank1_topology_layout_stats",
-    "_fallback_broadcast_topology_layout_stats",
-    "_absolute_final_topology_layout_stats",
-    "_final_convinteger_topology_layout_stats",
-    "_final_instancenorm_topology_layout_stats",
-    "_final_broadcast_topology_layout_stats",
+EXPECTED_PHASE_IDS = (
+    "topology_layout.fallback.post_dynamic_rank1",
+    "topology_layout.fallback.broadcast",
+    "topology_layout.primary.absolute_final",
+    "topology_layout.primary.final_convinteger",
+    "topology_layout.primary.final_instancenorm",
+    "topology_layout.primary.final_broadcast",
 )
 EXPECTED_MODEL_ARGUMENTS = (
     "fallback_ir",
@@ -101,6 +101,21 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
+        return None
+    return call.args[1]
+
+
 def _raw_pair_locations(
     lowerer: ast.FunctionDef,
 ) -> list[tuple[list[ast.stmt], int]]:
@@ -124,7 +139,9 @@ def _runner_locations(
             (block, index)
             for block in _pipeline_blocks(lowerer.body)
             for index, statement in enumerate(block)
-            if _call_name(statement) == RUNNER
+            if isinstance(_phase_result_owner(statement), ast.Call)
+            and isinstance(_phase_result_owner(statement).func, ast.Name)
+            and _phase_result_owner(statement).func.id == RUNNER
         ],
         key=lambda item: item[0][item[1]].lineno,
     )
@@ -194,17 +211,18 @@ def test_six_topology_layout_refresh_boundaries_are_explicit() -> None:
     locations = _runner_locations(lowerer)
     assert len(locations) == 6
     assert tuple(
-        _single_target(block[index]) for block, index in locations
-    ) == EXPECTED_TARGETS
-    assert tuple(
-        ast.unparse(_statement_call(block[index]).args[0])
+        ast.literal_eval(_statement_call(block[index]).args[0])
         for block, index in locations
-    ) == EXPECTED_MODEL_ARGUMENTS
+    ) == EXPECTED_PHASE_IDS
     assert tuple(
         _single_target(block[index - 1]) for block, index in locations
     ) == EXPECTED_PREDECESSOR_TARGETS
+    assert tuple(
+        ast.unparse(_phase_result_owner(block[index]).args[0])
+        for block, index in locations
+    ) == EXPECTED_MODEL_ARGUMENTS
     for block, index in locations:
-        call = _statement_call(block[index])
+        call = _phase_result_owner(block[index])
         assert call is not None
         assert call.keywords == []
 
@@ -229,22 +247,23 @@ def test_topology_layout_runner_preserves_effects_and_small_results() -> None:
     locations = _runner_locations(lowerer)
     assert len(locations) == 6
     assert tuple(
-        _single_target(block[index]) for block, index in locations
-    ) == EXPECTED_TARGETS
-    assert tuple(
-        ast.unparse(_statement_call(block[index]).args[0])
+        ast.literal_eval(_statement_call(block[index]).args[0])
         for block, index in locations
-    ) == EXPECTED_MODEL_ARGUMENTS
+    ) == EXPECTED_PHASE_IDS
     assert tuple(
         _single_target(block[index - 1]) for block, index in locations
     ) == EXPECTED_PREDECESSOR_TARGETS
+    assert tuple(
+        ast.unparse(_phase_result_owner(block[index]).args[0])
+        for block, index in locations
+    ) == EXPECTED_MODEL_ARGUMENTS
     for block, index in locations:
-        call = _statement_call(block[index])
+        call = _phase_result_owner(block[index])
         assert call is not None
         assert call.keywords == []
     assert not any(
         isinstance(node, ast.Name)
-        and node.id in EXPECTED_TARGETS
+        and node.id.endswith("_topology_layout_stats")
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

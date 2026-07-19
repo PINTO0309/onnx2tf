@@ -146,14 +146,10 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     assert invocation.value.keywords == []
 
     topology_layout_refresh = body[invocation_index + 1]
-    assert isinstance(topology_layout_refresh, ast.Assign)
-    assert len(topology_layout_refresh.targets) == 1
-    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
-    assert topology_layout_refresh.targets[0].id == (
-        "_fallback_dynamic_rank1_topology_layout_stats"
-    )
-    assert ast.unparse(topology_layout_refresh.value) == (
-        "run_topology_layout_refresh(fallback_ir)"
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.fallback.post_dynamic_rank1",
+        owner_expression="run_topology_layout_refresh(fallback_ir)",
     )
 
 
@@ -275,14 +271,10 @@ def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
     } == {"include_mutation_count": "True"}
 
     topology_layout_refresh = guard.body[1]
-    assert isinstance(topology_layout_refresh, ast.Assign)
-    assert len(topology_layout_refresh.targets) == 1
-    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
-    assert topology_layout_refresh.targets[0].id == (
-        "_fallback_broadcast_topology_layout_stats"
-    )
-    assert ast.unparse(topology_layout_refresh.value) == (
-        "run_topology_layout_refresh(fallback_ir)"
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.fallback.broadcast",
+        owner_expression="run_topology_layout_refresh(fallback_ir)",
     )
 
 

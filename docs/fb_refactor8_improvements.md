@@ -508,3 +508,37 @@ sequentially under `uv`:
 The existing private pass-diagnostics sink remains unchanged and its
 `model_ir_pass`-only contract still passes. No real-model conversion was run
 because pass owners and ModelIR mutations are unchanged.
+
+## Topology/layout refresh phase-result migration
+
+The six topology/layout refresh results already shared one characterized owner
+and the same two-counter schema. They were therefore migrated as the next
+homogeneous bounded-store family without reopening owner behavior or mixing in
+shape-reconciliation results.
+
+The former unconsumed locals now use these phase IDs:
+
+- `topology_layout.fallback.post_dynamic_rank1`;
+- `topology_layout.fallback.broadcast`;
+- `topology_layout.primary.absolute_final`;
+- `topology_layout.primary.final_convinteger`;
+- `topology_layout.primary.final_instancenorm`;
+- `topology_layout.primary.final_broadcast`.
+
+Each `run_topology_layout_refresh()` call remains at the same predecessor and
+under the same guard. The owner still sorts operators, refreshes logical layout
+annotations, releases the full layout map, and returns only
+`reordered_operators` and `cycle_detected`. The bounded store copies those two
+integers. No extra layout map, tensor reference, graph object, scan, public
+result, report field, artifact, dependency, or TensorFlow import was added.
+
+Validation completed sequentially under `uv`:
+
+- bounded-store, topology/layout owner, fallback/terminal orchestration, and
+  core diagnostics contracts: `149 passed in 2.97s`;
+- lowerer architecture contracts: `258 passed in 16.74s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because only the destination of an already
+small, unconsumed result changed.

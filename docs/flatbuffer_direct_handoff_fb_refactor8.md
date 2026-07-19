@@ -545,3 +545,39 @@ topology/layout refresh results are the next suitable family because they all
 share the same two-counter schema; do not migrate shape-reconciliation results
 in the same checkpoint. Continue with coherent commits and pushes only; never
 create, update, or reopen a pull request.
+
+## Topology/layout refresh result migration
+
+The six already-characterized `run_topology_layout_refresh()` results now use
+the bounded session store rather than unconsumed lowerer locals. Their stable
+phase IDs are:
+
+- `topology_layout.fallback.post_dynamic_rank1`;
+- `topology_layout.fallback.broadcast`;
+- `topology_layout.primary.absolute_final`;
+- `topology_layout.primary.final_convinteger`;
+- `topology_layout.primary.final_instancenorm`;
+- `topology_layout.primary.final_broadcast`.
+
+The migration reuses the owner and differential contracts from `5def1684` and
+`b7fe39e0`, plus the bounded-store contract from `8a3245e3` and `0772d42c`.
+No new characterization commit was needed because both sides of the migration
+were already fixed. Owner calls, guard conditions, predecessor results,
+logical-layout side effects, cycle handling, and full-layout-map release are
+unchanged.
+
+Validation completed sequentially under core-only `uv`:
+
+- phase store, topology/layout owner, fallback/terminal orchestration, and core
+  diagnostics contracts: `149 passed in 2.97s`;
+- lowerer architecture contracts: `258 passed in 16.74s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required for this result-destination-only change.
+On resume, migrate the three remaining single-call observation locals
+(`_core_cleanup_dynamic_reshape_stats`,
+`_no_layout_safe_transpose_reduction_stats`, and
+`_terminal_expand_squeeze_static_shape_stats`) only after confirming that each
+owner returns integer-only bounded counters. Keep fallback/final combined
+shape-topology results as a separate later family. Continue with coherent
+commits and pushes only; never create, update, or reopen a pull request.

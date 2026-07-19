@@ -856,13 +856,10 @@ def test_primary_path_stages_final_broadcast_reconciliation() -> None:
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
     topology_layout_refresh = guard.body[1]
-    assert isinstance(topology_layout_refresh, ast.Assign)
-    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
-    assert topology_layout_refresh.targets[0].id == (
-        "_final_broadcast_topology_layout_stats"
-    )
-    assert _call_name(_statement_call(topology_layout_refresh)) == (
-        "run_topology_layout_refresh"
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.primary.final_broadcast",
+        owner_expression="run_topology_layout_refresh(model_ir)",
     )
 
     following = body[stats_index + 3]
@@ -925,13 +922,10 @@ def test_primary_path_stages_final_instancenorm_reconciliation() -> None:
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
     topology_layout_refresh = guard.body[1]
-    assert isinstance(topology_layout_refresh, ast.Assign)
-    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
-    assert topology_layout_refresh.targets[0].id == (
-        "_final_instancenorm_topology_layout_stats"
-    )
-    assert _call_name(_statement_call(topology_layout_refresh)) == (
-        "run_topology_layout_refresh"
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.primary.final_instancenorm",
+        owner_expression="run_topology_layout_refresh(model_ir)",
     )
 
     following = body[stats_index + 3]
@@ -995,13 +989,10 @@ def test_primary_path_stages_final_convinteger_reconciliation() -> None:
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
     topology_layout_refresh = guard.body[1]
-    assert isinstance(topology_layout_refresh, ast.Assign)
-    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
-    assert topology_layout_refresh.targets[0].id == (
-        "_final_convinteger_topology_layout_stats"
-    )
-    assert _call_name(_statement_call(topology_layout_refresh)) == (
-        "run_topology_layout_refresh"
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.primary.final_convinteger",
+        owner_expression="run_topology_layout_refresh(model_ir)",
     )
 
     following = body[stats_index + 3]
@@ -1033,13 +1024,10 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
     assert _call_name(_statement_call(final)) == owner_name
 
     topology_layout_refresh = body[final_index + 1]
-    assert isinstance(topology_layout_refresh, ast.Assign)
-    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
-    assert topology_layout_refresh.targets[0].id == (
-        "_absolute_final_topology_layout_stats"
-    )
-    assert _call_name(_statement_call(topology_layout_refresh)) == (
-        "run_topology_layout_refresh"
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.primary.absolute_final",
+        owner_expression="run_topology_layout_refresh(model_ir)",
     )
     following = body[final_index + 2]
     assert isinstance(following, ast.Assign)

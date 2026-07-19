@@ -13,20 +13,32 @@ from onnx2tf.tflite_builder.ir import ModelIR
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
+    "_fallback_dynamic_rank1_topology_layout_stats",
+    "_fallback_broadcast_topology_layout_stats",
     "_fallback_post_placeholder_topology_stats",
     "_fallback_post_layout_repair_topology_stats",
     "_fallback_topology_layout_validation_stats",
     "_primary_post_lowering_topology_stats",
     "_no_layout_post_reduction_topology_stats",
+    "_absolute_final_topology_layout_stats",
+    "_final_convinteger_topology_layout_stats",
+    "_final_instancenorm_topology_layout_stats",
+    "_final_broadcast_topology_layout_stats",
     "_final_placeholder_topology_stats",
     "_terminal_topology_layout_validation_stats",
 )
 EXPECTED_OWNERS = (
+    "run_topology_layout_refresh",
+    "run_topology_layout_refresh",
     "_topologically_sort_operators",
     "_topologically_sort_operators",
     "run_topology_layout_validation",
     "_topologically_sort_operators",
     "_topologically_sort_operators",
+    "run_topology_layout_refresh",
+    "run_topology_layout_refresh",
+    "run_topology_layout_refresh",
+    "run_topology_layout_refresh",
     "_topologically_sort_operators",
     "run_topology_layout_validation",
 )
@@ -34,17 +46,29 @@ EXPECTED_MODEL_ARGUMENTS = (
     "fallback_ir",
     "fallback_ir",
     "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
+    "model_ir",
+    "model_ir",
+    "model_ir",
+    "model_ir",
     "model_ir",
     "model_ir",
     "model_ir",
     "model_ir",
 )
 EXPECTED_PHASE_IDS = (
+    "topology_layout.fallback.post_dynamic_rank1",
+    "topology_layout.fallback.broadcast",
     "topology.fallback.post_placeholder",
     "topology.fallback.post_layout_repair",
     "layout_validation.fallback.terminal",
     "topology.primary.post_lowering",
     "topology.primary.no_layout_post_reduction",
+    "topology_layout.primary.absolute_final",
+    "topology_layout.primary.final_convinteger",
+    "topology_layout.primary.final_instancenorm",
+    "topology_layout.primary.final_broadcast",
     "topology.primary.final_placeholder",
     "layout_validation.primary.terminal",
 )
@@ -87,7 +111,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_seven_topology_observations_use_the_bounded_session_store() -> None:
+def test_thirteen_topology_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -98,7 +122,7 @@ def test_seven_topology_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 7
+    assert len(records) == 13
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
