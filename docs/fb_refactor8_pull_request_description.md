@@ -1242,3 +1242,11 @@ reconciliation, Split fallback, and all specialized child contracts remain
 fixed. Runtime identity coverage, 401 affected tests, and every standard
 sequential gate pass; public behavior, TensorFlow isolation, and the exactly
 128-ID/128-owner store are unchanged.
+
+The next characterization selects indexed late Conv affine folding followed
+by the existing late Concat/layout composite. It fixes the affine-only policy,
+shared ModelIR/LayoutState/context identity, raw schemas and order,
+phase-recorded NDHWC cost-volume predecessor, and optional elementwise-fanout
+successor. Production remains unchanged pending a two-stage owner. Focused and
+affected validation report `1 passed, 1 xfailed` and
+`376 passed, 1 xfailed`.

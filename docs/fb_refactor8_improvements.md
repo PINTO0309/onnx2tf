@@ -5924,3 +5924,27 @@ checks passed. No guard, mutation, reconciliation, fallback, phase result,
 public API, artifact, dependency, or TensorFlow boundary changed; the store
 remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
 for this straight-line ownership extraction.
+
+## Late affine/Concat composite characterization
+
+The refreshed inventory selected the next smallest adjacent pair immediately
+after the phase-recorded late NDHWC cost-volume cleanup: indexed Conv
+Mul/Add-affine folding followed by the existing four-stage late Concat/layout
+owner. The affine call preserves `enable_conv_add_only_fold=True` and receives
+the shared ModelIR and LayoutState; the Concat child receives the exact shared
+`ModelIRPassContext`.
+
+`tests/test_flatbuffer_direct_late_affine_concat_orchestration.py` fixes the
+two-child order, fixed affine policy, state identity, complete empty-model
+schemas, absence of consumers, `cleanup.late.ndhwc_cost_volume` predecessor,
+and the optional elementwise-fanout guard successor. The guard and its result
+remain outside the proposed owner.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.55s` focused and
+`376 passed, 1 xfailed in 18.79s` across indexed affine folding, late Concat,
+NDHWC cost volume, layout-result, shared-context, terminal validation,
+architecture, and phase-store contracts. The sole expected failure requires a
+new shared-context owner returning both raw results unchanged. Production,
+public behavior, dependency boundaries, and the exactly 128-ID/128-owner
+store remain unchanged.

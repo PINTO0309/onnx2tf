@@ -5130,3 +5130,28 @@ smallest source-adjacent, semantically closed cluster whose children are
 already pass-module-owned, characterize it before changing production, and
 keep all testing sequential and single-process under `uv`. Commit and push
 only; never create, update, or reopen a pull request.
+
+## Late affine/Concat composite characterization checkpoint
+
+The next two-stage candidate is characterized but not implemented. It joins
+indexed Conv Mul/Add-affine folding with the existing late Concat/layout
+composite. The first child receives the shared ModelIR and LayoutState with
+`enable_conv_add_only_fold=True`; the second receives the exact shared
+`ModelIRPassContext`.
+
+The fixed predecessor is the `cleanup.late.ndhwc_cost_volume` phase record.
+The fixed successor is the optional `optimize_layout_transpose_chains` fanout
+guard. The new owner must not absorb the guard, change its policy, flatten the
+Concat tuple, or copy either raw result.
+
+Focused characterization reports `1 passed, 1 xfailed`; complete affected
+characterization reports `376 passed, 1 xfailed`. The sole xfail is the
+intentionally absent `passes/late_affine_concat_orchestration.py`. Production
+and the 128-ID/128-owner store are unchanged.
+
+At resume, implement `run_late_affine_concat_cleanup(context)` as a
+straight-line two-stage owner with the fixed affine flag. Return the affine
+mapping and raw four-result Concat tuple unchanged, replace only the two
+unconsumed lowerer locals, and preserve both outer boundaries. Run affected
+and standard gates sequentially, then commit and push only. Never create,
+update, or reopen a pull request.
