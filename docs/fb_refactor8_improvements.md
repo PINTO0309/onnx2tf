@@ -1481,6 +1481,42 @@ Sequential characterization under core-only `uv` completed with
 pass-module owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed.
 
+## Pre-Concat NHWC pass-module owner implementation
+
+`passes/pre_concat_nhwc_layout.py` now owns the complete three-stage composite.
+It invokes indexed NHWC Concat cleanup, quantized indexed cleanup, and the
+legacy fallback in the characterized order, preserves layout/diagnostics only
+for the first two stages, and returns the same aggregate integer schema. The
+recognized detail-key lists moved unchanged with the owner, so unrelated
+detail counters remain excluded from the aggregate.
+
+The lowerer keeps `_optimize_transpose_pre_concat_nhwc_chains` as a one-return
+compatibility wrapper with the same signature. All three direct production
+calls and the recovery-orchestration callback still resolve through that name.
+The separate legacy lowerer wrapper also remains available. The new module
+imports the three existing pass owners directly and has no lowerer import or
+callback injection.
+
+Sequential validation under core-only `uv` completed with:
+
+- focused owner order, aggregation, runtime identity, and wrapper contracts:
+  `3 passed in 0.54s`;
+- indexed, quantized, and legacy NHWC Concat family runtime contracts:
+  `285 passed in 1.33s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader result contracts: `196 passed in 8.99s`;
+- full lowerer architecture contracts: `258 passed in 19.02s`;
+- phase-result capacity contracts: `2 passed in 0.52s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No graph rewrite, pass ordering, result value, diagnostics destination,
+public compatibility name, phase identity, artifact, dependency, or
+TensorFlow boundary changed. No root-model conversion was repeated because
+the family-level runtime suite exercises all moved dispatch paths. The store
+remains exactly 128/128.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

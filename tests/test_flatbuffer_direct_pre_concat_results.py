@@ -12,8 +12,15 @@ LEGACY_OWNER_PATH = (
     / "passes"
     / "nhwc_concat_legacy_layout.py"
 )
+PRE_CONCAT_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_concat_nhwc_layout.py"
+)
 PRE_CONCAT = "_optimize_transpose_pre_concat_nhwc_chains"
-LEGACY_WRAPPER = "_optimize_transpose_pre_concat_nhwc_chains_legacy"
+PRE_CONCAT_OWNER = "optimize_transpose_pre_concat_nhwc_chains"
 LEGACY_OWNER = "optimize_transpose_pre_concat_nhwc_chains_legacy"
 RESULT_TARGETS = (
     "_layout_opt_pre_concat_stats",
@@ -88,24 +95,48 @@ def _call_name(statement: ast.stmt) -> str | None:
 
 
 def test_pre_concat_composite_schema_order_and_cleanup_are_explicit() -> None:
-    composite = _functions(LOWERER_PATH)[PRE_CONCAT]
+    composite_tree = ast.parse(
+        PRE_CONCAT_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    composite = _functions(PRE_CONCAT_OWNER_PATH)[PRE_CONCAT_OWNER]
     expected_dispatches = (
         "run_nhwc_concat_layout_cleanup",
         "run_nhwc_concat_quantized_layout_cleanup",
-        LEGACY_WRAPPER,
+        LEGACY_OWNER,
     )
-    dispatches = [
-        node.func.id
-        for node in ast.walk(composite)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_dispatches
-    ]
-    assert tuple(dispatches) == expected_dispatches
+    dispatches = sorted(
+        (
+            node
+            for node in ast.walk(composite)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in expected_dispatches
+        ),
+        key=lambda node: node.lineno,
+    )
+    assert tuple(node.func.id for node in dispatches) == expected_dispatches
+    stats_key = next(
+        node
+        for node in composite_tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "_STATS_KEY"
+    )
+    assert ast.literal_eval(stats_key.value) == (
+        "optimized_transpose_pre_concat_nhwc_chains"
+    )
     composite_return = composite.body[-1]
     assert isinstance(composite_return, ast.Return)
     assert ast.unparse(composite_return.value) == (
-        "{'optimized_transpose_pre_concat_nhwc_chains': int(optimized)}"
+        "{_STATS_KEY: int(optimized)}"
+    )
+
+    compatibility_wrapper = _functions(LOWERER_PATH)[PRE_CONCAT]
+    assert len(compatibility_wrapper.body) == 1
+    assert ast.unparse(compatibility_wrapper.body[0]) == (
+        "return _optimize_transpose_pre_concat_nhwc_chains_pass(model_ir, "
+        "layout_state=layout_state, diagnostics=diagnostics)"
     )
 
     legacy_owner = _functions(LEGACY_OWNER_PATH)[LEGACY_OWNER]
@@ -168,10 +199,10 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "run_ndhwc_concat_layout_cleanup",
         ),
         (
-                "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
-                "_final_slice_prepost_passthrough_stats",
-                "run_terminal_concat_bridge_layout_cleanup",
-            ),
+            "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
+            "_final_slice_prepost_passthrough_stats",
+            "run_terminal_concat_bridge_layout_cleanup",
+        ),
         (
             "summarize_late_hard_activation_layout_mutations",
             "_late_hard_activation_stats",

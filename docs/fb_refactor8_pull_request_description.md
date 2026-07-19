@@ -143,6 +143,20 @@ and result schemas while removing twenty-four unconsumed locals and two
 lowerer scope locals. Focused runtime tests verify shared scope identity, exact
 argument policy, and ordered results.
 
+### Shared pre-Concat NHWC composite owner
+
+The three-stage pre-ConCat NHWC composite now lives in
+`passes/pre_concat_nhwc_layout.py`. It runs indexed cleanup, quantized indexed
+cleanup, and the legacy fallback in the original order, forwards layout state
+and diagnostics only to the first two stages, and produces the same bounded
+aggregate counter from the same recognized detail keys.
+
+The existing lowerer function remains as a one-return compatibility wrapper,
+so its three direct production uses, recovery-orchestration callback, public
+test imports, arguments, and result schema are unchanged. The legacy wrapper
+also remains available. The pass module imports existing owners directly and
+does not depend on the lowerer or callback injection.
+
 ### Explicit topology checkpoints
 
 Five existing direct topological-sort calls now have stable phase identities:
@@ -373,6 +387,9 @@ Final checkpoint results:
   **79 passed**;
 - terminal Concat-bridge composite and affected result contracts:
   **17 passed**;
+- pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
+- indexed, quantized, and legacy NHWC Concat family contracts:
+  **285 passed**;
 - broader result and phase-result contracts: **196 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;

@@ -4645,19 +4645,42 @@ def test_nhwc_concat_legacy_optimizer_has_one_module_owner() -> None:
     assert dispatch.args[0].id == "model_ir"
 
     composite_name = "_optimize_transpose_pre_concat_nhwc_chains"
-    composite = next(
+    composite_owner_name = "optimize_transpose_pre_concat_nhwc_chains"
+    composite_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_concat_nhwc_layout.py"
+    )
+    composite_owner_tree = ast.parse(
+        composite_owner_path.read_text(encoding="utf-8")
+    )
+    composite_owner = next(
+        node
+        for node in composite_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == composite_owner_name
+    )
+    composite_wrapper = next(
         node
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == composite_name
     )
+    assert len(composite_wrapper.body) == 1
+    assert isinstance(composite_wrapper.body[0], ast.Return)
+    composite_dispatch = composite_wrapper.body[0].value
+    assert isinstance(composite_dispatch, ast.Call)
+    assert isinstance(composite_dispatch.func, ast.Name)
+    assert composite_dispatch.func.id == f"{composite_name}_pass"
     expected_dispatch_order = [
         "run_nhwc_concat_layout_cleanup",
         "run_nhwc_concat_quantized_layout_cleanup",
-        wrapper_name,
+        owner_name,
     ]
     composite_dispatches = [
         node
-        for node in ast.walk(composite)
+        for node in ast.walk(composite_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id in expected_dispatch_order

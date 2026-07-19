@@ -2521,3 +2521,35 @@ The characterization gate completed with `2 passed, 1 xfailed in 0.57s`;
 the sole xfail is the intentionally absent pass-module owner. Targeted Ruff,
 bytecode compilation, and whitespace checks passed. Commit and push this
 checkpoint before production changes.
+
+## Pre-Concat NHWC pass-module owner implementation
+
+`passes/pre_concat_nhwc_layout.py` now owns indexed NHWC Concat cleanup,
+quantized indexed cleanup, legacy fallback, and their aggregate counter. It
+preserves the characterized order and exact layout/diagnostics/model-only
+argument policy. The recognized counter-key lists moved with the owner, so
+unrelated details are still ignored.
+
+The lowerer function `_optimize_transpose_pre_concat_nhwc_chains` is now a
+one-return compatibility wrapper with its original signature. Its three direct
+production uses and recovery callback are unchanged, and the legacy lowerer
+wrapper remains available. The new module imports existing owners directly;
+it does not import the lowerer or inject callbacks.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner and compatibility contracts: `3 passed in 0.54s`;
+- all NHWC Concat family runtime contracts: `285 passed in 1.33s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- result contracts: `196 passed in 8.99s`;
+- full architecture contracts: `258 passed in 19.02s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No graph, numerical, diagnostics, public API, or artifact behavior changed.
+Commit and push this implementation checkpoint. On resume, characterize the
+now-safe final Slice/pre-Concat pair between final slice/Concat recovery and
+the terminal Concat-bridge composite. Continue with coherent commits and
+pushes only; never create, update, or reopen a pull request.
