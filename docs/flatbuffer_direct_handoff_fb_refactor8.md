@@ -2725,3 +2725,29 @@ and push this checkpoint. At resume, audit the next coherent non-store unit
 after the singleton/consecutive-Reshape cluster before changing production
 behavior. Continue with coherent commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Very-late layout/broadcast composite characterization
+
+The next selected source-order unit is the optional final layout-Transpose
+cleanup and unconditional rank-four channelwise broadcast-constant repair
+between the singleton/consecutive-Reshape composite and the already-recorded
+very-late broadcast reconciliation. Both result mappings are unconsumed.
+
+`tests/test_flatbuffer_direct_very_late_layout_broadcast_orchestration.py`
+fixes the original guard, call order, exact arguments, outer boundaries, and
+absence of consumers. Its strict expected failure requires one
+`run_very_late_layout_broadcast_cleanup(shared_model_ir_pass_context,
+include_layout_transpose=optimize_layout_transpose_chains)` call and an ordered
+`_very_late_layout_broadcast_results` tuple outside the full store. The
+existing reconciliation record must stay unconditional and immediately
+follow the composite.
+
+The implementation owner must import both pass owners directly, preserve the
+layout cleanup skip exactly, return `None` for the skipped optional result,
+preserve the unconditional broadcast result, retain compatibility wrappers,
+and keep the store exactly 128/128. The characterization gate completed with
+`1 passed, 1 xfailed in 0.15s`; the sole xfail is the intentionally absent
+owner. Targeted Ruff, bytecode compilation, and whitespace checks passed.
+
+Commit and push this characterization before production changes. Never
+create, update, or reopen a pull request.

@@ -1693,6 +1693,34 @@ checkpoint. On resume, audit the next coherent non-store source-order unit
 after the singleton/consecutive-Reshape cluster. Continue with commits and
 pushes only; never create, update, or reopen a pull request.
 
+## Very-late layout/broadcast composite characterization
+
+The next non-store boundary consists of the guarded final layout-Transpose
+cleanup followed by unconditional rank-four channelwise broadcast-constant
+repair. Both results are unconsumed. The existing unconditional
+`shape_reconciliation.primary.very_late_broadcast` record remains immediately
+after them and is explicitly outside this extraction.
+
+The focused characterization fixes the normalized
+`optimize_layout_transpose_chains` guard, exact ModelIR/layout/diagnostics
+arguments, unconditional broadcast call, singleton/consecutive-Reshape
+predecessor, reconciliation successor, and absence of result consumers. A
+strict expected failure requires one
+`run_very_late_layout_broadcast_cleanup(shared_model_ir_pass_context,
+include_layout_transpose=optimize_layout_transpose_chains)` assignment and an
+ordered `_very_late_layout_broadcast_results` tuple outside the full store.
+
+Implementation must preserve the conditional execution count, import the two
+existing pass owners directly, return `None` for the skipped optional result,
+keep the broadcast result mapping intact, retain all compatibility wrappers,
+and leave the reconciliation record and 128/128 store unchanged. No
+production source changed in this checkpoint.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.15s`; the sole xfail is the intentionally absent
+composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
