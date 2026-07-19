@@ -844,7 +844,7 @@ def test_primary_path_stages_final_broadcast_reconciliation() -> None:
     assert get_calls[0].args[0].value == (
         "repaired_rank4_channelwise_broadcast_constants"
     )
-    assert len(guard.body) == 3
+    assert len(guard.body) == 2
 
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
@@ -857,11 +857,14 @@ def test_primary_path_stages_final_broadcast_reconciliation() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
-    assert _call_name(_statement_call(guard.body[1])) == (
-        "_topologically_sort_operators"
+    topology_layout_refresh = guard.body[1]
+    assert isinstance(topology_layout_refresh, ast.Assign)
+    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
+    assert topology_layout_refresh.targets[0].id == (
+        "_final_broadcast_topology_layout_stats"
     )
-    assert _call_name(_statement_call(guard.body[2])) == (
-        "infer_model_ir_logical_layouts"
+    assert _call_name(_statement_call(topology_layout_refresh)) == (
+        "run_topology_layout_refresh"
     )
 
     following = body[stats_index + 3]
@@ -910,7 +913,7 @@ def test_primary_path_stages_final_instancenorm_reconciliation() -> None:
     assert get_calls[0].args[0].value == (
         "repaired_decomposed_instance_normalization_layouts"
     )
-    assert len(guard.body) == 3
+    assert len(guard.body) == 2
 
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
@@ -923,11 +926,14 @@ def test_primary_path_stages_final_instancenorm_reconciliation() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
-    assert _call_name(_statement_call(guard.body[1])) == (
-        "_topologically_sort_operators"
+    topology_layout_refresh = guard.body[1]
+    assert isinstance(topology_layout_refresh, ast.Assign)
+    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
+    assert topology_layout_refresh.targets[0].id == (
+        "_final_instancenorm_topology_layout_stats"
     )
-    assert _call_name(_statement_call(guard.body[2])) == (
-        "infer_model_ir_logical_layouts"
+    assert _call_name(_statement_call(topology_layout_refresh)) == (
+        "run_topology_layout_refresh"
     )
 
     following = body[stats_index + 3]
@@ -977,7 +983,7 @@ def test_primary_path_stages_final_convinteger_reconciliation() -> None:
         "repaired_channel_last_convinteger_input_transposes"
     )
     assert "propagated_channel_last_layout_hints" not in ast.unparse(guard.test)
-    assert len(guard.body) == 3
+    assert len(guard.body) == 2
 
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
@@ -990,11 +996,14 @@ def test_primary_path_stages_final_convinteger_reconciliation() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
-    assert _call_name(_statement_call(guard.body[1])) == (
-        "_topologically_sort_operators"
+    topology_layout_refresh = guard.body[1]
+    assert isinstance(topology_layout_refresh, ast.Assign)
+    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
+    assert topology_layout_refresh.targets[0].id == (
+        "_final_convinteger_topology_layout_stats"
     )
-    assert _call_name(_statement_call(guard.body[2])) == (
-        "infer_model_ir_logical_layouts"
+    assert _call_name(_statement_call(topology_layout_refresh)) == (
+        "run_topology_layout_refresh"
     )
 
     following = body[stats_index + 3]
@@ -1025,13 +1034,16 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
     assert final.targets[0].id == "_absolute_final_dynamic_rank1_stats"
     assert _call_name(_statement_call(final)) == owner_name
 
-    assert _call_name(_statement_call(body[final_index + 1])) == (
-        "_topologically_sort_operators"
+    topology_layout_refresh = body[final_index + 1]
+    assert isinstance(topology_layout_refresh, ast.Assign)
+    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
+    assert topology_layout_refresh.targets[0].id == (
+        "_absolute_final_topology_layout_stats"
     )
-    assert _call_name(_statement_call(body[final_index + 2])) == (
-        "infer_model_ir_logical_layouts"
+    assert _call_name(_statement_call(topology_layout_refresh)) == (
+        "run_topology_layout_refresh"
     )
-    following = body[final_index + 3]
+    following = body[final_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_convinteger_layout_stats"

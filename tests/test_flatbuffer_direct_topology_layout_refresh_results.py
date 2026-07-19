@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import ast
 import copy
-import importlib
 from pathlib import Path
 
-import pytest
+import onnx2tf.tflite_builder.passes.topology_layout_refresh as topology_layout_refresh_module
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _topologically_sort_operators,
@@ -16,11 +15,13 @@ from onnx2tf.tflite_builder.ir import (
     TensorIR,
     infer_model_ir_logical_layouts,
 )
+from onnx2tf.tflite_builder.passes.topology_layout_refresh import (
+    run_topology_layout_refresh,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
-OWNER_MODULE = "onnx2tf.tflite_builder.passes.topology_layout_refresh"
 RUNNER = "run_topology_layout_refresh"
 SORT_OWNER = "_topologically_sort_operators"
 LAYOUT_OWNER = "infer_model_ir_logical_layouts"
@@ -187,9 +188,14 @@ def test_topology_sort_and_layout_inference_contracts_are_explicit() -> None:
     )
 
 
-def test_six_raw_topology_layout_pairs_are_explicit() -> None:
-    locations = _raw_pair_locations(_lowerer())
+def test_six_topology_layout_refresh_boundaries_are_explicit() -> None:
+    lowerer = _lowerer()
+    assert _raw_pair_locations(lowerer) == []
+    locations = _runner_locations(lowerer)
     assert len(locations) == 6
+    assert tuple(
+        _single_target(block[index]) for block, index in locations
+    ) == EXPECTED_TARGETS
     assert tuple(
         ast.unparse(_statement_call(block[index]).args[0])
         for block, index in locations
@@ -198,28 +204,18 @@ def test_six_raw_topology_layout_pairs_are_explicit() -> None:
         _single_target(block[index - 1]) for block, index in locations
     ) == EXPECTED_PREDECESSOR_TARGETS
     for block, index in locations:
-        sort_call = _statement_call(block[index])
-        layout_call = _statement_call(block[index + 1])
-        assert sort_call is not None
-        assert layout_call is not None
-        assert sort_call.keywords == []
-        assert layout_call.keywords == []
-        assert ast.unparse(sort_call.args[0]) == ast.unparse(layout_call.args[0])
+        call = _statement_call(block[index])
+        assert call is not None
+        assert call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the six topology/layout pairs do not yet share an explicit owner",
-)
 def test_topology_layout_runner_preserves_effects_and_small_results() -> None:
-    owner_module = importlib.import_module(OWNER_MODULE)
-    runner = getattr(owner_module, RUNNER)
     expected_ir = _model_ir()
     actual_ir = copy.deepcopy(expected_ir)
 
     expected_result = _topologically_sort_operators(expected_ir)
     infer_model_ir_logical_layouts(expected_ir)
-    actual_result = runner(actual_ir)
+    actual_result = run_topology_layout_refresh(actual_ir)
 
     assert actual_result == expected_result
     assert actual_result == {
@@ -252,3 +248,32 @@ def test_topology_layout_runner_preserves_effects_and_small_results() -> None:
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
+
+
+def test_topology_layout_runner_keeps_layout_refresh_after_cycle(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("topology_cycle")
+    model_ir.operators = [
+        OperatorIR("IDENTITY", ["second"], ["first"]),
+        OperatorIR("IDENTITY", ["first"], ["second"]),
+    ]
+    layout_refreshes = 0
+
+    def record_layout_refresh(target_model_ir: ModelIR) -> dict[str, str]:
+        nonlocal layout_refreshes
+        assert target_model_ir is model_ir
+        layout_refreshes += 1
+        return {}
+
+    monkeypatch.setattr(
+        topology_layout_refresh_module,
+        "infer_model_ir_logical_layouts",
+        record_layout_refresh,
+    )
+
+    assert run_topology_layout_refresh(model_ir) == {
+        "reordered_operators": 0,
+        "cycle_detected": 1,
+    }
+    assert layout_refreshes == 1

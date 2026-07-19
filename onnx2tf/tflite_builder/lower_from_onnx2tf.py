@@ -54,7 +54,6 @@ from onnx2tf.tflite_builder.op_registry import (
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
-    infer_model_ir_logical_layouts,
     validate_model_ir_layout_annotations,
 )
 from onnx2tf.tflite_builder.op_families.constant import lower_constant_node
@@ -673,6 +672,9 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
 )
 from onnx2tf.tflite_builder.passes.prune_reconcile import (
     run_indexed_prune_reconcile_cleanup,
+)
+from onnx2tf.tflite_builder.passes.topology_layout_refresh import (
+    run_topology_layout_refresh,
 )
 from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
     _optimize_singleton_layout_reshape_maxpool_binary_cast_chains as _optimize_singleton_layout_reshape_maxpool_binary_cast_chains_pass,
@@ -5805,8 +5807,9 @@ def lower_onnx_to_ir(
         _fallback_dynamic_rank1_stats = (
             _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
         )
-        _topologically_sort_operators(fallback_ir)
-        infer_model_ir_logical_layouts(fallback_ir)
+        _fallback_dynamic_rank1_topology_layout_stats = (
+            run_topology_layout_refresh(fallback_ir)
+        )
         fallback_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             fallback_ir
         )
@@ -5821,8 +5824,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-            _topologically_sort_operators(fallback_ir)
-            infer_model_ir_logical_layouts(fallback_ir)
+            _fallback_broadcast_topology_layout_stats = (
+                run_topology_layout_refresh(fallback_ir)
+            )
         fallback_se_fc_gather_tensor_count = len(fallback_ir.tensors)
         fallback_sinet_shuffle_stats = (
             _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
@@ -6105,8 +6109,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _topologically_sort_operators(model_ir)
-    infer_model_ir_logical_layouts(model_ir)
+    _absolute_final_topology_layout_stats = run_topology_layout_refresh(
+        model_ir
+    )
     final_convinteger_layout_stats = repair_channel_last_convinteger_input_transposes(
         model_ir,
         layout_state=session.layout_state,
@@ -6125,8 +6130,9 @@ def lower_onnx_to_ir(
             model_ir,
             include_mutation_count=True,
         )
-        _topologically_sort_operators(model_ir)
-        infer_model_ir_logical_layouts(model_ir)
+        _final_convinteger_topology_layout_stats = (
+            run_topology_layout_refresh(model_ir)
+        )
     final_instancenorm_repair_stats = _repair_decomposed_instance_normalization_layouts(
         model_ir,
         layout_state=session.layout_state,
@@ -6140,8 +6146,9 @@ def lower_onnx_to_ir(
             model_ir,
             include_mutation_count=True,
         )
-        _topologically_sort_operators(model_ir)
-        infer_model_ir_logical_layouts(model_ir)
+        _final_instancenorm_topology_layout_stats = (
+            run_topology_layout_refresh(model_ir)
+        )
     final_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
     _final_broadcast_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
@@ -6152,8 +6159,9 @@ def lower_onnx_to_ir(
             model_ir,
             include_mutation_count=True,
         )
-        _topologically_sort_operators(model_ir)
-        infer_model_ir_logical_layouts(model_ir)
+        _final_broadcast_topology_layout_stats = (
+            run_topology_layout_refresh(model_ir)
+        )
     final_mixed_singleton_concat_stats = (
         _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
             model_ir,

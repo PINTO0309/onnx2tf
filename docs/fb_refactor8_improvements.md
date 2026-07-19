@@ -266,3 +266,32 @@ Characterization validation completed sequentially under `uv`:
 
 The sole expected failure is the absent shared owner and six assignments. No
 production source changed in this checkpoint.
+
+## Topology/layout refresh implementation
+
+`passes/topology_layout_refresh.py` now owns the six selected adjacent
+boundaries. It calls topological sort and logical-layout inference in the
+unchanged order, does not retain the full layout map, and returns only the
+normalized two-key sort result. Layout refresh still runs when sort detects a
+cycle, matching the former unconditional pair.
+
+The six lowerer positions retain phase-specific, unconsumed result dictionaries.
+All fifteen sort-only boundaries remain raw and unchanged. No layout algorithm,
+condition, graph mutation, successor, dependency, public API, or TensorFlow
+boundary changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated owner and six-boundary contract: `4 passed in 0.54s`;
+- focused fallback/terminal, Dynamic Reshape, broadcast, ConvInteger,
+  InstanceNorm, core, architecture, pass-efficiency, and
+  TensorFlow-import-blocked gate: `493 passed in 28.99s`;
+- all test files changed on `fb-refactor8`: `123 passed in 2.91s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The first focused run was `487 passed, 6 failed`; every failure was a stale AST
+expectation for the intentionally replaced two-expression boundary. After the
+six contracts required the new phase-specific result targets, the same gate
+passed. No model conversion was run because the owner is differentially
+equivalent to the existing adjacent calls.

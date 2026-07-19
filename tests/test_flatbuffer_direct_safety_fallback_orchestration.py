@@ -133,15 +133,15 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     ]
     assert invocation.value.keywords == []
 
-    topological_sort = body[invocation_index + 1]
-    assert isinstance(topological_sort, ast.Expr)
-    assert ast.unparse(topological_sort.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    topology_layout_refresh = body[invocation_index + 1]
+    assert isinstance(topology_layout_refresh, ast.Assign)
+    assert len(topology_layout_refresh.targets) == 1
+    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
+    assert topology_layout_refresh.targets[0].id == (
+        "_fallback_dynamic_rank1_topology_layout_stats"
     )
-    layout_inference = body[invocation_index + 2]
-    assert isinstance(layout_inference, ast.Expr)
-    assert ast.unparse(layout_inference.value) == (
-        "infer_model_ir_logical_layouts(fallback_ir)"
+    assert ast.unparse(topology_layout_refresh.value) == (
+        "run_topology_layout_refresh(fallback_ir)"
     )
 
 
@@ -239,7 +239,7 @@ def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
         "int(fallback_broadcast_repair_stats.get("
         "'repaired_rank4_channelwise_broadcast_constants', 0)) > 0"
     )
-    assert len(guard.body) == 3
+    assert len(guard.body) == 2
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
     assert len(reconciliation.targets) == 1
@@ -258,11 +258,15 @@ def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
         for keyword in reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
 
-    assert ast.unparse(guard.body[1]) == (
-        "_topologically_sort_operators(fallback_ir)"
+    topology_layout_refresh = guard.body[1]
+    assert isinstance(topology_layout_refresh, ast.Assign)
+    assert len(topology_layout_refresh.targets) == 1
+    assert isinstance(topology_layout_refresh.targets[0], ast.Name)
+    assert topology_layout_refresh.targets[0].id == (
+        "_fallback_broadcast_topology_layout_stats"
     )
-    assert ast.unparse(guard.body[2]) == (
-        "infer_model_ir_logical_layouts(fallback_ir)"
+    assert ast.unparse(topology_layout_refresh.value) == (
+        "run_topology_layout_refresh(fallback_ir)"
     )
 
 

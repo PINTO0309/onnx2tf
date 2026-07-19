@@ -253,3 +253,31 @@ family contract is `2 passed, 1 xfailed in 0.56s`, and targeted Ruff, bytecode
 compilation, and whitespace checks pass. The sole expected failure is the
 absent owner and assignments. Commit and push this characterization before
 changing production code; do not create or update a pull request.
+
+## Topology/layout refresh implementation checkpoint
+
+`run_topology_layout_refresh()` now owns the six selected adjacent pairs. It
+returns only `reordered_operators` and `cycle_detected`; the full layout map is
+released after its side effects. The layout refresh remains unconditional even
+when sort reports a cycle. Six phase-specific results are retained without
+consumers, while all fifteen sort-only sites remain unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated owner/boundary contract: `4 passed in 0.54s`;
+- focused fallback/terminal, affected op families, core, architecture,
+  pass-efficiency, and TensorFlow-import-blocked gate:
+  `493 passed in 28.99s`;
+- all `fb-refactor8` changed test files: `123 passed in 2.91s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+The first focused run found six stale raw-pair AST expectations and was
+`487 passed, 6 failed`; after updating those exact structural contracts, the
+same gate passed. No model conversion was required for the differentially
+equivalent owner.
+
+After this checkpoint is committed and pushed, audit the fifteen sort-only
+boundaries by semantic phase. Do not retain all results mechanically: select
+only repeated sequences or mutation evidence that can drive a proven safety or
+efficiency improvement without extending large result lifetimes. Continue
+with commits and pushes only; do not create or update a pull request.
