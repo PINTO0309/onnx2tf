@@ -41,6 +41,15 @@ PRE_TERMINAL_INSTANCENORM = (
 PRE_TERMINAL_INSTANCENORM_RESULT = (
     "_pre_terminal_instancenorm_layout_results"
 )
+PRE_TERMINAL_CLEANUP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_cleanup_orchestration.py"
+)
+PRE_TERMINAL_CLEANUP = "run_pre_terminal_cleanup"
+PRE_TERMINAL_CLEANUP_RESULT = "_pre_terminal_cleanup_results"
 ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -95,6 +104,23 @@ def _pre_terminal_instancenorm_calls(function_name: str) -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == owner_name
+    ]
+
+
+def _pre_terminal_cleanup_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(PRE_TERMINAL_CLEANUP_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == PRE_TERMINAL_CLEANUP
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
     ]
 
 
@@ -274,48 +300,53 @@ def test_terminal_affine_concat_split_invocations_remain_zero_argument() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == TERMINAL_AFFINE_SUMMARY
     ]
-    assert len(invocations) == 2
+    assert len(invocations) == 1
     assert all(
         [ast.unparse(argument) for argument in call.args]
         == ["terminal_affine_concat_split_recovery_context"]
         for call in invocations
     )
     assert all(call.keywords == [] for call in invocations)
+    composite_invocations = _pre_terminal_cleanup_calls(
+        TERMINAL_AFFINE_SUMMARY
+    )
+    assert len(composite_invocations) == 1
+    assert [ast.unparse(arg) for arg in composite_invocations[0].args] == [
+        "context"
+    ]
+    assert composite_invocations[0].keywords == []
 
 
 def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    expected_boundaries = (
-        (
-            "_pre_terminal_affine_stats",
-            PRE_TERMINAL_INSTANCENORM_RESULT,
-            "_pre_terminal_pre_add_stats",
-        ),
-        (
-            "_terminal_affine_stats",
-            "_pre_terminal_affine_tail_results",
-            "_terminal_slice_pad_concat_stats",
-        ),
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == PRE_TERMINAL_CLEANUP_RESULT
     )
-    for target, predecessor, successor in expected_boundaries:
-        statement = next(
-            candidate
-            for candidate in lowerer.body
-            if isinstance(candidate, ast.Assign)
-            and isinstance(candidate.targets[0], ast.Name)
-            and candidate.targets[0].id == target
-        )
-        index = lowerer.body.index(statement)
-        assert ast.unparse(statement.value) == (
-            "run_terminal_affine_concat_split_recovery_summary("
-            "terminal_affine_concat_split_recovery_context)"
-        )
-        assert isinstance(lowerer.body[index - 1], ast.Assign)
-        assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
-        assert lowerer.body[index - 1].targets[0].id == predecessor
-        assert isinstance(lowerer.body[index + 1], ast.Assign)
-        assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
-        assert lowerer.body[index + 1].targets[0].id == successor
+    composite_index = lowerer.body.index(composite)
+    assert ast.unparse(composite.value) == (
+        "run_pre_terminal_cleanup(shared_model_ir_pass_context)"
+    )
+    assert isinstance(lowerer.body[composite_index - 1], ast.If)
+    assert len(_pre_terminal_cleanup_calls(TERMINAL_AFFINE_SUMMARY)) == 1
+
+    terminal = lowerer.body[composite_index + 1]
+    assert isinstance(terminal, ast.Assign)
+    assert isinstance(terminal.targets[0], ast.Name)
+    assert terminal.targets[0].id == "_terminal_affine_stats"
+    assert ast.unparse(terminal.value) == (
+        "run_terminal_affine_concat_split_recovery_summary("
+        "terminal_affine_concat_split_recovery_context)"
+    )
+    assert isinstance(lowerer.body[composite_index + 2], ast.Assign)
+    assert isinstance(lowerer.body[composite_index + 2].targets[0], ast.Name)
+    assert (
+        lowerer.body[composite_index + 2].targets[0].id
+        == "_terminal_slice_pad_concat_stats"
+    )
 
 
 def test_terminal_affine_concat_split_context_and_wrapper_are_explicit() -> None:
@@ -465,7 +496,7 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
     assert isinstance(lowerer.body[index - 1], ast.Assign)
     assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
     assert lowerer.body[index - 1].targets[0].id == (
-        "_pre_terminal_affine_tail_results"
+        PRE_TERMINAL_CLEANUP_RESULT
     )
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
@@ -475,29 +506,12 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
 
 
 def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    summary = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_pre_terminal_affine_stats"
-    )
-    index = lowerer.body.index(summary)
-    assert ast.unparse(summary.value) == (
-        "run_terminal_affine_concat_split_recovery_summary("
-        "terminal_affine_concat_split_recovery_context)"
-    )
-    assert isinstance(lowerer.body[index - 1], ast.Assign)
-    assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
-    assert lowerer.body[index - 1].targets[0].id == (
-        PRE_TERMINAL_INSTANCENORM_RESULT
-    )
-    assert isinstance(lowerer.body[index + 1], ast.Assign)
-    assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
-    assert lowerer.body[index + 1].targets[0].id == (
-        "_pre_terminal_pre_add_stats"
-    )
+    invocations = _pre_terminal_cleanup_calls(TERMINAL_AFFINE_SUMMARY)
+    assert len(invocations) == 1
+    assert [ast.unparse(argument) for argument in invocations[0].args] == [
+        "context"
+    ]
+    assert invocations[0].keywords == []
 
 
 def _assert_pre_terminal_instancenorm_owner_call(
@@ -506,35 +520,12 @@ def _assert_pre_terminal_instancenorm_owner_call(
     expected_total_calls: int,
 ) -> None:
     lowerer, _ = _lowerer_and_helper()
-    affine_summary_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_pre_terminal_affine_stats"
-    )
-    invocation = lowerer.body[affine_summary_index - 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == PRE_TERMINAL_INSTANCENORM_RESULT
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == PRE_TERMINAL_INSTANCENORM
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "shared_model_ir_pass_context"
-    assert invocation.value.keywords == []
-    following = lowerer.body[affine_summary_index]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_pre_terminal_affine_stats"
-    assert ast.unparse(following.value) == (
-        "run_terminal_affine_concat_split_recovery_summary("
-        "terminal_affine_concat_split_recovery_context)"
-    )
+    composite_calls = _pre_terminal_cleanup_calls(PRE_TERMINAL_INSTANCENORM)
+    assert len(composite_calls) == 1
+    assert [ast.unparse(argument) for argument in composite_calls[0].args] == [
+        "context"
+    ]
+    assert composite_calls[0].keywords == []
 
     direct_statements = [
         statement

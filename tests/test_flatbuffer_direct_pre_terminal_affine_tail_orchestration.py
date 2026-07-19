@@ -25,6 +25,15 @@ OWNER_PATH = (
     / "pre_terminal_affine_tail_orchestration.py"
 )
 OWNER = "run_pre_terminal_affine_tail_cleanup"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_cleanup_orchestration.py"
+)
+COMPOSITE_OWNER = "run_pre_terminal_cleanup"
+COMPOSITE_TARGET = "_pre_terminal_cleanup_results"
 RESULT_TARGET = "_pre_terminal_affine_tail_results"
 OLD_RESULT_TARGETS = (
     "_pre_terminal_affine_post_add_stats",
@@ -61,20 +70,32 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _composite_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+
+
 def test_pre_terminal_affine_tail_boundary_is_fixed() -> None:
     lowerer = _lowerer()
     result = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(result)
     assert isinstance(result, ast.Assign)
     assert ast.unparse(result.value) == (
-        f"{OWNER}(shared_model_ir_pass_context)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert isinstance(lowerer.body[index - 1], ast.If)
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name)
         and node.id in OLD_RESULT_TARGETS
@@ -104,15 +125,16 @@ def test_pre_terminal_affine_tail_uses_one_ordered_owner() -> None:
     result = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(result)
     assert isinstance(result, ast.Assign)
     assert ast.unparse(result.value) == (
-        f"{OWNER}(shared_model_ir_pass_context)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert isinstance(lowerer.body[index - 1], ast.If)
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)

@@ -24,6 +24,15 @@ OWNER_PATH = (
 RAW_WRAPPER = "_run_channel_slice_pad_mul_layout_pass_cluster"
 RAW_OWNER = "run_channel_slice_pad_mul"
 SUMMARY_OWNER = "run_channel_slice_pad_mul_summary"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_cleanup_orchestration.py"
+)
+COMPOSITE_OWNER = "run_pre_terminal_cleanup"
+COMPOSITE_TARGET = "_pre_terminal_cleanup_results"
 SUMMARY_FUNCTION = "summarize_channel_slice_pad_mul_mutations"
 RAW_TARGET = "channel_slice_pad_mul_results"
 SUMMARY_TARGET = "_pre_terminal_channel_slice_pad_mul_stats"
@@ -50,20 +59,32 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _composite_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+
+
 def test_channel_slice_pad_mul_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(channel_slice_pad_mul_context)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert isinstance(lowerer.body[index - 1], ast.If)
+    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET
         for node in ast.walk(lowerer)
@@ -101,15 +122,16 @@ def test_channel_slice_pad_mul_uses_one_direct_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(channel_slice_pad_mul_context)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert isinstance(lowerer.body[index - 1], ast.If)
+    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET
         for node in ast.walk(lowerer)

@@ -238,7 +238,6 @@ from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration impo
 )
 from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
     run_channel_slice_pad_mul,
-    run_channel_slice_pad_mul_summary,
 )
 from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
     run_late_hard_activation_layout,
@@ -315,14 +314,8 @@ from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
 from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestration import (
     run_optional_late_binary_layout_recovery_cleanup,
 )
-from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestration import (
-    run_pre_terminal_instancenorm_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.pre_terminal_pre_add_orchestration import (
-    run_pre_terminal_pre_add_cleanup,
-)
-from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
-    run_pre_terminal_affine_tail_cleanup,
+from onnx2tf.tflite_builder.passes.pre_terminal_cleanup_orchestration import (
+    run_pre_terminal_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
@@ -5300,26 +5293,12 @@ def lower_onnx_to_ir(
         )
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
-    _pre_terminal_instancenorm_layout_results = (
-        run_pre_terminal_instancenorm_layout_cleanup(
+    # Late bridge rewrites can also recreate strict
+    # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
+    _pre_terminal_cleanup_results = (
+        run_pre_terminal_cleanup(
             shared_model_ir_pass_context,
         )
-    )
-    # Late bridge rewrites above can recreate strict
-    # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
-    _pre_terminal_affine_stats = (
-        run_terminal_affine_concat_split_recovery_summary(
-            terminal_affine_concat_split_recovery_context,
-        )
-    )
-    _pre_terminal_pre_add_stats = run_pre_terminal_pre_add_cleanup(
-        shared_model_ir_pass_context,
-    )
-    _pre_terminal_channel_slice_pad_mul_stats = run_channel_slice_pad_mul_summary(
-        channel_slice_pad_mul_context,
-    )
-    _pre_terminal_affine_tail_results = run_pre_terminal_affine_tail_cleanup(
-        shared_model_ir_pass_context,
     )
     # Strict slice/merge cleanup above can recreate simple affine bridge tails:
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).

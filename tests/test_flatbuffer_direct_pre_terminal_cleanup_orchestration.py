@@ -8,20 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
-    run_channel_slice_pad_mul_summary,
-)
-from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
-    run_pre_terminal_affine_tail_cleanup,
-)
-from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestration import (
-    run_pre_terminal_instancenorm_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.pre_terminal_pre_add_orchestration import (
-    run_pre_terminal_pre_add_cleanup,
-)
-from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
-    run_terminal_affine_concat_split_recovery_summary,
+from onnx2tf.tflite_builder.passes import (
+    pre_terminal_cleanup_orchestration,
 )
 
 
@@ -50,13 +38,6 @@ RESULT_TARGETS = (
     "_pre_terminal_pre_add_stats",
     "_pre_terminal_channel_slice_pad_mul_stats",
     "_pre_terminal_affine_tail_results",
-)
-CURRENT_ARGUMENTS = (
-    "shared_model_ir_pass_context",
-    "terminal_affine_concat_split_recovery_context",
-    "shared_model_ir_pass_context",
-    "channel_slice_pad_mul_context",
-    "shared_model_ir_pass_context",
 )
 COMPOSITE_TARGET = "_pre_terminal_cleanup_results"
 SUCCESSOR_TARGET = "_terminal_affine_stats"
@@ -96,36 +77,26 @@ def _lowerer() -> ast.FunctionDef:
 
 def test_pre_terminal_cleanup_current_boundary_and_schemas() -> None:
     lowerer = _lowerer()
-    indices = tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    index, invocation = next(
+        (index, statement)
+        for index, statement in enumerate(lowerer.body)
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    assert indices == tuple(range(indices[0], indices[0] + len(indices)))
-    assert isinstance(lowerer.body[indices[0] - 1], ast.If)
+    assert _call_name(invocation) == OWNER
+    call = _call(invocation)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert call.keywords == []
+    assert isinstance(lowerer.body[index - 1], ast.If)
     assert (
-        ast.unparse(lowerer.body[indices[0] - 1].test)
+        ast.unparse(lowerer.body[index - 1].test)
         == "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    for index, owner, argument in zip(
-        indices,
-        CHILD_OWNERS,
-        CURRENT_ARGUMENTS,
-    ):
-        statement = lowerer.body[index]
-        assert _call_name(statement) == owner
-        call = _call(statement)
-        assert call is not None
-        assert [ast.unparse(item) for item in call.args] == [argument]
-        assert call.keywords == []
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id in RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
 
@@ -135,12 +106,8 @@ def test_pre_terminal_cleanup_current_boundary_and_schemas() -> None:
         layout_state=LayoutState.from_model_ir(model_ir),
         diagnostics=[],
     )
-    results = (
-        run_pre_terminal_instancenorm_layout_cleanup(context),
-        run_terminal_affine_concat_split_recovery_summary(context),
-        run_pre_terminal_pre_add_cleanup(context),
-        run_channel_slice_pad_mul_summary(context),
-        run_pre_terminal_affine_tail_cleanup(context),
+    results = pre_terminal_cleanup_orchestration.run_pre_terminal_cleanup(
+        context
     )
     assert tuple(type(result) for result in results) == (
         tuple,
@@ -177,10 +144,6 @@ def test_pre_terminal_cleanup_current_boundary_and_schemas() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pre-terminal cleanup sequence has no shared context owner",
-)
 def test_pre_terminal_cleanup_has_one_context_owner() -> None:
     owner = _functions(OWNER_PATH)[OWNER]
     calls = sorted(
@@ -223,3 +186,38 @@ def test_pre_terminal_cleanup_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_pre_terminal_cleanup_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("pre_terminal_cleanup_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    results = tuple({"stage": index} for index in range(len(CHILD_OWNERS)))
+    calls: list[tuple[str, ModelIRPassContext]] = []
+
+    def callback(index: int):
+        def run(active_context: ModelIRPassContext) -> dict[str, int]:
+            calls.append((CHILD_OWNERS[index], active_context))
+            return results[index]
+
+        return run
+
+    for index, name in enumerate(CHILD_OWNERS):
+        monkeypatch.setattr(
+            pre_terminal_cleanup_orchestration,
+            name,
+            callback(index),
+        )
+
+    actual = pre_terminal_cleanup_orchestration.run_pre_terminal_cleanup(
+        context
+    )
+
+    assert actual == results
+    assert all(actual[index] is results[index] for index in range(len(results)))
+    assert calls == [(name, context) for name in CHILD_OWNERS]

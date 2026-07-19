@@ -271,6 +271,29 @@ def _late_input_affine_normalization_call_count(function_name: str) -> int:
     )
 
 
+def _pre_terminal_cleanup_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_terminal_cleanup_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_pre_terminal_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -2365,41 +2388,34 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         "summarize_terminal_affine_concat_split_mutations"
     ) == 1
 
-    summary_targets = (
-        "_pre_terminal_affine_stats",
-        "_terminal_affine_stats",
-    )
-    predecessors = (
-        "_pre_terminal_instancenorm_layout_results",
-        "_pre_terminal_affine_tail_results",
-    )
-    successors = (
-        "_pre_terminal_pre_add_stats",
-        "_terminal_slice_pad_concat_stats",
-    )
-    for target, predecessor, successor in zip(
-        summary_targets,
-        predecessors,
-        successors,
-    ):
-        statement = next(
-            candidate
-            for candidate in lowerer.body
-            if isinstance(candidate, ast.Assign)
-            and isinstance(candidate.targets[0], ast.Name)
-            and candidate.targets[0].id == target
+    assert (
+        _pre_terminal_cleanup_call_count(
+            "run_terminal_affine_concat_split_recovery_summary"
         )
-        index = lowerer.body.index(statement)
-        assert ast.unparse(statement.value) == (
-            "run_terminal_affine_concat_split_recovery_summary("
-            "terminal_affine_concat_split_recovery_context)"
-        )
-        assert isinstance(lowerer.body[index - 1], ast.Assign)
-        assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
-        assert lowerer.body[index - 1].targets[0].id == predecessor
-        assert isinstance(lowerer.body[index + 1], ast.Assign)
-        assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
-        assert lowerer.body[index + 1].targets[0].id == successor
+        == 1
+    )
+    statement = next(
+        candidate
+        for candidate in lowerer.body
+        if isinstance(candidate, ast.Assign)
+        and isinstance(candidate.targets[0], ast.Name)
+        and candidate.targets[0].id == "_terminal_affine_stats"
+    )
+    index = lowerer.body.index(statement)
+    assert ast.unparse(statement.value) == (
+        "run_terminal_affine_concat_split_recovery_summary("
+        "terminal_affine_concat_split_recovery_context)"
+    )
+    assert isinstance(lowerer.body[index - 1], ast.Assign)
+    assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
+    assert lowerer.body[index - 1].targets[0].id == (
+        "_pre_terminal_cleanup_results"
+    )
+    assert isinstance(lowerer.body[index + 1], ast.Assign)
+    assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
+    assert lowerer.body[index + 1].targets[0].id == (
+        "_terminal_slice_pad_concat_stats"
+    )
 
 
 def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
@@ -8776,6 +8792,7 @@ def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
         len(helper_invocations)
         + _orchestrated_pass_count(helper_name)
         + len(summary_invocations)
+        + _pre_terminal_cleanup_call_count(summary_owner_name)
         == 2
     )
 

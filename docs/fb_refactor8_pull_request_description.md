@@ -1056,3 +1056,16 @@ shared-context identity, source order, the optional late-binary guard
 predecessor, the separate terminal-affine successor, and the full
 128-ID/128-owner store. Production remains unchanged pending a separate
 context-owner implementation.
+
+The latest checkpoint implements that pre-terminal cleanup context owner. One
+small orchestration module now owns the exact five-child order and forwards the
+same `ModelIRPassContext` object to every child. It returns the original nested
+tuples and mappings unchanged inside one ordered outer tuple, allowing the
+lowerer to replace five unconsumed locals with one composite result. The
+optional late-binary reconciliation guard remains the predecessor, while the
+separate terminal affine recovery rerun remains the successor and is not
+absorbed into the composite. Existing wrappers, specialized owners, callbacks,
+pass IDs, phase results, public APIs, artifacts, dependency boundaries, and
+TensorFlow-free direct/`-cotof` behavior are preserved. Runtime identity tests,
+340 affected contracts, and the complete sequential standard gate set all
+pass; the phase-result store remains exactly 128 IDs and 128 owners.

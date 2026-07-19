@@ -4637,3 +4637,29 @@ straight-line five-stage owner. Pass the exact shared context to every child,
 return all five raw objects unchanged, retain child owners and independent
 callers, and preserve both outer boundaries. Run affected and standard gates
 sequentially. Never create, update, or reopen a pull request.
+
+## Pre-terminal cleanup composite implementation
+
+The five-stage owner is now implemented in
+`passes/pre_terminal_cleanup_orchestration.py`. It runs InstanceNorm layout,
+affine/Concat/Split recovery, pre-Add, channel Slice/Pad/Mul, and affine-tail
+cleanup with the exact shared context and returns each raw nested result in
+source order. The lowerer replaces the five unconsumed locals with
+`_pre_terminal_cleanup_results`; the preceding optional late-binary
+reconciliation guard and following independent terminal-affine rerun remain
+adjacent and unchanged.
+
+Owner-aware AST coverage and runtime callback injection prove child order,
+context identity, result identity, nested schemas, and both outer boundaries.
+Sequential validation passed: focused `3`, affected `340`, focused stale-
+boundary coverage `293`, terminal/efficiency `92`, core runtime `55`, result
+contracts `196`, phase-store `2`, and TensorFlow isolation/default-direct/
+`-cotof` `11`. Ruff and whitespace checks passed. The store remains exactly
+128 IDs and 128 owners; no model conversion was run.
+
+At resume, start with a read-only inventory of the remaining unconsumed
+lowerer results after this removal. Select the smallest source-adjacent,
+semantically closed cluster whose children are already pass-module-owned,
+characterize it before production changes, and keep all verification under
+`uv` sequential and single-process. Do not create, update, or reopen a pull
+request; use appropriately scoped commits and pushes only.

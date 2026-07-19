@@ -5315,3 +5315,49 @@ No production callback, nested schema, context identity, guard, graph
 mutation, pass order, API, artifact, dependency, TensorFlow boundary, or store
 entry changed. No real-model conversion was run; the phase-result store
 remains exactly 128 IDs and 128 owners.
+
+## Pre-terminal cleanup composite implementation
+
+`passes/pre_terminal_cleanup_orchestration.py` now owns the characterized
+five-stage sequence through one `ModelIRPassContext`. It invokes InstanceNorm
+layout cleanup, affine/Concat/Split recovery, pre-Add cleanup, channel
+Slice/Pad/Mul recovery, and affine-tail cleanup in their original order. The
+exact same context object is passed to every child, and the five original raw
+objects are returned as one ordered tuple without flattening, normalization,
+or copying. This preserves the nested tuple and mapping schemas already
+produced by the specialized child owners.
+
+The lowerer now keeps a single `_pre_terminal_cleanup_results` local instead
+of five unconsumed locals. The optional late-binary reconciliation guard still
+immediately precedes the stage. The deliberately separate terminal affine
+recovery rerun still immediately follows it and continues to feed terminal
+Slice/Pad/Concat recovery. Existing lowerer compatibility helpers, child
+owners, callbacks, independent invocation paths, pass IDs, and phase-result
+recording remain unchanged.
+
+The characterization tests were made owner-aware instead of weakening their
+contracts: they inspect the new composite for the four moved child summaries
+and cleanup calls, while continuing to inspect the lowerer for the separate
+terminal rerun. Runtime callback injection proves exact five-stage order,
+context identity, raw-result identity, and outer tuple order. Empty-graph
+coverage fixes all nested result schemas.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite boundary, schema, and runtime identity: `3 passed`;
+- affected pre-terminal, optional late-binary, shared-context, architecture,
+  and phase-store contracts: `340 passed in 18.10s`;
+- focused owner-aware stale-boundary set: `293 passed in 19.13s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.71s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.07s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.54s`.
+
+Ruff and whitespace checks passed. No phase result, graph mutation, callback,
+guard, public API, artifact, dependency, TensorFlow boundary, or result schema
+changed. The store remains exactly 128 IDs and 128 owners. No real-model
+conversion was repeated because this checkpoint is a straight-line ownership
+move and the dedicated runtime test proves all arguments, state identities,
+raw results, and boundaries.
