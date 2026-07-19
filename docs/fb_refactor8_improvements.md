@@ -1041,6 +1041,33 @@ No root-model corpus conversion was run because owner execution and ModelIR
 effects are unchanged and the existing synthetic runtime suite exercises the
 new storage boundary.
 
+## Terminal cleanup phase-result characterization
+
+The next family contains only the four unconditional mapping results at the
+start of the `terminal cleanup passes` stage:
+
+- terminal Transpose-before-Dequantize sanitization;
+- exact-grid terminal Q/DQ cleanup;
+- Conv affine folding;
+- Conv activation folding.
+
+These are the same owner schemas already exercised by the core-cleanup runtime
+gate. The characterization fixes their targets, owner expressions and keyword
+arguments, source order, progress predecessor, pre-ArgMax successor, and
+absence of consumers. A strict expected failure requires four stable
+`cleanup.terminal.*` records. Later terminal layout results remain outside this
+family. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization plus terminal orchestration and indexed-owner
+  architecture boundaries: `5 passed, 1 xfailed in 0.68s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented four-result
+destination migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

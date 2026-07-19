@@ -1123,3 +1123,25 @@ and pushing, inventory the next mapping-only family by execution guard and
 return schema. Keep composite cluster results separate, and account for the
 128-phase session limit before selecting further migrations. Never create,
 update, or reopen a pull request.
+
+## Terminal cleanup phase-result characterization
+
+The next mapping-only family is restricted to the four unconditional results
+at the beginning of `terminal cleanup passes`: Dequantize sanitization, exact-
+grid Q/DQ cleanup, Conv affine folding, and Conv activation folding. These
+reuse the owner schemas validated by the preceding core-cleanup migration.
+
+The contract fixes exact targets, owner arguments and keywords, source order,
+progress predecessor, pre-ArgMax successor, and absence of loads. Its strict
+expected failure requires four `cleanup.terminal.*` records; later terminal
+layout results are explicitly excluded.
+
+Validation completed sequentially under core-only `uv`: the dedicated and
+related boundary gate is `5 passed, 1 xfailed in 0.68s`; Ruff, bytecode
+compilation, and whitespace checks pass. No production source changed.
+
+Commit and push this characterization before replacing only the four result
+destinations. Preserve the owner expressions, unconditional execution,
+progress boundary, and pre-ArgMax successor. Then update existing occurrence
+contracts and the bounded-store inventory, validate, document, commit, and
+push. Never create, update, or reopen a pull request.
