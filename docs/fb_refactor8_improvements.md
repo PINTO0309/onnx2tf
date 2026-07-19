@@ -4359,3 +4359,31 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves exact schema merge, context forwarding, and stable/prune-only behavior,
 while affected and architecture gates preserve pair order, raw use count,
 other callers, reconciliation semantics, and topology order.
+
+## SiNet SE-FC/Gather shared-summary characterization
+
+The next isolated family is the duplicated fallback and absolute-final
+SiNet/SE-FC/Gather cleanup sequence. Both sites currently snapshot tensor
+count, run the SiNet shuffle-tail optimizer, run the ordered SE-FC and Gather
+fanout pair, and reconcile static shapes after either a reported rewrite or
+prune-only cleanup. The two sites differ only in their ModelIR and layout-state
+arguments.
+
+`tests/test_flatbuffer_direct_sinet_se_fc_gather_summary_orchestration.py`
+fixes both current call sequences, exact argument forwarding, rewrite-or-prune
+guards, neighboring fallback/final boundaries, and continued availability of
+the raw pair helper. Its one strict expected failure describes the future
+`run_sinet_se_fc_gather_summary(context)` owner: one tensor snapshot, one SiNet
+owner call, one ordered pair-owner call, a merged bounded mapping, and one
+generic positive-count guard at each production site.
+
+Sequential characterization under core-only `uv` completed with
+`407 passed, 1 xfailed in 19.96s` across the dedicated contract and related
+SE-FC/Gather, safety-fallback, terminal-layout, synthetic core, phase-store,
+and architecture contracts. The sole expected failure is the intentionally
+absent shared summary owner. Targeted Ruff and whitespace checks passed.
+
+This checkpoint changes no production source, graph mutation, pass order,
+phase-result entry, public API, artifact, dependency, or TensorFlow boundary.
+No real-model conversion was repeated because it is a characterization-only
+change.

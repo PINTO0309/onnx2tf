@@ -3861,3 +3861,29 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next compatible repeated evidence family before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## SiNet SE-FC/Gather shared-summary characterization
+
+The next selected family is the duplicated fallback and absolute-final
+SiNet/SE-FC/Gather cleanup. Each site currently owns a tensor snapshot, one
+SiNet shuffle-tail result, the ordered SE-FC/Gather pair results, and a
+rewrite-or-prune reconciliation condition. The ModelIR and layout-state
+arguments remain path-specific.
+
+The focused contract fixes the two current sequences, exact arguments,
+predecessor/successor boundaries, reconciliation semantics, and retained raw
+pair helper. One strict xfail requires a pass-module
+`run_sinet_se_fc_gather_summary(context)` owner and one merged stats mapping at
+each lowerer site.
+
+Sequential validation under core-only `uv` completed with
+`407 passed, 1 xfailed in 19.96s` across the new characterization and related
+SE-FC/Gather, fallback, terminal-layout, core runtime, phase-store, and
+architecture contracts. The sole expected failure is the unimplemented shared
+summary owner. Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the shared owner and these two compatible sites, preserve the raw pair helper
+and every other caller, update owner-aware structural/runtime contracts, and
+validate sequentially. Continue with commits and pushes only; never create,
+update, or reopen a pull request.

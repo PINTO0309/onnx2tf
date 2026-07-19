@@ -782,3 +782,10 @@ summary owner. It removes the tensor snapshot and two raw-result locals while
 retaining optional context forwarding, all other raw pair callers, the
 preceding reconciliation mapping, rewrite-or-prune guard, topology successor,
 and the full 128/128 store.
+
+The next characterization fixes both compatible SiNet/SE-FC/Gather
+count-plus-result sequences. It preserves path-specific ModelIR/LayoutState
+forwarding, SiNet-before-pair ordering, rewrite-or-prune reconciliation,
+fallback and final neighboring boundaries, the raw pair helper, and the full
+128/128 store. Production remains unchanged until a shared pass-module summary
+owner is implemented and validated in a separate checkpoint.
