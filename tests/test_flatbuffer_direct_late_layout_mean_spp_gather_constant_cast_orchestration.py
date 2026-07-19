@@ -364,48 +364,35 @@ def test_late_layout_mutation_summary_filters_iterations_and_reports_pruning(
 
 def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    assignment_indices = {}
-    assignments = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        if target.id in {
-            "late_layout_cluster_tensor_count",
-            "late_layout_cluster_results",
-            "_late_layout_cluster_stats",
-        }:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    assert assignment_indices == {
-        "late_layout_cluster_tensor_count": min(assignment_indices.values()),
-        "late_layout_cluster_results": min(assignment_indices.values()) + 1,
-        "_late_layout_cluster_stats": min(assignment_indices.values()) + 2,
-    }
-    count_call = assignments["late_layout_cluster_tensor_count"]
-    assert isinstance(count_call, ast.Call)
-    assert isinstance(count_call.func, ast.Name)
-    assert count_call.func.id == "len"
-    result_call = assignments["late_layout_cluster_results"]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == LATE_LAYOUT
-    summary_call = assignments["_late_layout_cluster_stats"]
+    summary = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_late_layout_cluster_stats"
+    )
+    summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
     assert summary_call.func.id == (
-        "summarize_late_layout_mean_spp_gather_constant_cast_mutations"
+        "run_late_layout_mean_spp_gather_constant_cast_summary"
     )
     assert len(summary_call.args) == 1
     assert isinstance(summary_call.args[0], ast.Name)
-    assert summary_call.args[0].id == "late_layout_cluster_results"
-    assert {keyword.arg for keyword in summary_call.keywords} == {
-        "include_layout_transpose",
-        "pruned_unused_tensors",
-    }
+    assert summary_call.args[0].id == (
+        "late_layout_mean_spp_gather_constant_cast_context"
+    )
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in summary_call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {"late_layout_cluster_tensor_count", "late_layout_cluster_results"}
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_late_layout_has_one_required_policy_production_call() -> None:
@@ -415,11 +402,14 @@ def test_late_layout_has_one_required_policy_production_call() -> None:
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == LATE_LAYOUT
+        and node.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast_summary"
     ]
 
     assert len(invocations) == 1
-    assert invocations[0].args == []
+    assert [ast.unparse(argument) for argument in invocations[0].args] == [
+        "late_layout_mean_spp_gather_constant_cast_context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in invocations[0].keywords
@@ -434,16 +424,17 @@ def test_late_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and any(
             isinstance(target, ast.Name)
-            and target.id == "late_layout_cluster_results"
+            and target.id == "_late_layout_cluster_stats"
             for target in statement.targets
         )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == LATE_LAYOUT
+        and statement.value.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast_summary"
     )
 
-    previous = lowerer.body[invocation_index - 2]
-    following = lowerer.body[invocation_index + 2]
+    previous = lowerer.body[invocation_index - 1]
+    following = lowerer.body[invocation_index + 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)

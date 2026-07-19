@@ -253,7 +253,7 @@ from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import
 )
 from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
     run_late_layout_mean_spp_gather_constant_cast,
-    summarize_late_layout_mean_spp_gather_constant_cast_mutations,
+    run_late_layout_mean_spp_gather_constant_cast_summary,
 )
 from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
     run_singleton_consecutive_reshape,
@@ -5394,20 +5394,10 @@ def lower_onnx_to_ir(
     _late_pre_layout_cluster_shape_extract_stats = (
         _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     )
-    late_layout_cluster_tensor_count = len(model_ir.tensors)
-    late_layout_cluster_results = (
-        _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
-            include_layout_transpose=optimize_layout_transpose_chains,
-        )
-    )
     _late_layout_cluster_stats = (
-        summarize_late_layout_mean_spp_gather_constant_cast_mutations(
-            late_layout_cluster_results,
+        run_late_layout_mean_spp_gather_constant_cast_summary(
+            late_layout_mean_spp_gather_constant_cast_context,
             include_layout_transpose=optimize_layout_transpose_chains,
-            pruned_unused_tensors=max(
-                0,
-                int(late_layout_cluster_tensor_count - len(model_ir.tensors)),
-            ),
         )
     )
     _terminal_expand_squeeze_stats = _replace_expand_dims_and_squeeze_with_reshape(

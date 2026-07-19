@@ -3448,3 +3448,34 @@ Commit and push this characterization separately. At resume, implement only
 the prune-aware owner and direct late site, retain the raw lowerer wrapper,
 update owner-aware structural contracts, and validate sequentially. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Late layout-cluster prune-aware summary implementation
+
+The pass module now exposes
+`run_late_layout_mean_spp_gather_constant_cast_summary(context, flags...)`. It
+captures tensor count, invokes the existing ordered owner, and applies the
+strict normalizer with the same runtime layout-Transpose policy. The lowerer
+keeps `_late_layout_cluster_stats` but removes its consumed count and raw-result
+locals.
+
+The raw lowerer wrapper remains intact. Shared context and pass-state identity,
+child constant-fold/Cast orchestration, pruning, summary schema, shape-extract
+predecessor, terminal Expand/Squeeze successor, and 128/128 store are
+unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `5 passed in 0.55s`;
+- affected owner, boundary, store, and architecture contracts:
+  `283 passed in 20.14s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.33s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.57s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next adjacent non-store evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

@@ -3912,3 +3912,39 @@ Sequential characterization under core-only `uv` completed with
 `21 passed, 1 xfailed in 0.98s` across the dedicated contract and related late
 layout-cluster, shape-extract result, and phase-store contracts. The sole
 expected failure is the intentionally absent summary owner.
+
+## Late layout-cluster prune-aware summary implementation
+
+`run_late_layout_mean_spp_gather_constant_cast_summary(context, *,
+include_layout_transpose)` now owns the characterized tensor snapshot, raw
+ordered invocation, and strict prune-aware normalization. The lowerer retains
+`_late_layout_cluster_stats` at the same boundary and passes the same shared
+context and runtime layout-Transpose flag, while the consumed
+`late_layout_cluster_tensor_count` and `late_layout_cluster_results` locals are
+removed.
+
+The nested raw wrapper remains defined and still dispatches to the ordered
+owner. Active pass selection, shared pass-state scope, constant-fold/Cast child
+builder, result schema, pruning, pre-cluster shape-extract predecessor,
+terminal Expand/Squeeze successor, public behavior, artifacts, dependencies,
+and TensorFlow isolation are unchanged. The normalized summary remains outside
+the full 128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `5 passed in 0.55s`;
+- affected owner, boundary, store, and architecture contracts:
+  `283 passed in 20.14s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.33s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.57s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact context/flag forwarding plus stable and prune-only behavior, while
+the affected and architecture gates preserve child orchestration, raw
+ownership, and both neighboring boundaries.

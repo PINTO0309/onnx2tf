@@ -6032,14 +6032,18 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         if isinstance(statement, ast.Assign)
         and any(
             isinstance(target, ast.Name)
-            and target.id == "late_layout_cluster_results"
+            and target.id == "_late_layout_cluster_stats"
             for target in statement.targets
         )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast_summary"
     )
     invocation = lowerer.body[invocation_index].value
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "late_layout_mean_spp_gather_constant_cast_context"
+    ]
     include_layout = next(
         keyword
         for keyword in invocation.keywords
@@ -6048,7 +6052,7 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     assert isinstance(include_layout.value, ast.Name)
     assert include_layout.value.id == "optimize_layout_transpose_chains"
 
-    previous_boundary = lowerer.body[invocation_index - 2]
+    previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
@@ -6061,7 +6065,7 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         previous_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 2]
+    next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
@@ -6069,6 +6073,30 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         next_boundary.value.func.id
         == "_replace_expand_dims_and_squeeze_with_reshape"
     )
+
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_layout_mean_spp_gather_constant_cast_orchestration.py"
+    )
+    orchestration_tree = ast.parse(orchestration_path.read_text(encoding="utf-8"))
+    summary_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_late_layout_mean_spp_gather_constant_cast_summary"
+    )
+    summary_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_layout_mean_spp_gather_constant_cast"
+    ]
+    assert len(summary_owner_calls) == 1
 
 
 def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:

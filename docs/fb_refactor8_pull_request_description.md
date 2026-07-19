@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Twenty-three late lowerer clusters now have focused orchestration owners. The first
+Twenty-four late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -225,11 +225,16 @@ prune-aware summary. It preserves the runtime layout-Transpose policy, shared
 ModelIR/LayoutState/diagnostics context, raw wrapper, and normalized schema
 while removing the consumed raw tuple from lowerer scope.
 
+The twenty-fourth composes the late
+layout/Mean/SPP/Gather/constant-fold/Cast cluster with its strict prune-aware
+summary. It preserves the runtime layout-Transpose policy, shared pass-state
+scope, child constant-fold/Cast builder, raw wrapper, and normalized schema.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
-lowerer scope locals. They also replace nineteen consumed mutation-evidence or
-aggregate-result locals and eight tensor-count snapshots with three explicit
-boolean decisions, seven reusable summary calls, and one prune-aware cleanup
+lowerer scope locals. They also replace twenty consumed mutation-evidence or
+aggregate-result locals and nine tensor-count snapshots with three explicit
+boolean decisions, eight reusable summary calls, and one prune-aware cleanup
 call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -525,6 +530,9 @@ Final checkpoint results:
   architecture contracts: **294 passed**;
 - late layout-cluster prune-aware summary characterization and related
   contracts: **21 passed, 1 intentional strict xfail**;
+- late layout-cluster prune-aware summary owner contracts: **5 passed**;
+- affected late layout-cluster, shape-extract, store, and architecture
+  contracts: **283 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -613,3 +621,9 @@ The next characterization fixes the late layout-cluster tensor snapshot,
 flagged raw ordered result, strict prune-aware summary, and neighboring pass
 boundaries. Production remains unchanged until its direct summary owner is
 implemented separately.
+
+The latest checkpoint implements that late layout-cluster summary owner. It
+removes the lowerer-local tensor snapshot and consumed raw tuple while
+retaining runtime option forwarding, raw wrapper dispatch, child-builder and
+shared-scope behavior, strict schema, neighboring boundaries, and the full
+128/128 phase-result store.
