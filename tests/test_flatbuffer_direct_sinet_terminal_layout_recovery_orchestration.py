@@ -31,6 +31,8 @@ PHASE_PATH = (
 )
 SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
+COMPOSITE_OWNER = "run_terminal_clamp_sinet_layout_cleanup"
+COMPOSITE_TARGET = "_terminal_clamp_sinet_layout_results"
 
 
 def _noop_recovery() -> None:
@@ -209,7 +211,7 @@ def test_sinet_terminal_layout_recovery_invocations_remain_zero_argument() -> No
         and node.func.id == SINET_TERMINAL
     ]
 
-    assert len(invocations) == 2
+    assert len(invocations) == 1
     assert all(call.args == [] for call in invocations)
     assert all(call.keywords == [] for call in invocations)
 
@@ -224,7 +226,6 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
         in {
-            "_terminal_sinet_layout_recovery_results",
             "_very_late_sinet_layout_recovery_results",
         }
         and isinstance(statement.value, ast.Call)
@@ -232,52 +233,41 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
         and statement.value.func.id == SINET_TERMINAL
     ]
 
-    assert len(invocation_indexes) == 2
+    assert len(invocation_indexes) == 1
     assert [
         lowerer.body[index].targets[0].id
         for index in invocation_indexes
         if isinstance(lowerer.body[index], ast.Assign)
         and isinstance(lowerer.body[index].targets[0], ast.Name)
     ] == [
-        "_terminal_sinet_layout_recovery_results",
         "_very_late_sinet_layout_recovery_results",
     ]
-    observed: list[tuple[str, str]] = []
-    assigned_boundary_targets: list[str] = []
-    for index in invocation_indexes:
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            assert isinstance(boundary, (ast.Assign, ast.Expr))
-            assert isinstance(boundary.value, ast.Call)
-            _direct_call_name(boundary)
-            if isinstance(boundary, ast.Assign):
-                assert len(boundary.targets) == 1
-                assert isinstance(boundary.targets[0], ast.Name)
-                assigned_boundary_targets.append(boundary.targets[0].id)
-        observed.append((_direct_call_name(previous), _direct_call_name(following)))
-
-    assert _phase_id(lowerer.body[invocation_indexes[0] + 1]) == (
-        "cleanup.terminal.sinet_hardswish_se"
-    )
-    assert _phase_id(lowerer.body[invocation_indexes[1] - 1]) == (
+    direct_index = invocation_indexes[0]
+    assert _phase_id(lowerer.body[direct_index - 1]) == (
         "shape_topology.terminal.indexed_convergence"
     )
+    assert _direct_call_name(lowerer.body[direct_index + 1]) == (
+        SINET_PREADD_RESIZE
+    )
 
-    assert observed == [
-        (
-            "_run_terminal_clamp_unary_relu_pass_cluster",
-            "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains",
-        ),
-        (
-            "_run_indexed_shape_convergence_cleanup",
-            SINET_PREADD_RESIZE,
-        ),
-    ]
-    assert assigned_boundary_targets == [
-        "_terminal_clamp_unary_relu_results",
-        "_very_late_sinet_preadd_resize_results",
-    ]
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == COMPOSITE_TARGET
+    )
+    composite_index = lowerer.body.index(composite)
+    assert _direct_call_name(composite) == COMPOSITE_OWNER
+    assert isinstance(lowerer.body[composite_index - 1], ast.If)
+    assert _phase_id(lowerer.body[composite_index + 1]) == (
+        "cleanup.terminal.sinet_hardswish_se"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_terminal_sinet_layout_recovery_results"
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_sinet_terminal_layout_context_and_wrapper_are_explicit() -> None:
@@ -401,7 +391,7 @@ def test_sinet_terminal_layout_propagates_and_retains_ordered_results(
         ),
         key=lambda statement: statement.lineno,
     )
-    assert len(direct_results) == 2
+    assert len(direct_results) == 1
     assert all(isinstance(statement, ast.Assign) for statement in direct_results)
     assert [
         statement.targets[0].id
@@ -410,31 +400,29 @@ def test_sinet_terminal_layout_propagates_and_retains_ordered_results(
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
     ] == [
-        "_terminal_sinet_layout_recovery_results",
         "_very_late_sinet_layout_recovery_results",
     ]
     assert all(statement.value.args == [] for statement in direct_results)
     assert all(statement.value.keywords == [] for statement in direct_results)
 
-    first_index = lowerer.body.index(direct_results[0])
-    second_index = lowerer.body.index(direct_results[1])
-    first_previous = lowerer.body[first_index - 1]
-    first_following = lowerer.body[first_index + 1]
-    second_previous = lowerer.body[second_index - 1]
-    second_following = lowerer.body[second_index + 1]
-    assert _direct_call_name(first_previous) == (
-        "_run_terminal_clamp_unary_relu_pass_cluster"
-    )
-    assert _direct_call_name(first_following) == (
-        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
-    )
-    assert _phase_id(second_previous) == (
+    direct_index = lowerer.body.index(direct_results[0])
+    direct_previous = lowerer.body[direct_index - 1]
+    direct_following = lowerer.body[direct_index + 1]
+    assert _phase_id(direct_previous) == (
         "shape_topology.terminal.indexed_convergence"
     )
-    assert _direct_call_name(second_previous) == (
+    assert _direct_call_name(direct_previous) == (
         "_run_indexed_shape_convergence_cleanup"
     )
-    assert _direct_call_name(second_following) == SINET_PREADD_RESIZE
+    assert _direct_call_name(direct_following) == SINET_PREADD_RESIZE
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == COMPOSITE_TARGET
+    )
+    assert _direct_call_name(composite) == COMPOSITE_OWNER
 
 
 def test_sinet_terminal_layout_module_does_not_import_lowerer() -> None:

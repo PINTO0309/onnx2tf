@@ -400,6 +400,36 @@ differential test proving identical operator order and downstream behavior.
 Continue with coherent commits and pushes only; never create, update, or reopen
 a pull request.
 
+## Terminal clamp/SiNet layout implementation checkpoint
+
+`passes/terminal_clamp_sinet_layout_orchestration.py` now implements the fixed
+two-child boundary. The embedded shared pass context is passed to terminal
+Clamp/unary/ReLU; the exact original SiNet context and pre-add/resize callback
+are passed to SiNet terminal-layout recovery. Both complete results are
+returned unchanged and in their original order.
+
+The lowerer retains one observation-only `_terminal_clamp_sinet_layout_results`
+value in place of the two child locals. The terminal layout conditional and
+following SiNet hard-swish/SE phase record remain immediate outer boundaries.
+Both zero-argument wrappers remain defined, and the independent very-late SiNet
+route remains unchanged. The characterized unconsumed-result inventory is now
+54; the phase store remains exactly 128 IDs and 128 owners.
+
+Sequential validation passed: focused 3, affected 464,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. Ruff, bytecode
+compilation, and whitespace checks pass. Runtime injection proves order,
+embedded pass-context identity, original context/callback identity, and both
+raw-result identities. No production test or known issue is failing, and no
+real-model conversion was repeated for this ownership-only extraction.
+
+At resume, rerun the read-only inventory of the 54 remaining characterized
+unconsumed lowerer results and select the next smallest source-adjacent,
+semantically closed cluster whose children already have pass-module owners.
+Characterize it before production changes, keep all tests sequential under
+`uv`, and commit/push only at complete checkpoints. Do not create, update, or
+reopen a pull request.
+
 ## Fallback topology checkpoint characterization
 
 The two unconditional fallback-wide sorts were audited separately from the

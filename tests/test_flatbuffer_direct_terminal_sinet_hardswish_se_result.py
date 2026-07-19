@@ -25,7 +25,7 @@ HARDSWISH_SE = (
 OWNER_NAME = (
     "optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
-SINET_TERMINAL_TARGET = "_terminal_sinet_layout_recovery_results"
+SINET_TERMINAL_TARGET = "_terminal_clamp_sinet_layout_results"
 RESULT_TARGET = "_terminal_sinet_hardswish_se_stats"
 DEQUANT_TARGET = "_terminal_dequant_hardsigmoid_bridge_stats"
 LATE_RESULT_TARGET = "_terminal_hardswish_se_stats"

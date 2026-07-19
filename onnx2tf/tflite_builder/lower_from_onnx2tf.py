@@ -216,6 +216,9 @@ from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration 
 from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
     run_terminal_clamp_unary_relu,
 )
+from onnx2tf.tflite_builder.passes.terminal_clamp_sinet_layout_orchestration import (
+    run_terminal_clamp_sinet_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
     run_terminal_singleton_maxpool_reshape,
 )
@@ -4947,11 +4950,10 @@ def lower_onnx_to_ir(
                 include_multi_branch_gate=True,
             )
         )
-    _terminal_clamp_unary_relu_results = (
-        _run_terminal_clamp_unary_relu_pass_cluster()
-    )
-    _terminal_sinet_layout_recovery_results = (
-        _run_sinet_terminal_layout_recovery_sequence()
+    _terminal_clamp_sinet_layout_results = (
+        run_terminal_clamp_sinet_layout_cleanup(
+            sinet_terminal_layout_recovery_context,
+        )
     )
     session.record_phase_result(
         "cleanup.terminal.sinet_hardswish_se",

@@ -504,7 +504,7 @@ def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> Non
         "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
     assert _direct_call_name(lowerer.body[outer_index + 1]) == (
-        "_run_terminal_clamp_unary_relu_pass_cluster"
+        "run_terminal_clamp_sinet_layout_cleanup"
     )
 
 

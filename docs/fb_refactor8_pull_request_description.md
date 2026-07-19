@@ -1238,6 +1238,25 @@ Focused and affected sequential characterization report
 the intentionally absent owner. Production behavior, dependencies, TensorFlow
 isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
 
+The latest checkpoint implements the terminal Clamp/SiNet layout owner. It
+passes the embedded shared pass context to terminal Clamp/unary/ReLU and the
+exact original SiNet context, including its pre-add/resize callback, to SiNet
+terminal-layout recovery. Both complete results are returned unchanged and in
+source order.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The terminal layout conditional and phase-recorded SiNet hard-swish/SE
+cleanup remain immediate outer boundaries. Both zero-argument wrappers and the
+independent very-late SiNet recovery route remain intact. Graph mutations,
+callbacks, guards, public behavior, artifacts, dependencies, and TensorFlow
+isolation are unchanged.
+
+Runtime identity coverage, 464 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+exactly 128-ID/128-owner store is unchanged, while the characterized unconsumed
+lowerer-result inventory decreases from 55 to 54.
+
 The next characterization selects the terminal layout/shape tail immediately
 after the activation bridge: absolute pre-ConCat cleanup, late Shape-extract,
 the prune-aware late layout/Mean/SPP/Gather/constant-fold/Cast summary, and

@@ -6158,6 +6158,40 @@ sole xfail is the intentionally absent composite owner. Production behavior,
 public APIs, artifacts, dependencies, TensorFlow isolation, and the exactly
 128-ID/128-owner phase store remain unchanged.
 
+## Terminal clamp/SiNet layout composite implementation
+
+`passes/terminal_clamp_sinet_layout_orchestration.py` now owns the fixed
+terminal Clamp/unary/ReLU then SiNet terminal-layout sequence. It passes the
+embedded `context.pass_context` to the Clamp child and the exact unchanged
+SiNet context, including its pre-add/resize callback, to the recovery child.
+Both complete results are returned in source order without copying,
+flattening, inspection, or result-driven control flow.
+
+The lowerer replaces only `_terminal_clamp_unary_relu_results` and
+`_terminal_sinet_layout_recovery_results` with
+`_terminal_clamp_sinet_layout_results`. The terminal layout conditional remains
+the immediate predecessor, and the phase-recorded terminal SiNet hard-swish/SE
+cleanup remains the immediate successor. Both zero-argument lowerer wrappers
+remain defined as compatibility routes, and the independent very-late SiNet
+recovery invocation remains unchanged.
+
+Owner-aware tests now resolve terminal production through the new outer owner
+while independently verifying both child owners, wrapper signatures, the
+very-late route, callback identity, and all surrounding phase boundaries.
+Runtime injection proves exact execution order, embedded pass-context identity,
+original composite-context identity, callback identity, and both raw-result
+identities.
+
+Sequential core-only `uv` validation passed with 3 focused tests, 464 affected
+tests, 92 terminal-layout/efficiency tests, 55 core tests, 196 result-contract
+tests, 2 phase-store tests, and 11 TensorFlow import-blocking, default-direct,
+and `-cotof` tests. Ruff, bytecode compilation, and whitespace checks pass.
+Public behavior, artifacts, dependencies, TensorFlow isolation, and the
+exactly 128-ID/128-owner phase store remain unchanged. The characterized
+unconsumed-result inventory decreases from 55 to 54. No real-model conversion
+was repeated because this is an ownership-only move with direct order, context,
+callback, schema, identity, wrapper, independent-route, and phase coverage.
+
 ## Terminal affine/QKV/layout-shape composite implementation
 
 `passes/terminal_affine_qkv_layout_shape_orchestration.py` now owns the fixed

@@ -2866,21 +2866,19 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
         in {
-            "_terminal_sinet_layout_recovery_results",
             "_very_late_sinet_layout_recovery_results",
         }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
-    assert len(invocation_indexes) == 2
+    assert len(invocation_indexes) == 1
     assert [
         lowerer.body[index].targets[0].id
         for index in invocation_indexes
         if isinstance(lowerer.body[index], ast.Assign)
         and isinstance(lowerer.body[index].targets[0], ast.Name)
     ] == [
-        "_terminal_sinet_layout_recovery_results",
         "_very_late_sinet_layout_recovery_results",
     ]
     previous_call_names = []
@@ -2900,24 +2898,28 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
                 assigned_boundary_targets.append(boundary.targets[0].id)
         previous_call_names.append(_phase_aware_call(previous)[0].func.id)
         next_call_names.append(_phase_aware_call(following)[0].func.id)
-    assert _phase_aware_call(lowerer.body[invocation_indexes[0] + 1])[1] == (
-        "cleanup.terminal.sinet_hardswish_se"
-    )
-    assert _phase_aware_call(lowerer.body[invocation_indexes[1] - 1])[1] == (
+    assert _phase_aware_call(lowerer.body[invocation_indexes[0] - 1])[1] == (
         "shape_topology.terminal.indexed_convergence"
     )
     assert previous_call_names == [
-        "_run_terminal_clamp_unary_relu_pass_cluster",
         "_run_indexed_shape_convergence_cleanup",
     ]
     assert next_call_names == [
-        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains",
         "_run_sinet_preadd_resize_recovery_sequence",
     ]
     assert assigned_boundary_targets == [
-        "_terminal_clamp_unary_relu_results",
         "_very_late_sinet_preadd_resize_results",
     ]
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_clamp_sinet_layout_results"
+    )
+    assert isinstance(composite.value, ast.Call)
+    assert isinstance(composite.value.func, ast.Name)
+    assert composite.value.func.id == "run_terminal_clamp_sinet_layout_cleanup"
 
 
 def test_terminal_affine_prelu_owner_has_one_lowerer_adapter() -> None:
@@ -6565,10 +6567,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_clamp_unary_relu_results"
+        and statement.targets[0].id == "_terminal_clamp_sinet_layout_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id == "run_terminal_clamp_sinet_layout_cleanup"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)
@@ -6585,16 +6587,15 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         previous_call.value.func.id
         == "_run_singleton_reshape_layout_pass_cluster"
     )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "sinet_terminal_layout_recovery_context"
+    ]
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert len(next_boundary.targets) == 1
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_terminal_sinet_layout_recovery_results"
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert (
-        next_boundary.value.func.id
-        == "_run_sinet_terminal_layout_recovery_sequence"
+    assert _phase_aware_call(next_boundary)[1] == (
+        "cleanup.terminal.sinet_hardswish_se"
     )
 
 
