@@ -1535,3 +1535,18 @@ gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
 phase-result store remains exactly 128 IDs and 128 owners, while the
 characterized unconsumed lowerer-result inventory decreases from 53 to 52.
+
+The next characterization selects the adjacent late
+dequant/hard-sigmoid/unary and late swish/very-late-layout-tail composites.
+Both receive the exact shared `ModelIRPassContext`; only the second receives
+the normalized layout-Transpose option. The new owner must preserve source
+order, exact context and option policy, both complete nested results, and both
+raw identities. The layout/no-layout conditional and phase-recorded very-late
+broadcast reconciliation remain the immediate outer boundaries. Nested
+owners, wrappers, and independent routes remain unchanged; production is
+unchanged pending one straight-line owner.
+
+Focused and affected sequential characterization report
+`2 passed, 1 xfailed` and `432 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.

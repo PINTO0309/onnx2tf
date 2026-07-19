@@ -5744,3 +5744,29 @@ guards, schemas, independent routes, and outer phase/progress boundaries before
 production changes. Continue with core-only `uv`, sequential tests, and
 complete checkpoint commits/pushes only. Do not create, update, reopen, or
 otherwise modify a pull request.
+
+## Late dequant/swish-layout-tail characterization checkpoint
+
+The current inventory is 52 unconsumed lowerer-result assignments. The next
+safe pair is late dequant/hard-sigmoid/unary cleanup followed immediately by
+late swish/very-late-layout-tail cleanup. Both use the exact
+`shared_model_ir_pass_context`, and the second alone receives the normalized
+layout-Transpose option. The preceding layout/no-layout branch and following
+recorded very-late broadcast reconciliation remain outside the owner.
+
+Focused characterization reports `2 passed, 1 xfailed`; the affected suite
+reports `432 passed, 1 xfailed`. The sole xfail requires the intentionally
+absent `passes/late_dequant_swish_layout_tail_orchestration.py`. Both policy
+paths, shared identity, complete nested outer schemas, options, independent
+routes, and phase adjacency are fixed. Production and the 128-ID/128-owner
+phase store are unchanged.
+
+At resume, implement
+`run_late_dequant_swish_layout_tail_cleanup(context, *,
+include_layout_transpose)` as a straight-line owner. Call the existing late
+dequant child first and late swish/layout-tail child second, forward the option
+only to the second, and return both raw results unchanged. Replace only the two
+characterized lowerer locals, retain nested owners and wrappers, update only
+stale boundary contracts, and run affected and standard gates sequentially.
+Commit and push only; do not create, update, reopen, or otherwise modify a pull
+request.

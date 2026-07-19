@@ -6598,3 +6598,32 @@ unconsumed lowerer-result inventory decreases from 53 to 52. No real-model
 conversion was repeated because this is a straight-line orchestration-only
 extraction with complete context, option, order, schema, identity, wrapper,
 route, and boundary coverage.
+
+## Late dequant/swish-layout-tail characterization checkpoint
+
+The refreshed inventory contains 52 unconsumed lowerer-result assignments.
+The next selected adjacent pair is the existing late
+dequant/hard-sigmoid/unary composite followed by the existing late
+swish/very-late-layout-tail composite. Both receive the exact same
+`shared_model_ir_pass_context`; only the second child receives the normalized
+`optimize_layout_transpose_chains` policy. There is no intervening branch,
+phase record, progress callback, result consumer, or other mutation.
+
+The proposed owner must invoke both public child owners in source order,
+forward the layout option only to the second, and return their complete nested
+tuples without copying or normalization. The layout/no-layout conditional
+remains the predecessor, and phase-recorded very-late broadcast shape
+reconciliation remains the successor outside the owner. All nested lowerer
+wrappers and independent routes remain intact.
+
+`tests/test_flatbuffer_direct_late_dequant_swish_layout_tail_orchestration.py`
+fixes both layout-policy variants, exact shared-context identity, adjacency,
+option forwarding, observation-only results, nested outer schemas, and both
+outer boundaries. Sequential characterization under core-only `uv` reports
+`2 passed, 1 xfailed in 0.57s` focused and
+`432 passed, 1 xfailed in 19.30s` across dequant/fan-out, swish, very-late
+layout tail, broadcast, Pad/InstanceNorm, Conv1D/decoder, singleton Reshape,
+shared-context, architecture, efficiency, result, phase-store, and terminal
+validation contracts. The sole xfail is the intentionally absent owner.
+Production, dependencies, TensorFlow isolation, and the exactly
+128-ID/128-owner phase store remain unchanged.
