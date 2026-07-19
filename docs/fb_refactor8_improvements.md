@@ -3776,3 +3776,24 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves exact flag/context forwarding, stable and prune-only behavior, and
 schema preservation, while the affected and architecture gates preserve all
 production boundaries and total pass ownership.
+
+## Terminal HardSwish/SE prune-aware summary characterization
+
+The next late evidence pair snapshots tensor count and then extends the raw
+HardSwish/SE layout result with `pruned_unused_tensors`. The raw owner already
+performs its required unused-tensor pruning; the lowerer snapshot observes that
+mutation without controlling later execution. The normalized result is not
+loaded after assignment.
+
+`tests/test_flatbuffer_direct_terminal_hardswish_se_summary_orchestration.py`
+fixes the exact two-statement representation, one-key raw mapping plus prune
+delta, terminal QKV-bridge predecessor, late hard-activation successor, and
+retained raw lowerer wrapper. Its strict expected failure requires one generic
+pass-module prune-aware summary owner. No production source, graph mutation,
+pass order, store entry, public API, artifact, dependency, or TensorFlow
+boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`76 passed, 1 xfailed in 1.22s` across the dedicated contract and related
+HardSwish/SE, late hard-activation, indexed bridge, and phase-store contracts.
+The sole expected failure is the intentionally absent summary owner.

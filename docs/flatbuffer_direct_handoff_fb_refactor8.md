@@ -3318,3 +3318,27 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Terminal HardSwish/SE prune-aware summary characterization
+
+The selected next unit is the two-statement terminal HardSwish/SE evidence
+boundary immediately after the terminal QKV Split/Conv/Concat bridge. It
+snapshots tensor count, calls the existing raw owner, and adds the non-negative
+prune delta to the unchanged raw mapping. The summary remains unconsumed and
+the following late hard-activation triple is outside this unit.
+
+The focused characterization fixes the current representation, exact prune
+expression, predecessor and successor, raw wrapper retention, and absence of a
+summary consumer. One strict xfail requires
+`run_hardswish_se_layout_summary(model_ir)` in the pass module.
+
+Sequential validation under core-only `uv` completed with
+`76 passed, 1 xfailed in 1.22s` across the new characterization and related
+HardSwish/SE, late hard-activation, indexed bridge, and store contracts. The
+sole expected failure is the unimplemented summary owner.
+
+Commit and push this characterization separately. At resume, implement only
+the prune-aware owner and late direct site, retain the raw lowerer wrapper and
+the earlier phase-store raw call, update owner-aware structural contracts, and
+validate sequentially. Continue with commits and pushes only; never create,
+update, or reopen a pull request.
