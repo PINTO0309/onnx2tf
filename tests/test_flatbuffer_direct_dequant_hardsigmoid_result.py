@@ -44,7 +44,32 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -132,11 +157,13 @@ def test_lowerer_retains_all_dequant_hardsigmoid_results() -> None:
     ]
     assert len(direct_results) == 3
     expected_targets = [
-        "_terminal_dequant_hardsigmoid_bridge_stats",
         "_post_sinet_dequant_hardsigmoid_bridge_stats",
         "_late_dequant_hardsigmoid_bridge_stats",
     ]
-    assert [_single_target(statement) for statement in direct_results] == (
+    assert _phase_id(direct_results[0]) == (
+        "cleanup.terminal.dequant_hardsigmoid_bridge"
+    )
+    assert [_single_target(statement) for statement in direct_results[1:]] == (
         expected_targets
     )
     for statement in direct_results:
@@ -144,7 +171,7 @@ def test_lowerer_retains_all_dequant_hardsigmoid_results() -> None:
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
         assert call.keywords == []
-    for target in expected_targets:
+    for target in ["_terminal_dequant_hardsigmoid_bridge_stats", *expected_targets]:
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target

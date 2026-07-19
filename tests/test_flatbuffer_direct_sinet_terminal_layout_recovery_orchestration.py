@@ -65,8 +65,33 @@ def _expression_path(node: ast.expr) -> Any:
 def _direct_call_name(statement: ast.stmt) -> str:
     assert isinstance(statement, (ast.Assign, ast.Expr))
     assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
-    return statement.value.func.id
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    assert isinstance(call.func, ast.Name)
+    return call.func.id
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _context(
@@ -225,12 +250,16 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
         for boundary in (previous, following):
             assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
+            _direct_call_name(boundary)
             if isinstance(boundary, ast.Assign):
                 assert len(boundary.targets) == 1
                 assert isinstance(boundary.targets[0], ast.Name)
                 assigned_boundary_targets.append(boundary.targets[0].id)
-        observed.append((previous.value.func.id, following.value.func.id))
+        observed.append((_direct_call_name(previous), _direct_call_name(following)))
+
+    assert _phase_id(lowerer.body[invocation_indexes[0] + 1]) == (
+        "cleanup.terminal.sinet_hardswish_se"
+    )
 
     assert observed == [
         (
@@ -244,7 +273,6 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
     ]
     assert assigned_boundary_targets == [
         "_terminal_clamp_unary_relu_results",
-        "_terminal_sinet_hardswish_se_stats",
         "_post_terminal_indexed_shape_convergence_stats",
         "_very_late_sinet_preadd_resize_results",
     ]

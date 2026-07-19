@@ -857,6 +857,39 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented two-result
 destination migration.
 
+## Terminal HardSwish/HardSigmoid implementation
+
+The two characterized observations now record consecutively under:
+
+- `cleanup.terminal.sinet_hardswish_se`;
+- `cleanup.terminal.dequant_hardsigmoid_bridge`.
+
+Only the unused local destinations changed. Both owner calls, arguments,
+unconditional execution, evaluation count, SiNet terminal-layout predecessor,
+pre-Add/Resize successor, later owner forms, ModelIR mutations, public outputs,
+reports, artifacts, dependencies, and TensorFlow isolation are unchanged. The
+bounded store now covers 112/128 phase IDs, leaving 16 slots.
+
+Six representation-dependent result, SiNet orchestration, and architecture
+assertions now unwrap phase records. They continue to verify the exact two
+phase IDs, owner names, all later production forms, and retained composite
+result names. The characterization was folded into the existing focused test,
+so no additional structural test file remains.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused HardSwish/HardSigmoid/SiNet/store contracts:
+  `23 passed in 1.21s`;
+- synthetic core runtime contracts: `55 passed in 1.07s`;
+- broader result and phase-result contracts: `190 passed in 9.59s`;
+- lowerer architecture contracts: `258 passed in 20.53s`;
+- targeted Ruff, Python bytecode compilation, AST capacity audit, and
+  whitespace validation: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and the existing focused runtime tests
+exercise both owners.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -59,7 +56,18 @@ def _direct_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     value = statement.value
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+    if not isinstance(value, ast.Call):
+        return None
+    if (
+        isinstance(value.func, ast.Attribute)
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id == "session"
+        and value.func.attr == "record_phase_result"
+        and len(value.args) == 2
+        and isinstance(value.args[1], ast.Call)
+    ):
+        value = value.args[1]
+    if not isinstance(value.func, ast.Name):
         return None
     return value if value.func.id == HARDSWISH_SE else None
 
@@ -145,30 +153,6 @@ def test_hardswish_se_has_exactly_two_production_forms() -> None:
     assert prune_key.value == "pruned_unused_tensors"
 
 
-def test_terminal_sinet_hardswish_se_result_is_retained_observation_only() -> None:
-    lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-    result_statement = next(
-        statement
-        for statement in lowerer.body
-        if _direct_call(statement) is not None
-    )
-    assert _single_target(result_statement) == RESULT_TARGET
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
-
-    result_index = lowerer.body.index(result_statement)
-    assert _single_target(lowerer.body[result_index - 1]) == SINET_TERMINAL_TARGET
-    assert _single_target(lowerer.body[result_index + 1]) == DEQUANT_TARGET
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal HardSwish/HardSigmoid results have not moved to phase records",
-)
 def test_terminal_hardswish_hardsigmoid_results_use_phase_result_store() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     records = [

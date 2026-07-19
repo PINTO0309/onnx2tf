@@ -120,6 +120,25 @@ from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _phase_aware_call(statement: ast.stmt) -> tuple[ast.Call, str | None]:
+    assert isinstance(statement, (ast.Assign, ast.Expr))
+    assert isinstance(statement.value, ast.Call)
+    call = statement.value
+    phase_id: str | None = None
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        phase_id = ast.literal_eval(call.args[0])
+        call = call.args[1]
+    assert isinstance(call.func, ast.Name)
+    return call, phase_id
 ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LAYOUT_RECOVERY_PASS_IDS,
     *ATTENTION_RECOVERY_PASS_IDS,
@@ -2234,15 +2253,16 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, (ast.Assign, ast.Expr))
-            assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
+            _phase_aware_call(boundary)
             if isinstance(boundary, ast.Assign):
                 assert len(boundary.targets) == 1
                 assert isinstance(boundary.targets[0], ast.Name)
                 assigned_boundary_targets.append(boundary.targets[0].id)
-        previous_call_names.append(previous.value.func.id)
-        next_call_names.append(following.value.func.id)
+        previous_call_names.append(_phase_aware_call(previous)[0].func.id)
+        next_call_names.append(_phase_aware_call(following)[0].func.id)
+    assert _phase_aware_call(lowerer.body[invocation_indexes[0] - 1])[1] == (
+        "cleanup.terminal.dequant_hardsigmoid_bridge"
+    )
     assert previous_call_names == [
         "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
         "_run_sinet_terminal_layout_recovery_sequence",
@@ -2254,7 +2274,6 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_csp_attention_nhwc_chains",
     ]
     assert assigned_boundary_targets == [
-        "_terminal_dequant_hardsigmoid_bridge_stats",
         "_post_terminal_singleton_reshape_results",
         "_very_late_sinet_layout_recovery_results",
         "_very_late_residual_affine_prelu_stats",
@@ -2344,15 +2363,16 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, (ast.Assign, ast.Expr))
-            assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
+            _phase_aware_call(boundary)
             if isinstance(boundary, ast.Assign):
                 assert len(boundary.targets) == 1
                 assert isinstance(boundary.targets[0], ast.Name)
                 assigned_boundary_targets.append(boundary.targets[0].id)
-        previous_call_names.append(previous.value.func.id)
-        next_call_names.append(following.value.func.id)
+        previous_call_names.append(_phase_aware_call(previous)[0].func.id)
+        next_call_names.append(_phase_aware_call(following)[0].func.id)
+    assert _phase_aware_call(lowerer.body[invocation_indexes[0] + 1])[1] == (
+        "cleanup.terminal.sinet_hardswish_se"
+    )
     assert previous_call_names == [
         "_run_terminal_clamp_unary_relu_pass_cluster",
         "_run_indexed_shape_convergence_cleanup",
@@ -2363,7 +2383,6 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     ]
     assert assigned_boundary_targets == [
         "_terminal_clamp_unary_relu_results",
-        "_terminal_sinet_hardswish_se_stats",
         "_post_terminal_indexed_shape_convergence_stats",
         "_very_late_sinet_preadd_resize_results",
     ]

@@ -1779,3 +1779,31 @@ Commit and push the characterization before replacing only the two mapping
 destinations. Preserve both SiNet composites and source order, update stale
 structural contracts, run sequential gates, document, commit, and push. Never
 create, update, or reopen a pull request.
+
+## Terminal HardSwish/HardSigmoid implementation
+
+The pair now records as `cleanup.terminal.sinet_hardswish_se` and
+`cleanup.terminal.dequant_hardsigmoid_bridge` in the original unconditional
+positions. Owner calls, arguments, order, both SiNet composite boundaries,
+later production forms, graph behavior, public contracts, dependencies, and
+TensorFlow isolation remain unchanged.
+
+The bounded store now contains 112/128 records, leaving 16 slots. Six stale
+structural assertions now unwrap phase records while preserving exact phase,
+owner, later-form, and composite-name checks. The temporary characterization
+expectation was converted in the existing focused module rather than leaving
+a redundant new test file.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused HardSwish/HardSigmoid/SiNet/store contracts:
+  `23 passed in 1.21s`;
+- synthetic core runtime contracts: `55 passed in 1.07s`;
+- broader result contracts: `190 passed in 9.59s`;
+- lowerer architecture contracts: `258 passed in 20.53s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because focused runtime tests cover both
+owners. Commit and push this unit. Start the next unit with a fresh
+characterize-first audit and never create, update, or reopen a pull request.

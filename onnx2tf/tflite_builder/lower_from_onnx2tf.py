@@ -5012,13 +5012,15 @@ def lower_onnx_to_ir(
     _terminal_sinet_layout_recovery_results = (
         _run_sinet_terminal_layout_recovery_sequence()
     )
-    _terminal_sinet_hardswish_se_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.sinet_hardswish_se",
         _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
             model_ir
-        )
+        ),
     )
-    _terminal_dequant_hardsigmoid_bridge_stats = (
-        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    session.record_phase_result(
+        "cleanup.terminal.dequant_hardsigmoid_bridge",
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir),
     )
     # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
     _terminal_sinet_preadd_resize_results = (
