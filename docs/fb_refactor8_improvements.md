@@ -5447,3 +5447,37 @@ TensorFlow boundary, or result schema changed. The store remains exactly 128
 IDs and 128 owners. No real-model conversion was repeated because this is a
 straight-line ownership move and runtime injection proves all state, result,
 policy, order, and boundary contracts.
+
+## Final boundary/Slice/Concat composite characterization
+
+The refreshed inventory selected four consecutive unconditional final-layout
+results immediately after indexed final shape/activation convergence: boundary
+channel cleanup, terminal Slice/Concat recovery, final Slice/pre-Concat
+cleanup, and terminal Concat bridge cleanup. All results are observation-only
+and unconsumed.
+
+The three layout children use the existing shared `ModelIRPassContext`. The
+Slice/Concat child uses the existing `TerminalSliceConcatRecoveryContext`,
+whose `pass_context` is that exact shared object and whose callback preserves
+the channel Slice/Pad/Mul compatibility route. The earlier terminal
+Slice/Concat invocation remains independent. The cluster ends before the
+optional terminal elementwise-fanout guard.
+
+`tests/test_flatbuffer_direct_final_boundary_slice_concat_orchestration.py`
+fixes the four child owners, exact shared/custom context arguments, source
+adjacency, both outer boundaries, the independent wrapper route, absence of
+consumers, and the empty-graph nested result schema `(3, 14, 2, 6)`. Its strict
+expected failure requires one custom-context owner returning all four raw
+tuples in order and one replacement lowerer result.
+
+Sequential characterization under core-only `uv` completed with
+`2 passed, 1 xfailed in 0.60s` focused and
+`398 passed, 1 xfailed in 19.40s` across the four child families, callback
+composition, terminal layout, affected result contracts, shared-context,
+architecture, and phase-store contracts. The sole expected failure is the
+intentionally absent composite. Ruff and whitespace checks passed.
+
+No production callback, graph mutation, nested schema, context identity, pass
+order, public API, artifact, dependency, TensorFlow boundary, or store entry
+changed. No real-model conversion was run; the phase-result store remains
+exactly 128 IDs and 128 owners.

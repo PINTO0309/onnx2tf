@@ -1090,3 +1090,12 @@ dependency boundaries, and TensorFlow-free direct/`-cotof` behavior remain
 unchanged. Runtime identity tests, 405 affected contracts, and the full
 sequential standard gate set pass; the phase-result store remains exactly 128
 IDs and 128 owners.
+
+The next characterization fixes four adjacent final-layout composites:
+boundary channel cleanup, terminal Slice/Concat recovery, final
+Slice/pre-Concat cleanup, and terminal Concat bridge cleanup. It preserves the
+shared pass context nested in the existing callback-bearing recovery context,
+the independent earlier wrapper route, all raw tuple schemas and order, the
+indexed final-shape predecessor, the optional elementwise-fanout successor,
+and the full 128-ID/128-owner store. Production remains unchanged pending a
+separate context-owner implementation.

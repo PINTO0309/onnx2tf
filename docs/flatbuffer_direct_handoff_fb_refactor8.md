@@ -4721,3 +4721,30 @@ closed cluster whose children are already pass-module-owned, characterize it
 before production changes, and keep every verification under `uv` sequential
 and single-process. Never create, update, or reopen a pull request; use
 appropriately scoped commits and pushes only.
+
+## Final boundary/Slice/Concat composite characterization
+
+The fresh inventory selected four adjacent unconsumed final-layout results:
+boundary channel, terminal Slice/Concat recovery, final Slice/pre-Concat, and
+terminal Concat bridge cleanup. The three layout owners use the exact shared
+pass context. Slice/Concat recovery retains its custom context containing that
+same pass context and the channel Slice/Pad/Mul callback. The indexed final-
+shape result and optional terminal elementwise-fanout guard define the outer
+boundaries; the earlier Slice/Concat wrapper call remains independent.
+
+The strict contract preserves exact owner order, shared/custom context
+identity, callback route, raw tuple schema `(3, 14, 2, 6)`, source adjacency,
+and absence of consumers. Focused validation reports `2 passed, 1 xfailed`;
+affected sequential validation reports `398 passed, 1 xfailed`. The sole
+expected failure requires the new owner. Ruff and whitespace checks passed.
+Production, TensorFlow isolation, and the 128-ID/128-owner store remain
+unchanged; no model conversion was run.
+
+At resume, implement
+`passes/final_boundary_slice_concat_orchestration.py` as a straight-line
+four-stage owner accepting `TerminalSliceConcatRecoveryContext`. Pass
+`context.pass_context` to the three layout owners, pass the full context to
+Slice/Concat recovery, return all four raw tuples unchanged, retain the lowerer
+wrapper and earlier independent caller, and preserve both outer boundaries.
+Run affected and standard gates sequentially. Never create, update, or reopen
+a pull request.
