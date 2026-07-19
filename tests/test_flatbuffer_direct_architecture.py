@@ -710,8 +710,18 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         following = layout_recovery.body[index + 1]
         assert isinstance(following, (ast.Assign, ast.Expr))
         assert isinstance(following.value, ast.Call)
-        assert isinstance(following.value.func, ast.Name)
-        next_call_names.append(following.value.func.id)
+        following_call = following.value
+        if (
+            isinstance(following_call.func, ast.Attribute)
+            and isinstance(following_call.func.value, ast.Name)
+            and following_call.func.value.id == "session"
+            and following_call.func.attr == "record_phase_result"
+            and len(following_call.args) == 2
+            and isinstance(following_call.args[1], ast.Call)
+        ):
+            following_call = following_call.args[1]
+        assert isinstance(following_call.func, ast.Name)
+        next_call_names.append(following_call.func.id)
         next_targets.append(
             following.targets[0].id
             if isinstance(following, ast.Assign)
@@ -727,8 +737,14 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
     assert next_targets == [
         "_layout_pass_set_1_initial_affine_chain_fold_stats",
         "_layout_pass_set_1_post_binary_affine_chain_fold_stats",
-        "_layout_pass_set_1_instancenorm_prepost_stats",
+        None,
     ]
+    assert ast.unparse(layout_recovery.body[invocation_indexes[2] + 1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.instancenorm_prepost', "
+        "_optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
 
 
 def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:

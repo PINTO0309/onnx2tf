@@ -13,6 +13,8 @@ from onnx2tf.tflite_builder.ir import ModelIR
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
+    "_layout_pass_set_1_instancenorm_prepost_stats",
+    "_layout_pass_set_1_squeeze_reshape_identity_stats",
     "_core_cleanup_pseudo_leakyrelu_stats",
     "_core_cleanup_yolo_decode_stats",
     "_core_cleanup_consecutive_mul_stats",
@@ -81,6 +83,8 @@ EXPECTED_RESULT_TARGETS = (
     "_terminal_topology_layout_validation_stats",
 )
 EXPECTED_OWNERS = (
+    "_optimize_transpose_instancenorm_prepost_nhwc_chains",
+    "run_squeeze_reshape_identity_cleanup",
     "_optimize_fuse_pseudo_leakyrelu_chains",
     "_optimize_yolo_decode_mul_square_anchor_chains",
     "run_consecutive_mul_constants_cleanup",
@@ -149,11 +153,13 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 24,
+    *("model_ir",) * 26,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
 EXPECTED_PHASE_IDS = (
+    "cleanup.layout_pass_set_1.instancenorm_prepost",
+    "cleanup.layout_pass_set_1.squeeze_reshape_identity",
     "cleanup.core.pseudo_leakyrelu",
     "cleanup.core.yolo_decode",
     "cleanup.core.consecutive_mul",
@@ -260,7 +266,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_sixty_six_observations_use_the_bounded_session_store() -> None:
+def test_sixty_eight_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -271,7 +277,7 @@ def test_sixty_six_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 66
+    assert len(records) == 68
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

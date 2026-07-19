@@ -1233,3 +1233,25 @@ destinations. Preserve the outer guard and both composite boundaries; do not
 attempt to store the composite return values in the bounded integer mapping
 store. Then update existing contracts and the phase inventory, validate,
 document, commit, and push. Never create, update, or reopen a pull request.
+
+## Layout pass-set 1 cleanup implementation
+
+The adjacent mapping pair now uses stable
+`cleanup.layout_pass_set_1.instancenorm_prepost` and
+`cleanup.layout_pass_set_1.squeeze_reshape_identity` records. The common guard,
+owner expressions, adjacency, and composite attention boundaries remain
+unchanged. No defaults existed. The bounded store now covers 68 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected contracts: `9 passed in 2.63s`;
+- synthetic core runtime contracts: `55 passed in 1.04s`;
+- broader affected contracts: `265 passed in 6.34s`;
+- lowerer architecture contracts: `258 passed in 16.53s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite executes the guarded path. After committing and
+pushing, keep composite return values outside the integer mapping store and
+select the next mapping family with the 128-phase cap in view. Never create,
+update, or reopen a pull request.

@@ -4521,19 +4521,21 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_final_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()
         )
-        _layout_pass_set_1_instancenorm_prepost_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.instancenorm_prepost",
             _optimize_transpose_instancenorm_prepost_nhwc_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
-        _layout_pass_set_1_squeeze_reshape_identity_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.squeeze_reshape_identity",
             run_squeeze_reshape_identity_cleanup(
                 model_ir,
                 include_unary_passthrough=True,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
-            )
+            ),
         )
         _layout_pass_set_1_final_attention_quantized_suffix_results = (
             _run_layout_attention_quantized_recovery_suffix(

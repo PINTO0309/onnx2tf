@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Sixty-six stable phase IDs
+### Sixty-eight stable phase IDs
 
-The lowerer now records 66 bounded observations covering:
+The lowerer now records 68 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -151,6 +151,7 @@ The lowerer now records 66 bounded observations covering:
 - four unconditional terminal cleanup results covering terminal Dequantize/QDQ
   and Conv affine/activation cleanup;
 - guarded layout pass-set 2 Squeeze/Reshape and indexed prune/reconcile cleanup;
+- guarded layout pass-set 1 InstanceNorm pre/post and Squeeze/Reshape cleanup;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -208,7 +209,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 66 phase IDs and owners appear in deterministic source order;
+- all 68 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -243,8 +244,9 @@ Final checkpoint results:
 - direct terminal-cleanup, phase-store, terminal orchestration, and indexed-
   owner architecture-boundary contracts: **68 passed**;
 - direct layout pass-set 2 cleanup and owner contracts: **9 passed**;
+- direct layout pass-set 1 cleanup and owner contracts: **9 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
-  **261 passed**;
+  **265 passed**;
 - lowerer architecture suite: **258 passed**;
 - targeted Ruff checks: **passed**;
 - Python bytecode compilation: **passed**;

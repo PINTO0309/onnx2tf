@@ -137,11 +137,22 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
     assert len(locations) == 3
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == (RESULT_TARGETS[0], None, None)
+    ) == (None, None, None)
 
     first_body, first_index = locations[0]
-    assert _single_target(first_body[first_index - 1]) == (
-        "_layout_pass_set_1_instancenorm_prepost_stats"
+    assert ast.unparse(first_body[first_index - 1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.instancenorm_prepost', "
+        "_optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
+    assert ast.unparse(first_body[first_index]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.squeeze_reshape_identity', "
+        "run_squeeze_reshape_identity_cleanup(model_ir, "
+        "include_unary_passthrough=True, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
     )
     assert _single_target(first_body[first_index + 1]) == (
         "_layout_pass_set_1_final_attention_quantized_suffix_results"
