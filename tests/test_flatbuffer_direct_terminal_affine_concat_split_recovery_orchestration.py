@@ -257,7 +257,7 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
         (
             "_pre_terminal_affine_stats",
             PRE_TERMINAL_INSTANCENORM_RESULT,
-            "pre_terminal_pre_add_tensor_count",
+            "_pre_terminal_pre_add_stats",
         ),
         (
             "_terminal_affine_stats",
@@ -464,7 +464,7 @@ def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
     assert lowerer.body[index + 1].targets[0].id == (
-        "pre_terminal_pre_add_tensor_count"
+        "_pre_terminal_pre_add_stats"
     )
 
 

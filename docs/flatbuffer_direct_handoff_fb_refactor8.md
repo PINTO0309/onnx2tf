@@ -3092,3 +3092,37 @@ compatibility wrapper, update owner-aware neighboring contracts, and run the
 affected gates sequentially. Keep the phase-result store at exactly 128/128.
 Continue with commits and pushes only; never create, update, or reopen a pull
 request.
+
+## Pre-terminal pre-add prune-evidence implementation
+
+The characterized owner is implemented in
+`passes/pre_terminal_pre_add_orchestration.py`. It captures the initial tensor
+count, calls the existing pre-add NHWC cleanup once with the shared
+ModelIR/LayoutState context, and returns the original mapping with the same
+non-negative `pruned_unused_tensors` delta. The lowerer now uses one owner call
+at the same result target and source location; its compatibility wrapper and
+all other call sites remain intact.
+
+The old lowerer-local tensor-count snapshot is removed. The first
+terminal-affine summary remains the predecessor, the channel Slice/Pad/Mul
+cluster remains the successor, and `_pre_terminal_pre_add_stats` remains
+outside the full 128/128 phase-result store. No graph, pass, layout,
+diagnostics, API, artifact, dependency, or TensorFlow behavior changed.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `4 passed in 0.58s`;
+- affected boundary contracts: `186 passed in 2.26s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.98s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.37s`;
+- architecture contracts: `258 passed in 19.63s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 10.20s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. On resume, inspect the next
+adjacent non-store evidence boundary and characterize it before production
+changes. Continue with coherent commits and pushes only; never create, update,
+or reopen a pull request.

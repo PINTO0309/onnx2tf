@@ -43,7 +43,7 @@ PREDECESSOR_TARGETS = (
     "_pre_terminal_affine_slice_pad_concat_stats",
 )
 SUCCESSOR_TARGETS = (
-    "pre_terminal_pre_add_tensor_count",
+    "_pre_terminal_pre_add_stats",
     "_terminal_slice_pad_concat_stats",
 )
 

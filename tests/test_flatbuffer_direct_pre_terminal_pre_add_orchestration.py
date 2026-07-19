@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import pre_terminal_pre_add_orchestration
+from onnx2tf.tflite_builder.passes.pre_terminal_pre_add_orchestration import (
+    PRE_TERMINAL_PRE_ADD_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -44,7 +51,7 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
-def test_pre_terminal_pre_add_prune_evidence_is_fixed() -> None:
+def test_pre_terminal_pre_add_prune_evidence_boundary_is_fixed() -> None:
     lowerer = _lowerer()
     result = next(
         statement
@@ -52,29 +59,18 @@ def test_pre_terminal_pre_add_prune_evidence_is_fixed() -> None:
         if _single_target(statement) == RESULT_TARGET
     )
     index = lowerer.body.index(result)
-    count = lowerer.body[index - 1]
-    assert _single_target(count) == COUNT_TARGET
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
     assert isinstance(result, ast.Assign)
     assert ast.unparse(result.value) == (
-        "{**_optimize_transpose_pre_add_nhwc_chains("
-        "model_ir, layout_state=session.layout_state), "
-        "'pruned_unused_tensors': max(0, "
-        "int(pre_terminal_pre_add_tensor_count - len(model_ir.tensors)))}"
+        "run_pre_terminal_pre_add_cleanup(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 2]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
-    assert sum(
+    assert not any(
         isinstance(node, ast.Name) and node.id == COUNT_TARGET
         for node in ast.walk(lowerer)
-    ) == 2
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pre-terminal pre-add lacks one prune-aware owner",
-)
 def test_pre_terminal_pre_add_uses_one_prune_aware_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -105,3 +101,47 @@ def test_pre_terminal_pre_add_uses_one_prune_aware_owner() -> None:
         isinstance(node, ast.Name) and node.id == COUNT_TARGET
         for node in ast.walk(lowerer)
     )
+
+
+@pytest.mark.parametrize("prune", [False, True])
+def test_pre_terminal_pre_add_owner_preserves_result_and_prune_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("pre_terminal_pre_add")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    observed: list[tuple[object, object]] = []
+
+    def _owner(
+        candidate: ModelIR,
+        *,
+        layout_state: object,
+    ) -> dict[str, int]:
+        observed.append((candidate, layout_state))
+        if prune:
+            del candidate.tensors["probe"]
+        return {"rewritten": 1}
+
+    monkeypatch.setattr(
+        pre_terminal_pre_add_orchestration,
+        PASS_ID.removeprefix("_"),
+        _owner,
+    )
+
+    assert pre_terminal_pre_add_orchestration.run_pre_terminal_pre_add_cleanup(
+        context
+    ) == {
+        "rewritten": 1,
+        "pruned_unused_tensors": int(prune),
+    }
+    assert observed == [(context.model_ir, context.layout_state)]
+    assert PRE_TERMINAL_PRE_ADD_PASS_IDS == (PASS_ID,)

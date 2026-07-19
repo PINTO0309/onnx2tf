@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Sixteen late lowerer clusters now have focused orchestration owners. The first
+Seventeen late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -188,11 +188,19 @@ both late call sites. It snapshots tensor count, invokes the existing raw
 eleven-pass owner, and reuses the strict summary schema. The raw lowerer wrapper
 remains available as a compatibility boundary.
 
+The seventeenth owns the immediately following pre-terminal pre-add cleanup.
+It snapshots tensor count, invokes the existing pre-add NHWC-chain pass once,
+and returns the original mapping extended with the same non-negative
+`pruned_unused_tensors` delta. The lowerer result target and both neighboring
+boundaries remain unchanged, while the lowerer-local snapshot and inline
+mapping construction are removed.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-three unconsumed locals and two
 lowerer scope locals. They also replace fifteen consumed mutation-evidence or
-aggregate-result locals and four tensor-count snapshots with three explicit
-boolean decisions and two reusable summary calls.
+aggregate-result locals and five tensor-count snapshots with three explicit
+boolean decisions, two reusable summary calls, and one prune-aware cleanup
+call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
 
@@ -459,8 +467,12 @@ Final checkpoint results:
   **151 passed**;
 - terminal-affine prune-aware summary and affected contracts:
   **182 passed**;
-- pre-terminal pre-add prune-evidence characterization:
-  **1 passed, 1 intentional strict xfail**;
+- pre-terminal pre-add prune-aware owner and boundary contracts:
+  **4 passed**;
+- affected pre-add, channel Slice/Pad/Mul, terminal-affine, and related
+  contracts: **186 passed**;
+- TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
+  contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
 - indexed, quantized, and legacy NHWC Concat family contracts:
   **285 passed**;
@@ -496,10 +508,8 @@ The broader multi-phase `flatbuffer_direct` refactor remains ongoing. This
 checkpoint supplies more explicit ownership and bounded evidence for that
 work without changing current converter behavior.
 
-The latest checkpoint also fixes the exact pre-terminal pre-add
-prune-evidence boundary in a characterize-first test. It deliberately makes no
-production change: the existing pass call, tensor-count delta, source order,
-ModelIR/LayoutState identity, and unconsumed result remain intact. The strict
-xfail documents the next minimal owner extraction and prevents that future
-change from absorbing neighboring passes or altering the already-full 128/128
-phase-result store.
+The latest checkpoint implements the characterized pre-terminal pre-add owner.
+The existing pass call, tensor-count delta, source order, ModelIR/LayoutState
+identity, and unconsumed result remain intact; only their orchestration moves
+behind a focused pass-module boundary. Runtime tests cover both stable and
+prune-only paths, and the already-full 128/128 phase-result store is unchanged.

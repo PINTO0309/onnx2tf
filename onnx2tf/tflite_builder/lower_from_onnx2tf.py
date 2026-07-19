@@ -305,6 +305,9 @@ from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestr
 from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestration import (
     run_pre_terminal_instancenorm_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_pre_add_orchestration import (
+    run_pre_terminal_pre_add_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5325,17 +5328,9 @@ def lower_onnx_to_ir(
             terminal_affine_concat_split_recovery_context,
         )
     )
-    pre_terminal_pre_add_tensor_count = len(model_ir.tensors)
-    _pre_terminal_pre_add_stats = {
-        **_optimize_transpose_pre_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        ),
-        "pruned_unused_tensors": max(
-            0,
-            int(pre_terminal_pre_add_tensor_count - len(model_ir.tensors)),
-        ),
-    }
+    _pre_terminal_pre_add_stats = run_pre_terminal_pre_add_cleanup(
+        shared_model_ir_pass_context,
+    )
     channel_slice_pad_mul_results = _run_channel_slice_pad_mul_layout_pass_cluster()
     _pre_terminal_channel_slice_pad_mul_stats = (
         summarize_channel_slice_pad_mul_mutations(channel_slice_pad_mul_results)

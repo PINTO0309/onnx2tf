@@ -1419,11 +1419,14 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
     assert previous.targets[0].id == "_pre_terminal_pre_add_stats"
-    assert isinstance(previous.value, ast.Dict)
-    pre_add_owner = previous.value.values[0]
+    pre_add_owner = previous.value
     assert isinstance(pre_add_owner, ast.Call)
     assert isinstance(pre_add_owner.func, ast.Name)
-    assert pre_add_owner.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert pre_add_owner.func.id == "run_pre_terminal_pre_add_cleanup"
+    assert [ast.unparse(argument) for argument in pre_add_owner.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert pre_add_owner.keywords == []
     following = lowerer.body[slice_index]
     assert isinstance(following, ast.Assign)
     assert following.targets[0].id == "_pre_terminal_affine_slice_pad_concat_stats"

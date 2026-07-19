@@ -3499,3 +3499,45 @@ Validation completed sequentially under core-only `uv`:
   passed.
 
 The sole expected failure is the intentionally absent prune-aware owner.
+
+## Pre-terminal pre-add prune-evidence implementation
+
+`run_pre_terminal_pre_add_cleanup(context)` now owns the characterized
+tensor-count snapshot, the single pre-add NHWC-chain cleanup call, and the
+non-negative `pruned_unused_tensors` delta. It imports the existing pass owner
+directly, forwards the exact conversion-local ModelIR and LayoutState objects,
+and returns the original pass mapping extended with the same prune evidence.
+
+The lowerer retains `_pre_terminal_pre_add_stats` at its original location but
+now assigns it from the focused owner. The lowerer-local tensor-count variable
+and duplicate inline mapping construction are gone. The preceding first
+terminal-affine summary and following channel Slice/Pad/Mul cluster remain
+adjacent. The existing lowerer compatibility wrapper remains defined for its
+other callers, and the direct pass's total production call count is unchanged
+through the declared orchestration pass-ID sequence.
+
+No pass execution, scan, graph mutation, prune behavior, result key, source
+order, layout identity, diagnostics, public API, artifact, dependency, or
+TensorFlow boundary changed. The phase-result store remains exactly 128/128;
+this result stays outside it as before.
+
+Final sequential validation under core-only `uv`:
+
+- focused stable/pruned owner and boundary contracts: `4 passed in 0.58s`;
+- affected pre-add, channel Slice/Pad/Mul, StridedSlice/Pad/Concat,
+  terminal-affine, InstanceNorm, core, and store contracts:
+  `186 passed in 2.26s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.98s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.37s`;
+- full lowerer architecture contracts: `258 passed in 19.63s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 10.20s`;
+- targeted Ruff, bytecode compilation, 128/128 capacity audit, and whitespace
+  checks: passed.
+
+No real-model conversion was repeated because this is a one-call orchestration
+extraction whose focused runtime matrix proves both stable and prune-only
+paths, while the broader structural gates preserve the exact call count and
+neighboring boundaries.
