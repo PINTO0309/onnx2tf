@@ -4617,3 +4617,23 @@ these four locals. Select the next smallest source-adjacent, semantically
 closed, fully pass-module-owned non-store cluster and characterize it before
 production changes. Keep all validation sequential and never create, update,
 or reopen a pull request.
+
+## Pre-terminal cleanup composite characterization
+
+The fresh unconsumed-result inventory selected five adjacent unconditional
+pre-terminal owners: InstanceNorm layout, affine/Concat/Split summary, pre-Add,
+channel Slice/Pad/Mul summary, and affine tail. All receive aliases of the same
+shared context and return unconsumed mappings or nested tuples.
+
+The strict contract preserves every child schema and argument, the preceding
+optional late-binary reconciliation guard, and the following separate terminal
+affine rerun. Focused validation reports `1 passed, 1 xfailed`; affected
+sequential validation reports `338 passed, 1 xfailed`. Production, TensorFlow
+isolation, and the 128-ID/128-owner store are unchanged; no model conversion
+was run.
+
+At resume, implement `passes/pre_terminal_cleanup_orchestration.py` as a
+straight-line five-stage owner. Pass the exact shared context to every child,
+return all five raw objects unchanged, retain child owners and independent
+callers, and preserve both outer boundaries. Run affected and standard gates
+sequentially. Never create, update, or reopen a pull request.

@@ -5283,3 +5283,35 @@ dependency, TensorFlow boundary, or result schema changed. The store remains
 exactly 128 IDs and 128 owners. No real-model conversion was repeated because
 the move is straight-line and the dedicated runtime test proves all arguments,
 state identities, raw results, and boundaries.
+
+## Pre-terminal cleanup composite characterization
+
+The post-removal AST inventory selected the five consecutive unconditional
+results that form the existing pre-terminal cleanup stage. They run
+InstanceNorm layout cleanup, affine/Concat/Split recovery summary, pre-Add
+cleanup, channel Slice/Pad/Mul summary, and affine-tail cleanup. Each current
+context variable is an identity alias of `shared_model_ir_pass_context`; all
+five results are unconsumed and every child is pass-module-owned.
+
+The cluster begins immediately after the optional late-binary reconciliation
+guard and ends immediately before the intentionally repeated terminal affine
+summary. This excludes that terminal rerun because its comment and position
+define a separate post-pre-terminal boundary.
+
+`tests/test_flatbuffer_direct_pre_terminal_cleanup_orchestration.py` fixes the
+five child owners and current context arguments, exact adjacency, both outer
+boundaries, absence of consumers, and empty-graph nested result schemas. Its
+strict expected failure requires one shared-context owner returning all five
+raw result objects as an ordered tuple and one replacement lowerer result.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.55s` focused and
+`338 passed, 1 xfailed in 17.67s` across the five child families, optional
+late-binary recovery, shared-context, architecture, and phase-store contracts.
+The sole expected failure is the intentionally absent composite. Ruff and
+whitespace checks passed.
+
+No production callback, nested schema, context identity, guard, graph
+mutation, pass order, API, artifact, dependency, TensorFlow boundary, or store
+entry changed. No real-model conversion was run; the phase-result store
+remains exactly 128 IDs and 128 owners.

@@ -1048,3 +1048,11 @@ all compatibility, fallback, and independent routes remain available. The
 progress predecessor, dynamic-adapter successor, TensorFlow isolation, public
 behavior, and full 128-ID/128-owner store are unchanged. Focused, affected,
 and standard sequential gates all pass.
+
+The next characterization fixes the existing five-stage pre-terminal cleanup:
+InstanceNorm layout, affine/Concat/Split recovery, pre-Add, channel
+Slice/Pad/Mul, and affine-tail cleanup. It preserves nested raw schemas, exact
+shared-context identity, source order, the optional late-binary guard
+predecessor, the separate terminal-affine successor, and the full
+128-ID/128-owner store. Production remains unchanged pending a separate
+context-owner implementation.
