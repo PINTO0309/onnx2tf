@@ -240,13 +240,17 @@ def test_late_binary_recovery_connects_to_terminal_evidence_boundary() -> None:
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_post_bias_stats"
+        "_pre_terminal_instancenorm_layout_results"
     )
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == (
-        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+        "run_pre_terminal_instancenorm_layout_cleanup"
     )
+    assert [ast.unparse(argument) for argument in following.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert following.value.keywords == []
 
 
 def test_late_binary_recovery_retains_complete_shape_result() -> None:

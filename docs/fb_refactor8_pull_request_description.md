@@ -862,3 +862,8 @@ while preserving the option guard, shared ModelIR/LayoutState identity,
 SE-FC-only diagnostics, raw order and schemas, both topology boundaries, every
 other caller, compatibility symbols, the signature successor, and the full
 128/128 store.
+
+An inherited late-binary structural test now follows the already-established
+pre-terminal InstanceNorm orchestration owner instead of the removed direct
+post-bias result target. This is a test-only contract repair with no production
+change.

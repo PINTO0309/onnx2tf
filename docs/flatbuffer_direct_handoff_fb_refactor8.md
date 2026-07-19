@@ -4112,3 +4112,18 @@ this checkpoint. On resume, audit the next small semantically closed
 unconsumed-result cluster before production changes. Keep validation
 sequential and continue with commits and pushes only; never create, update, or
 reopen a pull request.
+
+## Inherited late-binary successor contract repair
+
+The next-cluster affected gate found one stale test-only boundary after the
+late-binary reconciliation guard. Production already uses
+`_pre_terminal_instancenorm_layout_results` with
+`run_pre_terminal_instancenorm_layout_cleanup(shared_model_ir_pass_context)`,
+while the old assertion still named the removed direct post-bias result and
+wrapper.
+
+The test now follows the established owner and exact argument policy. Focused
+validation is `5 passed in 0.55s`; no production behavior or 128/128 store
+entry changed. Commit and push this repair separately before committing the
+absolute-final affine/InstanceNorm characterization. Continue with commits
+and pushes only; never create, update, or reopen a pull request.

@@ -4644,3 +4644,18 @@ No real-model corpus conversion was repeated because the runtime contract
 proves exact context identity, argument policy, callback order, and raw result
 schema, while the affected structural gates preserve both neighboring
 topology boundaries and all independent callers.
+
+## Inherited late-binary successor contract repair
+
+The broader next-cluster characterization gate exposed one stale test-only
+successor assertion. Production already routes the first post-late-binary
+boundary through `_pre_terminal_instancenorm_layout_results` and
+`run_pre_terminal_instancenorm_layout_cleanup(shared_model_ir_pass_context)`,
+but the older test still expected the removed direct InstanceNorm post-bias
+target and raw wrapper call.
+
+The assertion now follows the existing production owner, including its exact
+shared-context argument and empty keyword policy. The focused file passes
+(`5 passed in 0.55s`). No production source, graph behavior, pass order,
+public API, artifact, dependency, TensorFlow boundary, or 128/128 phase-result
+store changed.
