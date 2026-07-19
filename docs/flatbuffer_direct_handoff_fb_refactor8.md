@@ -1012,3 +1012,26 @@ only remaining unconsumed static-shape observation. Characterize its
 unconditional zero default, conditional invocation, fallback owner argument,
 and successor before changing its destination. Never create, update, or reopen
 a pull request.
+
+## Post-split fallback reconciliation characterization
+
+The last unconsumed static-shape result has been characterized. It follows the
+very-late unsupported Split-to-Slice fallback, starts with an unconsumed
+all-zero two-counter default, and invokes the complete static-shape reconciler
+only when at least one Split was replaced. The result has no consumer.
+
+The contract fixes the fallback owner and layout-state argument, zero schema,
+positive guard, `model_ir` and `include_mutation_count=True`, absence of loads,
+and following unbound-input safety check. Its strict expected failure requires
+`shape_reconciliation.primary.post_split_fallback` with invoked-only semantics.
+
+Validation completed sequentially under core-only `uv`: characterization,
+existing orchestration, and Split fallback unit contracts are
+`6 passed, 1 xfailed in 0.64s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass. No production source changed.
+
+Commit and push this characterization before removing only the unconsumed zero
+default and replacing only the guarded result destination. Preserve the Split
+owner, positive guard, and safety-fallback successor. Then update the existing
+orchestration and bounded-store inventories, validate, document, commit, and
+push. Never create, update, or reopen a pull request.

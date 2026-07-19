@@ -905,6 +905,31 @@ change at a runtime-characterized boundary. The post-split fallback result is
 now the sole remaining unconsumed static-shape observation and must be
 characterized separately before migration.
 
+## Post-split fallback reconciliation characterization
+
+The final unconsumed static-shape result follows the very-late unsupported
+Split-to-Slice fallback. It has an unconditional all-zero two-counter default,
+then invokes `_reconcile_static_tensor_shapes(model_ir,
+include_mutation_count=True)` only when the fallback reports at least one
+replacement. Neither the default nor the invoked result is consumed.
+
+The dedicated contract fixes the Split owner and layout-state argument, exact
+zero schema, positive replacement guard, reconciliation owner arguments,
+absence of loads, and the immediate unbound-input safety-fallback successor. A
+strict expected failure requires a stable
+`shape_reconciliation.primary.post_split_fallback` record with invoked-phase-
+only semantics. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- characterization, existing orchestration boundary, and Split fallback unit
+  contracts: `6 passed, 1 xfailed in 0.64s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented result-destination
+migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
