@@ -318,6 +318,30 @@ def _terminal_stabilization_calls(function_name: str) -> list[ast.Call]:
     ]
 
 
+def _absolute_final_cleanup_calls(function_name: str) -> list[ast.Call]:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "absolute_final_cleanup_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_absolute_final_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
 def _no_layout_final_cleanup_call_count(function_name: str) -> int:
     owner_path = (
         REPO_ROOT
@@ -6543,48 +6567,34 @@ def test_lowerer_absolute_final_normalization_attention_rank1_owner_is_explicit(
         for node in lowerer.body
     )
 
+    top_calls = _absolute_final_cleanup_calls(owner_name)
+    assert len(top_calls) == 1
+    assert ast.unparse(top_calls[0]) == f"{owner_name}(context)"
+
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_absolute_final_normalization_attention_rank1_results"
+        and statement.targets[0].id == "_absolute_final_cleanup_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == owner_name
+        and statement.value.func.id == "run_absolute_final_cleanup"
     )
-    previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_absolute_final_affine_instancenorm_results"
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert ast.unparse(invocation.value) == (
+        "run_absolute_final_cleanup(shared_model_ir_pass_context)"
     )
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "run_absolute_final_affine_instancenorm_cleanup"
-    )
-    assert [
-        ast.unparse(argument) for argument in previous_boundary.value.args
-    ] == ["shared_model_ir_pass_context"]
-    assert previous_boundary.value.keywords == []
-    signature_boundary = lowerer.body[invocation_index - 2]
-    assert isinstance(signature_boundary, ast.Assign)
-    assert len(signature_boundary.targets) == 1
-    assert isinstance(signature_boundary.targets[0], ast.Name)
-    assert signature_boundary.targets[0].id == (
-        "_absolute_final_boundary_signature_results"
-    )
-    assert isinstance(signature_boundary.value, ast.Call)
-    assert isinstance(signature_boundary.value.func, ast.Name)
-    assert (
-        signature_boundary.value.func.id
-        == "run_boundary_shape_signature_cleanup"
-    )
+    assert len(
+        _absolute_final_cleanup_calls(
+            "run_absolute_final_affine_instancenorm_cleanup"
+        )
+    ) == 1
+    assert len(
+        _absolute_final_cleanup_calls("run_boundary_shape_signature_cleanup")
+    ) == 1
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Expr)
     assert ast.unparse(next_boundary) == (

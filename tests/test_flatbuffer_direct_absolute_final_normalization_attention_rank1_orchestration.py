@@ -26,6 +26,15 @@ OWNER_PATH = (
 )
 SUMMARY_OWNER = "run_absolute_final_normalization_attention_rank1_cleanup"
 SUMMARY_TARGET = "_absolute_final_normalization_attention_rank1_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_cleanup_orchestration.py"
+)
+TOP_OWNER = "run_absolute_final_cleanup"
+TOP_TARGET = "_absolute_final_cleanup_results"
 OLD_TARGETS = (
     "_absolute_final_normalization_attention_results",
     "_absolute_final_dynamic_rank1_stats",
@@ -37,7 +46,6 @@ NORMALIZATION_OWNER = "run_absolute_final_normalization_attention"
 DYNAMIC_WRAPPER = "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
 DYNAMIC_OWNER = "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
 CONTEXT_ALIAS = "absolute_final_normalization_attention_context"
-PREDECESSOR_TARGET = "_absolute_final_affine_instancenorm_results"
 SUCCESSOR_PHASE = "topology_layout.primary.absolute_final"
 
 
@@ -86,18 +94,32 @@ def test_absolute_final_normalization_attention_rank1_summary_boundaries_are_fix
     None
 ):
     lowerer = _lowerer()
-    summary_index = _target_index(lowerer, SUMMARY_TARGET)
-    assert _single_target(lowerer.body[summary_index - 1]) == PREDECESSOR_TARGET
+    summary_index = _target_index(lowerer, TOP_TARGET)
     _assert_topology_refresh(lowerer.body[summary_index + 1])
 
     summary = lowerer.body[summary_index]
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(shared_model_ir_pass_context)"
+        f"{TOP_OWNER}(shared_model_ir_pass_context)"
     )
+    top_calls = [
+        node
+        for node in ast.walk(_functions(TOP_OWNER_PATH)[TOP_OWNER])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+    assert len(top_calls) == 1
+    assert ast.unparse(top_calls[0]) == f"{SUMMARY_OWNER}(context)"
     assert not any(
         isinstance(node, ast.Name)
-        and node.id in {*OLD_TARGETS, CONTEXT_ALIAS, NORMALIZATION_WRAPPER}
+        and node.id
+        in {
+            *OLD_TARGETS,
+            SUMMARY_TARGET,
+            CONTEXT_ALIAS,
+            NORMALIZATION_WRAPPER,
+        }
         for node in ast.walk(lowerer)
     )
 
@@ -128,18 +150,26 @@ def test_absolute_final_normalization_attention_rank1_uses_one_context_owner() -
         for keyword in calls[1].keywords
     } == {"layout_state": "context.layout_state"}
 
+    top_calls = [
+        node
+        for node in ast.walk(_functions(TOP_OWNER_PATH)[TOP_OWNER])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+    assert len(top_calls) == 1
+    assert ast.unparse(top_calls[0]) == f"{SUMMARY_OWNER}(context)"
+
     lowerer = _lowerer()
-    summary_index = _target_index(lowerer, SUMMARY_TARGET)
-    summary = lowerer.body[summary_index]
-    assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(shared_model_ir_pass_context)"
-    )
-    assert _single_target(lowerer.body[summary_index - 1]) == PREDECESSOR_TARGET
-    _assert_topology_refresh(lowerer.body[summary_index + 1])
     assert not any(
         isinstance(node, ast.Name)
-        and node.id in {*OLD_TARGETS, CONTEXT_ALIAS, NORMALIZATION_WRAPPER}
+        and node.id
+        in {
+            *OLD_TARGETS,
+            SUMMARY_TARGET,
+            CONTEXT_ALIAS,
+            NORMALIZATION_WRAPPER,
+        }
         for node in ast.walk(lowerer)
     )
     assert DYNAMIC_WRAPPER in _functions(LOWERER_PATH)

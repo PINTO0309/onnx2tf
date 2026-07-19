@@ -4407,3 +4407,31 @@ straight-line context owner by composing the three existing pass-module
 owners, replace only the three lowerer targets, add runtime identity/order/
 nested-tuple coverage, and run affected plus standard gates sequentially.
 Never create, update, or reopen a pull request.
+
+## Absolute-final cleanup composite implementation
+
+`passes/absolute_final_cleanup_orchestration.py` now owns the ordered outer
+triple. Boundary-signature cleanup receives `context.model_ir`; the existing
+affine/InstanceNorm and normalization/attention/rank-one composites receive the
+same context object. All three nested result objects are returned unchanged.
+
+The lowerer retains one `_absolute_final_cleanup_results` target and removes
+its three direct sub-owner imports. The no-layout predecessor and absolute-
+final topology/layout refresh successor remain adjacent, all sub-owner and raw
+wrapper contracts remain available, and the phase-result store stays 128/128.
+
+Sequential validation under core-only `uv` completed with:
+
+- focused top-level owner contracts: `3 passed in 0.55s`;
+- affected contracts: `389 passed in 18.97s`;
+- terminal-layout/pass-efficiency: `92 passed in 1.75s`;
+- core runtime: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.21s`;
+- phase-store capacity: `2 passed in 0.53s`;
+- TensorFlow isolation/default direct/`-cotof`: `11 passed in 9.57s`.
+
+On resume, rerun the read-only unconsumed-result inventory after this removal
+and choose the next small source-adjacent non-store cluster. Do not combine a
+guarded decision with an unconditional cleanup merely to reduce locals. Keep
+validation sequential, the store at 128/128, and never create, update, or
+reopen a pull request.

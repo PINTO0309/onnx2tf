@@ -4972,3 +4972,42 @@ This checkpoint changes no production source, callback, context identity,
 graph mutation, pass order, nested result schema, topology/layout refresh,
 store entry, API, artifact, dependency, or TensorFlow boundary. No real-model
 conversion was repeated.
+
+## Absolute-final cleanup composite implementation
+
+`passes/absolute_final_cleanup_orchestration.py` now composes the three
+characterized absolute-final owners through one shared `ModelIRPassContext`.
+It runs boundary-signature cleanup with `context.model_ir`, then passes the
+same context object to affine/InstanceNorm cleanup and normalization/attention/
+rank-one cleanup. Their nested return values are neither flattened nor copied;
+the owner returns the three original objects as an ordered outer tuple.
+
+The lowerer now retains one `_absolute_final_cleanup_results` target instead
+of the three former results. It no longer imports the three sub-owners solely
+for this site. The guarded no-layout predecessor, every sub-owner and raw
+compatibility wrapper, the absolute-final topology/layout refresh, and all
+later repair boundaries remain unchanged. The composite stays outside the full
+phase-result store, which remains exactly 128 IDs and 128 owners.
+
+Runtime callback injection proves shared context identity, exact three-stage
+order, nested tuple shape, and object identity for each result. Owner-aware
+structural tests continue to validate every sub-owner's internal order and
+schema while accounting for the new top-level caller.
+
+Final sequential validation under core-only `uv`:
+
+- focused top-level owner runtime and structure contracts:
+  `3 passed in 0.55s`;
+- affected boundary-signature, affine/InstanceNorm,
+  normalization/attention/rank-one, terminal-layout, shared-context,
+  phase-store, and architecture contracts: `389 passed in 18.97s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.75s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.21s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.57s`.
+
+No real-model conversion was repeated because the production change only
+moves a straight-line sequence behind a context owner, and runtime injection
+proves the complete order, argument identity, and nested results.

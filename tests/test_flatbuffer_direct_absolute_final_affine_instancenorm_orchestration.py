@@ -26,6 +26,15 @@ OWNER_PATH = (
 )
 SUMMARY_OWNER = "run_absolute_final_affine_instancenorm_cleanup"
 SUMMARY_TARGET = "_absolute_final_affine_instancenorm_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_cleanup_orchestration.py"
+)
+TOP_OWNER = "run_absolute_final_cleanup"
+TOP_TARGET = "_absolute_final_cleanup_results"
 OLD_TARGETS = (
     "_absolute_final_affine_post_add_stats",
     "_absolute_final_instancenorm_post_bias_stats",
@@ -38,8 +47,8 @@ INSTANCENORM_WRAPPER = (
 INSTANCENORM_OWNER = (
     "optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
 )
-PREDECESSOR_TARGET = "_absolute_final_boundary_signature_results"
-SUCCESSOR_TARGET = "_absolute_final_normalization_attention_rank1_results"
+PREDECESSOR_OWNER = "run_boundary_shape_signature_cleanup"
+SUCCESSOR_OWNER = "run_absolute_final_normalization_attention_rank1_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -74,17 +83,39 @@ def test_absolute_final_affine_instancenorm_summary_and_boundaries_are_fixed() -
     None
 ):
     lowerer = _lowerer()
-    summary_index = _target_index(lowerer, SUMMARY_TARGET)
-    assert _single_target(lowerer.body[summary_index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[summary_index + 1]) == SUCCESSOR_TARGET
+    summary_index = _target_index(lowerer, TOP_TARGET)
 
     summary = lowerer.body[summary_index]
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(shared_model_ir_pass_context)"
+        f"{TOP_OWNER}(shared_model_ir_pass_context)"
     )
+    successor = lowerer.body[summary_index + 1]
+    assert isinstance(successor, ast.Expr)
+    assert ast.unparse(successor) == (
+        "session.record_phase_result('topology_layout.primary.absolute_final', "
+        "run_topology_layout_refresh(model_ir))"
+    )
+
+    top_owner = _functions(TOP_OWNER_PATH)[TOP_OWNER]
+    calls = [
+        node
+        for node in ast.walk(top_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {PREDECESSOR_OWNER, SUMMARY_OWNER, SUCCESSOR_OWNER}
+    ]
+    calls.sort(key=lambda node: (node.lineno, node.col_offset))
+    assert [call.func.id for call in calls] == [
+        PREDECESSOR_OWNER,
+        SUMMARY_OWNER,
+        SUCCESSOR_OWNER,
+    ]
+    assert ast.unparse(calls[1]) == f"{SUMMARY_OWNER}(context)"
     assert not any(
-        isinstance(node, ast.Name) and node.id in OLD_TARGETS
+        isinstance(node, ast.Name)
+        and node.id in {*OLD_TARGETS, SUMMARY_TARGET}
         for node in ast.walk(lowerer)
     )
 
@@ -114,17 +145,20 @@ def test_absolute_final_affine_instancenorm_uses_one_ordered_context_owner() -> 
             for keyword in call.keywords
         } == {"layout_state": "context.layout_state"}
 
+    top_calls = [
+        node
+        for node in ast.walk(_functions(TOP_OWNER_PATH)[TOP_OWNER])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+    assert len(top_calls) == 1
+    assert ast.unparse(top_calls[0]) == f"{SUMMARY_OWNER}(context)"
+
     lowerer = _lowerer()
-    summary_index = _target_index(lowerer, SUMMARY_TARGET)
-    summary = lowerer.body[summary_index]
-    assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(shared_model_ir_pass_context)"
-    )
-    assert _single_target(lowerer.body[summary_index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[summary_index + 1]) == SUCCESSOR_TARGET
     assert not any(
-        isinstance(node, ast.Name) and node.id in OLD_TARGETS
+        isinstance(node, ast.Name)
+        and node.id in {*OLD_TARGETS, SUMMARY_TARGET}
         for node in ast.walk(lowerer)
     )
 

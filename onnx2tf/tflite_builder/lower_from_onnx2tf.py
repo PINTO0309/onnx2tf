@@ -136,7 +136,6 @@ from onnx2tf.tflite_builder.passes.squeeze_shape_sanitization import (
 )
 from onnx2tf.tflite_builder.passes.static_shape_signature_sanitization import (
     realign_dynamic_boundary_shape_signature_map as _realign_dynamic_boundary_shape_signature_map_pass,
-    run_boundary_shape_signature_cleanup,
     sanitize_static_shape_signature_consistency as _sanitize_static_shape_signature_consistency_pass,
 )
 from onnx2tf.tflite_builder.passes.expand_squeeze_reshape import (
@@ -238,11 +237,8 @@ from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration imp
     run_late_hard_activation_layout,
     run_late_hard_activation_layout_summary,
 )
-from onnx2tf.tflite_builder.passes.absolute_final_affine_instancenorm_orchestration import (
-    run_absolute_final_affine_instancenorm_cleanup,
-)
-from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
-    run_absolute_final_normalization_attention_rank1_cleanup,
+from onnx2tf.tflite_builder.passes.absolute_final_cleanup_orchestration import (
+    run_absolute_final_cleanup,
 )
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     run_qkv_attention,
@@ -5707,20 +5703,8 @@ def lower_onnx_to_ir(
     # Final boundary-signature restore:
     # late static-shape reconciliations may overwrite graph-boundary dynamic
     # contracts (e.g. NMS selected_indices leading axis).
-    _absolute_final_boundary_signature_results = (
-        run_boundary_shape_signature_cleanup(model_ir)
-    )
-    # Absolute-final guard: topological sort + signature sanitize can expose
-    # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.
-    _absolute_final_affine_instancenorm_results = (
-        run_absolute_final_affine_instancenorm_cleanup(
-            shared_model_ir_pass_context
-        )
-    )
-    _absolute_final_normalization_attention_rank1_results = (
-        run_absolute_final_normalization_attention_rank1_cleanup(
-            shared_model_ir_pass_context
-        )
+    _absolute_final_cleanup_results = run_absolute_final_cleanup(
+        shared_model_ir_pass_context
     )
     session.record_phase_result(
         "topology_layout.primary.absolute_final",
