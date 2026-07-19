@@ -6274,3 +6274,42 @@ lowerer assignment inventory decreases from 58 to 57. No real-model conversion
 was repeated because this is a straight-line ownership extraction with exact
 state, order, schema, result-identity, wrapper, route-count, and boundary
 coverage.
+
+## Late swish/very-late layout-tail composite characterization
+
+The refreshed inventory contains 57 unconsumed underscore-prefixed lowerer
+assignments. The next selected pair is late swish transpose-passthrough cleanup
+followed immediately by the existing four-stage very-late layout-tail
+composite. The swish compatibility wrapper receives `model_ir` plus the shared
+LayoutState; the tail receives the exact shared `ModelIRPassContext` and the
+normalized `include_layout_transpose` option. There is no guard, phase record,
+callback, progress update, or result consumer between them.
+
+The proposed pass-module owner must call the public swish owner with
+`context.model_ir` and `context.layout_state`, then pass the exact same context
+and layout option to the tail. It must preserve the swish mapping and complete
+nested tail tuple unchanged and in source order. The preceding late dequant
+hard-sigmoid/unary composite remains the fixed predecessor. The recorded
+`shape_reconciliation.primary.very_late_broadcast` result remains the fixed
+successor outside the owner. The lowerer swish wrapper remains a compatibility
+route.
+
+`tests/test_flatbuffer_direct_late_swish_layout_tail_orchestration.py` fixes
+both layout-policy variants, exact state identity, complete schemas for the
+swish mapping and every nested tail result, observation-only results, and both
+outer boundaries. Its sole strict expected failure requires one new
+shared-context owner replacing only the two current lowerer locals.
+
+The affected inventory exposed two stale terminal-affine structural
+expectations that still named a pre-composite QKV result. They now resolve the
+unchanged boundary through the current terminal QKV/activation/layout/shape
+owner; production and route counts did not change.
+
+Sequential characterization under core-only `uv` completed with
+`2 passed, 1 xfailed in 0.59s` focused and
+`476 passed, 1 xfailed in 20.45s` across swish, Conv1D/decoder,
+Pad/InstanceNorm, singleton Reshape, broadcast, reconciliation, late dequant,
+shared-context, pass-efficiency, terminal-validation, architecture, result,
+and phase-store contracts. The sole xfail is the intentionally absent owner.
+Production, public behavior, dependencies, TensorFlow isolation, and the
+exactly 128-ID/128-owner store remain unchanged.

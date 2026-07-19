@@ -5447,3 +5447,36 @@ closed cluster whose children already have pass-module owners before changing
 production. Keep all tests sequential and single-process under `uv`, and
 commit/push completed checkpoints only. Never create, update, or reopen a pull
 request.
+
+## Late swish/very-late layout-tail characterization checkpoint
+
+The current inventory contains 57 unconsumed underscore assignment targets.
+The next characterized pair is late swish transpose-passthrough cleanup
+followed by the existing four-stage very-late layout-tail composite. The
+current calls share the same ModelIR/LayoutState; the tail additionally
+receives the exact shared `ModelIRPassContext` and unchanged layout-Transpose
+option.
+
+The contract requires one two-child owner, fixed order, exact shared state and
+context, unchanged option forwarding, and identity preservation for the swish
+mapping and complete nested tail tuple. The preceding late dequant
+hard-sigmoid/unary composite and following phase-recorded very-late broadcast
+reconciliation remain fixed outer boundaries. The existing swish lowerer
+wrapper remains a compatibility route.
+
+Focused characterization reports `2 passed, 1 xfailed`; complete affected
+characterization reports `476 passed, 1 xfailed`. The sole xfail is the
+intentionally absent `passes/late_swish_layout_tail_orchestration.py`. Two
+stale terminal-affine AST expectations were corrected to resolve the already
+implemented terminal QKV/activation/layout/shape boundary. Production, graph
+mutations, wrappers, independent routes, and the 128-ID/128-owner phase store
+are unchanged.
+
+At resume, implement `run_late_swish_layout_tail_cleanup(context, *,
+include_layout_transpose)` as a straight-line two-child owner. Call the public
+swish pass with the context model and LayoutState, pass the same context and
+option to the tail, return both raw results unchanged, replace only the two
+characterized locals, and preserve both outer boundaries and the swish
+wrapper. Add runtime order/state/context/option/result-identity injection, run
+affected and standard gates sequentially, then commit and push only. Never
+create, update, or reopen a pull request.

@@ -1365,3 +1365,15 @@ phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. Public
 behavior, graph rewrites, artifacts, dependencies, TensorFlow isolation, and
 the exactly 128-ID/128-owner phase-result store are unchanged; the unconsumed
 lowerer assignment inventory decreases from 58 to 57.
+
+The next characterization selects late swish transpose-passthrough cleanup
+followed by the existing four-stage very-late layout-tail composite. The new
+owner must pass the context model and LayoutState to the public swish owner,
+then forward the exact shared context and unchanged layout-Transpose option to
+the tail. It must preserve the swish mapping and complete nested tail result.
+The preceding late dequant hard-sigmoid/unary composite and following
+phase-recorded very-late broadcast reconciliation remain outside the owner,
+while the swish lowerer wrapper remains a compatibility route. Production is
+unchanged pending one straight-line owner. Focused and affected sequential
+validation report `2 passed, 1 xfailed` and `476 passed, 1 xfailed`; the sole
+expected failure is the intentionally absent owner.
