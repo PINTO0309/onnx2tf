@@ -777,6 +777,32 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and existing synthetic runtime contracts
 exercise all three owners.
 
+## Post-cleanup attention result characterization
+
+The next unit is limited to the two consecutive top-level observations after
+the post-cleanup SiNet pre-Add/Resize recovery composite: CSP attention NHWC
+cleanup and SA/PA MirrorPad NHWC propagation. Each owner returns exactly one
+bounded integer counter, receives the existing conversion-session layout
+state, and performs its existing positive-rewrite cleanup internally. Neither
+lowerer-local result is loaded.
+
+The CSP attention result contract now strictly expects the two exact
+`cleanup.post_cleanup.*` records, their owner expressions and adjacency, the
+preceding SiNet composite, the following post-SiNet BatchMatMul affine-input
+result, and removal of both unconsumed local targets. No production source
+changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `14 passed in 0.88s`. The characterization must retain those passes plus
+one intentional strict expected failure until implementation. Targeted Ruff,
+bytecode compilation, and whitespace validation are required before the
+characterization checkpoint is committed and pushed.
+
+After that checkpoint, replace only the two mapping destinations, preserve
+all owner calls and surrounding composite boundaries, update structural
+contracts, run the sequential gates, document, commit, and push. Never create,
+update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

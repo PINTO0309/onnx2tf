@@ -1902,3 +1902,30 @@ Validation completed sequentially under core-only `uv`:
 No root-model conversion was required because focused runtime contracts cover
 all three owners. Commit and push this unit. Begin the next unit with a fresh
 characterize-first audit and never create, update, or reopen a pull request.
+
+## Post-cleanup attention result characterization
+
+The next bounded-store unit contains the consecutive top-level CSP attention
+and SA/PA MirrorPad cleanup observations immediately after
+`_post_cleanup_sinet_preadd_resize_results`. Both owners already have focused
+schema and cleanup coverage, return a single integer counter, receive
+`session.layout_state`, and have no result consumer.
+
+The existing CSP attention result module now has a strict expected-failure
+contract for:
+
+- `cleanup.post_cleanup.csp_attention`;
+- `cleanup.post_cleanup.sa_pa_mirrorpad`.
+
+It fixes exact nested owner expressions, source adjacency, the preceding SiNet
+composite, the following `_post_sinet_batchmatmul_affine_input_stats` result,
+and removal of both old local targets. Production source is unchanged.
+
+The related pre-characterization baseline is `14 passed in 0.88s`. Run the
+same four focused modules and expect one additional strict xfail, then run
+targeted Ruff, bytecode compilation, and whitespace validation. Commit and
+push that characterization before changing the lowerer. On implementation,
+change only the two result destinations, grow the store contract from 116 to
+118 records, keep the existing owner calls and phase boundaries, run all
+sequential gates, document, commit, and push. Never create, update, or reopen
+a pull request.
