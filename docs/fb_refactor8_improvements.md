@@ -6534,3 +6534,33 @@ exactly 128 IDs and 128 owners, and the unconsumed lowerer-result inventory
 decreases from 54 to 53. No real-model conversion was repeated because this
 is an exact straight-line ownership extraction with complete state, callback,
 order, schema, identity, wrapper, route, and phase-boundary coverage.
+
+## Terminal SiNet/singleton-Reshape characterization checkpoint
+
+The refreshed inventory contains 53 unconsumed lowerer-result assignments.
+The next selected adjacent pair is terminal SiNet pre-add/resize recovery
+followed by post-terminal singleton-Reshape recovery. Both existing context
+aliases resolve to the exact same `shared_model_ir_pass_context`; the singleton
+child alone receives the fixed `include_duplicate_fanout=True` and
+`include_spatial_concat_post_transpose=False` policy. There is no branch,
+phase-store write, progress callback, result consumer, or other mutation
+between the children.
+
+The proposed owner must invoke the public SiNet and singleton-Reshape owners
+with that exact shared context, preserve their source order, forward the fixed
+policy only to the second child, and return the complete six-result and
+eight-result tuples without copying or normalization. The recorded terminal
+dequant/hard-sigmoid cleanup remains the predecessor, and recorded terminal
+indexed-shape convergence remains the successor. Both lowerer wrappers and
+all independent recovery routes remain intact.
+
+`tests/test_flatbuffer_direct_terminal_sinet_singleton_reshape_orchestration.py`
+fixes shared-context aliasing, exact policy, adjacency, observation-only
+results, complete schemas, and both outer phase boundaries. Sequential
+characterization under core-only `uv` reports `1 passed, 1 xfailed in 0.62s`
+focused and `455 passed, 1 xfailed in 19.03s` across SiNet, all singleton
+policies, dequant, indexed convergence, terminal HardSwish/SE, shared-context,
+architecture, efficiency, result, phase-store, and terminal-validation
+contracts. The sole xfail is the intentionally absent owner. Production,
+dependencies, TensorFlow isolation, and the exactly 128-ID/128-owner phase
+store remain unchanged.

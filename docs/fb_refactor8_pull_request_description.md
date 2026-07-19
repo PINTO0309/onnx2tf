@@ -1501,3 +1501,19 @@ gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
 phase-result store remains exactly 128 IDs and 128 owners, while the
 characterized unconsumed lowerer-result inventory decreases from 54 to 53.
+
+The next characterization selects terminal SiNet pre-add/resize recovery
+followed immediately by post-terminal singleton-Reshape recovery. Both
+existing aliases resolve to the exact shared `ModelIRPassContext`; only the
+singleton child receives the fixed duplicate-fanout/spatial-Concat policy.
+The new owner must preserve context identity, source order, complete raw
+six-result and eight-result tuples, and both result identities. Recorded
+terminal dequant/hard-sigmoid cleanup and terminal indexed-shape convergence
+remain the immediate outer phase boundaries. Both lowerer wrappers and every
+independent route remain unchanged; production is unchanged pending one
+straight-line owner.
+
+Focused and affected sequential characterization report
+`1 passed, 1 xfailed` and `455 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.

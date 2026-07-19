@@ -5693,3 +5693,29 @@ schemas, independent routes, and outer phase/progress boundaries before any
 production change. Continue to use core-only `uv`, run tests sequentially,
 commit and push only at complete checkpoints, and do not create, update,
 reopen, or otherwise modify a pull request.
+
+## Terminal SiNet/singleton-Reshape characterization checkpoint
+
+The current inventory is 53 unconsumed lowerer-result assignments. The next
+safe pair is terminal SiNet pre-add/resize recovery followed immediately by
+post-terminal singleton-Reshape recovery. Both context aliases are the same
+`shared_model_ir_pass_context`. The second child alone has the fixed duplicate
+fan-out/spatial-Concat policy. Recorded terminal dequant/hard-sigmoid cleanup
+and terminal indexed-shape convergence remain the outer phase boundaries.
+
+Focused characterization reports `1 passed, 1 xfailed`; the affected suite
+reports `455 passed, 1 xfailed`. The sole xfail requires the intentionally
+absent `passes/terminal_sinet_singleton_reshape_orchestration.py`. The complete
+six-result and eight-result schemas, exact shared identity, options, wrapper
+routes, and phase adjacency are fixed. Production and the 128-ID/128-owner
+phase store are unchanged.
+
+At resume, implement
+`run_terminal_sinet_singleton_reshape_cleanup(context)` as a straight-line
+owner. Call `run_sinet_preadd_resize_recovery(context)`, then
+`run_singleton_reshape(context, include_duplicate_fanout=True,
+include_spatial_concat_post_transpose=False)`, returning both raw tuples
+unchanged. Replace only the two characterized lowerer locals, retain the
+wrappers and independent routes, update only stale boundary contracts, and
+run affected and standard gates sequentially. Commit and push only; do not
+create, update, reopen, or otherwise modify a pull request.
