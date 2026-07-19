@@ -718,3 +718,33 @@ Validation completed sequentially under core-only `uv`:
 
 The sole expected failure is the intentionally unimplemented session-store
 migration.
+
+## Primary final layout-refresh reconciliation implementation
+
+The three characterized reconciliations now record under:
+
+- `shape_reconciliation.primary.final_convinteger`;
+- `shape_reconciliation.primary.final_instancenorm`;
+- `shape_reconciliation.primary.final_broadcast`.
+
+Each record remains inside its original mutation-positive guard and directly
+precedes the matching `topology_layout.primary.final_*` refresh record. The
+three unconsumed zero-default dictionaries and local targets were removed.
+Owner arguments, complete mutation accounting, refresh calls, repair order,
+and all subsequent phases are unchanged.
+
+No graph scan, reconciliation, layout inference, topology sort, mutation,
+public result, report, artifact, dependency, or TensorFlow boundary changed.
+The bounded store now covers 34 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct family, terminal, refresh, and phase-store contracts:
+  `71 passed in 2.50s`;
+- broader affected contracts: `140 passed in 3.57s`;
+- lowerer architecture contracts: `258 passed in 17.03s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because this is a result-destination-only
+change at already-characterized owner boundaries.

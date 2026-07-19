@@ -6099,19 +6099,18 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _final_convinteger_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_convinteger_layout_stats.get(
             "repaired_channel_last_convinteger_input_transposes",
             0,
         )
     ) > 0:
-        _final_convinteger_static_shape_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_convinteger",
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            ),
         )
         session.record_phase_result(
             "topology_layout.primary.final_convinteger",
@@ -6121,28 +6120,26 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _final_instancenorm_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(final_instancenorm_repair_stats.get("repaired_decomposed_instance_normalization_layouts", 0)) > 0:
-        _final_instancenorm_static_shape_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_instancenorm",
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            ),
         )
         session.record_phase_result(
             "topology_layout.primary.final_instancenorm",
             run_topology_layout_refresh(model_ir),
         )
     final_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
-    _final_broadcast_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(final_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
-        _final_broadcast_static_shape_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_broadcast",
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            ),
         )
         session.record_phase_result(
             "topology_layout.primary.final_broadcast",

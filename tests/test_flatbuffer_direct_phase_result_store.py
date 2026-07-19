@@ -33,8 +33,11 @@ EXPECTED_RESULT_TARGETS = (
     "_primary_post_lowering_topology_stats",
     "_no_layout_post_reduction_topology_stats",
     "_absolute_final_topology_layout_stats",
+    "_final_convinteger_static_shape_stats",
     "_final_convinteger_topology_layout_stats",
+    "_final_instancenorm_static_shape_stats",
     "_final_instancenorm_topology_layout_stats",
+    "_final_broadcast_static_shape_stats",
     "_final_broadcast_topology_layout_stats",
     "_final_placeholder_topology_stats",
     "_final_high_rank_bmm_static_shape_stats",
@@ -66,8 +69,11 @@ EXPECTED_OWNERS = (
     "_topologically_sort_operators",
     "_topologically_sort_operators",
     "run_topology_layout_refresh",
+    "_reconcile_static_tensor_shapes",
     "run_topology_layout_refresh",
+    "_reconcile_static_tensor_shapes",
     "run_topology_layout_refresh",
+    "_reconcile_static_tensor_shapes",
     "run_topology_layout_refresh",
     "_topologically_sort_operators",
     "run_static_shape_topology_reconciliation",
@@ -110,6 +116,9 @@ EXPECTED_MODEL_ARGUMENTS = (
     "model_ir",
     "model_ir",
     "model_ir",
+    "model_ir",
+    "model_ir",
+    "model_ir",
 )
 EXPECTED_PHASE_IDS = (
     "shape_resolution.core.dynamic_reshape",
@@ -132,8 +141,11 @@ EXPECTED_PHASE_IDS = (
     "topology.primary.post_lowering",
     "topology.primary.no_layout_post_reduction",
     "topology_layout.primary.absolute_final",
+    "shape_reconciliation.primary.final_convinteger",
     "topology_layout.primary.final_convinteger",
+    "shape_reconciliation.primary.final_instancenorm",
     "topology_layout.primary.final_instancenorm",
+    "shape_reconciliation.primary.final_broadcast",
     "topology_layout.primary.final_broadcast",
     "topology.primary.final_placeholder",
     "shape_topology.primary.final_high_rank_batch_matmul",
@@ -183,7 +195,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_thirty_one_observations_use_the_bounded_session_store() -> None:
+def test_thirty_four_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -194,7 +206,7 @@ def test_thirty_one_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 31
+    assert len(records) == 34
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

@@ -45,9 +45,9 @@ EXPECTED_PREDECESSOR_IDS = (
     "_fallback_dynamic_rank1_stats",
     "shape_reconciliation.fallback.broadcast",
     "_absolute_final_dynamic_rank1_stats",
-    "_final_convinteger_static_shape_stats",
-    "_final_instancenorm_static_shape_stats",
-    "_final_broadcast_static_shape_stats",
+    "shape_reconciliation.primary.final_convinteger",
+    "shape_reconciliation.primary.final_instancenorm",
+    "shape_reconciliation.primary.final_broadcast",
 )
 RESULT_SCHEMA = {
     "reordered_operators": 0,

@@ -715,3 +715,26 @@ assignments and remove only their zero defaults. Update the topology/layout
 predecessor contract and bounded-store inventory, run focused and architecture
 gates, document, commit, and push. Never create, update, or reopen a pull
 request.
+
+## Primary final layout-refresh reconciliation implementation
+
+The final ConvInteger, InstanceNorm, and broadcast reconciliations now use
+stable `shape_reconciliation.primary.final_*` records immediately before their
+unchanged topology/layout refresh records. Their zero defaults and local
+targets were removed; invoked-only semantics and all mutation guards are
+preserved. The bounded store now covers 34 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct family, terminal, refresh, and store contracts:
+  `71 passed in 2.50s`;
+- broader affected contracts: `140 passed in 3.57s`;
+- lowerer architecture contracts: `258 passed in 17.03s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required. After committing and pushing, continue
+the primary static-shape inventory with another small semantic family. The
+remaining SiNet-specific final repair chain should not be migrated together
+with generic placeholder, PReLU, or consecutive-Reshape boundaries. Preserve
+all guards and do not use observations to skip work without separate
+differential characterization. Never create, update, or reopen a pull request.

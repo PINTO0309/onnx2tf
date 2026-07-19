@@ -141,15 +141,17 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Thirty-one stable phase IDs
+### Thirty-four stable phase IDs
 
-The lowerer now records 31 bounded observations covering:
+The lowerer now records 34 bounded observations covering:
 
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
 - fallback and primary topology checkpoints;
 - fallback and primary topology/layout refresh;
+- primary final ConvInteger, InstanceNorm, and broadcast reconciliation before
+  their matching topology/layout refresh;
 - fallback and primary terminal layout validation;
 - fallback broadcast, SE/FC/Gather, placeholder-MatMul, Conv-input,
   mixed-Concat, Concat-axis, and binary-layout static-shape reconciliation;
@@ -161,7 +163,7 @@ The guarded shape-reconciliation and shape/topology phases use
 invoked-phase-only semantics. A phase omitted by its guard is absent from the
 snapshot. An invoked phase is recorded even when all counters are zero. This
 preserves the distinction between "not invoked" and "invoked but stable" and
-allowed 15 unconsumed all-zero default dictionaries to be removed.
+allowed 18 unconsumed all-zero default dictionaries to be removed.
 
 ## Safety and compatibility
 
@@ -190,7 +192,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 31 phase IDs and owners appear in deterministic source order;
+- all 34 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -203,9 +205,10 @@ Final checkpoint results:
 
 - fallback static-shape family and safety-fallback contracts:
   **20 passed**;
-- SE/FC/Gather, topology/layout, and phase-store contracts: **18 passed**;
+- direct primary final-layout family, terminal, refresh, and store contracts:
+  **71 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
-  **138 passed**;
+  **140 passed**;
 - lowerer architecture suite: **258 passed**;
 - targeted Ruff checks: **passed**;
 - Python bytecode compilation: **passed**;
