@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Forty-five stable phase IDs
+### Forty-seven stable phase IDs
 
-The lowerer now records 45 bounded observations covering:
+The lowerer now records 47 bounded observations covering:
 
 - core shape resolution;
 - safe no-layout Transpose reduction;
@@ -156,6 +156,7 @@ The lowerer now records 45 bounded observations covering:
 - primary final mixed-singleton Concat, nested placeholder/binary, and
   SE/FC/Gather reconciliation;
 - the ordered six-boundary primary final SiNet reconciliation chain;
+- two unconditional very-late reconciliation boundaries;
 - fallback and primary terminal layout validation;
 - fallback broadcast, SE/FC/Gather, placeholder-MatMul, Conv-input,
   mixed-Concat, Concat-axis, and binary-layout static-shape reconciliation;
@@ -196,7 +197,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 45 phase IDs and owners appear in deterministic source order;
+- all 47 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -216,8 +217,10 @@ Final checkpoint results:
 - direct generic-final, terminal, SE/FC/Gather, and store contracts:
   **79 passed**;
 - direct final-SiNet, terminal, and store contracts: **67 passed**;
+- direct unconditional, terminal, very-late, and store contracts:
+  **90 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
-  **146 passed**;
+  **171 passed**;
 - lowerer architecture suite: **258 passed**;
 - targeted Ruff checks: **passed**;
 - Python bytecode compilation: **passed**;

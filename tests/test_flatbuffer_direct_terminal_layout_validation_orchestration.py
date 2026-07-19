@@ -1518,21 +1518,14 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
     assert len(retained_layout) == 1
 
     successor = body[very_late_index + 1]
-    assert isinstance(successor, ast.Assign)
-    assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == (
-        "_very_late_broadcast_static_shape_stats"
+    _assert_phase_result_record(
+        successor,
+        phase_id="shape_reconciliation.primary.very_late_broadcast",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    successor_call = _statement_call(successor)
-    assert _call_name(successor_call) == "_reconcile_static_tensor_shapes"
-    assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in successor_call.keywords
-    } == {"include_mutation_count": "True"}
 
     final = body[final_index]
     assert isinstance(final, ast.Assign)
@@ -1583,21 +1576,14 @@ def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     )
 
     statement = body[broadcast_index + 1]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == (
-        "_very_late_broadcast_static_shape_stats"
+    _assert_phase_result_record(
+        statement,
+        phase_id="shape_reconciliation.primary.very_late_broadcast",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"include_mutation_count": "True"}
 
     predecessor = body[broadcast_index]
     assert isinstance(predecessor, ast.Assign)

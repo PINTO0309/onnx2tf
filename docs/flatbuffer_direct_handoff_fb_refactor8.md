@@ -896,3 +896,25 @@ records. Do not add guards or combine them with shared, binary-recovery, or
 split-fallback results. Update their existing surrounding contracts and the
 bounded-store inventory, validate, document, commit, and push. Never create,
 update, or reopen a pull request.
+
+## Unconditional very-late reconciliation implementation
+
+The two unconditional very-late results now use stable
+`shape_reconciliation.primary.very_late_*` records. Their calls remain
+unconditional and between the same predecessor/successor assignments. Only the
+unconsumed local destinations changed; no defaults existed at these boundaries.
+The bounded store now covers 47 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct boundary, terminal, very-late, and store contracts:
+  `90 passed in 2.77s`;
+- broader affected contracts: `171 passed in 4.32s`;
+- lowerer architecture contracts: `258 passed in 18.11s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required. After committing and pushing, the four
+remaining unconsumed static-shape observations are guarded shared-late,
+late-binary repair, late-binary recovery, and post-split fallback boundaries.
+Classify the two binary-related boundaries together first; keep shared-late and
+post-split separate. Never create, update, or reopen a pull request.

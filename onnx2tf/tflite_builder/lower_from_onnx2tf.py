@@ -5400,9 +5400,12 @@ def lower_onnx_to_ir(
             model_ir
         )
     )
-    _very_late_broadcast_static_shape_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        include_mutation_count=True,
+    session.record_phase_result(
+        "shape_reconciliation.primary.very_late_broadcast",
+        _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        ),
     )
     shared_late_tensor_count = len(model_ir.tensors)
     shared_boundary_signature_stats = (
@@ -5731,9 +5734,12 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _very_late_static_shape_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        include_mutation_count=True,
+    session.record_phase_result(
+        "shape_reconciliation.primary.very_late_final",
+        _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        ),
     )
     split_fallback_stats = _replace_unsupported_split_with_slice(
         model_ir,

@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER = "_reconcile_static_tensor_shapes"
@@ -64,49 +61,8 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     return call.args[1]
 
 
-def test_two_very_late_reconciliations_are_unconditional_and_bounded() -> None:
-    lowerer = _lowerer()
-    indices = tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        )
-        for target in EXPECTED_RESULT_TARGETS
-    )
-
-    assert tuple(
-        _single_target(lowerer.body[index - 1]) for index in indices
-    ) == EXPECTED_PREDECESSOR_TARGETS
-    assert tuple(
-        _single_target(lowerer.body[index + 1]) for index in indices
-    ) == EXPECTED_SUCCESSOR_TARGETS
-    for index in indices:
-        observation = lowerer.body[index]
-        call = _statement_call(observation)
-        assert call is not None
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == OWNER
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {"include_mutation_count": "True"}
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id in EXPECTED_RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="unconditional very-late reconciliations have not moved to phase results",
-)
-def test_two_very_late_reconciliations_use_phase_results() -> None:
-    lowerer = _lowerer()
-    records = sorted(
+def _phase_records(lowerer: ast.FunctionDef) -> list[ast.Expr]:
+    return sorted(
         (
             node
             for node in lowerer.body
@@ -120,10 +76,36 @@ def test_two_very_late_reconciliations_use_phase_results() -> None:
         key=lambda node: node.lineno,
     )
 
+
+def test_two_very_late_reconciliations_are_unconditional_and_bounded() -> None:
+    lowerer = _lowerer()
+    records = _phase_records(lowerer)
+    indices = tuple(lowerer.body.index(record) for record in records)
+
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
+    assert tuple(
+        _single_target(lowerer.body[index - 1]) for index in indices
+    ) == EXPECTED_PREDECESSOR_TARGETS
+    assert tuple(
+        _single_target(lowerer.body[index + 1]) for index in indices
+    ) == EXPECTED_SUCCESSOR_TARGETS
+    for record in records:
+        owner = _phase_result_owner(record)
+        assert owner is not None
+        assert [ast.unparse(argument) for argument in owner.args] == ["model_ir"]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in owner.keywords
+        } == {"include_mutation_count": "True"}
+
+
+def test_two_very_late_reconciliation_locals_are_removed() -> None:
+    lowerer = _lowerer()
+
     assert not any(
-        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        isinstance(node, ast.Name)
+        and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )

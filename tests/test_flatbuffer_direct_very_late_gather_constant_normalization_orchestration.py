@@ -712,13 +712,13 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
     assert _expression_path(layout_keyword.value) == "session.layout_state"
 
     following = lowerer.body[concat_pool_index + 2]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_very_late_static_shape_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_reconcile_static_tensor_shapes"
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.very_late_final', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
+    )
 
     result_assignments = sorted(
         [
@@ -772,21 +772,13 @@ def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -
         and statement.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
     )
     invocation = lowerer.body[dynamic_rank1_index + 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_very_late_static_shape_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    mutation_keyword = invocation.value.keywords[0]
-    assert mutation_keyword.arg == "include_mutation_count"
-    assert isinstance(mutation_keyword.value, ast.Constant)
-    assert mutation_keyword.value.value is True
+    assert isinstance(invocation, ast.Expr)
+    assert ast.unparse(invocation) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.very_late_final', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
+    )
 
     following = lowerer.body[dynamic_rank1_index + 2]
     assert isinstance(following, ast.Assign)

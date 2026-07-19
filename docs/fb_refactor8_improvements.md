@@ -707,6 +707,33 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented result-destination
 migration.
 
+## Unconditional very-late reconciliation implementation
+
+The two unconditional results now record as:
+
+- `shape_reconciliation.primary.very_late_broadcast`;
+- `shape_reconciliation.primary.very_late_final`.
+
+Both owner calls remain top-level, unconditional, and directly between the
+same predecessors and successors. Only their unconsumed assignment targets
+were replaced; unlike guarded families, there were no zero defaults to remove.
+
+No guard, owner argument, reconciliation, graph scan, mutation, pass order,
+public result, report, artifact, dependency, or TensorFlow boundary changed.
+The bounded store now covers 47 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct boundary, terminal, very-late, and store contracts:
+  `90 passed in 2.77s`;
+- broader affected contracts: `171 passed in 4.32s`;
+- lowerer architecture contracts: `258 passed in 18.11s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because the two reconciliation calls and
+their ModelIR effects are unchanged.
+
 ## Primary generic final reconciliation implementation
 
 The three selected results now record as:
