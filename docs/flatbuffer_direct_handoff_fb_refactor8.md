@@ -5284,3 +5284,35 @@ add runtime order/context/option/result-identity injection, and update
 child-family ownership tests. Run all affected and standard gates
 sequentially, then commit and push only. Never create, update, or reopen a
 pull request.
+
+## Terminal QKV/activation-bridge implementation checkpoint
+
+`passes/terminal_qkv_activation_bridge_orchestration.py` now owns the fixed
+QKV-then-activation sequence. Both existing children receive the exact shared
+`ModelIRPassContext` and the unchanged layout-Transpose option. Their complete
+two-result and three-result tuples are returned unchanged in one ordered outer
+tuple, preserving both child identities and all nested schemas.
+
+The lowerer replaces only the two unconsumed child locals with
+`_terminal_qkv_activation_bridge_results`. Pre-terminal affine/Slice/SPP and
+terminal layout/shape remain separate immediate boundaries. Specialized child
+owners, independent and compatibility routes, callbacks, guards, graph
+behavior, public behavior, and TensorFlow isolation remain unchanged. The
+unconsumed assignment inventory is now 59; the phase-result store remains
+exactly 128 IDs and 128 owners.
+
+Sequential core-only `uv` validation passed: focused 5, complete affected 535,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase-store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. Ruff, bytecode
+compilation, and whitespace checks pass. Runtime injection proves exact
+order, shared-context identity, option forwarding, nested schemas, outer
+boundaries, and both raw-result identities. No test is failing and no new
+production issue is known. No real-model conversion was repeated for this
+ownership-only move.
+
+At resume, rerun the read-only inventory of the 59 remaining unconsumed
+lowerer results. Characterize the next smallest source-adjacent, semantically
+closed cluster whose children already have pass-module owners before changing
+production. Keep all tests sequential and single-process under `uv`, and
+commit/push completed checkpoints only. Never create, update, or reopen a pull
+request.

@@ -44,6 +44,15 @@ TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH = (
 TERMINAL_ACTIVATION_BRIDGE_OWNER = (
     "run_terminal_activation_bridge_cleanup"
 )
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
 PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
     "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
 )
@@ -790,30 +799,35 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_activation_bridge_results"
+        and statement.targets[0].id == OUTER_RESULT
     )
     composite = lowerer.body[invocation_index]
     assert isinstance(composite, ast.Assign)
     assert isinstance(composite.value, ast.Call)
     assert isinstance(composite.value.func, ast.Name)
-    assert composite.value.func.id == TERMINAL_ACTIVATION_BRIDGE_OWNER
+    assert composite.value.func.id == OUTER_OWNER
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in composite.value.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
+    }
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_slice_spp_results"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "run_terminal_qkv_shape_attention_cleanup"
+    assert previous.value.func.id == (
+        "run_pre_terminal_affine_slice_spp_cleanup"
+    )
     assert [ast.unparse(argument) for argument in previous.value.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in previous.value.keywords
-    } == {
-        "include_layout_transpose": "optimize_layout_transpose_chains",
-    }
+    assert previous.value.keywords == []
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -825,6 +839,20 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
         following.value.func.id
         == "run_terminal_layout_shape_cleanup"
     )
+    outer_tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    outer_owner = next(
+        node
+        for node in outer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    outer_calls = [
+        node
+        for node in ast.walk(outer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_ACTIVATION_BRIDGE_OWNER
+    ]
+    assert len(outer_calls) == 1
 
 
 def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:

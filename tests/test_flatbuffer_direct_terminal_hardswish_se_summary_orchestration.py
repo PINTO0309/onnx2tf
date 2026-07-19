@@ -42,6 +42,16 @@ SUMMARY_TARGET = "_terminal_hardswish_se_stats"
 COMPOSITE_TARGET = "_terminal_activation_bridge_results"
 PREDECESSOR_TARGET = "_terminal_qkv_shape_attention_results"
 SUCCESSOR_TARGET = "_terminal_layout_shape_results"
+OUTER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_TARGET = "_terminal_qkv_activation_bridge_results"
+OUTER_PREDECESSOR_TARGET = "_pre_terminal_affine_slice_spp_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -63,6 +73,17 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _outer_calls() -> list[ast.Call]:
+    owner = _functions(OUTER_PATH)[OUTER_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_OWNER
+    ]
+
+
 def test_terminal_hardswish_se_prune_aware_boundary_is_fixed() -> None:
     owner = _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER]
     summary_call = next(
@@ -78,13 +99,16 @@ def test_terminal_hardswish_se_prune_aware_boundary_is_fixed() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value).startswith(f"{TERMINAL_OWNER}(")
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert ast.unparse(summary.value).startswith(f"{OUTER_OWNER}(")
+    assert _single_target(lowerer.body[index - 1]) == (
+        OUTER_PREDECESSOR_TARGET
+    )
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == COUNT_TARGET
         for node in ast.walk(lowerer)
@@ -119,13 +143,16 @@ def test_terminal_hardswish_se_uses_one_prune_aware_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value).startswith(f"{TERMINAL_OWNER}(")
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert ast.unparse(summary.value).startswith(f"{OUTER_OWNER}(")
+    assert _single_target(lowerer.body[index - 1]) == (
+        OUTER_PREDECESSOR_TARGET
+    )
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == COUNT_TARGET
         for node in ast.walk(lowerer)

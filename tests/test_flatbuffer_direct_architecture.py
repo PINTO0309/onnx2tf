@@ -435,6 +435,29 @@ def _terminal_activation_bridge_calls(function_name: str) -> list[ast.Call]:
     ]
 
 
+def _terminal_qkv_activation_bridge_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_qkv_activation_bridge_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_qkv_activation_bridge_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _terminal_layout_shape_calls(function_name: str) -> list[ast.Call]:
     owner_path = (
         REPO_ROOT
@@ -2615,7 +2638,7 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
     assert lowerer.body[index + 1].targets[0].id == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_bridge_results"
     )
     assert (
         _pre_terminal_affine_slice_spp_call_count(
@@ -5891,11 +5914,12 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_qkv_shape_attention_results"
+        and statement.targets[0].id
+        == "_terminal_qkv_activation_bridge_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_terminal_qkv_shape_attention_cleanup"
+        == "run_terminal_qkv_activation_bridge_cleanup"
         and any(
             keyword.arg == "include_layout_transpose"
             for keyword in statement.value.keywords
@@ -5912,14 +5936,24 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == (
-        "_terminal_activation_bridge_results"
-    )
+    assert next_boundary.targets[0].id == "_terminal_layout_shape_results"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
         next_boundary.value.func.id
-        == "run_terminal_activation_bridge_cleanup"
+        == "run_terminal_layout_shape_cleanup"
+    )
+    assert (
+        _terminal_qkv_activation_bridge_call_count(
+            "run_terminal_qkv_shape_attention_cleanup"
+        )
+        == 1
+    )
+    assert (
+        _terminal_qkv_activation_bridge_call_count(
+            "run_terminal_activation_bridge_cleanup"
+        )
+        == 1
     )
     assert (
         _terminal_qkv_shape_attention_call_count(
@@ -6598,12 +6632,14 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_terminal_activation_bridge_results"
+    assert previous_boundary.targets[0].id == (
+        "_terminal_qkv_activation_bridge_results"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
-        == "run_terminal_activation_bridge_cleanup"
+        == "run_terminal_qkv_activation_bridge_cleanup"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Expr)
@@ -6689,13 +6725,13 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
     assert next_boundary.targets[0].id == (
-        "_terminal_qkv_shape_attention_results"
+        "_terminal_qkv_activation_bridge_results"
     )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
         next_boundary.value.func.id
-        == "run_terminal_qkv_shape_attention_cleanup"
+        == "run_terminal_qkv_activation_bridge_cleanup"
     )
     assert (
         _pre_terminal_affine_slice_spp_call_count(
@@ -6785,10 +6821,12 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_activation_bridge_results"
+        and statement.targets[0].id
+        == "_terminal_qkv_activation_bridge_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "run_terminal_activation_bridge_cleanup"
+        and statement.value.func.id
+        == "run_terminal_qkv_activation_bridge_cleanup"
     )
     invocation = _terminal_activation_bridge_calls(
         "run_late_hard_activation_layout_summary"
@@ -6809,17 +6847,23 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
     assert previous_boundary.targets[0].id == (
-        "_terminal_qkv_shape_attention_results"
+        "_pre_terminal_affine_slice_spp_results"
     )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
-        == "run_terminal_qkv_shape_attention_cleanup"
+        == "run_pre_terminal_affine_slice_spp_cleanup"
     )
     assert [
         ast.unparse(argument) for argument in previous_boundary.value.args
     ] == ["shared_model_ir_pass_context"]
+    assert (
+        _terminal_qkv_activation_bridge_call_count(
+            "run_terminal_activation_bridge_cleanup"
+        )
+        == 1
+    )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1

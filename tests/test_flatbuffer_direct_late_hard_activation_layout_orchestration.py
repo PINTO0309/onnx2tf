@@ -30,6 +30,15 @@ TERMINAL_OWNER_PATH = (
     / "terminal_activation_bridge_orchestration.py"
 )
 TERMINAL_OWNER = "run_terminal_activation_bridge_cleanup"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -55,6 +64,22 @@ def _terminal_owner() -> ast.FunctionDef:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
     )
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_OWNER
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -388,10 +413,10 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_activation_bridge_results"
+        and statement.targets[0].id == OUTER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_OWNER
+        and statement.value.func.id == OUTER_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
@@ -399,10 +424,14 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_slice_spp_results"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "run_terminal_qkv_shape_attention_cleanup"
+    assert previous.value.func.id == (
+        "run_pre_terminal_affine_slice_spp_cleanup"
+    )
     assert [ast.unparse(argument) for argument in previous.value.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -413,6 +442,7 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "run_terminal_layout_shape_cleanup"
+    assert len(_outer_calls()) == 1
 
 
 def test_late_hard_activation_layout_context_is_explicit() -> None:

@@ -282,11 +282,8 @@ from onnx2tf.tflite_builder.passes.very_late_layout_tail_orchestration import (
 from onnx2tf.tflite_builder.passes.pre_terminal_affine_slice_spp_orchestration import (
     run_pre_terminal_affine_slice_spp_cleanup,
 )
-from onnx2tf.tflite_builder.passes.terminal_qkv_shape_attention_orchestration import (
-    run_terminal_qkv_shape_attention_cleanup,
-)
-from onnx2tf.tflite_builder.passes.terminal_activation_bridge_orchestration import (
-    run_terminal_activation_bridge_cleanup,
+from onnx2tf.tflite_builder.passes.terminal_qkv_activation_bridge_orchestration import (
+    run_terminal_qkv_activation_bridge_cleanup,
 )
 from onnx2tf.tflite_builder.passes.terminal_layout_shape_orchestration import (
     run_terminal_layout_shape_cleanup,
@@ -5240,17 +5237,11 @@ def lower_onnx_to_ir(
     )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
-    _terminal_qkv_shape_attention_results = (
-        run_terminal_qkv_shape_attention_cleanup(
-            shared_model_ir_pass_context,
-            include_layout_transpose=optimize_layout_transpose_chains,
-        )
-    )
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.
-    _terminal_activation_bridge_results = (
-        run_terminal_activation_bridge_cleanup(
+    _terminal_qkv_activation_bridge_results = (
+        run_terminal_qkv_activation_bridge_cleanup(
             shared_model_ir_pass_context,
             include_layout_transpose=optimize_layout_transpose_chains,
         )

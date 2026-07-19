@@ -6089,3 +6089,41 @@ Split/Conv/Concat, HardSwish-SE, hard activation, adjacent composites,
 shared-context, terminal-validation, architecture, and phase-store contracts.
 Production, public behavior, dependencies, TensorFlow isolation, and the
 exactly 128-ID/128-owner store remain unchanged.
+
+## Terminal QKV/activation-bridge composite implementation
+
+`passes/terminal_qkv_activation_bridge_orchestration.py` now owns the
+characterized two-stage terminal sequence. It forwards the exact same
+`ModelIRPassContext` and the unchanged `include_layout_transpose` value first
+to terminal QKV shape/attention cleanup and then to terminal activation-bridge
+cleanup. The owner returns the complete two-result QKV tuple and three-result
+activation tuple as one ordered outer tuple. It does not copy, flatten,
+normalize, inspect, or use either child result as control flow.
+
+The lowerer replaces only the two unconsumed observation locals with
+`_terminal_qkv_activation_bridge_results` and removes the now-unused direct
+child imports. The pre-terminal affine/Slice/SPP composite remains the
+immediate predecessor, and terminal layout/shape remains the immediate
+successor. Specialized child owners, raw compatibility wrappers, callbacks,
+independent QKV and activation routes, graph mutations, and layout policy are
+unchanged.
+
+Owner-aware QKV, Shape-extract, indexed Split/Conv/Concat, HardSwish-SE, late
+hard-activation, adjacent-composite, and architecture tests now resolve the
+top-level call through the new owner while continuing to inspect the original
+child owners for their internal contracts. Runtime monkeypatch injection for
+both layout-option values proves exact two-child order, shared-context
+identity, exact keyword forwarding, and identity of both raw nested result
+tuples.
+
+Final sequential validation under core-only `uv` passed with 5 focused tests,
+535 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. Ruff, bytecode compilation, and whitespace
+checks also pass. No pass invocation, graph rewrite, callback, guard, phase
+result, public API, artifact, dependency, or TensorFlow boundary changed. The
+bounded store remains exactly 128 IDs and 128 owners. The unconsumed lowerer
+assignment inventory decreases from 60 to 59. No real-model conversion was
+repeated because this is a straight-line ownership extraction with exact
+state, option, order, schema, result-identity, route-count, and boundary
+coverage.

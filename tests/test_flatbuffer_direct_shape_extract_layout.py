@@ -30,6 +30,15 @@ TERMINAL_QKV_OWNER_PATH = (
 )
 TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
 TERMINAL_QKV_RESULT = "_terminal_qkv_shape_attention_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
 TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -54,6 +63,22 @@ def _terminal_qkv_shape_calls() -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == SHAPE_EXTRACT_OWNER.removeprefix("_")
+    ]
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_QKV_OWNER
     ]
 
 
@@ -388,13 +413,13 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_QKV_RESULT
+        and statement.targets[0].id == OUTER_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == TERMINAL_QKV_OWNER
+    assert invocation.value.func.id == OUTER_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
@@ -423,10 +448,11 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_activation_bridge_results"
+    assert following.targets[0].id == "_terminal_layout_shape_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_terminal_activation_bridge_cleanup"
+    assert following.value.func.id == "run_terminal_layout_shape_cleanup"
+    assert len(_outer_calls()) == 1
 
     all_calls = [
         node

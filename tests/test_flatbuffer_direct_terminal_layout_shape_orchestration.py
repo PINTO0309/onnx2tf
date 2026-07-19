@@ -38,7 +38,7 @@ RESULT_TARGETS = (
     "_terminal_expand_squeeze_stats",
 )
 COMPOSITE_TARGET = "_terminal_layout_shape_results"
-PREDECESSOR_TARGET = "_terminal_activation_bridge_results"
+PREDECESSOR_TARGET = "_terminal_qkv_activation_bridge_results"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 EXPECTED_SCHEMAS = (
     {"optimized_transpose_pre_concat_nhwc_chains": 0},

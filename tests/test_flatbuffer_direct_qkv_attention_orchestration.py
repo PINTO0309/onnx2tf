@@ -42,6 +42,15 @@ TERMINAL_QKV_OWNER_PATH = (
 )
 TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
 TERMINAL_QKV_RESULT = "_terminal_qkv_shape_attention_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -73,6 +82,22 @@ def _terminal_qkv_owner_calls(function_name: str) -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
+    ]
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_QKV_OWNER
     ]
 
 
@@ -404,14 +429,14 @@ def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_QKV_RESULT
+        and statement.targets[0].id == OUTER_RESULT
     )
     summary = lowerer.body[summary_index]
     assert isinstance(summary, ast.Assign)
     summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == TERMINAL_QKV_OWNER
+    assert summary_call.func.id == OUTER_OWNER
     assert [_expression_path(argument) for argument in summary_call.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -433,7 +458,8 @@ def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_activation_bridge_results"
+    assert following.targets[0].id == "_terminal_layout_shape_results"
+    assert len(_outer_calls()) == 1
     owner_calls = _terminal_qkv_owner_calls("run_qkv_attention_summary")
     assert len(owner_calls) == 1
     assert [_expression_path(argument) for argument in owner_calls[0].args] == [
@@ -607,11 +633,11 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_QKV_RESULT
+        and statement.targets[0].id == OUTER_RESULT
     )
     assert isinstance(late_result.value, ast.Call)
     assert isinstance(late_result.value.func, ast.Name)
-    assert late_result.value.func.id == TERMINAL_QKV_OWNER
+    assert late_result.value.func.id == OUTER_OWNER
     assert [ast.unparse(argument) for argument in late_result.value.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -622,6 +648,7 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         "include_layout_transpose": "optimize_layout_transpose_chains",
     }
     assert len(_terminal_qkv_owner_calls("run_qkv_attention_summary")) == 1
+    assert len(_outer_calls()) == 1
 
 
 def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
@@ -632,10 +659,10 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_QKV_RESULT
+        and statement.targets[0].id == OUTER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_QKV_OWNER
+        and statement.value.func.id == OUTER_OWNER
     )
 
     previous_boundary = lowerer.body[late_index - 1]
@@ -650,14 +677,15 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
     assert next_boundary.targets[0].id == (
-        "_terminal_activation_bridge_results"
+        "_terminal_layout_shape_results"
     )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert next_boundary.value.func.id == (
-        "run_terminal_activation_bridge_cleanup"
+        "run_terminal_layout_shape_cleanup"
     )
     assert len(_terminal_qkv_owner_calls("run_qkv_attention_summary")) == 1
+    assert len(_outer_calls()) == 1
 
 
 def test_qkv_attention_context_is_explicit() -> None:
