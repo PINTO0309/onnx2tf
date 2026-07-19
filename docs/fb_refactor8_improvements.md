@@ -745,6 +745,41 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented three-result
 destination migration.
 
+## Guarded terminal BatchMatMul implementation
+
+The three characterized results now record inside their original guard under:
+
+- `cleanup.terminal.batchmatmul_affine_input`;
+- `cleanup.terminal.batchmatmul_reshape_se`;
+- `cleanup.terminal.batchmatmul_adj_flags`.
+
+Only the unused local destinations changed. The
+`optimize_layout_transpose_chains` guard, owner calls, arguments,
+three-statement order, preceding Mean-attention composite, following
+QKV-attention composite, ModelIR mutations, post-SiNet observations, public
+outputs, reports, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. Because records remain inside the guard, invoked-phase-only
+semantics are preserved. The bounded store now covers 109/128 phase IDs,
+leaving 19 slots.
+
+Five representation-dependent owner and QKV boundary assertions now unwrap
+the phase record and identify the guard through the retained composites. They
+continue to verify both production call sites and all non-migrated post-SiNet
+assignments.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused BatchMatMul/QKV/store contracts: `26 passed in 1.22s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- broader result and phase-result contracts: `189 passed in 9.37s`;
+- lowerer architecture contracts: `258 passed in 17.61s`;
+- targeted Ruff, Python bytecode compilation, AST capacity audit, and
+  whitespace validation: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and the synthetic runtime suite exercises
+the guarded terminal path.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

@@ -1682,3 +1682,29 @@ Commit and push this characterization before replacing only these three
 guarded mapping destinations. Preserve the guard, both composites, and source
 order; update representation-dependent contracts; run the sequential gates;
 document, commit, and push. Never create, update, or reopen a pull request.
+
+## Guarded terminal BatchMatMul implementation
+
+The three characterized BatchMatMul observations now use stable
+`cleanup.terminal.*` records inside the unchanged
+`optimize_layout_transpose_chains` guard. Their owner calls, arguments, order,
+Mean-attention predecessor, QKV-attention successor, post-SiNet counterparts,
+graph behavior, public contracts, dependencies, and TensorFlow isolation are
+unchanged. The composite results remain outside the bounded mapping store.
+
+The phase store now contains 109/128 records, leaving 19 slots. Five stale
+structural assertions were changed to unwrap nested owners and locate the
+guard through retained composites while preserving both-call-site checks.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused BatchMatMul/QKV/store contracts: `26 passed in 1.22s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- broader result contracts: `189 passed in 9.37s`;
+- lowerer architecture contracts: `258 passed in 17.61s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required for this observation-only destination
+migration. Commit and push this unit. Start the next unit with a fresh
+characterize-first audit and never create, update, or reopen a pull request.

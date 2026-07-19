@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
@@ -82,39 +79,6 @@ def _terminal_layout_guard(lowerer: ast.FunctionDef) -> ast.If:
     return guards[0]
 
 
-def test_terminal_batchmatmul_results_are_guarded_consecutive_and_unconsumed() -> (
-    None
-):
-    lowerer = _lowerer()
-    guard = _terminal_layout_guard(lowerer)
-    assignments = [
-        statement
-        for statement in guard.body
-        if _single_target(statement) in EXPECTED_RESULT_TARGETS
-    ]
-    indices = [guard.body.index(statement) for statement in assignments]
-
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert tuple(ast.unparse(statement.value) for statement in assignments) == (
-        EXPECTED_OWNER_EXPRESSIONS
-    )
-    assert indices == list(range(indices[0], indices[0] + 3))
-    assert _single_target(guard.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _single_target(guard.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id in EXPECTED_RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal BatchMatMul results have not moved to phase records",
-)
 def test_terminal_batchmatmul_results_use_phase_result_store() -> None:
     lowerer = _lowerer()
     guard = _terminal_layout_guard(lowerer)

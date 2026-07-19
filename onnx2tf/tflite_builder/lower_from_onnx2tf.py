@@ -4976,14 +4976,17 @@ def lower_onnx_to_ir(
                 include_conv_attention=False,
             )
         )
-        _terminal_batchmatmul_affine_input_stats = (
-            _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
+        session.record_phase_result(
+            "cleanup.terminal.batchmatmul_affine_input",
+            _optimize_batchmatmul_affine_transpose_input_chains(model_ir),
         )
-        _terminal_batchmatmul_reshape_se_stats = (
-            _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
+        session.record_phase_result(
+            "cleanup.terminal.batchmatmul_reshape_se",
+            _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir),
         )
-        _terminal_batchmatmul_adj_flags_stats = (
-            _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
+        session.record_phase_result(
+            "cleanup.terminal.batchmatmul_adj_flags",
+            _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir),
         )
         _terminal_qkv_attention_results = (
             _run_qkv_attention_layout_pass_cluster()

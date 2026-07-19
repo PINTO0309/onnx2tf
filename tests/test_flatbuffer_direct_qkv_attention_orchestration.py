@@ -65,9 +65,31 @@ def _call_name(statement: ast.stmt) -> str | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    if not isinstance(statement.value.func, ast.Name):
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    if not isinstance(call.func, ast.Name):
         return None
-    return statement.value.func.id
+    return call.func.id
+
+
+def _assert_phase_result_record(statement: ast.stmt, phase_id: str) -> None:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
 
 
 def _context() -> QKVAttentionContext:
@@ -501,8 +523,9 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         and isinstance(statement.test, ast.Name)
         and statement.test.id == "optimize_layout_transpose_chains"
         and any(
-            isinstance(node, ast.Name)
-            and node.id == "_terminal_batchmatmul_adj_flags_stats"
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == QKV_ATTENTION
             for node in ast.walk(statement)
         )
     )
@@ -520,9 +543,10 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
     assert terminal.value.args == []
     assert terminal.value.keywords == []
     predecessor = terminal_guard.body[terminal_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_batchmatmul_adj_flags_stats"
+    _assert_phase_result_record(
+        predecessor,
+        "cleanup.terminal.batchmatmul_adj_flags",
+    )
     assert _call_name(terminal_guard.body[terminal_index + 1]) == (
         "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )

@@ -24,7 +24,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         statement.value,
         ast.Call,
     ):
-        return statement.value
+        call = statement.value
+        if (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "session"
+            and call.func.attr == "record_phase_result"
+            and len(call.args) == 2
+            and isinstance(call.args[1], ast.Call)
+        ):
+            return call.args[1]
+        return call
     return None
 
 
@@ -33,6 +43,18 @@ def _call_name(statement: ast.stmt) -> str | None:
     if call is None or not isinstance(call.func, ast.Name):
         return None
     return call.func.id
+
+
+def _assert_phase_result_record(statement: ast.stmt, phase_id: str) -> None:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
 
 
 def _fingerprint(model_ir: ModelIR) -> tuple[object, ...]:
@@ -222,7 +244,7 @@ def test_batchmatmul_adj_flags_results_are_retained_at_both_boundaries() -> None
         and statement.test.id == "optimize_layout_transpose_chains"
         and any(
             isinstance(node, ast.Name)
-            and node.id == "_terminal_batchmatmul_reshape_se_stats"
+            and node.id == "_terminal_mean_attention_results"
             for node in ast.walk(statement)
         )
     )
@@ -232,14 +254,15 @@ def test_batchmatmul_adj_flags_results_are_retained_at_both_boundaries() -> None
         if _call_name(statement) == callback_name
     )
     terminal = terminal_guard.body[terminal_index]
-    assert isinstance(terminal, ast.Assign)
-    assert len(terminal.targets) == 1
-    assert isinstance(terminal.targets[0], ast.Name)
-    assert terminal.targets[0].id == "_terminal_batchmatmul_adj_flags_stats"
+    _assert_phase_result_record(
+        terminal,
+        "cleanup.terminal.batchmatmul_adj_flags",
+    )
     predecessor = terminal_guard.body[terminal_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_batchmatmul_reshape_se_stats"
+    _assert_phase_result_record(
+        predecessor,
+        "cleanup.terminal.batchmatmul_reshape_se",
+    )
     assert _call_name(terminal_guard.body[terminal_index + 1]) == (
         "_run_qkv_attention_layout_pass_cluster"
     )

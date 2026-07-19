@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### 106 stable phase IDs
+### 109 stable phase IDs
 
-The lowerer now records 106 bounded observations covering:
+The lowerer now records 109 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -168,6 +168,8 @@ The lowerer now records 106 bounded observations covering:
 - unconditional terminal InstanceNorm post-bias, normalization Pad,
   InstanceNorm residual Add, InstanceNorm residual Mul/Concat, and
   InstanceNorm dual-stat cleanup;
+- guarded terminal BatchMatMul affine-input, Reshape/SE, and adjoint-flag
+  cleanup between the retained Mean- and QKV-attention composites;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -222,15 +224,15 @@ contract that fixed the relevant schema, graph effects, cycle behavior,
 metadata behavior, phase position, arguments, and no-op behavior. Production
 changes were then limited to the characterized boundary.
 
-The latest nine records cover terminal boundary StridedSlice/QDQ/Concat,
-activation bridge, InstanceNorm, and normalization cleanup observations. They
-remain in deterministic order from the terminal Slice/Concat recovery
-composite through the terminal boundary-layout composite.
+The latest twelve records cover terminal boundary StridedSlice/QDQ/Concat,
+activation bridge, InstanceNorm, normalization, and guarded BatchMatMul
+cleanup observations. They retain deterministic order and their original
+composite boundaries.
 
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 106 phase IDs and owners appear in deterministic source order;
+- all 109 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -283,7 +285,8 @@ Final checkpoint results:
   **75 passed**;
 - terminal normalization, phase-store, owner, and boundary contracts:
   **100 passed**;
-- broader result and phase-result contracts: **188 passed**;
+- terminal BatchMatMul, QKV, and phase-store contracts: **26 passed**;
+- broader result and phase-result contracts: **189 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;
