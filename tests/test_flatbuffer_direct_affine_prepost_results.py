@@ -165,11 +165,11 @@ def test_all_direct_affine_prepost_results_are_retained_observation_only() -> No
     assert len(locations) == 3
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == RESULT_TARGETS
+    ) == (None, RESULT_TARGETS[1], RESULT_TARGETS[2])
 
     initial_body, initial_index = locations[0]
-    assert _single_target(initial_body[initial_index - 1]) == (
-        "_layout_pass_set_1_initial_affine_chain_fold_stats"
+    assert _call_name(initial_body[initial_index - 1]) == (
+        "_optimize_fold_mul_add_mul_affine_chains"
     )
     assert _call_name(initial_body[initial_index + 1]) == (
         "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains"
@@ -189,10 +189,13 @@ def test_all_direct_affine_prepost_results_are_retained_observation_only() -> No
         "_topologically_sort_operators"
     )
 
-    for target in RESULT_TARGETS[:2]:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
-        )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGETS[0]
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == RESULT_TARGETS[1]
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )

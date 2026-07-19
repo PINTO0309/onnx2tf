@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Seventy-two stable phase IDs
+### Seventy-seven stable phase IDs
 
-The lowerer now records 72 bounded observations covering:
+The lowerer now records 77 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -153,6 +153,8 @@ The lowerer now records 72 bounded observations covering:
 - guarded layout pass-set 2 Squeeze/Reshape and indexed prune/reconcile cleanup;
 - guarded layout pass-set 1 InstanceNorm pre/post and Squeeze/Reshape cleanup;
 - guarded layout pass-set 1 quantized PReLU, TransposeConv, and Reshape cleanup;
+- guarded layout pass-set 1 affine-chain fold, affine pre/post, pre-unary
+  affine fan-out, and mean-affine pre/post cleanup;
 - guarded layout pass-set 2 quantized TransposeConv cleanup;
 - core shape resolution;
 - safe no-layout Transpose reduction;
@@ -211,7 +213,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 72 phase IDs and owners appear in deterministic source order;
+- all 77 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -251,6 +253,9 @@ Final checkpoint results:
   **10 passed**;
 - direct layout pass-set 2 quantized cleanup and owner contracts:
   **8 passed**;
+- direct layout pass-set 1 affine cleanup and owner contracts:
+  **13 passed**;
+- broader result and phase-result contracts: **180 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;

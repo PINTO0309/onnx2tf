@@ -683,6 +683,40 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented five-result
 destination migration.
 
+## Layout pass-set 1 affine cleanup implementation
+
+The five characterized observations now record under stable
+`cleanup.layout_pass_set_1.*` affine phase IDs. The first four records remain a
+contiguous prefix between initial attention recovery and mean-attention
+recovery. The post-binary affine-chain fold remains between post-binary
+attention recovery and the attention/quantized suffix.
+
+Only the five unconsumed mapping destinations changed. Owner calls, arguments,
+keywords, evaluation counts, the outer layout guard, graph traversal, ModelIR
+mutation, composite recovery boundaries, public results, reports, artifacts,
+dependencies, and TensorFlow import boundaries are unchanged. No defaults
+existed. The bounded store now covers 77 phase IDs.
+
+The broader result-contract run exposed one additional stale test helper that
+read the previously migrated no-layout safe-transpose phase record as an outer
+call. The ConvPool boundary helper now unwraps and verifies the exact nested
+owner. Its targeted correction is `2 passed in 0.14s`; production behavior was
+not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affine, multi-occurrence owner, phase-store, and adjacent architecture
+  contracts: `13 passed in 2.90s`;
+- synthetic core runtime contracts: `55 passed in 1.00s`;
+- broader result and phase-result contracts: `180 passed in 8.24s`;
+- lowerer architecture contracts: `258 passed in 16.87s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No root-model corpus conversion was run because this is an observation-
+destination-only change and the synthetic runtime suite executes the guarded
+layout path.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:

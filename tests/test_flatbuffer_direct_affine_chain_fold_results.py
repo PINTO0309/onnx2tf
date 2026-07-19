@@ -37,7 +37,18 @@ def _lowerer() -> ast.FunctionDef:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -119,7 +130,7 @@ def test_direct_affine_chain_fold_results_are_retained_observation_only() -> Non
     assert len(locations) == 2
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == RESULT_TARGETS
+    ) == (None, None)
 
     first_body, first_index = locations[0]
     assert _single_target(first_body[first_index - 1]) == (
@@ -141,6 +152,5 @@ def test_direct_affine_chain_fold_results_are_retained_observation_only() -> Non
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
-            and isinstance(node.ctx, ast.Load)
             for node in ast.walk(lowerer)
         )

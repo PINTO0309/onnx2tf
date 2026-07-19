@@ -4430,25 +4430,29 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_initial_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()
         )
-        _layout_pass_set_1_initial_affine_chain_fold_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.initial_affine_chain_fold",
             _optimize_fold_mul_add_mul_affine_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
-        _layout_pass_set_1_affine_prepost_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.affine_prepost",
             _optimize_transpose_mul_add_const_prepost_nhwc_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
-        _layout_pass_set_1_pre_unary_affine_fanout_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.pre_unary_affine_fanout",
             _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(
                 model_ir
-            )
+            ),
         )
-        _layout_pass_set_1_mean_affine_prepost_stats = (
-            _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.mean_affine_prepost",
+            _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir),
         )
         _layout_pass_set_1_mean_attention_results = (
             _run_mean_attention_layout_pass_cluster(include_layernorm=True)
@@ -4501,11 +4505,12 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_post_binary_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()
         )
-        _layout_pass_set_1_post_binary_affine_chain_fold_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.post_binary_affine_chain_fold",
             _optimize_fold_mul_add_mul_affine_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
         _layout_pass_set_1_attention_quantized_suffix_results = (
             _run_layout_attention_quantized_recovery_suffix(

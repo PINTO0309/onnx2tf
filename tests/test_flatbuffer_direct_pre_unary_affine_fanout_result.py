@@ -40,7 +40,18 @@ def _lowerer() -> ast.FunctionDef:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -120,9 +131,9 @@ def test_direct_pre_unary_affine_fanout_result_is_retained_observation_only() ->
     locations = _direct_locations(lowerer.body)
     assert len(locations) == 1
     body, index = locations[0]
-    assert _single_target(body[index]) == RESULT_TARGET
-    assert _single_target(body[index - 1]) == (
-        "_layout_pass_set_1_affine_prepost_stats"
+    assert _single_target(body[index]) is None
+    assert _call_name(body[index - 1]) == (
+        "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
     )
     assert _call_name(body[index + 1]) == (
         "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains"
@@ -130,6 +141,5 @@ def test_direct_pre_unary_affine_fanout_result_is_retained_observation_only() ->
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

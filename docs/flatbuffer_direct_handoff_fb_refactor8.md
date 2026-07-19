@@ -1371,3 +1371,29 @@ Commit and push this characterization before replacing only the five mapping
 destinations. Preserve the guard and every composite boundary, then update
 multi-occurrence owner and bounded-store contracts, validate, document,
 commit, and push. Never create, update, or reopen a pull request.
+
+## Layout pass-set 1 affine cleanup implementation
+
+The five mapping results now use stable `cleanup.layout_pass_set_1.*` affine
+records. The shared layout guard, four-result prefix, isolated post-binary
+fold, owner expressions, and every composite recovery boundary remain
+unchanged. No default existed. The bounded store now covers 77 phase IDs.
+
+The broader result-contract run exposed a second stale AST helper for the
+already-migrated no-layout safe-transpose record. The ConvPool boundary helper
+now unwraps and verifies its exact nested owner; the targeted correction is
+`2 passed in 0.14s` and production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected contracts: `13 passed in 2.90s`;
+- synthetic core runtime contracts: `55 passed in 1.00s`;
+- broader result contracts: `180 passed in 8.24s`;
+- lowerer architecture contracts: `258 passed in 16.87s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite exercises the guarded path. After committing and
+pushing, retain the 77/128 phase-cap audit and keep composite results outside
+the bounded integer mapping store. Never create, update, or reopen a pull
+request.

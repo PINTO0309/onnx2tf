@@ -735,10 +735,22 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         "_optimize_transpose_instancenorm_prepost_nhwc_chains",
     ]
     assert next_targets == [
-        "_layout_pass_set_1_initial_affine_chain_fold_stats",
-        "_layout_pass_set_1_post_binary_affine_chain_fold_stats",
+        None,
+        None,
         None,
     ]
+    assert ast.unparse(layout_recovery.body[invocation_indexes[0] + 1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.initial_affine_chain_fold', "
+        "_optimize_fold_mul_add_mul_affine_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
+    assert ast.unparse(layout_recovery.body[invocation_indexes[1] + 1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.post_binary_affine_chain_fold', "
+        "_optimize_fold_mul_add_mul_affine_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
     assert ast.unparse(layout_recovery.body[invocation_indexes[2] + 1]) == (
         "session.record_phase_result("
         "'cleanup.layout_pass_set_1.instancenorm_prepost', "
