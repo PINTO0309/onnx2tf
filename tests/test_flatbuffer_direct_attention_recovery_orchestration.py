@@ -79,7 +79,17 @@ def _direct_call_name(statement: ast.stmt) -> str | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    function = statement.value.func
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    function = call.func
     return function.id if isinstance(function, ast.Name) else None
 
 
@@ -652,8 +662,12 @@ def test_preadd_mean_attention_propagates_nested_results_to_both_direct_calls(
     assert _single_target(direct_results[1][0][direct_results[1][1] - 1]) == (
         "_layout_opt_channel_shuffle_gather_results"
     )
-    assert _single_target(direct_results[1][0][direct_results[1][1] + 1]) == (
-        "_layout_opt_sa_pa_mirrorpad_stats"
+    assert ast.unparse(
+        direct_results[1][0][direct_results[1][1] + 1]
+    ) == (
+        "session.record_phase_result('cleanup.layout_pass_set_2.sa_pa_mirrorpad', "
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir, "
+        "layout_state=session.layout_state))"
     )
     for target in PREADD_RESULT_TARGETS:
         assert not any(

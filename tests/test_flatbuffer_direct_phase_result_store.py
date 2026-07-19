@@ -38,6 +38,15 @@ EXPECTED_RESULT_TARGETS = (
     "_core_cleanup_squeeze_reshape_identity_stats",
     "_core_cleanup_prune_reconcile_stats",
     "_layout_pass_set_2_dequant_transposeconv_quantize_stats",
+    "_layout_opt_elementwise_concat_conv_stats",
+    "_layout_opt_spp_stats",
+    "_layout_opt_pre_concat_stats",
+    "_layout_opt_ndhwc_concat_stats",
+    "_layout_opt_stridedslice_pre_concat_stats",
+    "_layout_opt_split_mixed_pre_concat_stats",
+    "_layout_opt_concat_input_adapter_stats",
+    "_layout_opt_slice_logistic_concat_tail_stats",
+    "_layout_opt_sa_pa_mirrorpad_stats",
     "_layout_pass_set_2_squeeze_reshape_identity_stats",
     "_layout_pass_set_2_prune_reconcile_stats",
     "_terminal_cleanup_terminal_dequant_stats",
@@ -121,6 +130,15 @@ EXPECTED_OWNERS = (
     "run_squeeze_reshape_identity_cleanup",
     "run_indexed_prune_reconcile_cleanup",
     "_optimize_dequant_transposeconv_quantize_chains",
+    "_optimize_transpose_elementwise_concat_conv_nhwc_groups",
+    "run_spp_layout_cleanup",
+    "_optimize_transpose_pre_concat_nhwc_chains",
+    "run_ndhwc_concat_layout_cleanup",
+    "_optimize_transpose_stridedslice_pre_concat_nhwc_chains",
+    "_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains",
+    "_optimize_transpose_input_chains_pre_concat_to_single_post_adapter",
+    "_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains",
+    "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
     "run_squeeze_reshape_identity_cleanup",
     "run_indexed_prune_reconcile_cleanup",
     "_sanitize_terminal_transpose_before_dequantize",
@@ -179,7 +197,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 39,
+    *("model_ir",) * 48,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -209,6 +227,15 @@ EXPECTED_PHASE_IDS = (
     "cleanup.core.squeeze_reshape_identity",
     "cleanup.core.prune_reconcile",
     "cleanup.layout_pass_set_2.dequant_transposeconv_quantize",
+    "cleanup.layout_pass_set_2.elementwise_concat_conv",
+    "cleanup.layout_pass_set_2.spp",
+    "cleanup.layout_pass_set_2.pre_concat",
+    "cleanup.layout_pass_set_2.ndhwc_concat",
+    "cleanup.layout_pass_set_2.stridedslice_pre_concat",
+    "cleanup.layout_pass_set_2.split_mixed_pre_concat",
+    "cleanup.layout_pass_set_2.concat_input_adapter",
+    "cleanup.layout_pass_set_2.slice_logistic_concat_tail",
+    "cleanup.layout_pass_set_2.sa_pa_mirrorpad",
     "cleanup.layout_pass_set_2.squeeze_reshape_identity",
     "cleanup.layout_pass_set_2.prune_reconcile",
     "cleanup.terminal.dequant",
@@ -305,7 +332,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_eighty_one_observations_use_the_bounded_session_store() -> None:
+def test_ninety_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -316,7 +343,7 @@ def test_eighty_one_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 81
+    assert len(records) == 90
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

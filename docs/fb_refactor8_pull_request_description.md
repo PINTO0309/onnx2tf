@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Eighty-one stable phase IDs
+### Ninety stable phase IDs
 
-The lowerer now records 81 bounded observations covering:
+The lowerer now records 90 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -158,6 +158,8 @@ The lowerer now records 81 bounded observations covering:
 - guarded layout pass-set 1 layout-Transpose, Transpose/binary bridge,
   duplicate fan-out, and Dequantize→Mean→Quantize cleanup;
 - guarded layout pass-set 2 quantized TransposeConv cleanup;
+- guarded layout pass-set 2 elementwise/Concat/SPP, input-adapter,
+  Slice/Logistic-tail, and SA/PA MirrorPad cleanup;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -215,7 +217,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 81 phase IDs and owners appear in deterministic source order;
+- all 90 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -259,8 +261,10 @@ Final checkpoint results:
   **13 passed**;
 - direct residual layout pass-set 1 cleanup and owner contracts:
   **14 passed**;
+- expanded residual layout pass-set 2 and orchestration contracts:
+  **64 passed**;
 - QLinear and terminal-layout orchestration contracts: **71 passed**;
-- broader result and phase-result contracts: **182 passed**;
+- broader result and phase-result contracts: **184 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;

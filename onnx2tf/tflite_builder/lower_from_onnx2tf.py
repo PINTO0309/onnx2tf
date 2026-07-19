@@ -4657,56 +4657,64 @@ def lower_onnx_to_ir(
             _run_quantized_activation_binary_bridge_recovery_sequence()
         )
         # Binary bridge recovery can recreate pre/post transpose wrappers around CONCAT.
-        _layout_opt_elementwise_concat_conv_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.elementwise_concat_conv",
             _optimize_transpose_elementwise_concat_conv_nhwc_groups(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
-        _layout_opt_spp_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.spp",
             run_spp_layout_cleanup(
                 model_ir,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
-            )
+            ),
         )
-        _layout_opt_pre_concat_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.pre_concat",
             _optimize_transpose_pre_concat_nhwc_chains(
                 model_ir,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
-            )
+            ),
         )
-        _layout_opt_ndhwc_concat_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.ndhwc_concat",
             run_ndhwc_concat_layout_cleanup(
                 model_ir,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
-            )
+            ),
         )
-        _layout_opt_stridedslice_pre_concat_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.stridedslice_pre_concat",
             _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
-        _layout_opt_split_mixed_pre_concat_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.split_mixed_pre_concat",
             _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
-        _layout_opt_concat_input_adapter_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.concat_input_adapter",
             _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
-        _layout_opt_slice_logistic_concat_tail_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.slice_logistic_concat_tail",
             _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
         _layout_opt_channel_shuffle_gather_results = (
             _run_channel_shuffle_gather_layout_pass_cluster(
@@ -4716,11 +4724,12 @@ def lower_onnx_to_ir(
         _layout_opt_preadd_mean_attention_results = (
             _run_preadd_mean_attention_recovery_sequence()
         )
-        _layout_opt_sa_pa_mirrorpad_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.sa_pa_mirrorpad",
             _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
         _layout_opt_gate_layout_results = _run_gate_layout_pass_cluster(
             include_mixed_attention=False

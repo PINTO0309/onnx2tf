@@ -46,7 +46,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -162,8 +172,9 @@ def test_lowerer_retains_both_concat_input_adapter_results() -> None:
     )
     terminal_result = lowerer.body[terminal_index]
     direct_results = [guarded_result, terminal_result]
+    old_guarded_target = "_layout_opt_concat_input_adapter_stats"
     expected_targets = [
-        "_layout_opt_concat_input_adapter_stats",
+        None,
         "_terminal_concat_input_adapter_stats",
     ]
     assert [_single_target(statement) for statement in direct_results] == (
@@ -184,7 +195,11 @@ def test_lowerer_retains_both_concat_input_adapter_results() -> None:
             keyword.arg: ast.unparse(keyword.value)
             for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
-    for target in expected_targets:
+    assert not any(
+        isinstance(node, ast.Name) and node.id == old_guarded_target
+        for node in ast.walk(lowerer)
+    )
+    for target in expected_targets[1:]:
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
@@ -193,9 +208,7 @@ def test_lowerer_retains_both_concat_input_adapter_results() -> None:
         )
 
     guarded_previous = layout_guard.body[guarded_index - 1]
-    assert _single_target(guarded_previous) == (
-        "_layout_opt_split_mixed_pre_concat_stats"
-    )
+    assert _single_target(guarded_previous) is None
     assert _call_name(guarded_previous) == SPLIT_MIXED_CONCAT
     assert _call_name(layout_guard.body[guarded_index + 1]) == (
         SLICE_LOGISTIC_CONCAT

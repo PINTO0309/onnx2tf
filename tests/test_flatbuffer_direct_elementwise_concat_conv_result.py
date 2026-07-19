@@ -46,7 +46,18 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -153,7 +164,7 @@ def test_direct_elementwise_concat_conv_result_is_retained_observation_only() ->
         if _call_name(statement) == ELEMENTWISE_CONCAT_CONV
     )
     result = layout_guard.body[result_index]
-    assert _single_target(result) == RESULT_TARGET
+    assert _single_target(result) is None
     call = _statement_call(result)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -171,9 +182,10 @@ def test_direct_elementwise_concat_conv_result_is_retained_observation_only() ->
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
 
     assert _single_target(layout_guard.body[result_index - 1]) == PREVIOUS_TARGET
-    assert _single_target(layout_guard.body[result_index + 1]) == FOLLOWING_TARGET
+    assert _call_name(layout_guard.body[result_index + 1]) == (
+        "run_spp_layout_cleanup"
+    )

@@ -279,12 +279,10 @@ def test_gate_layout_preserves_direct_reduced_policy_and_boundaries() -> None:
         for keyword in invocation.value.keywords
     } == {"include_mixed_attention": False}
     predecessor = direct_guard.body[invocation_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_layout_opt_sa_pa_mirrorpad_stats"
-    assert _direct_call_name(predecessor) == (
-        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains"
+    assert ast.unparse(predecessor) == (
+        "session.record_phase_result('cleanup.layout_pass_set_2.sa_pa_mirrorpad', "
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir, "
+        "layout_state=session.layout_state))"
     )
     following = direct_guard.body[invocation_index + 1]
     assert isinstance(following, ast.For)

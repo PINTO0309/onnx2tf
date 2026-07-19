@@ -807,6 +807,41 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented nine-result
 destination migration.
 
+## Layout pass-set 2 residual cleanup implementation
+
+The nine characterized observations now record under stable
+`cleanup.layout_pass_set_2.*` phase IDs. The first eight records remain
+consecutive between the quantized-activation/binary composite and the
+channel-shuffle/Gather composite. The SA/PA MirrorPad record remains between
+the pre-add/mean-attention and gate-layout composites.
+
+Only the nine unconsumed mapping destinations changed. Owner calls, arguments,
+keywords, evaluation counts, the outer layout guard, graph traversal, ModelIR
+mutation, composite recovery boundaries, public results, reports, artifacts,
+dependencies, and TensorFlow import boundaries are unchanged. No defaults
+existed. The bounded store now covers 90 phase IDs.
+
+Expanded orchestration validation exposed three stale helper expectations that
+could not unwrap previously migrated quantized and Dequantize→Mean→Quantize
+phase owners. The shared test helpers now resolve the exact nested owner. The
+targeted correction is `3 passed in 0.62s`; production behavior was not
+implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct nine-result owner/schema contracts: `24 passed in 1.60s`;
+- expanded owner, phase-store, attention, gate, quantized-recovery, and
+  architecture-boundary contracts: `64 passed in 2.38s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader result and phase-result contracts: `184 passed in 11.76s`;
+- lowerer architecture contracts: `258 passed in 16.96s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No root-model corpus conversion was run because this is an observation-
+destination-only change and the synthetic runtime suite executes the guarded
+layout path.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:

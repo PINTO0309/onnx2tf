@@ -45,7 +45,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -147,7 +157,7 @@ def test_lowerer_retains_slice_logistic_concat_result() -> None:
     )
     result = layout_guard.body[result_index]
     target = "_layout_opt_slice_logistic_concat_tail_stats"
-    assert _single_target(result) == target
+    assert _single_target(result) is None
     assert sum(
         1
         for node in ast.walk(lowerer)
@@ -165,12 +175,11 @@ def test_lowerer_retains_slice_logistic_concat_result() -> None:
     assert not any(
         isinstance(node, ast.Name)
         and node.id == target
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
 
     previous = layout_guard.body[result_index - 1]
-    assert _single_target(previous) == "_layout_opt_concat_input_adapter_stats"
+    assert _single_target(previous) is None
     assert _call_name(previous) == CONCAT_INPUT_ADAPTER
     following = layout_guard.body[result_index + 1]
     assert _single_target(following) == (

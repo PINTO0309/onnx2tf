@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
@@ -134,37 +131,7 @@ def _assert_boundaries(guard: ast.If, indices: list[int]) -> None:
     assert _single_target(guard.body[indices[8] + 1]) == SA_PA_SUCCESSOR_TARGET
 
 
-def test_layout_pass_set_2_residual_results_are_guarded_and_unconsumed() -> None:
-    lowerer = _lowerer()
-    guard = _guard(lowerer)
-    assignments = [
-        statement
-        for statement in guard.body
-        if _single_target(statement) in EXPECTED_RESULT_TARGETS
-    ]
-    indices = [guard.body.index(statement) for statement in assignments]
-
-    assert guard.orelse == []
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert tuple(ast.unparse(statement.value) for statement in assignments) == (
-        EXPECTED_OWNER_EXPRESSIONS
-    )
-    _assert_boundaries(guard, indices)
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id in EXPECTED_RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout pass-set 2 residual results have not moved to phase records",
-)
-def test_layout_pass_set_2_residual_results_use_phase_result_store() -> None:
+def test_layout_pass_set_2_residual_results_use_guarded_phase_records() -> None:
     lowerer = _lowerer()
     guard = _guard(lowerer)
     records = [
@@ -174,11 +141,21 @@ def test_layout_pass_set_2_residual_results_use_phase_result_store() -> None:
     ]
     indices = [guard.body.index(statement) for statement in records]
 
+    assert guard.orelse == []
     assert tuple(_phase_id(statement) for statement in records) == EXPECTED_PHASE_IDS
     assert tuple(
         ast.unparse(_statement_call(statement).args[1]) for statement in records
     ) == EXPECTED_OWNER_EXPRESSIONS
     _assert_boundaries(guard, indices)
+    assert not any(
+        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
+
+
+def test_layout_pass_set_2_residual_result_locals_are_removed() -> None:
+    lowerer = _lowerer()
+
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)

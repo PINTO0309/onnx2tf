@@ -1473,3 +1473,30 @@ destinations. Preserve the outer guard, adjacency, and every composite
 boundary, then update multi-occurrence owner and bounded-store contracts,
 validate, document, commit, and push. Never create, update, or reopen a pull
 request.
+
+## Layout pass-set 2 residual cleanup implementation
+
+The nine mapping results now use stable `cleanup.layout_pass_set_2.*` records.
+The eight-result adjacency, isolated SA/PA position, outer layout guard, owner
+expressions, and every composite recovery boundary remain unchanged. No
+default existed. The bounded store now covers 90 phase IDs.
+
+Expanded orchestration validation exposed three stale test helpers for
+previously migrated quantized and Dequantize→Mean→Quantize phase owners. They
+now unwrap and verify the exact nested call; the targeted correction is
+`3 passed in 0.62s` and production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct nine-result contracts: `24 passed in 1.60s`;
+- expanded affected contracts: `64 passed in 2.38s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader result contracts: `184 passed in 11.76s`;
+- lowerer architecture contracts: `258 passed in 16.96s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite exercises the guarded path. After committing and
+pushing, retain the 90/128 phase-cap audit and keep composite results outside
+the bounded integer mapping store. Never create, update, or reopen a pull
+request.

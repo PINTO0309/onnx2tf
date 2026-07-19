@@ -844,12 +844,24 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         assert invocation.keywords == []
         previous = recovery_block.body[index - 1]
         following = recovery_block.body[index + 1]
+        boundary_calls = []
         for boundary in (previous, following):
             assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
-        previous_call_names.append(previous.value.func.id)
-        next_call_names.append(following.value.func.id)
+            boundary_call = boundary.value
+            if (
+                isinstance(boundary_call.func, ast.Attribute)
+                and isinstance(boundary_call.func.value, ast.Name)
+                and boundary_call.func.value.id == "session"
+                and boundary_call.func.attr == "record_phase_result"
+                and len(boundary_call.args) == 2
+                and isinstance(boundary_call.args[1], ast.Call)
+            ):
+                boundary_call = boundary_call.args[1]
+            assert isinstance(boundary_call.func, ast.Name)
+            boundary_calls.append(boundary_call)
+        previous_call_names.append(boundary_calls[0].func.id)
+        next_call_names.append(boundary_calls[1].func.id)
     assert previous_call_names == [
         "_run_layout_recovery_prefix_pass_sequence",
         "_run_channel_shuffle_gather_layout_pass_cluster",
@@ -865,10 +877,11 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         "_layout_opt_channel_shuffle_gather_results"
     )
     sa_pa_boundary = recovery_block.body[invocation_indexes[1] + 1]
-    assert isinstance(sa_pa_boundary, ast.Assign)
-    assert len(sa_pa_boundary.targets) == 1
-    assert isinstance(sa_pa_boundary.targets[0], ast.Name)
-    assert sa_pa_boundary.targets[0].id == "_layout_opt_sa_pa_mirrorpad_stats"
+    assert ast.unparse(sa_pa_boundary) == (
+        "session.record_phase_result('cleanup.layout_pass_set_2.sa_pa_mirrorpad', "
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
 
 
 def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
@@ -1101,18 +1114,11 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         == "enable_transpose_binary_bridge_optimizations"
     )
     second_following = direct_boundaries[1][2]
-    assert isinstance(second_following, ast.Assign)
-    assert len(second_following.targets) == 1
-    assert isinstance(second_following.targets[0], ast.Name)
-    assert (
-        second_following.targets[0].id
-        == "_layout_opt_elementwise_concat_conv_stats"
-    )
-    assert isinstance(second_following.value, ast.Call)
-    assert isinstance(second_following.value.func, ast.Name)
-    assert (
-        second_following.value.func.id
-        == "_optimize_transpose_elementwise_concat_conv_nhwc_groups"
+    assert ast.unparse(second_following) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_2.elementwise_concat_conv', "
+        "_optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir, "
+        "layout_state=session.layout_state))"
     )
 
 

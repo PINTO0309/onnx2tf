@@ -73,7 +73,17 @@ def _direct_call_name(statement: ast.stmt) -> str | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    function = statement.value.func
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    function = call.func
     return function.id if isinstance(function, ast.Name) else None
 
 
@@ -457,8 +467,11 @@ def test_quantized_activation_binary_propagates_nested_results_to_both_calls(
         "enable_transpose_binary_bridge_optimizations"
     )
     second_following = production_results[1][0][production_results[1][1] + 1]
-    assert _single_target(second_following) == (
-        "_layout_opt_elementwise_concat_conv_stats"
+    assert ast.unparse(second_following) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_2.elementwise_concat_conv', "
+        "_optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir, "
+        "layout_state=session.layout_state))"
     )
     for target in RESULT_TARGETS:
         assert not any(

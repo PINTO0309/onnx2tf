@@ -50,7 +50,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -165,8 +175,9 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
     )
     terminal_result = lowerer.body[terminal_index]
     direct_results = [guarded_result, terminal_result]
+    old_guarded_target = "_layout_opt_split_mixed_pre_concat_stats"
     expected_targets = [
-        "_layout_opt_split_mixed_pre_concat_stats",
+        None,
         "_terminal_split_mixed_pre_concat_stats",
     ]
     assert [_single_target(statement) for statement in direct_results] == (
@@ -187,7 +198,11 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
             keyword.arg: ast.unparse(keyword.value)
             for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
-    for target in expected_targets:
+    assert not any(
+        isinstance(node, ast.Name) and node.id == old_guarded_target
+        for node in ast.walk(lowerer)
+    )
+    for target in expected_targets[1:]:
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
@@ -198,9 +213,7 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
     assert _call_name(layout_guard.body[guarded_index - 1]) == (
         STRIDED_SLICE_PRE_CONCAT
     )
-    assert _single_target(layout_guard.body[guarded_index - 1]) == (
-        "_layout_opt_stridedslice_pre_concat_stats"
-    )
+    assert _single_target(layout_guard.body[guarded_index - 1]) is None
     assert _call_name(layout_guard.body[guarded_index + 1]) == INPUT_PRE_CONCAT
 
     terminal_previous = lowerer.body[terminal_index - 1]

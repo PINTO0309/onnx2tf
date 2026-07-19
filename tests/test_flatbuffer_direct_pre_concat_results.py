@@ -36,10 +36,20 @@ def _direct_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    function = statement.value.func
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    function = call.func
     if not isinstance(function, ast.Name) or function.id != PRE_CONCAT:
         return None
-    return statement.value
+    return call
 
 
 def _single_target(statement: ast.stmt) -> str | None:
@@ -61,7 +71,18 @@ def _call_name(statement: ast.stmt) -> str | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     value = statement.value
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+    if not isinstance(value, ast.Call):
+        return None
+    if (
+        isinstance(value.func, ast.Attribute)
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id == "session"
+        and value.func.attr == "record_phase_result"
+        and len(value.args) == 2
+        and isinstance(value.args[1], ast.Call)
+    ):
+        value = value.args[1]
+    if not isinstance(value.func, ast.Name):
         return None
     return value.func.id
 
@@ -113,7 +134,9 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
     )
     assert len(direct_results) == 3
     assert tuple(_single_target(statement) for statement in direct_results) == (
-        RESULT_TARGETS
+        None,
+        RESULT_TARGETS[1],
+        RESULT_TARGETS[2],
     )
     for statement in direct_results:
         call = _direct_call(statement)
@@ -126,7 +149,11 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "layout_state": "session.layout_state",
             "diagnostics": "session.diagnostics",
         }
-    for target in RESULT_TARGETS:
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGETS[0]
+        for node in ast.walk(lowerer)
+    )
+    for target in RESULT_TARGETS[1:]:
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
@@ -137,7 +164,7 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
     expected_boundaries = (
         (
             "run_spp_layout_cleanup",
-            "_layout_opt_spp_stats",
+            None,
             "run_ndhwc_concat_layout_cleanup",
         ),
         (
