@@ -93,3 +93,26 @@ expectation was updated to require the new observation target and complete
 schema; the unchanged gate then passed. No model-corpus conversion was run
 because assigning an already-computed dictionary cannot affect ModelIR or an
 artifact.
+
+## Core dynamic-Reshape result characterization
+
+The core-cleanup call to `_resolve_dynamic_reshape_shapes(model_ir)` returns a
+fixed `resolved_dynamic_reshape_shapes` counter but currently discards it. The
+call sits between the retained Conv-activation result and the retained
+Squeeze/Reshape identity cleanup result.
+
+The new contract freezes the zero schema and a positive mutation that resolves
+`[-1, 2]` to `[2, 2]` across the operator option, constant shape tensor, and
+output tensor metadata. The selected implementation is an unconsumed
+assignment named `_core_cleanup_dynamic_reshape_stats`. It must not add a
+guard, graph index, cleanup, pass, scan, or consumer, and it must preserve the
+exact call arguments and phase position.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated contract: `2 passed, 1 xfailed in 0.54s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented assignment. No
+production source changed in this checkpoint.

@@ -85,3 +85,23 @@ without changing production behavior. Prefer a local assignment-only or
 shared-index opportunity whose current mutation and cleanup evidence can be
 fully characterized. Continue with commits and pushes only; do not create,
 reopen, or update a pull request.
+
+## Core dynamic-Reshape result characterization
+
+The next selected raw boundary is `_resolve_dynamic_reshape_shapes(model_ir)`
+inside core cleanup. It has a fixed one-key result, no cleanup or layout-state
+side effect, and is positioned between `_core_cleanup_conv_activation_stats`
+and `_core_cleanup_squeeze_reshape_identity_stats`.
+
+The characterization fixture freezes a positive resolution of `[-1, 2]` to
+`[2, 2]`, including the operator option, shape constant, output shape, and
+output signature. A strict expected failure requires observation-only
+assignment to `_core_cleanup_dynamic_reshape_stats` with the same sole
+`model_ir` argument. Do not add a consumer, guard, graph index, cleanup, or
+pass, and do not change the surrounding core-cleanup order.
+
+Characterization validation completed sequentially under `uv`: the dedicated
+contract is `2 passed, 1 xfailed in 0.54s`, and targeted Ruff, bytecode
+compilation, and whitespace checks pass. The sole expected failure is the
+unimplemented assignment. Commit and push this characterization before
+changing production code; do not create or update a pull request.
