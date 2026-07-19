@@ -693,6 +693,36 @@ bounded semantic families rather than migrating all model-specific final
 repairs at once, and preserve invoked-only semantics. Never create, update, or
 reopen a pull request.
 
+## Terminal clamp/SiNet layout characterization checkpoint
+
+The current characterized inventory contains 55 unconsumed lowerer results.
+The next selected adjacent pair is terminal Clamp/unary/ReLU followed by SiNet
+terminal-layout recovery. The SiNet context embeds the same shared pass context
+used by the first child and preserves the existing pre-add/resize callback.
+There is no intervening branch, phase record, progress update, result consumer,
+or other mutation.
+
+The contract requires one two-child owner with fixed order, exact embedded
+pass-context and callback preservation, and identity preservation for both
+complete results. The terminal layout conditional remains the predecessor and
+the phase-recorded SiNet hard-swish/SE cleanup remains the successor. Both
+lowerer wrappers remain compatibility routes.
+
+Focused characterization reports `1 passed, 1 xfailed`; the affected suite
+reports `462 passed, 1 xfailed`. The sole xfail is the intentionally absent
+`passes/terminal_clamp_sinet_layout_orchestration.py`. Production and the
+exactly 128-ID/128-owner phase store remain unchanged.
+
+At resume, implement `run_terminal_clamp_sinet_layout_cleanup(context)` as a
+straight-line owner. Pass `context.pass_context` to terminal
+Clamp/unary/ReLU, pass the exact original context to SiNet terminal-layout
+recovery, return both raw results unchanged, and replace only the two
+characterized lowerer locals. Preserve the preceding conditional, following
+phase record, callback, and both wrappers. Add runtime
+order/context/callback/result-identity injection, run affected and standard
+gates sequentially, then commit and push only. Do not create, update, or reopen
+a pull request.
+
 ## Primary final layout-refresh reconciliation characterization
 
 The primary inventory found 20 remaining unconsumed static-shape-only results.

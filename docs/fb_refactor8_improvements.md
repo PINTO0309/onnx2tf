@@ -6193,6 +6193,32 @@ real-model conversion was repeated because this is an ownership-only move with
 direct state, order, schema, identity, route, guard, phase, and progress
 coverage.
 
+## Terminal clamp/SiNet layout composite characterization
+
+The characterized unconsumed-result inventory contains 55 entries. The next
+selected pair is terminal Clamp/unary/ReLU cleanup followed immediately by
+SiNet terminal-layout recovery. The existing SiNet recovery context embeds the
+same shared `ModelIRPassContext` used by the Clamp child and retains the exact
+pre-add/resize callback. No branch, phase record, progress update, result
+consumer, or unrelated mutation occurs between the two calls.
+
+The proposed owner must call terminal Clamp/unary/ReLU with
+`context.pass_context`, call SiNet terminal-layout recovery with the exact
+unchanged composite context, and return both complete result tuples in source
+order without copying, flattening, inspection, or result-driven control flow.
+The optional terminal layout block remains the immediate predecessor. The
+phase-recorded terminal SiNet hard-swish/SE cleanup remains the immediate
+successor. Both lowerer wrappers remain compatibility routes.
+
+Sequential core-only `uv` characterization passed with
+`1 passed, 1 xfailed` focused and `462 passed, 1 xfailed` across terminal
+Clamp/unary/ReLU, SiNet terminal-layout, pre-add/resize, singleton Reshape,
+callback/context composition, architecture, pass-efficiency,
+terminal-validation, shared-context, result, and phase-store contracts. The
+sole xfail is the intentionally absent owner. Production behavior, public
+APIs, artifacts, dependencies, TensorFlow isolation, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
 ## Terminal QKV/activation-bridge composite implementation
 
 `passes/terminal_qkv_activation_bridge_orchestration.py` now owns the

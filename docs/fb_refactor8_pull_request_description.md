@@ -1224,6 +1224,20 @@ contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
 tests. The exactly 128-ID/128-owner store is unchanged, while the characterized
 unconsumed lowerer-result inventory decreases from 56 to 55.
 
+The next characterization selects terminal Clamp/unary/ReLU followed by SiNet
+terminal-layout recovery. The existing SiNet context embeds the same shared
+pass context used by the Clamp child and retains the exact pre-add/resize
+callback. The new owner must preserve both calls, their order, the embedded
+context and callback, and both complete raw results. The terminal layout
+conditional remains the predecessor and the phase-recorded SiNet hard-swish/SE
+cleanup remains the successor. Production is unchanged pending one
+straight-line owner, and both lowerer wrappers remain compatibility routes.
+
+Focused and affected sequential characterization report
+`1 passed, 1 xfailed` and `462 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
 The next characterization selects the terminal layout/shape tail immediately
 after the activation bridge: absolute pre-ConCat cleanup, late Shape-extract,
 the prune-aware late layout/Mean/SPP/Gather/constant-fold/Cast summary, and
