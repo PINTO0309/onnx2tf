@@ -3721,3 +3721,23 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves exact context and normalization, while affected and architecture gates
 preserve the wrapper, adjacent boundaries, shared scope, and total pass
 ownership.
+
+## Late QKV prune-aware summary characterization
+
+The next evidence triple captures tensor count, invokes the QKV owner with the
+runtime layout-Transpose flag and `include_prefix=False`, then builds a stable
+prune-aware summary. The count and raw tuple are consumed only by that summary;
+the normalized mapping is not used for control flow. Two default-policy raw
+wrapper uses elsewhere must remain unchanged.
+
+`tests/test_flatbuffer_direct_late_qkv_summary_orchestration.py` fixes the
+three statements, exact flags, prune expression, result use counts,
+predecessor, successor, and retained raw wrapper. Its strict expected failure
+requires a generic pass-module prune-aware summary owner. No production source,
+pass, graph, result, store, public API, artifact, dependency, or TensorFlow
+boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.17s`; targeted Ruff, bytecode compilation, and
+whitespace checks passed. The sole expected failure is the intentionally
+absent summary owner.

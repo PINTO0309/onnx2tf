@@ -494,6 +494,8 @@ Final checkpoint results:
 - late SPP/Concat/Unary direct-summary owner contracts: **3 passed**;
 - affected late SPP, shape-extract, terminal recovery, and related contracts:
   **187 passed**;
+- late QKV prune-aware summary characterization:
+  **1 passed, 1 intentional strict xfail**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -550,3 +552,7 @@ layout-aware/model-only argument policy, all other call sites, and the full
 The latest checkpoint implements the adjacent late SPP/Concat/Unary raw tuple
 and normalized summary owner while explicitly retaining the existing raw
 wrapper and shared pass-state scope.
+
+The next characterization fixes the late QKV tensor snapshot, flagged raw
+owner, and prune-aware summary while retaining both default-policy raw-wrapper
+uses.

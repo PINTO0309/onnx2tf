@@ -3270,3 +3270,20 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Late QKV prune-aware summary characterization
+
+The late QKV site is now fixed as one evidence triple: tensor-count snapshot,
+flagged raw QKV owner with prefix disabled, and strict prune-aware summary. The
+two consumed intermediate values are local to this triple, while the summary
+is unconsumed. Other default-policy raw-wrapper uses remain outside the scope.
+
+The focused contract passes for the current representation and has one strict
+xfail for `run_qkv_attention_summary(context, flags...)`. Sequential
+validation completed with `1 passed, 1 xfailed in 0.17s`; targeted Ruff,
+bytecode compilation, and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, add the generic
+prune-aware owner, replace only this late triple, retain the raw lowerer
+wrapper and both default uses, and validate sequentially. Continue with commits
+and pushes only; never create, update, or reopen a pull request.
