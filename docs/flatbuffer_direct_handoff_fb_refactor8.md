@@ -1210,3 +1210,26 @@ changed and the runtime suite exercises the guarded path. After committing and
 pushing, select the next family without mixing compound cluster return values
 with mapping-only results, and retain the 128-phase limit in the sizing audit.
 Never create, update, or reopen a pull request.
+
+## Layout pass-set 1 cleanup characterization
+
+The selected pair contains only the adjacent InstanceNorm pre/post and
+Squeeze/Reshape identity mapping results near the end of the first layout
+pass-set. Both are behind `optimize_layout_transpose_chains`, have no defaults
+or consumers, and are bounded by composite attention-cluster results that are
+not part of this family.
+
+The contract fixes the guard, owner arguments and keywords, adjacency,
+composite predecessor and successor targets, and absence of loads. Its strict
+expected failure requires two `cleanup.layout_pass_set_1.*` records.
+
+Validation completed sequentially under core-only `uv`: the characterization
+and existing owner/architecture boundaries are
+`6 passed, 1 xfailed in 0.80s`; Ruff, bytecode compilation, and whitespace
+checks pass. No production source changed.
+
+Commit and push this characterization before replacing only the two mapping
+destinations. Preserve the outer guard and both composite boundaries; do not
+attempt to store the composite return values in the bounded integer mapping
+store. Then update existing contracts and the phase inventory, validate,
+document, commit, and push. Never create, update, or reopen a pull request.

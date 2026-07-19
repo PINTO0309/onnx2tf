@@ -1149,6 +1149,30 @@ Validation completed sequentially under core-only `uv`:
 No root-model corpus conversion was run because only observation destinations
 changed and the synthetic runtime suite exercises the guarded layout path.
 
+## Layout pass-set 1 cleanup characterization
+
+The next family is limited to the adjacent InstanceNorm pre/post and
+Squeeze/Reshape identity mapping results near the end of layout pass-set 1.
+Both run under the existing `optimize_layout_transpose_chains` guard, have no
+defaults or consumers, and sit between two composite attention-cluster results
+that remain explicitly outside this migration.
+
+The characterization fixes the common guard, exact owner expressions and
+keywords, adjacency, composite predecessor and successor targets, and absence
+of loads. A strict expected failure requires stable
+`cleanup.layout_pass_set_1.*` records with invoked-phase-only semantics. No
+production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization plus InstanceNorm, Squeeze/Reshape, and attention-
+  prefix architecture boundaries: `6 passed, 1 xfailed in 0.80s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented two-result
+destination migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
