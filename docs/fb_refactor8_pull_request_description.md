@@ -715,3 +715,9 @@ The latest checkpoint implements that dedicated final stale Conv-input summary
 owner. It removes the final tensor snapshot and inline mapping extension while
 retaining the raw wrapper, optional graph-index forwarding, both indexed
 summary sites, neighboring boundaries, and the full 128/128 phase-result store.
+
+The next characterization fixes the absolute-final PRELU count-plus-result
+boundary. It preserves ModelIR/LayoutState forwarding, the preceding
+SE-FC/Gather guard, rewrite-or-prune reconciliation semantics, the following
+consecutive-Reshape cleanup, and the raw wrapper. Production remains unchanged
+until its dedicated prune-aware summary owner is implemented separately.

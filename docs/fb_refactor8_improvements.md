@@ -4179,3 +4179,25 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves stable and prune-only schema preservation, while the affected and
 architecture gates preserve the raw and indexed owners, all three production
 summary sites, optional graph-index forwarding, and neighboring boundaries.
+
+## Final PRELU prune-aware summary characterization
+
+The next isolated boundary is the absolute-final PRELU passthrough repair. The
+raw owner always performs unused-tensor pruning, including on a zero-match
+call. The lowerer currently snapshots tensor count around that one-key result
+and reconciles shapes after either a PRELU rewrite or prune-only cleanup.
+
+`tests/test_flatbuffer_direct_final_prelu_summary_orchestration.py` fixes the
+current count-plus-call representation, exact ModelIR and `LayoutState`
+arguments, preceding SE-FC/Gather reconciliation guard, rewrite-or-prune
+condition, following consecutive-Reshape cleanup, and retained raw lowerer
+wrapper. Its strict expected failure requires one dedicated pass-module
+prune-aware summary and the existing generic positive-count predicate. No
+production source, graph mutation, pass order, store entry, public API,
+artifact, dependency, or TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`389 passed, 1 xfailed in 19.45s` across the dedicated contract and related
+terminal-layout, SE-FC/Gather, core runtime, phase-store, and architecture
+contracts. The sole expected failure is the intentionally absent dedicated
+summary owner. Targeted Ruff and whitespace checks passed.

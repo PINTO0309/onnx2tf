@@ -3696,3 +3696,27 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next compatible repeated evidence family before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Final PRELU prune-aware summary characterization
+
+The next selected boundary is the absolute-final PRELU passthrough repair. Its
+raw owner prunes on every invocation, while the lowerer currently owns the
+tensor snapshot and rewrite-or-prune reconciliation condition.
+
+The focused contract fixes the current representation, ModelIR/LayoutState
+arguments, preceding SE-FC/Gather guard, following consecutive-Reshape cleanup,
+raw wrapper retention, and exact guard semantics. One strict xfail requires
+`run_prelu_transpose_passthrough_summary(model_ir, layout_state=...)` and the
+existing generic positive-count predicate.
+
+Sequential validation under core-only `uv` completed with
+`389 passed, 1 xfailed in 19.45s` across the new characterization and related
+terminal-layout, SE-FC/Gather, core runtime, phase-store, and architecture
+contracts. The sole expected failure is the unimplemented dedicated summary
+owner. Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the dedicated PRELU summary owner and final-primary site, retain the raw
+lowerer wrapper and all other PRELU callers, update owner-aware structural
+contracts, and validate sequentially. Continue with commits and pushes only;
+never create, update, or reopen a pull request.
