@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import no_layout_final_cleanup_orchestration
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -71,31 +76,22 @@ def _guard(lowerer: ast.FunctionDef) -> tuple[int, ast.If]:
 def test_no_layout_final_cleanup_raw_pair_and_boundaries_are_fixed() -> None:
     lowerer = _lowerer()
     guard_index, guard = _guard(lowerer)
-    assert len(guard.body) == 3
-    assert tuple(_single_target(statement) for statement in guard.body[:2]) == (
-        OLD_TARGETS
+    assert len(guard.body) == 2
+    summary = guard.body[0]
+    assert _single_target(summary) == SUMMARY_TARGET
+    assert isinstance(summary, ast.Assign)
+    assert ast.unparse(summary.value) == (
+        f"{SUMMARY_OWNER}(shared_model_ir_pass_context)"
     )
-    se_fc = guard.body[0]
-    affine = guard.body[1]
-    assert isinstance(se_fc, ast.Assign)
-    assert ast.unparse(se_fc.value) == (
-        "run_se_fc_layout_cleanup(model_ir, "
-        "layout_state=session.layout_state, "
-        "diagnostics=session.diagnostics)"
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_TARGETS
+        for node in ast.walk(lowerer)
     )
-    assert isinstance(affine, ast.Assign)
-    assert ast.unparse(affine.value) == (
-        f"{AFFINE_WRAPPER}(model_ir, layout_state=session.layout_state)"
-    )
-    _assert_topology_phase(guard.body[2], TOPOLOGY_PHASE)
+    _assert_topology_phase(guard.body[1], TOPOLOGY_PHASE)
     _assert_topology_phase(lowerer.body[guard_index - 1], PREDECESSOR_PHASE)
     assert _single_target(lowerer.body[guard_index + 1]) == SUCCESSOR_TARGET
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="no-layout final SE-FC/affine pair lacks one ordered owner",
-)
 def test_no_layout_final_cleanup_uses_one_ordered_context_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     owner_calls = [
@@ -132,3 +128,59 @@ def test_no_layout_final_cleanup_uses_one_ordered_context_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.se_layout"
     )
     assert SE_FC_OWNER in {alias.name for alias in se_layout_import.names}
+
+
+def test_no_layout_final_cleanup_preserves_context_order_and_raw_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("no_layout_final_cleanup")
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict[str, object]] = []
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+    results = (
+        {"optimized_transpose_se_fc_mul_prepost_nhwc_chains": 2},
+        {"optimized_transpose_mul_add_const_prepost_nhwc_chains": 3},
+    )
+    events: list[tuple[str, ModelIR, dict[str, object]]] = []
+
+    def _run_se_fc(candidate: ModelIR, **kwargs: object) -> dict[str, int]:
+        events.append((SE_FC_OWNER, candidate, dict(kwargs)))
+        return dict(results[0])
+
+    def _run_affine(candidate: ModelIR, **kwargs: object) -> dict[str, int]:
+        events.append((AFFINE_OWNER, candidate, dict(kwargs)))
+        return dict(results[1])
+
+    monkeypatch.setattr(
+        no_layout_final_cleanup_orchestration,
+        SE_FC_OWNER,
+        _run_se_fc,
+    )
+    monkeypatch.setattr(
+        no_layout_final_cleanup_orchestration,
+        AFFINE_OWNER,
+        _run_affine,
+    )
+
+    assert no_layout_final_cleanup_orchestration.run_no_layout_final_cleanup(
+        context
+    ) == results
+    assert events == [
+        (
+            SE_FC_OWNER,
+            model_ir,
+            {
+                "layout_state": layout_state,
+                "diagnostics": diagnostics,
+            },
+        ),
+        (
+            AFFINE_OWNER,
+            model_ir,
+            {"layout_state": layout_state},
+        ),
+    ]

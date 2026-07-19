@@ -20,7 +20,7 @@ EXPECTED_INNER_GUARDS = (
 )
 EXPECTED_PREDECESSOR_TARGETS = (
     None,
-    "_no_layout_final_affine_prepost_stats",
+    "_no_layout_final_cleanup_results",
     None,
 )
 EXPECTED_PHASE_IDS = (

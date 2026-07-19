@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Thirty-four late lowerer clusters now have focused orchestration owners. The first
+Thirty-five late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -285,8 +285,14 @@ static-signature sanitizer pair. It preserves both raw schemas, exact mutation
 order, every other signature caller, wrapper compatibility, and the following
 affine cleanup.
 
+The thirty-fifth owns the guarded no-layout final SE-FC and affine pre/post
+cleanup pair. It preserves shared ModelIR/LayoutState identity, SE-FC-only
+diagnostics, raw mapping schemas and order, the option guard, both topology
+boundaries, every other raw caller, compatibility symbols, and the following
+boundary-signature cleanup.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing fifty-three former unconsumed locals and two
+and result schemas while removing fifty-five former unconsumed locals and two
 lowerer scope locals. They also replace twenty-nine consumed mutation-evidence
 or aggregate-result locals and twenty tensor-count snapshots with three
 explicit boolean decisions, nineteen reusable summary calls, and one prune-aware
@@ -849,3 +855,10 @@ diagnostics, raw result schemas and order, both topology boundaries, the
 following signature owner, compatibility symbols, and the full 128/128 store.
 Production remains unchanged until a shared context owner is implemented
 separately.
+
+The latest checkpoint implements that shared no-layout final cleanup owner. It
+replaces the two individual unconsumed result locals with one ordered tuple
+while preserving the option guard, shared ModelIR/LayoutState identity,
+SE-FC-only diagnostics, raw order and schemas, both topology boundaries, every
+other caller, compatibility symbols, the signature successor, and the full
+128/128 store.

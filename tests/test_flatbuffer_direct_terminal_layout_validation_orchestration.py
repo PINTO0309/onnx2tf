@@ -1036,48 +1036,23 @@ def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
         and ast.unparse(statement.test)
         == "apply_safe_transpose_reduction_lite_on_no_layout_opt"
         and any(
-            _call_name(_statement_call(child)) == "run_se_fc_layout_cleanup"
+            _call_name(_statement_call(child))
+            == "run_no_layout_final_cleanup"
             for child in statement.body
         )
     )
     guard = body[guard_index]
     assert isinstance(guard, ast.If)
-    assert len(guard.body) == 3
-
-    expected = (
-        (
-            "_no_layout_final_se_fc_stats",
-            "run_se_fc_layout_cleanup",
-            {
-                "layout_state": "session.layout_state",
-                "diagnostics": "session.diagnostics",
-            },
-        ),
-        (
-            "_no_layout_final_affine_prepost_stats",
-            "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
-            {"layout_state": "session.layout_state"},
-        ),
+    assert len(guard.body) == 2
+    summary = guard.body[0]
+    assert isinstance(summary, ast.Assign)
+    assert isinstance(summary.targets[0], ast.Name)
+    assert summary.targets[0].id == "_no_layout_final_cleanup_results"
+    assert ast.unparse(summary.value) == (
+        "run_no_layout_final_cleanup(shared_model_ir_pass_context)"
     )
-    for statement, (target_name, function_name, keywords) in zip(
-        guard.body[:2],
-        expected,
-    ):
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == function_name
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == keywords
 
-    topology_checkpoint = guard.body[2]
+    topology_checkpoint = guard.body[1]
     _assert_phase_result_record(
         topology_checkpoint,
         phase_id="topology.primary.no_layout_post_reduction",

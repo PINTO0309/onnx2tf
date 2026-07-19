@@ -294,6 +294,29 @@ def _boundary_signature_cleanup_call_count(function_name: str) -> int:
     )
 
 
+def _no_layout_final_cleanup_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "no_layout_final_cleanup_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_no_layout_final_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+        for node in ast.walk(owner)
+    )
+
+
 def test_constant_lowering_has_one_typed_op_family_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -6850,6 +6873,9 @@ def test_indexed_affine_prepost_layout_owner_preserves_canonical_output() -> Non
         len(production_calls)
         + _orchestrated_pass_count(wrapper_name)
         + _late_binary_layout_recovery_call_count(
+            "optimize_transpose_mul_add_const_prepost_nhwc_chains"
+        )
+        + _no_layout_final_cleanup_call_count(
             "optimize_transpose_mul_add_const_prepost_nhwc_chains"
         )
         == 7
@@ -13827,6 +13853,9 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         len(calls)
         + len(summarized_runner_calls)
         + len(precision_runner_calls) * len(precision_sequence_invocations)
+        + _no_layout_final_cleanup_call_count(
+            "run_se_fc_layout_cleanup"
+        )
         + sum(_orchestrated_pass_count(name) for name in runner_names)
         + sum(
             _late_binary_layout_recovery_call_count(name)
@@ -14229,6 +14258,9 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert (
         len(se_fc_calls)
         + _orchestrated_pass_count("run_se_fc_layout_cleanup")
+        + _no_layout_final_cleanup_call_count(
+            "run_se_fc_layout_cleanup"
+        )
         == 3
     )
 

@@ -27,8 +27,13 @@ ORCHESTRATION_SELECTIONS = {
     ),
 }
 LATE_BINARY_PATH = PASSES_PATH / "late_binary_layout_recovery.py"
+NO_LAYOUT_FINAL_PATH = (
+    PASSES_PATH / "no_layout_final_cleanup_orchestration.py"
+)
 OWNER = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 NESTED_OWNER = "optimize_transpose_mul_add_const_prepost_nhwc_chains"
+NO_LAYOUT_FINAL_OWNER = "run_no_layout_final_cleanup"
+NO_LAYOUT_FINAL_TARGET = "_no_layout_final_cleanup_results"
 RESULT_TARGETS = (
     "_layout_pass_set_1_affine_prepost_stats",
     "_no_layout_fallback_affine_prepost_stats",
@@ -103,7 +108,7 @@ def test_affine_prepost_schema_and_all_selections_are_explicit() -> None:
 
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     locations = _direct_locations(lowerer.body)
-    assert len(locations) == 3
+    assert len(locations) == 2
     for body, index in locations:
         call = _statement_call(body[index])
         assert call is not None
@@ -112,6 +117,23 @@ def test_affine_prepost_schema_and_all_selections_are_explicit() -> None:
             keyword.arg: ast.unparse(keyword.value)
             for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
+
+    no_layout_owner = _functions(NO_LAYOUT_FINAL_PATH)[NO_LAYOUT_FINAL_OWNER]
+    no_layout_calls = [
+        node
+        for node in ast.walk(no_layout_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == NESTED_OWNER
+    ]
+    assert len(no_layout_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in no_layout_calls[0].args
+    ] == ["context.model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in no_layout_calls[0].keywords
+    } == {"layout_state": "context.layout_state"}
 
     for filename, (expected_pass_id, expected_context) in (
         ORCHESTRATION_SELECTIONS.items()
@@ -162,10 +184,10 @@ def test_affine_prepost_schema_and_all_selections_are_explicit() -> None:
 def test_all_direct_affine_prepost_results_are_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     locations = _direct_locations(lowerer.body)
-    assert len(locations) == 3
+    assert len(locations) == 2
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == (None, RESULT_TARGETS[1], RESULT_TARGETS[2])
+    ) == (None, RESULT_TARGETS[1])
 
     initial_body, initial_index = locations[0]
     assert _call_name(initial_body[initial_index - 1]) == (
@@ -181,14 +203,6 @@ def test_all_direct_affine_prepost_results_are_retained_observation_only() -> No
         "_apply_safe_transpose_reduction_lite"
     )
 
-    final_body, final_index = locations[2]
-    assert _single_target(final_body[final_index - 1]) == (
-        "_no_layout_final_se_fc_stats"
-    )
-    assert _call_name(final_body[final_index + 1]) == (
-        "_topologically_sort_operators"
-    )
-
     assert not any(
         isinstance(node, ast.Name) and node.id == RESULT_TARGETS[0]
         for node in ast.walk(lowerer)
@@ -197,5 +211,15 @@ def test_all_direct_affine_prepost_results_are_retained_observation_only() -> No
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGETS[1]
         and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGETS[2]
+        for node in ast.walk(lowerer)
+    )
+    assert any(
+        isinstance(node, ast.Name)
+        and node.id == NO_LAYOUT_FINAL_TARGET
+        and isinstance(node.ctx, ast.Store)
         for node in ast.walk(lowerer)
     )

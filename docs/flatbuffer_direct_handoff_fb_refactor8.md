@@ -4077,3 +4077,38 @@ the guarded pair owner and site, retain the affine wrapper, SE-FC compatibility
 import, all other callers, and both topology boundaries, then validate
 sequentially. Continue with commits and pushes only; never create, update, or
 reopen a pull request.
+
+## No-layout final SE-FC/affine pair implementation
+
+`passes/no_layout_final_cleanup_orchestration.py` now provides
+`run_no_layout_final_cleanup(shared_model_ir_pass_context)`. It invokes SE-FC
+layout cleanup before affine pre/post cleanup, forwards the shared ModelIR and
+layout state to both, forwards diagnostics only to SE-FC, and returns both raw
+mappings unchanged as an ordered tuple.
+
+The guarded lowerer site retains that tuple instead of two individual
+unconsumed locals. The option guard, preceding and following topology
+checkpoints, boundary-signature successor, affine lowerer wrapper, SE-FC
+compatibility re-export, every other raw caller, and exact graph mutation order
+remain intact. The context owner stays outside the already-full 128/128
+phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `3 passed in 0.57s`;
+- affected owner-aware contracts: `369 passed in 18.98s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.78s`;
+- synthetic core runtime contracts: `55 passed in 0.91s`;
+- result contracts: `196 passed in 9.15s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.62s`;
+- targeted Ruff passed.
+
+No real-model conversion was repeated; runtime callback injection and the
+owner-aware structural suite cover exact context forwarding, raw schemas,
+order, guards, neighboring boundaries, and independent routes. Commit and push
+this checkpoint. On resume, audit the next small semantically closed
+unconsumed-result cluster before production changes. Keep validation
+sequential and continue with commits and pushes only; never create, update, or
+reopen a pull request.

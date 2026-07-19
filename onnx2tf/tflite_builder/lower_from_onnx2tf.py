@@ -62,6 +62,9 @@ from onnx2tf.tflite_builder.passes.precision import (
 from onnx2tf.tflite_builder.passes.precision_cleanup_orchestration import (
     run_precision_cleanup_sequence,
 )
+from onnx2tf.tflite_builder.passes.no_layout_final_cleanup_orchestration import (
+    run_no_layout_final_cleanup,
+)
 from onnx2tf.tflite_builder.passes.recurrent_alias import (
     repair_orphan_recurrent_step_tensors,
 )
@@ -496,7 +499,7 @@ from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
 from onnx2tf.tflite_builder.passes.se_layout import (
     _optimize_transpose_se_conv_mul_prepost_nhwc_chains as _optimize_transpose_se_conv_mul_prepost_nhwc_chains_pass,
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains as _optimize_transpose_se_fc_mul_prepost_nhwc_chains_pass,
-    run_se_fc_layout_cleanup,
+    run_se_fc_layout_cleanup,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.elementwise_gate_layout import (
     _optimize_transpose_logistic_muladd_prepost_nhwc_chains as _optimize_transpose_logistic_muladd_prepost_nhwc_chains_pass,
@@ -5744,16 +5747,8 @@ def lower_onnx_to_ir(
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # In no-layout fallback path, some strict MUL/ADD affine bridges become
         # reducible only after final topological normalization.
-        _no_layout_final_se_fc_stats = run_se_fc_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _no_layout_final_affine_prepost_stats = (
-            _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-                model_ir,
-                layout_state=session.layout_state,
-            )
+        _no_layout_final_cleanup_results = run_no_layout_final_cleanup(
+            shared_model_ir_pass_context
         )
         session.record_phase_result(
             "topology.primary.no_layout_post_reduction",

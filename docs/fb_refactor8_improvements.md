@@ -4608,3 +4608,39 @@ checks passed.
 This checkpoint changes no production source, graph mutation, pass order,
 guard, topology phase, store entry, public API, artifact, dependency, or
 TensorFlow boundary. No real-model conversion was repeated.
+
+## No-layout final SE-FC/affine pair implementation
+
+`passes/no_layout_final_cleanup_orchestration.py` now owns the guarded final
+no-layout cleanup pair through
+`run_no_layout_final_cleanup(shared_model_ir_pass_context)`. The owner forwards
+the same primary ModelIR and `LayoutState` to both raw passes, forwards
+conversion diagnostics only to SE-FC cleanup, and returns the two unchanged raw
+mappings in their original SE-FC-before-affine order.
+
+The lowerer now retains one ordered result tuple instead of the two former
+unconsumed locals. The existing option guard, preceding primary topology
+checkpoint, following guarded topology checkpoint, boundary-signature
+successor, affine lowerer wrapper, SE-FC compatibility re-export, and every
+other raw caller remain unchanged. The owner adds no graph scan, result
+normalization, control-flow decision, phase-store entry, dependency,
+TensorFlow import, public API, or artifact behavior; the phase-result store
+remains exactly 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `3 passed in 0.57s`;
+- affected terminal-layout, topology, affine, SE-layout, efficiency, store,
+  architecture, and boundary-signature contracts: `369 passed in 18.98s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.78s`;
+- synthetic core runtime contracts: `55 passed in 0.91s`;
+- result contracts: `196 passed in 9.15s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.62s`;
+- targeted Ruff passed.
+
+No real-model corpus conversion was repeated because the runtime contract
+proves exact context identity, argument policy, callback order, and raw result
+schema, while the affected structural gates preserve both neighboring
+topology boundaries and all independent callers.
