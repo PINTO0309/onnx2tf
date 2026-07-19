@@ -22,6 +22,14 @@ OWNER_PATH = (
     / "passes"
     / "unbound_input_repair_orchestration.py"
 )
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_input_affine_normalization_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_input_affine_normalization_cleanup"
 WRAPPER = "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
 OWNER = "repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
 RAW_OWNER = "repair_unbound_nonconstant_inputs_with_layout_transpose"
@@ -87,6 +95,15 @@ def _assert_owner_contract(
     assert ast.unparse(terminal.value.values[0]) == "int(result.repaired)"
 
 
+def _composite_call_count() -> int:
+    return len(
+        _ordered_calls(
+            _functions(COMPOSITE_PATH)[COMPOSITE_OWNER],
+            (OWNER,),
+        )
+    )
+
+
 def test_unbound_input_repair_lowerer_contract_is_fixed() -> None:
     functions = _functions(LOWERER_PATH)
     _assert_owner_contract(
@@ -95,12 +112,12 @@ def test_unbound_input_repair_lowerer_contract_is_fixed() -> None:
     )
 
     calls = _ordered_calls(functions["lower_onnx_to_ir"], (WRAPPER,))
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert [ast.unparse(call.args[0]) for call in calls] == [
-        "model_ir",
         "fallback_ir",
     ]
     assert all(call.keywords == [] for call in calls)
+    assert _composite_call_count() == 1
 
 
 def test_unbound_input_repair_has_one_pass_module_owner() -> None:
@@ -119,11 +136,11 @@ def test_unbound_input_repair_has_one_pass_module_owner() -> None:
     )
 
     calls = _ordered_calls(_functions(LOWERER_PATH)["lower_onnx_to_ir"], (WRAPPER,))
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert [ast.unparse(call.args[0]) for call in calls] == [
-        "model_ir",
         "fallback_ir",
     ]
+    assert _composite_call_count() == 1
 
 
 def test_unbound_input_repair_forwards_returned_index_to_reconciliation(

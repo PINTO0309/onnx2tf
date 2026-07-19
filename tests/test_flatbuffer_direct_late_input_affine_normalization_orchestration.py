@@ -8,13 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.lower_from_onnx2tf import (
-    _optimize_transpose_mul_posttranspose_add_nhwc_chains,
-    _repair_orphan_recurrent_step_tensors,
-    _repair_unbound_nonconstant_operator_inputs_with_layout_transpose,
-)
-from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
-    run_very_late_gather_constant_normalization_summary,
+from onnx2tf.tflite_builder.passes import (
+    late_input_affine_normalization_orchestration,
 )
 
 
@@ -30,12 +25,6 @@ OWNER_PATH = (
     / "late_input_affine_normalization_orchestration.py"
 )
 OWNER = "run_late_input_affine_normalization_cleanup"
-LOWERER_OWNERS = (
-    "_repair_orphan_recurrent_step_tensors",
-    "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
-    "_optimize_transpose_mul_posttranspose_add_nhwc_chains",
-    "run_very_late_gather_constant_normalization_summary",
-)
 PASS_OWNERS = (
     "repair_orphan_recurrent_step_tensors_summary",
     "repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
@@ -101,27 +90,19 @@ def _lowerer() -> ast.FunctionDef:
 
 def test_late_input_affine_normalization_current_boundary_and_schemas() -> None:
     lowerer = _lowerer()
-    indices = tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    index, invocation = next(
+        (index, statement)
+        for index, statement in enumerate(lowerer.body)
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    assert indices == tuple(range(indices[0], indices[0] + len(indices)))
-    assert _call_name(lowerer.body[indices[0] - 1]) == "_advance_post_progress"
+    assert _call_name(invocation) == OWNER
+    assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
     assert (
-        _single_target(lowerer.body[indices[-1] + 1])
+        _single_target(lowerer.body[index + 1])
         == "_very_late_dynamic_adapter_results"
     )
-    assert tuple(_call_name(lowerer.body[index]) for index in indices) == (
-        LOWERER_OWNERS
-    )
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id in RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
 
@@ -132,22 +113,13 @@ def test_late_input_affine_normalization_current_boundary_and_schemas() -> None:
         diagnostics=[],
     )
     assert (
-        _repair_orphan_recurrent_step_tensors(model_ir),
-        _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
-            model_ir
-        ),
-        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-            model_ir,
-            layout_state=context.layout_state,
-        ),
-        run_very_late_gather_constant_normalization_summary(context),
-    ) == EXPECTED_EMPTY_RESULTS
+        late_input_affine_normalization_orchestration.run_late_input_affine_normalization_cleanup(
+            context
+        )
+        == EXPECTED_EMPTY_RESULTS
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late input/affine/normalization sequence has no context owner",
-)
 def test_late_input_affine_normalization_has_one_context_owner() -> None:
     owner = _functions(OWNER_PATH)[OWNER]
     calls = sorted(
@@ -198,3 +170,60 @@ def test_late_input_affine_normalization_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_late_input_affine_normalization_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("late_input_affine_normalization_runtime")
+    layout_state = LayoutState.from_model_ir(model_ir)
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=[],
+    )
+    results = tuple({"stage": index} for index in range(4))
+    calls: list[tuple[object, ...]] = []
+
+    def recurrent(active_model_ir: ModelIR) -> dict[str, int]:
+        calls.append((PASS_OWNERS[0], active_model_ir))
+        return results[0]
+
+    def unbound(active_model_ir: ModelIR) -> dict[str, int]:
+        calls.append((PASS_OWNERS[1], active_model_ir))
+        return results[1]
+
+    def affine(
+        active_model_ir: ModelIR,
+        *,
+        layout_state: LayoutState | None = None,
+    ) -> dict[str, int]:
+        calls.append((PASS_OWNERS[2], active_model_ir, layout_state))
+        return results[2]
+
+    def normalization(active_context: ModelIRPassContext) -> dict[str, int]:
+        calls.append((PASS_OWNERS[3], active_context))
+        return results[3]
+
+    for name, callback in zip(
+        PASS_OWNERS,
+        (recurrent, unbound, affine, normalization),
+    ):
+        monkeypatch.setattr(
+            late_input_affine_normalization_orchestration,
+            name,
+            callback,
+        )
+
+    actual = late_input_affine_normalization_orchestration.run_late_input_affine_normalization_cleanup(
+        context
+    )
+
+    assert actual == results
+    assert all(actual[index] is results[index] for index in range(4))
+    assert calls == [
+        (PASS_OWNERS[0], model_ir),
+        (PASS_OWNERS[1], model_ir),
+        (PASS_OWNERS[2], model_ir, layout_state),
+        (PASS_OWNERS[3], context),
+    ]

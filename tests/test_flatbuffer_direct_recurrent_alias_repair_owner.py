@@ -21,6 +21,14 @@ OWNER_PATH = (
     / "passes"
     / "recurrent_alias_repair_orchestration.py"
 )
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_input_affine_normalization_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_input_affine_normalization_cleanup"
 WRAPPER = "_repair_orphan_recurrent_step_tensors"
 OWNER = "repair_orphan_recurrent_step_tensors_summary"
 RAW_OWNER = "repair_orphan_recurrent_step_tensors"
@@ -69,16 +77,22 @@ def _assert_mapping_contract(function: ast.FunctionDef) -> None:
     assert ast.unparse(terminal.value.values[0]) == "int(repaired)"
 
 
+def _composite_call_count() -> int:
+    return len(
+        _ordered_calls(
+            _functions(COMPOSITE_PATH)[COMPOSITE_OWNER],
+            (OWNER,),
+        )
+    )
+
+
 def test_recurrent_alias_repair_lowerer_mapping_contract_is_fixed() -> None:
     functions = _functions(LOWERER_PATH)
     _assert_mapping_contract(_functions(OWNER_PATH)[OWNER])
 
     calls = _ordered_calls(functions["lower_onnx_to_ir"], (WRAPPER,))
-    assert len(calls) == 1
-    assert [ast.unparse(argument) for argument in calls[0].args] == [
-        "model_ir"
-    ]
-    assert calls[0].keywords == []
+    assert calls == []
+    assert _composite_call_count() == 1
 
 
 def test_recurrent_alias_repair_has_one_pass_module_mapping_owner() -> None:
@@ -94,8 +108,8 @@ def test_recurrent_alias_repair_has_one_pass_module_mapping_owner() -> None:
     )
 
     calls = _ordered_calls(_functions(LOWERER_PATH)["lower_onnx_to_ir"], (WRAPPER,))
-    assert len(calls) == 1
-    assert ast.unparse(calls[0].args[0]) == "model_ir"
+    assert calls == []
+    assert _composite_call_count() == 1
 
 
 def test_recurrent_alias_repair_owner_preserves_index_and_result(

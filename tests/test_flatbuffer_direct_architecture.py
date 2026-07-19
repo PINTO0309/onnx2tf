@@ -248,6 +248,29 @@ def _orchestrated_pass_count(pass_id: str) -> int:
     return ORCHESTRATED_PASS_ID_SEQUENCE.count(str(pass_id))
 
 
+def _late_input_affine_normalization_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_input_affine_normalization_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_input_affine_normalization_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -5363,7 +5386,8 @@ def test_unbound_input_layout_repair_has_one_indexed_owner() -> None:
     assert [
         call.args[0].id
         for call in sorted(invocations, key=lambda candidate: candidate.lineno)
-    ] == ["model_ir", "fallback_ir"]
+    ] == ["fallback_ir"]
+    assert _late_input_affine_normalization_call_count(wrapper_name) == 1
 
 
 def test_quantized_activation_bridge_cleanup_has_one_indexed_owner() -> None:
@@ -5765,23 +5789,28 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_normalization_stats"
+        and statement.targets[0].id
+        == "_late_input_affine_normalization_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_very_late_gather_constant_normalization_summary"
+        == "run_late_input_affine_normalization_cleanup"
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert [ast.unparse(argument) for argument in invocation.value.args] == [
-        "very_late_gather_constant_normalization_context"
+        "shared_model_ir_pass_context"
     ]
+    assert (
+        _late_input_affine_normalization_call_count(
+            "run_very_late_gather_constant_normalization_summary"
+        )
+        == 1
+    )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_very_late_affine_post_add_stats"
+    assert isinstance(previous_boundary, ast.Expr)
+    assert ast.unparse(previous_boundary) == "_advance_post_progress()"
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
@@ -7107,6 +7136,7 @@ def test_indexed_affine_post_add_layout_owner_is_bounded_and_separate_from_pad()
         len(production_calls)
         + _orchestrated_pass_count(wrapper_name)
         + _absolute_final_affine_instancenorm_call_count(wrapper_name)
+        + _late_input_affine_normalization_call_count(wrapper_name)
         == 4
     )
     assert all(

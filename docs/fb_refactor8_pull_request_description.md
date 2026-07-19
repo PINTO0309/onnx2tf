@@ -1039,3 +1039,12 @@ schemas and order, shared ModelIR/LayoutState/context identity, the progress
 predecessor, the dynamic-adapter successor, and the full 128-ID/128-owner
 store. Production remains unchanged until the separate context-owner
 implementation.
+
+The latest checkpoint implements that late input/affine/normalization context
+owner. Four unconsumed lowerer locals become one ordered tuple while exact
+repair, affine, and normalization callbacks remain unchanged. The owner
+preserves shared ModelIR/LayoutState/context identity and raw mapping identity;
+all compatibility, fallback, and independent routes remain available. The
+progress predecessor, dynamic-adapter successor, TensorFlow isolation, public
+behavior, and full 128-ID/128-owner store are unchanged. Focused, affected,
+and standard sequential gates all pass.

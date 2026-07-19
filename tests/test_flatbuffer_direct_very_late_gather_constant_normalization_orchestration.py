@@ -59,6 +59,16 @@ VERY_LATE_DYNAMIC_ADAPTER_PATH = (
     / "very_late_dynamic_adapter_orchestration.py"
 )
 VERY_LATE_DYNAMIC_ADAPTER = "run_very_late_dynamic_adapter_cleanup"
+LATE_INPUT_AFFINE_NORMALIZATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_input_affine_normalization_orchestration.py"
+)
+LATE_INPUT_AFFINE_NORMALIZATION = (
+    "run_late_input_affine_normalization_cleanup"
+)
 
 
 def _absolute_final_affine_instancenorm_call_count(
@@ -110,6 +120,27 @@ def _very_late_dynamic_adapter_calls(function_name: str) -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == VERY_LATE_DYNAMIC_ADAPTER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+    ]
+
+
+def _late_input_affine_normalization_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LATE_INPUT_AFFINE_NORMALIZATION_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == LATE_INPUT_AFFINE_NORMALIZATION
     )
     return [
         node
@@ -454,17 +485,21 @@ def test_very_late_flatten_owner_can_prune_without_a_rewrite(
 def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     adapter_index, adapter = _very_late_dynamic_adapter_invocation(lowerer)
-    summary = lowerer.body[adapter_index - 1]
-    assert isinstance(summary, ast.Assign)
-    assert isinstance(summary.targets[0], ast.Name)
-    assert summary.targets[0].id == "_very_late_normalization_stats"
-    assert isinstance(summary.value, ast.Call)
-    assert isinstance(summary.value.func, ast.Name)
-    assert summary.value.func.id == (
+    composite = lowerer.body[adapter_index - 1]
+    assert isinstance(composite, ast.Assign)
+    assert isinstance(composite.targets[0], ast.Name)
+    assert composite.targets[0].id == (
+        "_late_input_affine_normalization_results"
+    )
+    assert isinstance(composite.value, ast.Call)
+    assert isinstance(composite.value.func, ast.Name)
+    assert composite.value.func.id == LATE_INPUT_AFFINE_NORMALIZATION
+    summary_calls = _late_input_affine_normalization_calls(
         "run_very_late_gather_constant_normalization_summary"
     )
-    assert [ast.unparse(argument) for argument in summary.value.args] == [
-        "very_late_gather_constant_normalization_context"
+    assert len(summary_calls) == 1
+    assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
+        "context"
     ]
     assert isinstance(adapter.value, ast.Call)
     assert isinstance(adapter.value.func, ast.Name)
@@ -733,35 +768,26 @@ def test_post_split_fallback_reconciliation_captures_complete_mutation_evidence(
 
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_indexes = [
+    calls = _late_input_affine_normalization_calls(
+        "run_very_late_gather_constant_normalization_summary"
+    )
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert calls[0].keywords == []
+
+    invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_normalization_stats"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id
-        == "run_very_late_gather_constant_normalization_summary"
-    ]
-
-    assert len(invocation_indexes) == 1
-    invocation_index = invocation_indexes[0]
-    invocation = lowerer.body[invocation_index]
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert [ast.unparse(argument) for argument in invocation.value.args] == [
-        "very_late_gather_constant_normalization_context"
-    ]
-    assert invocation.value.keywords == []
-
+        and statement.targets[0].id
+        == "_late_input_affine_normalization_results"
+    )
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_very_late_affine_post_add_stats"
+    assert isinstance(previous, ast.Expr)
+    assert ast.unparse(previous) == "_advance_post_progress()"
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -773,57 +799,47 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
 
 def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_normalization_stats"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id
-        == "run_very_late_gather_constant_normalization_summary"
-    )
-    invocation = lowerer.body[invocation_index - 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_very_late_affine_post_add_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
+    affine_calls = _late_input_affine_normalization_calls(
         "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
     )
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
+    assert len(affine_calls) == 1
+    invocation = affine_calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert len(invocation.keywords) == 1
+    layout_keyword = invocation.keywords[0]
     assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert ast.unparse(layout_keyword.value) == "context.layout_state"
 
-    previous = lowerer.body[invocation_index - 2]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_unbound_input_repair_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    owner_calls = sorted(
+        (
+            node
+            for node in ast.walk(
+                next(
+                    node
+                    for node in ast.parse(
+                        LATE_INPUT_AFFINE_NORMALIZATION_PATH.read_text(
+                            encoding="utf-8"
+                        )
+                    ).body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == LATE_INPUT_AFFINE_NORMALIZATION
+                )
+            )
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
     )
-    following = lowerer.body[invocation_index]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert (
-        following.value.func.id
-        == "run_very_late_gather_constant_normalization_summary"
+    owner_call_names = [call.func.id for call in owner_calls]
+    affine_index = owner_call_names.index(
+        "optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    assert owner_call_names[affine_index - 1] == (
+        "repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    )
+    assert owner_call_names[affine_index + 1] == (
+        "run_very_late_gather_constant_normalization_summary"
     )
 
     direct_statements = [
@@ -840,6 +856,7 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
     ]
     assert (
         len(direct_statements)
+        + len(affine_calls)
         + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
             "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
         )
@@ -848,11 +865,7 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
         )
         == 3
     )
-    assert isinstance(direct_statements[0], ast.Assign)
-    first_target = direct_statements[0].targets[0]
-    assert isinstance(first_target, ast.Name)
-    assert first_target.id == "_very_late_affine_post_add_stats"
-    assert direct_statements[0] is invocation
+    assert direct_statements == []
 
 
 def test_very_late_context_is_explicit() -> None:

@@ -24,6 +24,15 @@ OWNER_PATH = (
     / "passes"
     / "very_late_gather_constant_normalization_orchestration.py"
 )
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_input_affine_normalization_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_input_affine_normalization_cleanup"
+COMPOSITE_TARGET = "_late_input_affine_normalization_results"
 RAW_WRAPPER = "_run_very_late_gather_constant_normalization_pass_cluster"
 RAW_OWNER = "run_very_late_gather_constant_normalization"
 SUMMARY_OWNER = "run_very_late_gather_constant_normalization_summary"
@@ -31,7 +40,6 @@ SUMMARY_FUNCTION = "summarize_very_late_gather_constant_normalization_mutations"
 COUNT_TARGET = "very_late_normalization_tensor_count"
 RAW_TARGET = "very_late_normalization_results"
 SUMMARY_TARGET = "_very_late_normalization_stats"
-PREDECESSOR_TARGET = "_very_late_affine_post_add_stats"
 SUCCESSOR_TARGET = "_very_late_dynamic_adapter_results"
 
 
@@ -54,20 +62,36 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _composite_summary_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+
+
 def test_very_late_normalization_prune_aware_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    summary = next(
+    composite = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    index = lowerer.body.index(summary)
-    assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(very_late_gather_constant_normalization_context)"
+    index = lowerer.body.index(composite)
+    assert isinstance(composite, ast.Assign)
+    assert ast.unparse(composite.value) == (
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert ast.unparse(lowerer.body[index - 1]) == "_advance_post_progress()"
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    summary_calls = _composite_summary_calls()
+    assert len(summary_calls) == 1
+    assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
+        "context"
+    ]
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)
@@ -100,18 +124,19 @@ def test_very_late_normalization_uses_one_prune_aware_summary_owner() -> None:
     assert ast.unparse(initial_count.value) == "len(context.model_ir.tensors)"
 
     lowerer = _lowerer()
-    summary = next(
+    composite = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    index = lowerer.body.index(summary)
-    assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(very_late_gather_constant_normalization_context)"
+    index = lowerer.body.index(composite)
+    assert isinstance(composite, ast.Assign)
+    assert ast.unparse(composite.value) == (
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert ast.unparse(lowerer.body[index - 1]) == "_advance_post_progress()"
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_composite_summary_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)

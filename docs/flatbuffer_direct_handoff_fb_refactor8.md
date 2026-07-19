@@ -4597,3 +4597,23 @@ mapping. Pass ModelIR to the two repair summaries, ModelIR plus LayoutState to
 affine cleanup, and the exact shared context to normalization. Preserve the
 progress predecessor and dynamic-adapter successor, then run affected and
 standard gates sequentially. Never create, update, or reopen a pull request.
+
+## Late input/affine/normalization composite implementation
+
+`passes/late_input_affine_normalization_orchestration.py` now runs recurrent
+repair summary → unbound-input repair summary → affine post-Add cleanup →
+prune-aware normalization through one shared context and returns their four raw
+mappings unchanged. The lowerer retains one composite result; all wrappers,
+fallback and independent routes, progress predecessor, and dynamic-adapter
+successor remain intact.
+
+Sequential gates passed: focused `3`, affected `396`, terminal/efficiency
+`92`, core runtime `55`, results `196`, phase-store `2`, and TensorFlow
+isolation/default-direct/`-cotof` `11`. The store remains exactly 128 IDs and
+128 owners; no model conversion was run.
+
+At resume, rerun the read-only unconsumed-result inventory after removal of
+these four locals. Select the next smallest source-adjacent, semantically
+closed, fully pass-module-owned non-store cluster and characterize it before
+production changes. Keep all validation sequential and never create, update,
+or reopen a pull request.

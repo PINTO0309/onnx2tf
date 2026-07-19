@@ -12,6 +12,15 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_input_affine_normalization_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_input_affine_normalization_cleanup"
+COMPOSITE_TARGET = "_late_input_affine_normalization_results"
 OWNERS = (
     "_repair_orphan_recurrent_step_tensors",
     "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
@@ -25,7 +34,7 @@ RESULT_SCHEMAS = (
     {"repaired_unbound_nonconstant_inputs_with_layout_transpose": 0},
 )
 PREDECESSOR = "_advance_post_progress"
-SUCCESSOR_TARGET = "_very_late_affine_post_add_stats"
+SUCCESSOR_TARGET = "_very_late_dynamic_adapter_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -60,16 +69,8 @@ def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
 
 
-def _direct_locations() -> tuple[ast.FunctionDef, tuple[int, ...]]:
-    lowerer = _lowerer()
-    return lowerer, tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _call_name(statement) == owner
-        )
-        for owner in OWNERS
-    )
+def _composite_owner() -> ast.FunctionDef:
+    return _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
 
 
 def test_late_input_repair_result_schemas_are_explicit() -> None:
@@ -84,33 +85,49 @@ def test_late_input_repair_result_schemas_are_explicit() -> None:
 
 
 def test_late_input_repair_direct_boundary_is_explicit() -> None:
-    lowerer, indices = _direct_locations()
-    assert indices == tuple(range(indices[0], indices[0] + len(OWNERS)))
-    for index, owner, target in zip(indices, OWNERS, RESULT_TARGETS):
-        invocation = lowerer.body[index]
-        assert _single_target(invocation) == target
-        call = _statement_call(invocation)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert call.keywords == []
-        assert sum(
-            isinstance(node, ast.Call)
+    owner = _composite_owner()
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == owner
-            for node in ast.walk(lowerer)
-        ) >= 1
-    assert _call_name(lowerer.body[indices[0] - 1]) == PREDECESSOR
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
+            and node.func.id
+            in {
+                "repair_orphan_recurrent_step_tensors_summary",
+                "repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
+            }
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    assert len(calls) == 2
+    assert all(
+        [ast.unparse(argument) for argument in call.args]
+        == ["context.model_ir"]
+        and call.keywords == []
+        for call in calls
+    )
+
+    lowerer = _lowerer()
+    index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    assert _call_name(lowerer.body[index]) == COMPOSITE_OWNER
+    assert _call_name(lowerer.body[index - 1]) == PREDECESSOR
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
 
 
 def test_late_input_repair_results_are_retained_for_observation() -> None:
-    lowerer, indices = _direct_locations()
-    assert tuple(_single_target(lowerer.body[index]) for index in indices) == (
-        RESULT_TARGETS
+    lowerer = _lowerer()
+    assert not any(
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
+        for node in ast.walk(lowerer)
     )
     assert not any(
         isinstance(node, ast.Name)
-        and node.id in RESULT_TARGETS
+        and node.id == COMPOSITE_TARGET
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

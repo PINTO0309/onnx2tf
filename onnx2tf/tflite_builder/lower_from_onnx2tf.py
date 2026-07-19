@@ -65,6 +65,9 @@ from onnx2tf.tflite_builder.passes.precision_cleanup_orchestration import (
 from onnx2tf.tflite_builder.passes.no_layout_final_cleanup_orchestration import (
     run_no_layout_final_cleanup,
 )
+from onnx2tf.tflite_builder.passes.late_input_affine_normalization_orchestration import (
+    run_late_input_affine_normalization_cleanup,
+)
 from onnx2tf.tflite_builder.passes.recurrent_alias_repair_orchestration import (
     repair_orphan_recurrent_step_tensors_summary,
 )
@@ -253,7 +256,6 @@ from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration impor
 )
 from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
     run_very_late_gather_constant_normalization,
-    run_very_late_gather_constant_normalization_summary,
 )
 from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
     run_se_fc_gather_channel_fanout,
@@ -5391,24 +5393,12 @@ def lower_onnx_to_ir(
     )
     _advance_post_progress()
 
-    _late_orphan_recurrent_repair_stats = (
-        _repair_orphan_recurrent_step_tensors(model_ir)
-    )
-    _late_unbound_input_repair_stats = (
-        _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(model_ir)
-    )
     # The late unbound-input repair can inject strict
     # NHWC->NCHW->NHWC MUL/ADD wrappers (repair_perm tensors).
     # Fold them again before final shape/topology reconciliation.
-    _very_late_affine_post_add_stats = (
-        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _very_late_normalization_stats = (
-        run_very_late_gather_constant_normalization_summary(
-            very_late_gather_constant_normalization_context,
+    _late_input_affine_normalization_results = (
+        run_late_input_affine_normalization_cleanup(
+            shared_model_ir_pass_context,
         )
     )
     # Very late terminal bridge/transpose rewrites above can still stale out

@@ -5241,3 +5241,45 @@ No production callback, graph mutation, result schema, context identity,
 pass order, API, artifact, dependency, TensorFlow boundary, or store entry
 changed. No real-model conversion was run; the phase-result store remains
 exactly 128 IDs and 128 owners.
+
+## Late input/affine/normalization composite implementation
+
+`passes/late_input_affine_normalization_orchestration.py` now owns the
+characterized four-stage sequence through one `ModelIRPassContext`. It passes
+`context.model_ir` to both repair summaries, forwards `context.layout_state`
+only to affine post-Add cleanup, passes the exact context object to prune-aware
+normalization, and returns all four original mapping objects in one ordered
+tuple without copying or flattening.
+
+The lowerer replaces four unconsumed locals with
+`_late_input_affine_normalization_results`. Its recurrent, unbound-input, and
+affine compatibility wrappers remain available; the fallback unbound-input
+caller and every independent affine caller are unchanged. The raw very-late
+normalization compatibility cluster and its shared-context alias also remain.
+Only the now-redundant direct summary import was removed. The progress
+predecessor and very-late dynamic-adapter successor remain adjacent.
+
+Runtime callback injection proves exact four-stage order, ModelIR/LayoutState/
+context identity, raw mapping identity, and outer tuple shape. Owner-aware
+result, architecture, and normalization contracts now count the composite,
+fallback, compatibility, and independent routes at their actual boundaries.
+
+Final sequential validation under core-only `uv`:
+
+- focused context-owner structure, empty schema, and runtime identity:
+  `3 passed in 0.56s`;
+- affected late input, recurrent/unbound indexed repair, affine post-Add,
+  very-late normalization/dynamic adapter, shared-context, architecture, and
+  phase-store contracts: `396 passed in 17.86s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.74s`;
+- synthetic core runtime contracts: `55 passed in 0.91s`;
+- result contracts: `196 passed in 9.10s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.47s`.
+
+No phase result, graph mutation, callback, guard, public API, artifact,
+dependency, TensorFlow boundary, or result schema changed. The store remains
+exactly 128 IDs and 128 owners. No real-model conversion was repeated because
+the move is straight-line and the dedicated runtime test proves all arguments,
+state identities, raw results, and boundaries.
