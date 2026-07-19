@@ -28,6 +28,8 @@ FINAL_COMPOSITE_PATH = (
 )
 FINAL_COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
 FINAL_COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
+OUTER_COMPOSITE_OWNER = "run_late_final_shape_boundary_cleanup"
+OUTER_COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 CONCAT_INPUT_ADAPTER = (
     "_optimize_transpose_input_chains_pre_concat_to_single_post_adapter"
 )
@@ -209,9 +211,9 @@ def test_lowerer_retains_guarded_input_adapter_and_terminal_composite() -> None:
     terminal_composite = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_COMPOSITE_TARGET
     )
-    assert _call_name(terminal_composite) == FINAL_COMPOSITE_OWNER
+    assert _call_name(terminal_composite) == OUTER_COMPOSITE_OWNER
     owner = _functions(FINAL_COMPOSITE_PATH)[FINAL_COMPOSITE_OWNER]
     assert sum(
         isinstance(node, ast.Call)

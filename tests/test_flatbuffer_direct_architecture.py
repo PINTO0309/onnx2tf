@@ -3343,11 +3343,19 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "indexed_final_shape_activation_convergence.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
     helper_name = "_run_indexed_shape_convergence_cleanup"
+    owner_name = "run_indexed_shape_convergence_cleanup"
     helper = next(
-        node
-        for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+        node for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
     )
     direct_calls = [
         statement.value
@@ -3357,9 +3365,9 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
         and isinstance(statement.value.func, ast.Name)
     ]
     assert [call.func.id for call in direct_calls] == [
-        "_prune_dead_operators",
-        "_reconcile_static_tensor_shapes",
-        "_resolve_dynamic_reshape_shapes",
+        "prune_dead_operators",
+        "reconcile_static_tensor_shapes",
+        "resolve_dynamic_reshape_shapes",
     ]
     guard = next(
         statement for statement in helper.body if isinstance(statement, ast.If)
@@ -3378,7 +3386,7 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     guarded_call = guarded_assignment.value
     assert isinstance(guarded_call, ast.Call)
     assert isinstance(guarded_call.func, ast.Name)
-    assert guarded_call.func.id == "_reconcile_static_tensor_shapes"
+    assert guarded_call.func.id == "reconcile_static_tensor_shapes"
     assert len(
         [
             node
@@ -3394,6 +3402,19 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
         )
         assert isinstance(graph_index_keyword.value, ast.Name)
         assert graph_index_keyword.value.id == "graph_index"
+
+    compatibility_wrapper = next(
+        node for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    wrapper_calls = [
+        node for node in ast.walk(compatibility_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+    ]
+    assert [call.func.id for call in wrapper_calls] == [
+        "_run_indexed_shape_convergence_cleanup_pass"
+    ]
 
     lowerer = next(
         node
@@ -3845,11 +3866,19 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "indexed_final_shape_activation_convergence.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
     helper_name = "_run_indexed_final_shape_activation_convergence"
+    owner_name = "run_indexed_final_shape_activation_convergence"
     helper = next(
-        node
-        for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+        node for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
     )
     direct_calls = [
         statement.value
@@ -3861,10 +3890,10 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     ]
     assert [call.func.id for call in direct_calls] == [
         "ModelIRGraphIndex",
-        "_run_indexed_shape_convergence_cleanup",
-        "_sanitize_hardswish_tensor_shapes",
-        "_resolve_dynamic_reshape_shapes",
-        "_optimize_fuse_conv_activation_chains",
+        "run_indexed_shape_convergence_cleanup",
+        "sanitize_hardswish_tensor_shapes",
+        "resolve_dynamic_reshape_shapes",
+        "optimize_fuse_activation_chains",
     ]
     guards = [
         statement for statement in helper.body if isinstance(statement, ast.If)
@@ -3893,7 +3922,7 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         guarded_call = guarded_assignment.value
         assert isinstance(guarded_call, ast.Call)
         assert isinstance(guarded_call.func, ast.Name)
-        assert guarded_call.func.id == "_reconcile_static_tensor_shapes"
+        assert guarded_call.func.id == "reconcile_static_tensor_shapes"
         guarded_calls.append(guarded_call)
     final_guard = guards[2]
     assert isinstance(final_guard.test, ast.BoolOp)
@@ -3918,19 +3947,19 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     final_guarded_call = final_guarded_assignment.value
     assert isinstance(final_guarded_call, ast.Call)
     assert isinstance(final_guarded_call.func, ast.Name)
-    assert final_guarded_call.func.id == "_reconcile_static_tensor_shapes"
+    assert final_guarded_call.func.id == "reconcile_static_tensor_shapes"
     guarded_calls.append(final_guarded_call)
     reshape_call = next(
         call
         for call in direct_calls
         if isinstance(call.func, ast.Name)
-        and call.func.id == "_resolve_dynamic_reshape_shapes"
+        and call.func.id == "resolve_dynamic_reshape_shapes"
     )
     fusion_call = next(
         call
         for call in direct_calls
         if isinstance(call.func, ast.Name)
-        and call.func.id == "_optimize_fuse_conv_activation_chains"
+        and call.func.id == "optimize_fuse_activation_chains"
     )
     assert direct_calls[2].lineno < guards[0].lineno < reshape_call.lineno
     assert reshape_call.lineno < guards[1].lineno < fusion_call.lineno
@@ -3960,51 +3989,42 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert isinstance(fusion_layout_keyword.value, ast.Name)
     assert fusion_layout_keyword.value.id == "layout_state"
 
-    lowerer = next(
-        node
-        for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    compatibility_wrapper = next(
+        node for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    invocation_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+    wrapper_calls = [
+        node for node in ast.walk(compatibility_wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+    ]
+    assert [call.func.id for call in wrapper_calls] == [
+        "_run_indexed_final_shape_activation_convergence_pass"
+    ]
+
+    composite_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_final_shape_boundary_orchestration.py"
     )
-    invocation_statement = lowerer.body[invocation_index]
-    assert isinstance(invocation_statement, ast.Assign)
-    assert isinstance(invocation_statement.targets[0], ast.Name)
-    assert invocation_statement.targets[0].id == (
-        "_late_final_shape_activation_convergence_stats"
+    composite_tree = ast.parse(composite_path.read_text(encoding="utf-8"))
+    composite = next(
+        node for node in composite_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_final_shape_boundary_cleanup"
     )
-    invocation = invocation_statement.value
-    assert len(invocation.args) == 1
-    assert isinstance(invocation.args[0], ast.Name)
-    assert invocation.args[0].id == "model_ir"
-    previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_late_reshape_shuffle_attention_window_results"
-    )
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert previous_boundary.value.func.id == (
-        "run_late_reshape_shuffle_attention_window_cleanup"
-    )
-    next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == (
-        "_final_boundary_slice_concat_results"
-    )
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert next_boundary.value.func.id == (
-        "run_final_boundary_slice_concat_cleanup"
-    )
+    composite_calls = [
+        node for node in ast.walk(composite)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert len(composite_calls) == 1
+    assert [ast.unparse(argument) for argument in composite_calls[0].args] == [
+        "context.pass_context.model_ir"
+    ]
 
     fusion_wrapper = next(
         node
@@ -4051,6 +4071,10 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert "remove_operator" in fusion_call_names
     assert "_prune_unused_tensors" in fusion_call_names
 
+    lowerer = next(
+        node for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
     direct_production_occurrences: list[tuple[ast.stmt, ast.Call]] = []
     for statement in lowerer.body:
         if not isinstance(statement, (ast.Assign, ast.Expr)):
@@ -8914,7 +8938,7 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    owner_name = "run_late_reshape_shuffle_attention_window_cleanup"
+    owner_name = "run_late_final_shape_boundary_cleanup"
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
@@ -8927,7 +8951,7 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_late_reshape_shuffle_attention_window_results"
+        "_late_final_shape_boundary_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)
@@ -8935,17 +8959,8 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         "optimize_layout_transpose_chains"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == (
-        "_late_final_shape_activation_convergence_stats"
-    )
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert (
-        next_boundary.value.func.id
-        == "_run_indexed_final_shape_activation_convergence"
-    )
+    assert isinstance(next_boundary, ast.If)
+    assert ast.unparse(next_boundary.test) == "optimize_layout_transpose_chains"
     assert (
         _late_reshape_shuffle_attention_window_call_count(
             "run_channel_shuffle_gather"

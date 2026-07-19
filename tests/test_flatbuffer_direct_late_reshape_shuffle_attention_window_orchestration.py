@@ -43,9 +43,10 @@ RESULT_TARGETS = (
     "_late_attention_layout_results",
     "_late_window_layout_results",
 )
-COMPOSITE_TARGET = "_late_reshape_shuffle_attention_window_results"
+COMPOSITE_TARGET = "_late_final_shape_boundary_results"
+OUTER_OWNER = "run_late_final_shape_boundary_cleanup"
 PREDECESSOR_TARGET = "_late_concat_elementwise_fanout_stats"
-SUCCESSOR_TARGET = "_late_final_shape_activation_convergence_stats"
+SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -88,11 +89,11 @@ def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> 
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
+        "late_final_shape_boundary_context"
     ]
     assert call.keywords == []
     predecessor = lowerer.body[index - 1]
@@ -101,7 +102,9 @@ def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> 
     assert [_single_target(statement) for statement in predecessor.body] == [
         PREDECESSOR_TARGET
     ]
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -196,15 +199,17 @@ def test_late_reshape_shuffle_attention_window_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
+        "late_final_shape_boundary_context"
     ]
     assert call.keywords == []
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

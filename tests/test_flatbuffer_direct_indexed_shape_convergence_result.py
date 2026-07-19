@@ -5,13 +5,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "indexed_final_shape_activation_convergence.py"
+)
 INDEXED_SHAPE_CONVERGENCE = "_run_indexed_shape_convergence_cleanup"
 FINAL_CONVERGENCE = "_run_indexed_final_shape_activation_convergence"
+INDEXED_SHAPE_OWNER = "run_indexed_shape_convergence_cleanup"
+FINAL_OWNER = "run_indexed_final_shape_activation_convergence"
 PHASE_ID = "shape_topology.terminal.indexed_convergence"
 
 
-def _module_functions() -> dict[str, ast.FunctionDef]:
-    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+def _module_functions(path: Path = LOWERER_PATH) -> dict[str, ast.FunctionDef]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     return {
         node.name: node
         for node in tree.body
@@ -76,7 +85,8 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> None:
     functions = _module_functions()
-    owner = functions[INDEXED_SHAPE_CONVERGENCE]
+    owner_functions = _module_functions(OWNER_PATH)
+    owner = owner_functions[INDEXED_SHAPE_OWNER]
     result_return = next(
         statement
         for statement in owner.body
@@ -94,7 +104,11 @@ def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> Non
     ]
 
     lowerer_invocations = _direct_invocations(functions["lower_onnx_to_ir"])
-    nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
+    nested_invocations = [
+        statement
+        for statement in owner_functions[FINAL_OWNER].body
+        if _call_name(statement) == INDEXED_SHAPE_OWNER
+    ]
     assert len(lowerer_invocations) == 1
     assert len(nested_invocations) == 1
 
@@ -150,6 +164,11 @@ def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
         for node in ast.walk(lowerer)
     )
 
-    nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
+    owner_functions = _module_functions(OWNER_PATH)
+    nested_invocations = [
+        statement
+        for statement in owner_functions[FINAL_OWNER].body
+        if _call_name(statement) == INDEXED_SHAPE_OWNER
+    ]
     assert len(nested_invocations) == 1
     assert _single_target(nested_invocations[0]) == "convergence_stats"

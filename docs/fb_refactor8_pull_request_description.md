@@ -1581,3 +1581,25 @@ differentially updated `ModelIRGraphIndex` across all internal cleanup stages.
 Focused and complete affected sequential characterization report
 `1 passed, 1 xfailed` and `402 passed, 1 xfailed`; the sole expected failure is
 the intentionally absent owner.
+
+The latest checkpoint implements the late final shape/boundary extraction.
+Indexed shape convergence and final shape/activation convergence now live in a
+dedicated pass module, while their lowerer names remain thin compatibility
+wrappers. The implementation preserves one differentially updated
+`ModelIRGraphIndex`, every conditional reconciliation, fusion prune detection,
+and the exact three-key and eleven-key mappings.
+
+A frozen composite context then carries the shared `ModelIRPassContext` and
+the original callback-bearing terminal Slice/Concat recovery context through
+the three existing stages. ModelIR, LayoutState, diagnostics, callback, call
+order, nested tuples, and all raw result identities are preserved. The lowerer
+replaces only the three observation-only assignments with one outer result;
+the optional elementwise-fanout guards remain the immediate boundaries.
+
+Runtime identity and legacy-equivalence coverage, 404 affected tests, and all
+standard sequential gates pass: 92 terminal-layout/efficiency, 55 core, 196
+result contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/
+`-cotof` tests. Public behavior, graph mutations, artifacts, dependencies,
+TensorFlow isolation, and the exactly 128-ID/128-owner phase-result store are
+unchanged. The characterized unconsumed lowerer-result inventory decreases
+from 51 to 49.

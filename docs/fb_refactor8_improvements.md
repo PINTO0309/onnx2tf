@@ -6678,3 +6678,32 @@ three public owners without changing graph behavior. Production is unchanged
 at this checkpoint. Focused and complete affected sequential characterization
 report `1 passed, 1 xfailed` and `402 passed, 1 xfailed`; the sole expected
 failure is the intentionally absent owner.
+
+## Extract the late final shape/boundary composite
+
+`passes/indexed_final_shape_activation_convergence.py` now owns the indexed
+shape and final shape/activation convergence algorithms. The lowerer keeps
+thin compatibility wrappers, while the pass owner preserves the single
+differentially updated `ModelIRGraphIndex`, every mutation-dependent
+reconciliation guard, activation-fusion prune detection, and the exact result
+schemas.
+
+`passes/late_final_shape_boundary_orchestration.py` composes the existing late
+reshape/shuffle/attention/window owner, the new convergence owner, and the
+existing final boundary Slice/Concat owner. Its frozen context carries both
+the shared `ModelIRPassContext` and the original terminal recovery context, so
+LayoutState, diagnostics, callback identity, and ModelIR identity are not
+reconstructed or copied. The three complete raw results are returned in their
+original order and retain object identity.
+
+Only the three observation-only lowerer assignments are replaced by one outer
+result. Both optional elementwise-fanout guards remain outside, and every
+nested owner, compatibility wrapper, and independent call route remains
+available. Thirty-one stale entry-point tests now follow the outer owner while
+retaining direct child-family coverage.
+
+Sequential validation passes: focused `18`, affected `404`, and standard
+`92 / 55 / 196 / 2 / 11`. The last group includes TensorFlow import blocking,
+default direct conversion, and `-cotof`. The phase-result store remains exactly
+128 IDs and 128 owners, while the characterized unconsumed lowerer-result
+inventory decreases from 51 to 49.

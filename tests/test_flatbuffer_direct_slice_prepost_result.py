@@ -25,6 +25,8 @@ RESULT_TARGET = "_final_slice_prepost_passthrough_stats"
 PREVIOUS_TARGET = "_late_final_shape_activation_convergence_stats"
 COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
 COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+OUTER_COMPOSITE_TARGET = "_late_final_shape_boundary_results"
+OUTER_COMPOSITE_OWNER = "run_late_final_shape_boundary_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -112,14 +114,14 @@ def test_final_slice_prepost_result_moves_to_final_pair_composite() -> None:
     composite = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_COMPOSITE_TARGET
     )
     composite_index = lowerer.body.index(composite)
     assert _direct_call(composite) is None
     assert isinstance(composite.value, ast.Call)
     assert isinstance(composite.value.func, ast.Name)
-    assert composite.value.func.id == COMPOSITE_OWNER
-    assert _single_target(lowerer.body[composite_index - 1]) == PREVIOUS_TARGET
+    assert composite.value.func.id == OUTER_COMPOSITE_OWNER
+    assert isinstance(lowerer.body[composite_index - 1], ast.If)
     assert isinstance(lowerer.body[composite_index + 1], ast.If)
     owner = _functions(FINAL_COMPOSITE_PATH)[COMPOSITE_OWNER]
     assert sum(

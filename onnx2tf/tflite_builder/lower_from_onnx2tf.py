@@ -135,6 +135,10 @@ from onnx2tf.tflite_builder.passes.static_shape_reconciliation import (
 from onnx2tf.tflite_builder.passes.hardswish_shape_sanitization import (
     sanitize_hardswish_tensor_shapes as _sanitize_hardswish_tensor_shapes_pass,
 )
+from onnx2tf.tflite_builder.passes.indexed_final_shape_activation_convergence import (
+    run_indexed_final_shape_activation_convergence as _run_indexed_final_shape_activation_convergence_pass,
+    run_indexed_shape_convergence_cleanup as _run_indexed_shape_convergence_cleanup_pass,
+)
 from onnx2tf.tflite_builder.passes.squeeze_shape_sanitization import (
     sanitize_squeeze_axes_with_static_input_shapes as _sanitize_squeeze_axes_with_static_input_shapes_pass,
 )
@@ -282,11 +286,9 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_affine_concat_orchestration import (
     run_late_affine_concat_cleanup,
 )
-from onnx2tf.tflite_builder.passes.late_reshape_shuffle_attention_window_orchestration import (
-    run_late_reshape_shuffle_attention_window_cleanup,
-)
-from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration import (
-    run_final_boundary_slice_concat_cleanup,
+from onnx2tf.tflite_builder.passes.late_final_shape_boundary_orchestration import (
+    LateFinalShapeBoundaryContext,
+    run_late_final_shape_boundary_cleanup,
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_qkv_layout_shape_orchestration import (
     run_terminal_affine_qkv_layout_shape_cleanup,
@@ -1304,46 +1306,11 @@ def _run_indexed_shape_convergence_cleanup(
     layout_state: Optional[LayoutState] = None,
     graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
-    graph_index = (
-        graph_index
-        if graph_index is not None and graph_index.model_ir is model_ir
-        else ModelIRGraphIndex(model_ir)
-    )
-    prune_stats = _prune_dead_operators(
+    return _run_indexed_shape_convergence_cleanup_pass(
         model_ir,
-        graph_index=graph_index,
         layout_state=layout_state,
-    )
-    first_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
         graph_index=graph_index,
     )
-    reshape_stats = _resolve_dynamic_reshape_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
-    final_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
-    if _stats_have_positive_count(
-        prune_stats,
-        first_reconcile_stats,
-        reshape_stats,
-    ):
-        final_reconcile_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            graph_index=graph_index,
-        )
-    return {
-        "removed_dead_operators": int(
-            prune_stats.get("removed_dead_operators", 0)
-        ),
-        "resolved_dynamic_reshape_shapes": int(
-            reshape_stats.get("resolved_dynamic_reshape_shapes", 0)
-        ),
-        "reconciled_static_tensor_shapes": int(
-            first_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
-            + final_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
-        ),
-    }
 
 
 def _run_indexed_final_shape_activation_convergence(
@@ -1351,81 +1318,10 @@ def _run_indexed_final_shape_activation_convergence(
     *,
     layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Run the terminal metadata/fusion convergence with one graph index.
-
-    Shape sanitation and reconciliation do not change graph topology. The
-    final activation fusion is the only structural mutation and updates the
-    supplied index differentially before the last reconciliation.
-    """
-
-    graph_index = ModelIRGraphIndex(model_ir)
-    convergence_stats = _run_indexed_shape_convergence_cleanup(
+    return _run_indexed_final_shape_activation_convergence_pass(
         model_ir,
         layout_state=layout_state,
-        graph_index=graph_index,
     )
-    hardswish_stats = _sanitize_hardswish_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
-    first_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
-    if _stats_have_positive_count(
-        convergence_stats,
-        hardswish_stats,
-    ):
-        first_reconcile_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            graph_index=graph_index,
-        )
-    reshape_stats = _resolve_dynamic_reshape_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
-    second_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
-    if _stats_have_positive_count(
-        first_reconcile_stats,
-        reshape_stats,
-    ):
-        second_reconcile_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            graph_index=graph_index,
-        )
-    fusion_tensor_count = len(model_ir.tensors)
-    fusion_stats = _optimize_fuse_conv_activation_chains(
-        model_ir,
-        graph_index=graph_index,
-        layout_state=layout_state,
-    )
-    final_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
-    if (
-        _stats_have_positive_count(
-            second_reconcile_stats,
-            fusion_stats,
-        )
-        or len(model_ir.tensors) < fusion_tensor_count
-    ):
-        final_reconcile_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            graph_index=graph_index,
-        )
-    return {
-        **convergence_stats,
-        "sanitized_hardswish_tensor_shapes": int(
-            hardswish_stats.get("sanitized_hardswish_tensor_shapes", 0)
-        ),
-        "resolved_dynamic_reshape_shapes": int(
-            convergence_stats.get("resolved_dynamic_reshape_shapes", 0)
-            + reshape_stats.get("resolved_dynamic_reshape_shapes", 0)
-        ),
-        "reconciled_static_tensor_shapes": int(
-            convergence_stats.get("reconciled_static_tensor_shapes", 0)
-            + first_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
-            + second_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
-            + final_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
-        ),
-        **fusion_stats,
-    }
 
 
 def _restore_placeholder_matmul_flattened_inputs(
@@ -4214,6 +4110,10 @@ def lower_onnx_to_ir(
             _run_channel_slice_pad_mul_layout_pass_cluster
         ),
     )
+    late_final_shape_boundary_context = LateFinalShapeBoundaryContext(
+        pass_context=shared_model_ir_pass_context,
+        terminal_slice_concat_context=terminal_slice_concat_recovery_context,
+    )
     terminal_affine_concat_split_recovery_context = shared_model_ir_pass_context
     terminal_clamp_unary_relu_context = shared_model_ir_pass_context
     terminal_singleton_maxpool_reshape_context = shared_model_ir_pass_context
@@ -5096,25 +4996,11 @@ def lower_onnx_to_ir(
                 model_ir
             )
         )
-    _late_reshape_shuffle_attention_window_results = (
-        run_late_reshape_shuffle_attention_window_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
-    # Late transpose/layout rewrites can invalidate previously resolved
-    # RESHAPE constants. Re-resolve once at absolute end.
-    _late_final_shape_activation_convergence_stats = (
-        _run_indexed_final_shape_activation_convergence(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # Final boundary/Slice/Concat cleanup after all late transpose/layout
-    # rewrites. Late strict rewrites can recreate CONCAT(axis=1)+post-
-    # transpose wrappers, so keep this at the terminal boundary.
-    _final_boundary_slice_concat_results = (
-        run_final_boundary_slice_concat_cleanup(
-            terminal_slice_concat_recovery_context,
+    # Late layout rewrites can invalidate RESHAPE constants and recreate
+    # terminal Slice/Concat adapters; converge both at the final boundary.
+    _late_final_shape_boundary_results = (
+        run_late_final_shape_boundary_cleanup(
+            late_final_shape_boundary_context,
         )
     )
     if optimize_layout_transpose_chains:

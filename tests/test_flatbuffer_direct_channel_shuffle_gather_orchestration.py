@@ -46,7 +46,7 @@ COMPOSITE_PATH = (
     / "late_reshape_shuffle_attention_window_orchestration.py"
 )
 COMPOSITE_OWNER = "run_late_reshape_shuffle_attention_window_cleanup"
-COMPOSITE_TARGET = "_late_reshape_shuffle_attention_window_results"
+COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 POLICIES = (
     (False, False, False),
     (False, False, True),
@@ -534,11 +534,11 @@ def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> N
     )
     index = lowerer.body.index(composite)
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert isinstance(lowerer.body[index + 1], ast.Assign)
-    assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
-    assert lowerer.body[index + 1].targets[0].id == (
-        "_late_final_shape_activation_convergence_stats"
-    )
+    assert isinstance(lowerer.body[index + 1], ast.If)
+    successor = lowerer.body[index + 1].body[0]
+    assert isinstance(successor, ast.Assign)
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == "_terminal_elementwise_fanout_stats"
 
 
 def test_channel_shuffle_gather_preserves_argument_free_default_callback() -> None:

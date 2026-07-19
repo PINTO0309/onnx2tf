@@ -5826,3 +5826,46 @@ observation-only lowerer locals, and update stale structural entry assertions.
 Preserve exact GraphIndex sharing, result identities, callbacks, guards, and
 the 128-ID/128-owner phase-result store. Commit and push only; do not create,
 update, reopen, or otherwise modify a pull request.
+
+## Late final shape/boundary implementation checkpoint
+
+`passes/indexed_final_shape_activation_convergence.py` now owns both indexed
+shape convergence and final shape/activation convergence. The implementation
+still builds exactly one `ModelIRGraphIndex` for final convergence and forwards
+that same object through pruning, static-shape reconciliation, dynamic Reshape
+resolution, HardSwish metadata repair, and activation fusion. Mutation guards,
+the fusion prune fallback, and the exact three-key and eleven-key result schemas
+are unchanged. Both former lowerer functions remain as one-return compatibility
+wrappers.
+
+`passes/late_final_shape_boundary_orchestration.py` adds the frozen
+`LateFinalShapeBoundaryContext` and the straight-line
+`run_late_final_shape_boundary_cleanup()` owner. It invokes late
+reshape/shuffle/attention/window cleanup with the shared pass context, final
+shape/activation convergence with that context's exact ModelIR and LayoutState,
+and final boundary Slice/Concat cleanup with the original callback-bearing
+terminal context. All three raw results are returned unchanged and in source
+order.
+
+The lowerer replaces the three observation-only locals with
+`_late_final_shape_boundary_results`. The optional late and terminal
+elementwise-fanout guards remain the immediate outer boundaries. Thirty-one
+stale structural assertions now traverse the new outer owner while continuing
+to validate the two nested composites, the dedicated convergence owner, all
+compatibility wrappers, and independent routes.
+
+Sequential core-only validation passes: focused convergence/composite `18`,
+complete affected `404`, terminal-layout/efficiency `92`, core `55`, result
+contracts `196`, phase-store `2`, and TensorFlow import-blocking/default-direct/
+`-cotof` `11`. Ruff, bytecode compilation, whitespace checks, exact result
+identity injection, legacy-sequence equivalence, and one-index reuse all pass.
+The phase store remains exactly 128 IDs and 128 owners. The characterized
+unconsumed lowerer-result inventory decreases from 51 to 49. No real-model
+conversion was repeated for this ownership-only extraction.
+
+At resume, refresh the 49-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+its context, option, guard, callback, result-schema, independent-route, and
+outer-boundary contracts before changing production. Continue with sequential
+core-only `uv` validation and complete checkpoint commits/pushes only. Do not
+create, update, reopen, or otherwise modify a pull request.

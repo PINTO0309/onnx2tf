@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import onnx2tf.tflite_builder.passes.indexed_final_shape_activation_convergence as convergence_module
 import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -259,28 +260,28 @@ def _run_instrumented_final_convergence(
         }
 
     monkeypatch.setattr(
-        lowering_module,
-        "_run_indexed_shape_convergence_cleanup",
+        convergence_module,
+        "run_indexed_shape_convergence_cleanup",
         convergence_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_sanitize_hardswish_tensor_shapes",
+        convergence_module,
+        "sanitize_hardswish_tensor_shapes",
         hardswish_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_reconcile_static_tensor_shapes",
+        convergence_module,
+        "reconcile_static_tensor_shapes",
         reconcile_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_resolve_dynamic_reshape_shapes",
+        convergence_module,
+        "resolve_dynamic_reshape_shapes",
         reshape_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_optimize_fuse_conv_activation_chains",
+        convergence_module,
+        "optimize_fuse_activation_chains",
         fusion_probe,
     )
 

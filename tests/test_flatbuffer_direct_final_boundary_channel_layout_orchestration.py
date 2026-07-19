@@ -34,9 +34,9 @@ COMPOSITE_PATH = (
     / "final_boundary_slice_concat_orchestration.py"
 )
 COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
-COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
+COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 RESULT_TARGET = "_final_boundary_channel_layout_results"
-PREDECESSOR_TARGET = "_late_final_shape_activation_convergence_stats"
+PREDECESSOR_TARGET = "_late_concat_elementwise_fanout_stats"
 SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 OLD_RESULT_TARGETS = (
     "_final_boundary_input_normalization_stats",
@@ -102,10 +102,12 @@ def test_final_boundary_channel_cluster_uses_composite_result_outside_store() ->
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_final_boundary_slice_concat_cleanup("
-        "terminal_slice_concat_recovery_context)"
+        "run_late_final_shape_boundary_cleanup("
+        "late_final_shape_boundary_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert _single_target(predecessor.body[0]) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
@@ -151,10 +153,12 @@ def test_final_boundary_channel_cluster_uses_one_composite_owner() -> None:
     assignment = assignments[0]
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_final_boundary_slice_concat_cleanup("
-        "terminal_slice_concat_recovery_context)"
+        "run_late_final_shape_boundary_cleanup("
+        "late_final_shape_boundary_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert _single_target(predecessor.body[0]) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
