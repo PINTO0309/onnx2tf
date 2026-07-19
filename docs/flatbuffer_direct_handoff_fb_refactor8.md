@@ -2234,3 +2234,29 @@ No root-model conversion was required because focused runtime equivalence
 covers the mechanical four-call extraction. Commit and push this unit. Resume
 with another non-store orchestration audit, keep the 128-phase bound fixed,
 and never create, update, or reopen a pull request.
+
+## Late reshape-layout composite characterization
+
+The next selected unit is another non-store extraction. It owns the adjacent
+late ExpandDims-compatible, Flatten-HW-compatible, and NHWC-collapse reshape
+passes while preserving their current order and arguments. Their three result
+locals have no consumers.
+
+`tests/test_flatbuffer_direct_late_reshape_layout_orchestration.py` fixes the
+current calls and outer boundaries. Its strict expected failure requires a
+new `run_late_reshape_layout_cleanup(shared_model_ir_pass_context)` composite
+and removal of the three old locals. The ordered tuple must remain outside
+`ConversionSession.phase_results`, which stays fixed at 128/128.
+
+The audit baseline also found a stale channel-shuffle structure assertion,
+not a production regression. Commit `2107f972` updated it to inspect the
+existing phase ID and nested pass owner, with `24 passed` plus Ruff, compile,
+and whitespace checks.
+
+The characterization gate completed with `93 passed, 1 xfailed in 1.09s`;
+the sole xfail is the intentionally absent composite. Targeted Ruff, bytecode
+compilation, and whitespace validation passed. Commit and push this checkpoint
+first. Implementation must add a focused runtime test for call order, context
+identity, layout arguments, and tuple order; then update only structural
+boundary contracts, run sequential focused/core/result/architecture gates,
+document, commit, and push. Never create, update, or reopen a pull request.

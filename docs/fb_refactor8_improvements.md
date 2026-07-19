@@ -1161,6 +1161,32 @@ The phase store remains exactly 128/128. No root-model conversion was run
 because this is a characterized four-call orchestration extraction with a
 focused runtime equivalence test.
 
+## Late reshape-layout composite characterization
+
+The next non-store unit covers three adjacent late layout repairs: the
+ExpandDims-compatible Transpose/Reshape collapse, the Flatten-HW-compatible
+collapse, and the private NHWC Reshape collapse. Each returns one bounded
+integer mapping, and all three lowerer locals are unconsumed.
+
+The focused characterization fixes their order, exact model/layout arguments,
+guarded elementwise-fanout predecessor, channel-shuffle successor, and absence
+of result consumers. A strict expected failure requires one
+`run_late_reshape_layout_cleanup` owner and one ordered
+`_late_reshape_layout_results` tuple outside the already-full session store.
+No production source changed.
+
+The initial baseline exposed one independent stale channel-shuffle assertion:
+its predecessor had already moved inside `session.record_phase_result`, while
+the test still required a direct call. Commit `2107f972` now verifies both the
+stable phase ID and its nested owner; that module passes all 24 contracts.
+
+Sequential validation under core-only `uv` completed with
+`93 passed, 1 xfailed in 1.09s`; the sole xfail is the intentionally absent
+composite. Targeted Ruff, bytecode compilation, and whitespace validation
+also passed. Commit and push the characterization before implementing the
+owner. Keep the phase store at 128/128 and do not create, update, or reopen a
+pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
