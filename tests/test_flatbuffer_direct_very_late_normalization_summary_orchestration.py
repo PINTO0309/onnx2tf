@@ -32,7 +32,7 @@ COUNT_TARGET = "very_late_normalization_tensor_count"
 RAW_TARGET = "very_late_normalization_results"
 SUMMARY_TARGET = "_very_late_normalization_stats"
 PREDECESSOR_TARGET = "_very_late_affine_post_add_stats"
-SUCCESSOR_TARGET = "_very_late_dynamic_reshape_stats"
+SUCCESSOR_TARGET = "_very_late_dynamic_adapter_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
