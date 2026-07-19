@@ -26,6 +26,13 @@ LATE_CONCAT_PATH = (
     / "passes"
     / "late_concat_layout_orchestration.py"
 )
+VERY_LATE_LAYOUT_BROADCAST_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_broadcast_orchestration.py"
+)
 OWNER = "run_layout_transpose_cleanup"
 INNER_OWNER = "_optimize_layout_transpose_chains"
 RESULT_TARGET = "_layout_pass_set_1_layout_transpose_cleanup_stats"
@@ -118,10 +125,19 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
 
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_calls = _direct_lowerer_calls(lowerer)
-    assert len(direct_calls) == 2
+    very_late_owner = _functions(VERY_LATE_LAYOUT_BROADCAST_PATH)[
+        "run_very_late_layout_broadcast_cleanup"
+    ]
+    very_late_calls = [
+        node
+        for node in ast.walk(very_late_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(direct_calls) + len(very_late_calls) == 2
     assert [_single_target(statement) for statement in direct_calls] == [
         None,
-        "_very_late_layout_transpose_cleanup_stats",
     ]
     assert all(
         [ast.unparse(argument) for argument in _statement_call(statement).args]
@@ -142,11 +158,18 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
             "layout_state": "session.layout_state",
             "diagnostics": "session.diagnostics",
         },
-        {
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
-        },
     ]
+    very_late_call = very_late_calls[0]
+    assert [ast.unparse(argument) for argument in very_late_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in very_late_call.keywords
+    } == {
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+    }
 
     late_concat = _functions(LATE_CONCAT_PATH)[
         "run_late_concat_layout_cleanup"

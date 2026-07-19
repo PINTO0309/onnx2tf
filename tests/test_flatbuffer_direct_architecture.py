@@ -119,6 +119,9 @@ from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration impo
 from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestration import (
     VERY_LATE_PAD_INSTANCENORM_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration import (
+    VERY_LATE_LAYOUT_BROADCAST_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -207,6 +210,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
     *LATE_CONV1D_DECODER_LAYOUT_PASS_IDS,
     *VERY_LATE_PAD_INSTANCENORM_LAYOUT_PASS_IDS,
+    *VERY_LATE_LAYOUT_BROADCAST_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -11455,7 +11459,7 @@ def test_rank4_channelwise_broadcast_constant_repair_has_one_module_owner() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
     convergence = next(
         node

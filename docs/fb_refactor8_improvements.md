@@ -1721,6 +1721,44 @@ Sequential characterization under core-only `uv` completed with
 composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed.
 
+## Very-late layout/broadcast composite implementation
+
+`run_very_late_layout_broadcast_cleanup` now owns the characterized boundary.
+It invokes layout-Transpose cleanup only when the normalized layout option is
+enabled, with the same ModelIR, LayoutState, and diagnostics. It then invokes
+rank-four channelwise broadcast-constant repair unconditionally with the same
+ModelIR. The ordered result contains `None` when the optional first pass is
+skipped and always retains the broadcast mapping.
+
+The lowerer now retains one `_very_late_layout_broadcast_results` tuple
+outside the full phase store. The old conditional local, unconditional local,
+and inline guard are gone. The singleton/consecutive-Reshape predecessor and
+unconditional `shape_reconciliation.primary.very_late_broadcast` successor
+remain adjacent to the new owner. Both existing pass owners and all lowerer
+compatibility wrappers remain available.
+
+Final sequential validation under core-only `uv`:
+
+- focused enabled/disabled owner contracts: `4 passed in 0.57s`;
+- affected layout, broadcast, reconciliation, singleton, and store contracts:
+  `97 passed in 2.82s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- result contracts: `196 passed in 9.20s`;
+- full architecture contracts: `258 passed in 19.24s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No pass execution count, graph traversal, mutation, numerical behavior,
+diagnostics, public API, artifact, dependency, or TensorFlow boundary changed.
+No real-model conversion was run because the focused owner tests exercise both
+flag paths and the affected suites cover both underlying repair families.
+Commit and push this implementation checkpoint. On resume, audit the next
+coherent non-store boundary after the very-late broadcast reconciliation.
+Continue with commits and pushes only; never create, update, or reopen a pull
+request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

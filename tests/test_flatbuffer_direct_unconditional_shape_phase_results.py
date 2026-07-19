@@ -15,7 +15,7 @@ EXPECTED_PHASE_IDS = (
     "shape_reconciliation.primary.very_late_final",
 )
 EXPECTED_PREDECESSOR_TARGETS = (
-    "_very_late_broadcast_repair_stats",
+    "_very_late_layout_broadcast_results",
     "_very_late_dynamic_rank1_reshape_stats",
 )
 EXPECTED_SUCCESSOR_TARGETS = (

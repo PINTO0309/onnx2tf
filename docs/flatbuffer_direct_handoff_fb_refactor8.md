@@ -2751,3 +2751,37 @@ owner. Targeted Ruff, bytecode compilation, and whitespace checks passed.
 
 Commit and push this characterization before production changes. Never
 create, update, or reopen a pull request.
+
+## Very-late layout/broadcast composite implementation
+
+The new pass-module owner preserves the normalized layout-option guard around
+layout-Transpose cleanup, including its layout and diagnostics arguments. It
+always follows with rank-four channelwise broadcast-constant repair. Disabled
+layout cleanup returns `None`; enabled cleanup and broadcast repair retain
+their original mappings in a fixed two-item tuple.
+
+The lowerer replaces the two old unconsumed locals and inline guard with one
+`_very_late_layout_broadcast_results` assignment outside the full store. The
+singleton/consecutive-Reshape predecessor and unconditional very-late
+broadcast shape-reconciliation record remain unchanged and adjacent. The
+phase-result store remains exactly 128/128, and all compatibility wrappers
+remain intact.
+
+Final sequential validation under core-only `uv`:
+
+- focused enabled/disabled owner contracts: `4 passed in 0.57s`;
+- affected layout, broadcast, reconciliation, singleton, and store contracts:
+  `97 passed in 2.82s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- result contracts: `196 passed in 9.20s`;
+- full architecture contracts: `258 passed in 19.24s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No real-model conversion was required for this owner-only extraction. Commit
+and push this checkpoint. At resume, audit the next coherent non-store unit
+after the very-late broadcast reconciliation without changing production
+behavior first. Continue with coherent commits and pushes only; never create,
+update, or reopen a pull request.

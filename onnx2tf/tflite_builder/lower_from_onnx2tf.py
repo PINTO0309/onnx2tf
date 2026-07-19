@@ -293,6 +293,9 @@ from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration impo
 from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestration import (
     run_very_late_pad_instancenorm_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration import (
+    run_very_late_layout_broadcast_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5244,17 +5247,10 @@ def lower_onnx_to_ir(
             session.layout_state,
         )
     )
-    if optimize_layout_transpose_chains:
-        _very_late_layout_transpose_cleanup_stats = (
-            run_layout_transpose_cleanup(
-                model_ir,
-                layout_state=session.layout_state,
-                diagnostics=session.diagnostics,
-            )
-        )
-    _very_late_broadcast_repair_stats = (
-        _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
-            model_ir
+    _very_late_layout_broadcast_results = (
+        run_very_late_layout_broadcast_cleanup(
+            shared_model_ir_pass_context,
+            include_layout_transpose=optimize_layout_transpose_chains,
         )
     )
     session.record_phase_result(

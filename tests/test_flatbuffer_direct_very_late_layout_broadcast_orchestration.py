@@ -5,6 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    very_late_layout_broadcast_orchestration,
+)
+from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration import (
+    VERY_LATE_LAYOUT_BROADCAST_PASS_IDS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -82,71 +92,44 @@ def _phase_id(statement: ast.stmt) -> str | None:
     return ast.literal_eval(call.args[0])
 
 
-def test_very_late_layout_broadcast_boundary_is_ordered_and_unconsumed() -> None:
+def test_very_late_layout_broadcast_boundary_uses_composite_outside_store() -> (
+    None
+):
     lowerer = _lowerer()
-    guard_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.If)
-        and ast.unparse(statement.test) == "optimize_layout_transpose_chains"
-        and any(
-            _single_target(child) == OLD_RESULT_TARGETS[0]
-            for child in statement.body
-        )
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == RESULT_TARGET
     )
-    guard = lowerer.body[guard_index]
-    assert isinstance(guard, ast.If)
-    assert len(guard.body) == 1
-    layout_statement = guard.body[0]
-    assert _single_target(layout_statement) == OLD_RESULT_TARGETS[0]
-    assert _call_name(layout_statement) == LOWERER_PASS_IDS[0]
-    layout_call = _statement_call(layout_statement)
-    assert layout_call is not None
-    assert [ast.unparse(argument) for argument in layout_call.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in layout_call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
-
-    assert _single_target(lowerer.body[guard_index - 1]) == PREDECESSOR_TARGET
-    broadcast_statement = lowerer.body[guard_index + 1]
-    assert _single_target(broadcast_statement) == OLD_RESULT_TARGETS[1]
-    assert _call_name(broadcast_statement) == LOWERER_PASS_IDS[1]
-    broadcast_call = _statement_call(broadcast_statement)
-    assert broadcast_call is not None
-    assert [ast.unparse(argument) for argument in broadcast_call.args] == [
-        "model_ir"
-    ]
-    assert broadcast_call.keywords == []
-    assert _phase_id(lowerer.body[guard_index + 2]) == SUCCESSOR_PHASE_ID
-
-    for target in OLD_RESULT_TARGETS:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
-        )
+    index = lowerer.body.index(assignment)
+    assert ast.unparse(assignment.value) == (
+        "run_very_late_layout_broadcast_cleanup("
+        "shared_model_ir_pass_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
+    )
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late layout/broadcast boundary lacks a composite owner",
-)
 def test_very_late_layout_broadcast_boundary_uses_one_composite_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
     owner_calls = [
         node.func.id
-        for node in ast.walk(owner)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in PASS_IDS
+        for node in sorted(
+            (
+                node
+                for node in ast.walk(owner)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in PASS_IDS
+            ),
+            key=lambda node: node.lineno,
+        )
     ]
     assert owner_calls == list(PASS_IDS)
 
@@ -168,3 +151,63 @@ def test_very_late_layout_broadcast_boundary_uses_one_composite_owner() -> None:
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_very_late_layout_broadcast_owner_preserves_guard_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    model_ir = ModelIR("very_late_layout_broadcast_owner")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    layout_result = {"layout_result": 1}
+    broadcast_result = {"broadcast_result": 2}
+    observed: list[tuple[str, object, object | None, object | None]] = []
+
+    def _layout_callback(
+        candidate: ModelIR,
+        *,
+        layout_state: object,
+        diagnostics: object,
+    ) -> dict[str, int]:
+        observed.append((PASS_IDS[0], candidate, layout_state, diagnostics))
+        return dict(layout_result)
+
+    def _broadcast_callback(candidate: ModelIR) -> dict[str, int]:
+        observed.append((PASS_IDS[1], candidate, None, None))
+        return dict(broadcast_result)
+
+    monkeypatch.setattr(
+        very_late_layout_broadcast_orchestration,
+        PASS_IDS[0],
+        _layout_callback,
+    )
+    monkeypatch.setattr(
+        very_late_layout_broadcast_orchestration,
+        PASS_IDS[1],
+        _broadcast_callback,
+    )
+
+    expected_layout_result = (
+        layout_result if include_layout_transpose else None
+    )
+    assert (
+        very_late_layout_broadcast_orchestration.run_very_late_layout_broadcast_cleanup(
+            context,
+            include_layout_transpose=include_layout_transpose,
+        )
+        == (expected_layout_result, broadcast_result)
+    )
+    expected_pass_ids = (
+        list(PASS_IDS) if include_layout_transpose else [PASS_IDS[1]]
+    )
+    assert [entry[0] for entry in observed] == expected_pass_ids
+    assert all(entry[1] is context.model_ir for entry in observed)
+    if include_layout_transpose:
+        assert observed[0][2] is context.layout_state
+        assert observed[0][3] is context.diagnostics
+    assert VERY_LATE_LAYOUT_BROADCAST_PASS_IDS == LOWERER_PASS_IDS

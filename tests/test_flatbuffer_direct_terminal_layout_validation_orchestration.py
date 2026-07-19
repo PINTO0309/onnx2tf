@@ -14,6 +14,17 @@ VERY_LATE_OWNER_PATH = (
 )
 VERY_LATE_OWNER = "run_very_late_pad_instancenorm_layout_cleanup"
 VERY_LATE_RESULT = "_very_late_pad_instancenorm_layout_results"
+VERY_LATE_LAYOUT_BROADCAST_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_broadcast_orchestration.py"
+)
+VERY_LATE_LAYOUT_BROADCAST_OWNER = (
+    "run_very_late_layout_broadcast_cleanup"
+)
+VERY_LATE_LAYOUT_BROADCAST_RESULT = "_very_late_layout_broadcast_results"
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -58,6 +69,53 @@ def _very_late_assignment(body: list[ast.stmt]) -> ast.Assign:
         "shared_model_ir_pass_context"
     ]
     assert assignment.value.keywords == []
+    return assignment
+
+
+def _very_late_layout_broadcast_owner_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        VERY_LATE_LAYOUT_BROADCAST_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_LAYOUT_BROADCAST_OWNER
+    )
+    owner_function_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_function_name
+        for node in ast.walk(owner)
+    )
+
+
+def _very_late_layout_broadcast_assignment(
+    body: list[ast.stmt],
+) -> ast.Assign:
+    assignment = next(
+        statement
+        for statement in body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == VERY_LATE_LAYOUT_BROADCAST_RESULT
+    )
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == VERY_LATE_LAYOUT_BROADCAST_OWNER
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in assignment.value.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
+    }
     return assignment
 
 
@@ -1436,11 +1494,17 @@ def test_primary_path_retains_late_concat_composite_results() -> None:
         if isinstance(statement, (ast.Assign, ast.Expr))
         and _call_name(_statement_call(statement)) == "run_layout_transpose_cleanup"
     ]
-    assert len(layout_cleanup_statements) == 2
+    assert (
+        len(layout_cleanup_statements)
+        + _very_late_layout_broadcast_owner_call_count(
+            "run_layout_transpose_cleanup"
+        )
+        == 2
+    )
     assert sum(
         isinstance(statement, ast.Assign)
         for statement in layout_cleanup_statements
-    ) == 1
+    ) == 0
     phase_records = [
         statement
         for statement in layout_cleanup_statements
@@ -1461,46 +1525,14 @@ def test_primary_path_retains_late_concat_composite_results() -> None:
 def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> None:
     body = _lowerer_body()
     callback_name = "run_layout_transpose_cleanup"
-    guarded = [
-        (index, statement)
-        for index, statement in enumerate(body)
-        if isinstance(statement, ast.If)
-        and ast.unparse(statement.test) == "optimize_layout_transpose_chains"
-        and any(
-            _call_name(_statement_call(child_statement)) == callback_name
-            for child_statement in statement.body
-        )
-    ]
-    assert len(guarded) == 2
-
-    very_late_index, guard = next(
-        (index, statement)
-        for index, statement in guarded
-        if isinstance(body[index - 1], ast.Assign)
-        and isinstance(body[index - 1].targets[0], ast.Name)
-        and body[index - 1].targets[0].id
-        == "_very_late_singleton_consecutive_reshape_results"
+    statement = _very_late_layout_broadcast_assignment(body)
+    very_late_index = body.index(statement)
+    assert _very_late_layout_broadcast_owner_call_count(callback_name) == 1
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_very_late_layout_transpose_cleanup_stats"
+        for node in ast.walk(ast.Module(body=body, type_ignores=[]))
     )
-    assert len(guard.body) == 1
-    statement = guard.body[0]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == (
-        "_very_late_layout_transpose_cleanup_stats"
-    )
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
 
     predecessor = body[very_late_index - 1]
     assert isinstance(predecessor, ast.Assign)
@@ -1509,15 +1541,15 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         "_very_late_singleton_consecutive_reshape_results"
     )
 
-    successor_call = _statement_call(body[very_late_index + 1])
-    assert _call_name(successor_call) == (
-        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
+    successor = body[very_late_index + 1]
+    _assert_phase_result_record(
+        successor,
+        phase_id="shape_reconciliation.primary.very_late_broadcast",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == [
-        "model_ir"
-    ]
-    assert successor_call.keywords == []
 
     cleanup_statements = [
         statement
@@ -1526,7 +1558,11 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         if isinstance(statement, (ast.Assign, ast.Expr))
         and _call_name(_statement_call(statement)) == callback_name
     ]
-    assert len(cleanup_statements) == 2
+    assert (
+        len(cleanup_statements)
+        + _very_late_layout_broadcast_owner_call_count(callback_name)
+        == 2
+    )
     _assert_phase_result_record(
         cleanup_statements[0],
         phase_id="cleanup.layout_pass_set_1.layout_transpose",
@@ -1536,15 +1572,7 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
             "diagnostics=session.diagnostics)"
         ),
     )
-    assigned_targets = [
-        statement.targets[0].id
-        for statement in cleanup_statements
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-    ]
-    assert assigned_targets == [
-        "_very_late_layout_transpose_cleanup_stats",
-    ]
+    assert not any(isinstance(statement, ast.Assign) for statement in cleanup_statements)
 
 
 def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> None:
@@ -1557,33 +1585,17 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == callback_name
     ]
-    assert len(direct_indices) == 2
-
-    very_late_index, final_index = direct_indices
+    assert len(direct_indices) == 1
+    final_index = direct_indices[0]
+    assert _very_late_layout_broadcast_owner_call_count(callback_name) == 1
+    statement = _very_late_layout_broadcast_assignment(body)
+    very_late_index = body.index(statement)
     assert very_late_index < final_index
-    statement = body[very_late_index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_very_late_broadcast_repair_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
-
-    predecessor = body[very_late_index - 1]
-    assert isinstance(predecessor, ast.If)
-    retained_layout = [
-        nested_statement
-        for nested_statement in predecessor.body
-        if isinstance(nested_statement, ast.Assign)
-        and isinstance(nested_statement.targets[0], ast.Name)
-        and nested_statement.targets[0].id
-        == "_very_late_layout_transpose_cleanup_stats"
-    ]
-    assert len(retained_layout) == 1
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_very_late_broadcast_repair_stats"
+        for node in ast.walk(ast.Module(body=body, type_ignores=[]))
+    )
 
     successor = body[very_late_index + 1]
     _assert_phase_result_record(
@@ -1608,7 +1620,11 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == callback_name
     ]
-    assert len(all_calls) == 3
+    assert (
+        len(all_calls)
+        + _very_late_layout_broadcast_owner_call_count(callback_name)
+        == 3
+    )
     assert sum(
         ast.unparse(call_node).startswith(f"{callback_name}(fallback_ir")
         for call_node in all_calls
@@ -1622,7 +1638,11 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == callback_name
     ]
-    assert len(module_calls) == 4
+    assert (
+        len(module_calls)
+        + _very_late_layout_broadcast_owner_call_count(callback_name)
+        == 4
+    )
     assert sum(
         any(
             keyword.arg == "graph_index"
@@ -1635,13 +1655,7 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
 
 def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     body = _lowerer_body()
-    broadcast_index = next(
-        index
-        for index, statement in enumerate(body)
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_broadcast_repair_stats"
-    )
+    broadcast_index = body.index(_very_late_layout_broadcast_assignment(body))
 
     statement = body[broadcast_index + 1]
     _assert_phase_result_record(
@@ -1656,7 +1670,7 @@ def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     predecessor = body[broadcast_index]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_very_late_broadcast_repair_stats"
+    assert predecessor.targets[0].id == VERY_LATE_LAYOUT_BROADCAST_RESULT
 
     successor = body[broadcast_index + 2]
     assert isinstance(successor, ast.Assign)

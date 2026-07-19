@@ -338,13 +338,16 @@ def test_singleton_consecutive_retains_very_late_main_results() -> None:
     assert len(predecessor.targets) == 1
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == (
-            "_very_late_pad_instancenorm_layout_results"
+        "_very_late_pad_instancenorm_layout_results"
     )
 
     successor = lowerer.body[first_index + 1]
-    assert isinstance(successor, ast.If)
-    assert isinstance(successor.test, ast.Name)
-    assert successor.test.id == "optimize_layout_transpose_chains"
+    assert isinstance(successor, ast.Assign)
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == "_very_late_layout_broadcast_results"
+    assert _statement_call_name(successor) == (
+        "run_very_late_layout_broadcast_cleanup"
+    )
 
     second = lowerer.body[second_index]
     assert isinstance(second, ast.Assign)
@@ -400,9 +403,14 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
         "run_very_late_pad_instancenorm_layout_cleanup"
     )
     first_following = lowerer.body[first_index + 1]
-    assert isinstance(first_following, ast.If)
-    assert isinstance(first_following.test, ast.Name)
-    assert first_following.test.id == "optimize_layout_transpose_chains"
+    assert isinstance(first_following, ast.Assign)
+    assert isinstance(first_following.targets[0], ast.Name)
+    assert first_following.targets[0].id == (
+        "_very_late_layout_broadcast_results"
+    )
+    assert _statement_call_name(first_following) == (
+        "run_very_late_layout_broadcast_cleanup"
+    )
 
     assert _statement_call_name(lowerer.body[second_index - 1]) == (
         "run_indexed_binary_layout_adapter_cleanup"
