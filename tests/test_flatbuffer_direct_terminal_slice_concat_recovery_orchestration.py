@@ -391,8 +391,8 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             "_final_boundary_channel_layout_results",
             "run_final_boundary_channel_layout_cleanup",
             (),
-            "_final_slice_prepost_passthrough_stats",
-            "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
+            "_final_slice_pre_concat_layout_results",
+            "run_final_slice_pre_concat_layout_cleanup",
         ),
     ]
 

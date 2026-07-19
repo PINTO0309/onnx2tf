@@ -107,6 +107,9 @@ from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
     FINAL_BOUNDARY_CHANNEL_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.final_slice_pre_concat_layout_orchestration import (
+    FINAL_SLICE_PRE_CONCAT_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
     TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
 )
@@ -194,6 +197,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_ATTENTION_LAYOUT_PASS_IDS,
     *LATE_WINDOW_LAYOUT_PASS_IDS,
     *FINAL_BOUNDARY_CHANNEL_LAYOUT_PASS_IDS,
+    *FINAL_SLICE_PRE_CONCAT_LAYOUT_PASS_IDS,
     *TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
@@ -2029,11 +2033,11 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     assert previous_keyword_names == [["layout_state"], []]
     assert next_targets == [
         None,
-        "_final_slice_prepost_passthrough_stats",
+        "_final_slice_pre_concat_layout_results",
     ]
     assert next_call_names == [
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
-        "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
+        "run_final_slice_pre_concat_layout_cleanup",
     ]
 
 
@@ -4768,7 +4772,7 @@ def test_slice_prepost_layout_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 1
 
 
 def test_shape_extract_layout_optimizer_has_one_module_owner() -> None:

@@ -163,10 +163,9 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
         ),
         key=lambda statement: statement.lineno,
     )
-    assert len(direct_results) == 3
+    assert len(direct_results) == 2
     assert tuple(_single_target(statement) for statement in direct_results) == (
         None,
-        RESULT_TARGETS[1],
         RESULT_TARGETS[2],
     )
     for statement in direct_results:
@@ -180,11 +179,12 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "layout_state": "session.layout_state",
             "diagnostics": "session.diagnostics",
         }
-    assert not any(
-        isinstance(node, ast.Name) and node.id == RESULT_TARGETS[0]
-        for node in ast.walk(lowerer)
-    )
-    for target in RESULT_TARGETS[1:]:
+    for target in RESULT_TARGETS[:2]:
+        assert not any(
+            isinstance(node, ast.Name) and node.id == target
+            for node in ast.walk(lowerer)
+        )
+    for target in RESULT_TARGETS[2:]:
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
@@ -197,11 +197,6 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "run_spp_layout_cleanup",
             None,
             "run_ndhwc_concat_layout_cleanup",
-        ),
-        (
-            "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
-            "_final_slice_prepost_passthrough_stats",
-            "run_terminal_concat_bridge_layout_cleanup",
         ),
         (
             "summarize_late_hard_activation_layout_mutations",

@@ -2579,3 +2579,32 @@ The characterization gate completed with `1 passed, 1 xfailed in 0.14s`;
 the sole xfail is the intentionally absent composite owner. Targeted Ruff,
 bytecode compilation, and whitespace checks passed. Commit and push this
 checkpoint before production changes.
+
+## Final Slice/pre-ConCat composite implementation
+
+`run_final_slice_pre_concat_layout_cleanup` now owns the characterized pair.
+It calls Slice/pre-post passthrough model-only, then pre-ConCat NHWC cleanup
+with the shared layout state and diagnostics, returning both mappings in order.
+
+The lowerer retains `_final_slice_pre_concat_layout_results` outside the full
+store. The two old unconsumed locals are gone; both compatibility wrappers and
+the surrounding final slice/Concat recovery and terminal Concat-bridge
+composites are unchanged. Focused runtime coverage proves order, context
+identity, exact argument policy, and tuple order.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite and affected boundaries: `20 passed in 1.13s`;
+- Slice/pre-post mutation contracts: `9 passed in 0.52s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.81s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- result contracts: `196 passed in 9.28s`;
+- full architecture contracts: `258 passed in 18.28s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No graph, numerical, diagnostics, public API, or artifact behavior changed.
+Commit and push this implementation checkpoint. Resume by auditing the next
+non-store late/terminal source-order unit. Continue with coherent commits and
+pushes only; never create, update, or reopen a pull request.

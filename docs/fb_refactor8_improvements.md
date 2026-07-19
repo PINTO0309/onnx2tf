@@ -1543,6 +1543,39 @@ Sequential characterization under core-only `uv` completed with
 composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed.
 
+## Final Slice/pre-ConCat composite implementation
+
+`run_final_slice_pre_concat_layout_cleanup(context)` now invokes the existing
+Slice/pre-post passthrough and pre-ConCat NHWC owners in their original order.
+The first remains model-only; the second receives the shared ModelIR, layout
+state, and diagnostics. Their independent mappings are returned as an ordered
+tuple.
+
+The lowerer retains one `_final_slice_pre_concat_layout_results` composite via
+`shared_model_ir_pass_context`, outside the full phase-result store. The two
+old unconsumed locals are absent. Both compatibility wrappers, the preceding
+final slice/Concat recovery composite, and the following terminal Concat-bridge
+composite remain intact.
+
+Sequential validation under core-only `uv` completed with:
+
+- focused composite and affected boundary/result contracts:
+  `20 passed in 1.13s`;
+- Slice/pre-post owner mutation contracts: `9 passed in 0.52s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.81s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader result contracts: `196 passed in 9.28s`;
+- full lowerer architecture contracts: `258 passed in 18.28s`;
+- phase-result capacity contracts: `2 passed in 0.52s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No pass implementation, graph rewrite, call count, result value, layout or
+diagnostics identity, public compatibility name, artifact, dependency, or
+TensorFlow boundary changed. No root-model conversion was repeated because
+the focused runtime owner test and existing Slice/pre-post mutation suite cover
+the extracted dispatch. The store remains exactly 128/128.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

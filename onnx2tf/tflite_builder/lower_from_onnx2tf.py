@@ -281,6 +281,9 @@ from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
     run_final_boundary_channel_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.final_slice_pre_concat_layout_orchestration import (
+    run_final_slice_pre_concat_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
     run_terminal_concat_bridge_layout_cleanup,
 )
@@ -5159,16 +5162,11 @@ def lower_onnx_to_ir(
     _final_slice_concat_recovery_results = (
         _run_terminal_slice_concat_layout_recovery_sequence()
     )
-    _final_slice_prepost_passthrough_stats = (
-        _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
-    )
     # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
     # can recreate CONCAT(axis=1)+post-transpose wrappers.
-    _final_pre_concat_stats = (
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+    _final_slice_pre_concat_layout_results = (
+        run_final_slice_pre_concat_layout_cleanup(
+            shared_model_ir_pass_context,
         )
     )
     _terminal_concat_bridge_layout_results = (

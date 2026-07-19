@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Seven late lowerer clusters now have focused orchestration owners. The first
+Eight late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -138,8 +138,12 @@ Concat-unary-Conv, and Shape-extract repairs. It preserves the exact
 layout/layout/layout/layout/(layout+diagnostics)/model-only argument policy and
 returns all six mappings as an ordered tuple outside the store.
 
+The eighth runs final Slice/pre-post passthrough followed by final pre-ConCat
+NHWC cleanup. It preserves the model-only/(layout+diagnostics) argument policy
+and returns both independent mappings as an ordered tuple outside the store.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing twenty-four unconsumed locals and two
+and result schemas while removing twenty-six unconsumed locals and two
 lowerer scope locals. Focused runtime tests verify shared scope identity, exact
 argument policy, and ordered results.
 
@@ -387,6 +391,9 @@ Final checkpoint results:
   **79 passed**;
 - terminal Concat-bridge composite and affected result contracts:
   **17 passed**;
+- final Slice/pre-ConCat composite and affected boundary contracts:
+  **20 passed**;
+- Slice/pre-post mutation contracts: **9 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
 - indexed, quantized, and legacy NHWC Concat family contracts:
   **285 passed**;

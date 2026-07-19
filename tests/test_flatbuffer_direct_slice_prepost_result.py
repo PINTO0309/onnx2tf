@@ -16,7 +16,9 @@ SLICE_PREPOST = "_optimize_transpose_slice_prepost_nhwc_passthrough_chains"
 OWNER_NAME = "optimize_transpose_slice_prepost_nhwc_passthrough_chains"
 RESULT_TARGET = "_final_slice_prepost_passthrough_stats"
 PREVIOUS_TARGET = "_final_slice_concat_recovery_results"
-PRE_CONCAT = "_optimize_transpose_pre_concat_nhwc_chains"
+COMPOSITE_TARGET = "_final_slice_pre_concat_layout_results"
+COMPOSITE_OWNER = "run_final_slice_pre_concat_layout_cleanup"
+NEXT_TARGET = "_terminal_concat_bridge_layout_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -88,32 +90,28 @@ def test_slice_prepost_wrapper_schema_and_guarded_cleanup_are_explicit() -> None
     )
 
 
-def test_final_slice_prepost_result_is_retained_observation_only() -> None:
+def test_final_slice_prepost_result_moves_to_final_pair_composite() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     production_results = [
         statement
         for statement in lowerer.body
         if _direct_call(statement) is not None
     ]
-    assert len(production_results) == 1
-    result = production_results[0]
-    assert _single_target(result) == RESULT_TARGET
-    call = _direct_call(result)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
+    assert production_results == []
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == RESULT_TARGET
         for node in ast.walk(lowerer)
     )
 
-    result_index = lowerer.body.index(result)
-    assert _single_target(lowerer.body[result_index - 1]) == PREVIOUS_TARGET
-    following = lowerer.body[result_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert _single_target(following) == "_final_pre_concat_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == PRE_CONCAT
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    composite_index = lowerer.body.index(composite)
+    assert _direct_call(composite) is None
+    assert isinstance(composite.value, ast.Call)
+    assert isinstance(composite.value.func, ast.Name)
+    assert composite.value.func.id == COMPOSITE_OWNER
+    assert _single_target(lowerer.body[composite_index - 1]) == PREVIOUS_TARGET
+    assert _single_target(lowerer.body[composite_index + 1]) == NEXT_TARGET

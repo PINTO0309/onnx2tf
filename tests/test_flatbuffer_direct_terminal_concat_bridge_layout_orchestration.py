@@ -27,7 +27,7 @@ OWNER_PATH = (
 )
 OWNER = "run_terminal_concat_bridge_layout_cleanup"
 RESULT_TARGET = "_terminal_concat_bridge_layout_results"
-PREDECESSOR_TARGET = "_final_pre_concat_stats"
+PREDECESSOR_TARGET = "_final_slice_pre_concat_layout_results"
 SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 OLD_RESULT_TARGETS = (
     "_terminal_relu_split_all_outputs_stats",

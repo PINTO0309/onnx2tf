@@ -5,6 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    final_slice_pre_concat_layout_orchestration,
+)
+from onnx2tf.tflite_builder.passes.final_slice_pre_concat_layout_orchestration import (
+    FINAL_SLICE_PRE_CONCAT_LAYOUT_PASS_IDS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -68,55 +78,36 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
-def test_final_slice_pre_concat_pair_is_adjacent_and_unconsumed() -> None:
+def test_final_slice_pre_concat_pair_uses_composite_result_outside_store() -> None:
     lowerer = _lowerer()
-    assignments = [
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) in OLD_RESULT_TARGETS
-    ]
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        OLD_RESULT_TARGETS
+        if _single_target(statement) == RESULT_TARGET
     )
-    indices = [lowerer.body.index(statement) for statement in assignments]
-    assert indices == [indices[0], indices[0] + 1]
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[indices[1] + 1]) == SUCCESSOR_TARGET
-    assert tuple(_call_name(statement) for statement in assignments) == (
-        LOWERER_PASS_IDS
+    index = lowerer.body.index(assignment)
+    assert ast.unparse(assignment.value) == (
+        "run_final_slice_pre_concat_layout_cleanup("
+        "shared_model_ir_pass_context)"
     )
-
-    first_call = _statement_call(assignments[0])
-    second_call = _statement_call(assignments[1])
-    assert first_call is not None
-    assert second_call is not None
-    assert [ast.unparse(argument) for argument in first_call.args] == [
-        "model_ir"
-    ]
-    assert first_call.keywords == []
-    assert [ast.unparse(argument) for argument in second_call.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in second_call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
-    for target in OLD_RESULT_TARGETS:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "record_phase_result"
+        and any(
+            isinstance(child, ast.Name) and child.id == OWNER
+            for child in ast.walk(node)
         )
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final Slice/pre-Concat pair has not moved to one composite owner",
-)
 def test_final_slice_pre_concat_pair_uses_one_composite_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -146,3 +137,56 @@ def test_final_slice_pre_concat_pair_uses_one_composite_owner() -> None:
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_final_slice_pre_concat_owner_preserves_argument_and_result_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("final_slice_pre_concat_layout_owner")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    observed: list[tuple[str, object, object | None, object | None]] = []
+    expected_results = (
+        {"optimized_slice_prepost": 1},
+        {"optimized_pre_concat": 2},
+    )
+
+    def _model_callback(candidate: ModelIR) -> dict[str, int]:
+        observed.append((PASS_IDS[0], candidate, None, None))
+        return dict(expected_results[0])
+
+    def _layout_callback(
+        candidate: ModelIR,
+        *,
+        layout_state: object,
+        diagnostics: object,
+    ) -> dict[str, int]:
+        observed.append((PASS_IDS[1], candidate, layout_state, diagnostics))
+        return dict(expected_results[1])
+
+    monkeypatch.setattr(
+        final_slice_pre_concat_layout_orchestration,
+        PASS_IDS[0],
+        _model_callback,
+    )
+    monkeypatch.setattr(
+        final_slice_pre_concat_layout_orchestration,
+        PASS_IDS[1],
+        _layout_callback,
+    )
+
+    assert (
+        final_slice_pre_concat_layout_orchestration.run_final_slice_pre_concat_layout_cleanup(
+            context
+        )
+        == expected_results
+    )
+    assert [entry[0] for entry in observed] == list(PASS_IDS)
+    assert all(entry[1] is context.model_ir for entry in observed)
+    assert observed[0][2:] == (None, None)
+    assert observed[1][2] is context.layout_state
+    assert observed[1][3] is context.diagnostics
+    assert FINAL_SLICE_PRE_CONCAT_LAYOUT_PASS_IDS == LOWERER_PASS_IDS
