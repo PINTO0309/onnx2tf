@@ -5924,3 +5924,25 @@ source-adjacent semantically closed boundary. Preserve fallback recursion,
 guards, result-driven reconciliation, and all independent wrappers. Continue
 with sequential core-only `uv` tests and complete commits/pushes only. Do not
 create, update, reopen, or otherwise modify a pull request.
+
+## Next candidate audit (not yet characterized)
+
+The read-only 48-result audit selects the adjacent layout-pass-set-1 mean/
+attention and attention/gate/QDQ observations. They are unconditional within
+the existing `optimize_layout_transpose_chains` guard and have no intervening
+phase, progress, or result consumer. The first currently calls the mean/
+attention owner with `include_layernorm=True` and the default enabled Conv
+attention policy. The second receives the existing `AttentionRecoveryContext`,
+which embeds the exact same `ModelIRPassContext` plus the original gate and
+transpose-unary callback identities.
+
+The recorded mean-affine-prepost phase is the immediate predecessor, and the
+recorded quantized-PRELU phase is the immediate successor. A safe owner can
+therefore accept the existing `AttentionRecoveryContext`, call
+`run_mean_attention(context.pass_context, include_layernorm=True)` first, call
+`run_attention_gate_qdq_recovery(context)` second, and return both complete raw
+tuples unchanged. Do not implement this directly on resume: first add a strict
+characterization covering the two policy defaults, embedded pass-context and
+callback identity, child schemas, outer phase IDs, observation-only status,
+and independent wrapper routes. No production or test change was made during
+this audit.
