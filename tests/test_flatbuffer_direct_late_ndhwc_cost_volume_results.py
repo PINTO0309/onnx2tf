@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import gate_layout_orchestration
 from onnx2tf.tflite_builder.passes.cost_volume_scatter_layout import (
     run_cost_volume_scatter_layout_cleanup,
 )
@@ -108,12 +109,12 @@ def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
 
 
-def _scope_location() -> tuple[ast.FunctionDef, int]:
+def _pair_location() -> tuple[ast.FunctionDef, int]:
     lowerer = _lowerer()
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == SCOPE_TARGET
+        if _phase_id(statement) == PAIR_PHASE_ID
     )
 
 
@@ -245,53 +246,97 @@ def test_late_ndhwc_cost_volume_schemas_and_routes_are_explicit() -> None:
 
 
 def test_late_ndhwc_cost_volume_direct_pair_boundary_is_explicit() -> None:
-    lowerer, scope_index = _scope_location()
-    ndhwc = lowerer.body[scope_index + 1]
-    cost_volume = lowerer.body[scope_index + 2]
-    assert _single_target(ndhwc) == NDHWC_TARGET
-    assert _single_target(cost_volume) == COST_VOLUME_TARGET
-    assert _call_name(ndhwc) == NDHWC_OWNER
-    assert _call_name(cost_volume) == COST_VOLUME_OWNER
-    for statement in (ndhwc, cost_volume):
-        call = _statement_call(statement)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
-            "state_scope": SCOPE_TARGET,
-        }
-    assert _phase_id(lowerer.body[scope_index - 1]) == PREDECESSOR_PHASE_ID
-    assert _single_target(lowerer.body[scope_index + 3]) == SUCCESSOR_TARGET
-    for owner in (NDHWC_OWNER, COST_VOLUME_OWNER):
-        assert sum(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == owner
-            for node in ast.walk(lowerer)
-        ) == 1
+    lowerer, pair_index = _pair_location()
+    record = lowerer.body[pair_index]
+    assert isinstance(record, ast.Expr)
+    assert isinstance(record.value, ast.Call)
+    owner_call = record.value.args[1]
+    assert isinstance(owner_call, ast.Call)
+    assert isinstance(owner_call.func, ast.Name)
+    assert owner_call.func.id == PAIR_OWNER
+    assert [ast.unparse(argument) for argument in owner_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert owner_call.keywords == []
+    assert _phase_id(lowerer.body[pair_index - 1]) == PREDECESSOR_PHASE_ID
+    assert _single_target(lowerer.body[pair_index + 1]) == SUCCESSOR_TARGET
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PAIR_OWNER
+        for node in ast.walk(lowerer)
+    ) == 1
 
 
-def test_late_ndhwc_cost_volume_direct_results_are_retained_for_observation() -> None:
-    lowerer, scope_index = _scope_location()
-    assert _single_target(lowerer.body[scope_index + 1]) == NDHWC_TARGET
-    assert _single_target(lowerer.body[scope_index + 2]) == COST_VOLUME_TARGET
-    for target in (NDHWC_TARGET, COST_VOLUME_TARGET):
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
+def test_late_ndhwc_cost_volume_direct_result_uses_phase_store() -> None:
+    lowerer, pair_index = _pair_location()
+    assert _phase_id(lowerer.body[pair_index]) == PAIR_PHASE_ID
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_PAIR_TARGETS
+        for node in ast.walk(lowerer)
+    )
+
+
+def test_late_ndhwc_cost_volume_pair_shares_scope_and_merges_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context("late_ndhwc_cost_volume_pair")
+    observed: list[tuple[str, object, object, object, object]] = []
+
+    def _ndhwc(
+        model_ir: ModelIR,
+        *,
+        layout_state: object,
+        diagnostics: object,
+        state_scope: object,
+    ) -> dict[str, int]:
+        observed.append(
+            ("ndhwc", model_ir, layout_state, diagnostics, state_scope)
         )
+        return {
+            "optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains": 1,
+            "optimized_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains": 2,
+        }
+
+    def _cost_volume(
+        model_ir: ModelIR,
+        *,
+        layout_state: object,
+        diagnostics: object,
+        state_scope: object,
+    ) -> dict[str, int]:
+        observed.append(
+            ("cost_volume", model_ir, layout_state, diagnostics, state_scope)
+        )
+        return {"optimized_transpose_cost_volume_scatter_ndhwc_chains": 3}
+
+    monkeypatch.setattr(
+        gate_layout_orchestration,
+        "run_ndhwc_gate_layout_cleanup",
+        _ndhwc,
+    )
+    monkeypatch.setattr(
+        gate_layout_orchestration,
+        "run_cost_volume_scatter_layout_cleanup",
+        _cost_volume,
+    )
+
+    assert gate_layout_orchestration.run_late_ndhwc_cost_volume_layout_cleanup(
+        context
+    ) == {
+        "optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains": 1,
+        "optimized_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains": 2,
+        "optimized_transpose_cost_volume_scatter_ndhwc_chains": 3,
+    }
+    assert [entry[0] for entry in observed] == ["ndhwc", "cost_volume"]
+    for _, model_ir, layout_state, diagnostics, _ in observed:
+        assert model_ir is context.model_ir
+        assert layout_state is context.layout_state
+        assert diagnostics is context.diagnostics
+    assert observed[0][4] is observed[1][4]
+    assert isinstance(observed[0][4], ModelIRPassStateScope)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late NDHWC/cost-volume pair has not moved to one phase owner",
-)
 def test_late_ndhwc_cost_volume_pair_uses_one_bounded_phase_owner() -> None:
     owner = _functions(GATE_ORCHESTRATION_PATH)[PAIR_OWNER]
     owner_calls = [

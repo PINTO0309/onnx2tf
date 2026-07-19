@@ -253,8 +253,8 @@ def test_post_sinet_attention_activation_results_use_phase_store() -> None:
     assert _phase_id(lowerer.body[indices[0] - 1]) == (
         "cleanup.post_sinet.split_conv_concat_bridge"
     )
-    assert _single_target(lowerer.body[indices[-1] + 1]) == (
-        "late_ndhwc_cost_volume_state_scope"
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == (
+        "cleanup.late.ndhwc_cost_volume"
     )
     assert not any(
         isinstance(node, ast.Name)

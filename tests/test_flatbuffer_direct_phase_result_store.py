@@ -90,6 +90,8 @@ EXPECTED_RESULT_TARGETS = (
     "_post_sinet_mix_attention_stats",
     "_post_sinet_mixed_attention_layout_stats",
     "_post_sinet_dequant_hardsigmoid_bridge_stats",
+    "_late_ndhwc_gate_layout_stats",
+    "_late_cost_volume_scatter_layout_stats",
     "_no_layout_safe_transpose_reduction_stats",
     "_very_late_broadcast_static_shape_stats",
     "_shared_late_static_shape_stats",
@@ -219,6 +221,7 @@ EXPECTED_OWNERS = (
     "_optimize_sinet_mix_attention_double_logistic_nhwc_chains",
     "run_mixed_attention_layout_cleanup",
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
+    "run_late_ndhwc_cost_volume_layout_cleanup",
     "_apply_safe_transpose_reduction_lite",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
@@ -271,7 +274,9 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 85,
+    *("model_ir",) * 77,
+    "shared_model_ir_pass_context",
+    *("model_ir",) * 8,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -353,6 +358,7 @@ EXPECTED_PHASE_IDS = (
     "cleanup.post_sinet.mix_attention",
     "cleanup.post_sinet.mixed_attention_layout",
     "cleanup.post_sinet.dequant_hardsigmoid_bridge",
+    "cleanup.late.ndhwc_cost_volume",
     "layout.no_layout.safe_transpose_reduction",
     "shape_reconciliation.primary.very_late_broadcast",
     "shape_reconciliation.primary.shared_late",
@@ -443,7 +449,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_one_hundred_twenty_seven_observations_use_the_bounded_session_store() -> None:
+def test_one_hundred_twenty_eight_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -454,7 +460,7 @@ def test_one_hundred_twenty_seven_observations_use_the_bounded_session_store() -
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 127
+    assert len(records) == 128
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

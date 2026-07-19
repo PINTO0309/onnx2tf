@@ -90,6 +90,7 @@ from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration i
 from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     GATE_LAYOUT_PASS_IDS,
     GATE_LAYOUT_REQUIRED_PASS_IDS,
+    LATE_NDHWC_COST_VOLUME_PASS_IDS,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
@@ -169,6 +170,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *TERMINAL_BOUNDARY_LAYOUT_PASS_IDS,
     *SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
     *GATE_LAYOUT_PASS_IDS,
+    *LATE_NDHWC_COST_VOLUME_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -7617,90 +7619,95 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "gate_layout_orchestration.py"
+    )
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowerer = next(
         node
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-
-    assignment_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_ndhwc_cost_volume_state_scope"
+    orchestration_tree = ast.parse(
+        orchestration_path.read_text(encoding="utf-8")
     )
-    assignment = lowerer.body[assignment_index]
-    assert isinstance(assignment, ast.Assign)
-    assert isinstance(assignment.value, ast.Call)
-    assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == "ModelIRPassStateScope"
+    owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_ndhwc_cost_volume_layout_cleanup"
+    )
 
     def _statement_call(statement: ast.stmt) -> ast.Call:
         assert isinstance(statement, (ast.Assign, ast.Expr))
         assert isinstance(statement.value, ast.Call)
-        call = statement.value
-        if (
-            isinstance(call.func, ast.Attribute)
-            and isinstance(call.func.value, ast.Name)
-            and call.func.value.id == "session"
-            and call.func.attr == "record_phase_result"
-        ):
-            assert len(call.args) == 2
-            assert isinstance(call.args[1], ast.Call)
-            return call.args[1]
-        assert isinstance(call.func, ast.Name)
-        return call
+        assert isinstance(statement.value.func, ast.Name)
+        return statement.value
 
-    def _phase_id(statement: ast.stmt) -> str | None:
-        assert isinstance(statement, (ast.Assign, ast.Expr))
-        assert isinstance(statement.value, ast.Call)
-        call = statement.value
-        if not (
-            isinstance(call.func, ast.Attribute)
-            and isinstance(call.func.value, ast.Name)
-            and call.func.value.id == "session"
-            and call.func.attr == "record_phase_result"
-        ):
-            return None
-        return ast.literal_eval(call.args[0])
-
-    mixed_call = _statement_call(lowerer.body[assignment_index - 2])
-    raw_boundary_call = _statement_call(lowerer.body[assignment_index - 1])
-    ndhwc_call = _statement_call(lowerer.body[assignment_index + 1])
-    cost_volume_call = _statement_call(lowerer.body[assignment_index + 2])
-    next_raw_boundary_call = _statement_call(lowerer.body[assignment_index + 3])
-
-    assert _phase_id(lowerer.body[assignment_index - 2]) == (
-        "cleanup.post_sinet.mixed_attention_layout"
-    )
-    assert _phase_id(lowerer.body[assignment_index - 1]) == (
-        "cleanup.post_sinet.dequant_hardsigmoid_bridge"
-    )
-    assert mixed_call.func.id == "run_mixed_attention_layout_cleanup"
-    assert all(keyword.arg != "state_scope" for keyword in mixed_call.keywords)
-    assert (
-        raw_boundary_call.func.id
-        == "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
-    )
+    owner_assignments = [
+        statement for statement in owner.body if isinstance(statement, ast.Assign)
+    ]
+    assert len(owner_assignments) == 3
+    scope_assignment, ndhwc_assignment, cost_volume_assignment = owner_assignments
+    assert isinstance(scope_assignment, ast.Assign)
+    assert isinstance(scope_assignment.targets[0], ast.Name)
+    assert scope_assignment.targets[0].id == "state_scope"
+    scope_call = _statement_call(scope_assignment)
+    ndhwc_call = _statement_call(ndhwc_assignment)
+    cost_volume_call = _statement_call(cost_volume_assignment)
+    assert scope_call.func.id == "ModelIRPassStateScope"
     assert ndhwc_call.func.id == "run_ndhwc_gate_layout_cleanup"
     assert cost_volume_call.func.id == "run_cost_volume_scatter_layout_cleanup"
-    assert next_raw_boundary_call.func.id == "_optimize_fold_conv_mul_add_affine_chains"
-    next_raw_boundary = lowerer.body[assignment_index + 3]
-    assert isinstance(next_raw_boundary, ast.Assign)
-    assert isinstance(next_raw_boundary.targets[0], ast.Name)
-    assert next_raw_boundary.targets[0].id == (
-        "_late_cost_volume_conv_affine_stats"
-    )
+    for call in (ndhwc_call, cost_volume_call):
+        assert [ast.unparse(argument) for argument in call.args] == [
+            "context.model_ir"
+        ]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == {
+            "layout_state": "context.layout_state",
+            "diagnostics": "context.diagnostics",
+            "state_scope": "state_scope",
+        }
 
-    for call in [ndhwc_call, cost_volume_call]:
-        scope_keyword = next(
-            keyword for keyword in call.keywords if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "late_ndhwc_cost_volume_state_scope"
+    phase_record = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and statement.value.func.attr == "record_phase_result"
+        and ast.literal_eval(statement.value.args[0])
+        == "cleanup.late.ndhwc_cost_volume"
+    )
+    record_index = lowerer.body.index(phase_record)
+    nested_call = phase_record.value.args[1]
+    assert isinstance(nested_call, ast.Call)
+    assert isinstance(nested_call.func, ast.Name)
+    assert nested_call.func.id == "run_late_ndhwc_cost_volume_layout_cleanup"
+    assert [ast.unparse(argument) for argument in nested_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert nested_call.keywords == []
+    successor = lowerer.body[record_index + 1]
+    assert isinstance(successor, ast.Assign)
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == "_late_cost_volume_conv_affine_stats"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {
+            "late_ndhwc_cost_volume_state_scope",
+            "_late_ndhwc_gate_layout_stats",
+            "_late_cost_volume_scatter_layout_stats",
+        }
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> None:

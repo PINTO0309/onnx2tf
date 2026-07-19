@@ -1048,6 +1048,53 @@ callbacks receive the same internally scoped state object, update the store
 from 127 to its fixed 128-record capacity, run sequential gates, document,
 commit, and push. Never create, update, or reopen a pull request.
 
+## Late NDHWC/cost-volume pair implementation
+
+`run_late_ndhwc_cost_volume_layout_cleanup(context)` now owns the adjacent
+pair. It creates one short-lived `ModelIRPassStateScope`, invokes NDHWC gate
+cleanup and cost-volume ScatterND cleanup in the original order with identical
+model/layout/diagnostics values, and merges their two-plus-one distinct
+integer counters. The lowerer records this mapping under
+`cleanup.late.ndhwc_cost_volume` using the existing shared pass context.
+
+The former scope local and two unconsumed result locals are gone. Low-level
+owner imports remain compatibility re-exports. A dedicated runtime test
+proves callback order, shared scope identity, exact context members, and the
+merged schema. The phase-result store now contains exactly 128/128 phase IDs;
+its bound was not increased and no further phase may be added without an
+explicit retention-policy decision.
+
+Three groups of stale structural assumptions surfaced during broad gates:
+
+- one terminal-layout assertion expected the former three-statement
+  scope/result sequence;
+- two result assertions expected the former scope target immediately after
+  post-SiNet HardSigmoid cleanup;
+- two architecture assertions counted only direct lowerer calls plus the
+  general gate cluster.
+
+They were updated to require the exact combined phase, nested owner, shared
+scope ownership, and the separate two-pass late orchestration ID sequence.
+No graph, numerical, diagnostics, or artifact failure occurred.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused pair/gate/store/architecture contracts: `20 passed in 2.76s`;
+- pass-efficiency and terminal-layout contracts after repair:
+  `94 passed in 2.12s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- focused repaired boundary contracts: `11 passed in 0.87s`;
+- broader result and phase-result contracts after repair:
+  `196 passed in 9.12s`;
+- focused architecture ownership repairs: `2 passed in 2.29s`;
+- full lowerer architecture contracts after repair: `258 passed in 16.88s`;
+- targeted Ruff, bytecode compilation, full-capacity AST audit, and
+  whitespace checks: passed.
+
+No root-model corpus conversion was run because this mechanical owner
+extraction preserves both already-tested callbacks and now has a focused
+runtime equivalence contract.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

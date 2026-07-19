@@ -190,8 +190,8 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
 
     post_sinet_index = lowerer.body.index(direct_results[1])
     assert _call_name(lowerer.body[post_sinet_index - 1]) == MIXED_ATTENTION
-    assert _single_target(lowerer.body[post_sinet_index + 1]) == (
-        "late_ndhwc_cost_volume_state_scope"
+    assert _phase_id(lowerer.body[post_sinet_index + 1]) == (
+        "cleanup.late.ndhwc_cost_volume"
     )
 
     late_index = lowerer.body.index(direct_results[2])

@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### 127 stable phase IDs
+### 128 stable phase IDs
 
-The lowerer now records 127 bounded observations covering:
+The lowerer now records 128 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -187,6 +187,8 @@ The lowerer now records 127 bounded observations covering:
   Split/Conv/Concat bridge cleanup after the retained QKV composite;
 - post-SiNet mix-attention, mixed-attention layout, and
   Dequantize/HardSigmoid bridge cleanup before shared late pass-state scopes;
+- one aggregated late NDHWC gate/cost-volume ScatterND phase whose internal
+  owner shares a short-lived pass state and returns three integer counters;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -241,7 +243,7 @@ contract that fixed the relevant schema, graph effects, cycle behavior,
 metadata behavior, phase position, arguments, and no-op behavior. Production
 changes were then limited to the characterized boundary.
 
-The latest thirty records cover terminal boundary StridedSlice/QDQ/Concat,
+The latest thirty-one records cover terminal boundary StridedSlice/QDQ/Concat,
 activation bridge, InstanceNorm, normalization, and guarded BatchMatMul
 and QKV bridge plus SiNet HardSwish/HardSigmoid and indexed convergence
 and very-late residual, post-cleanup attention, plus post-SiNet BatchMatMul
@@ -251,7 +253,7 @@ deterministic order and original boundaries.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 127 phase IDs and owners appear in deterministic source order;
+- all 128 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -318,7 +320,9 @@ Final checkpoint results:
 - post-SiNet BatchMatMul/QKV/attention/store contracts: **31 passed**;
 - post-SiNet ReLU/Split/QKV/mix-attention/store contracts: **75 passed**;
 - post-SiNet attention/activation/state-scope/store contracts: **17 passed**;
-- broader result and phase-result contracts: **194 passed**;
+- late NDHWC/cost-volume pair, gate, store, and architecture contracts:
+  **20 passed**;
+- broader result and phase-result contracts: **196 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;

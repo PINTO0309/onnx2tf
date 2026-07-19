@@ -2141,3 +2141,41 @@ Implementation must add a focused runtime test proving callback order, shared
 scope identity, arguments, and merged schema; then move the store from 127 to
 128 records, run all sequential gates, document, commit, and push. Never
 create, update, or reopen a pull request.
+
+## Late NDHWC/cost-volume pair implementation
+
+The new `run_late_ndhwc_cost_volume_layout_cleanup` owner creates one internal
+state scope, calls the NDHWC and cost-volume owners in the original order, and
+returns their merged three-counter mapping. The lowerer records it as
+`cleanup.late.ndhwc_cost_volume` through
+`shared_model_ir_pass_context`. The old scope and two result locals are
+removed; direct low-level imports remain compatibility re-exports.
+
+A runtime contract uses isolated callbacks to prove exact order, identical
+model/layout/diagnostics objects, shared scope identity, and result schema.
+The bounded store is now full at 128/128. Do not raise the limit or add another
+record as a mechanical follow-up; future observation work needs an explicit
+retention or aggregation decision.
+
+Broad validation found only stale structural contracts: one former
+three-statement boundary assertion, two former scope-successor assertions,
+and two owner-count assertions. They now verify the combined phase, nested
+owner, internal shared scope, and distinct late orchestration pass-ID sequence.
+No runtime or numerical failure occurred.
+
+Final sequential validation under core-only `uv`:
+
+- focused pair/gate/store/architecture contracts: `20 passed in 2.76s`;
+- pass-efficiency and terminal-layout contracts: `94 passed in 2.12s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- focused repaired boundaries: `11 passed in 0.87s`;
+- broader result contracts: `196 passed in 9.12s`;
+- focused architecture ownership contracts: `2 passed in 2.29s`;
+- full architecture contracts: `258 passed in 16.88s`;
+- targeted Ruff, bytecode compilation, full-capacity AST audit, and
+  whitespace checks: passed.
+
+No root-model conversion was required because this is a characterized
+two-call owner extraction with focused runtime equivalence. Commit and push
+this unit. Resume with a non-store refactoring audit, keeping the 128-phase
+bound fixed, and never create, update, or reopen a pull request.

@@ -1326,18 +1326,13 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
         "layout_state": "session.layout_state",
     }
 
-    preceding_scope = body[late_index - 3]
-    assert isinstance(preceding_scope, ast.Assign)
-    assert isinstance(preceding_scope.targets[0], ast.Name)
-    assert preceding_scope.targets[0].id == "late_ndhwc_cost_volume_state_scope"
-    assert ast.unparse(preceding_scope.value) == (
-        "ModelIRPassStateScope(model_ir, layout_state=session.layout_state)"
-    )
-    assert _call_name(_statement_call(body[late_index - 2])) == (
-        "run_ndhwc_gate_layout_cleanup"
-    )
-    assert _call_name(_statement_call(body[late_index - 1])) == (
-        "run_cost_volume_scatter_layout_cleanup"
+    _assert_phase_result_record(
+        body[late_index - 1],
+        phase_id="cleanup.late.ndhwc_cost_volume",
+        owner_expression=(
+            "run_late_ndhwc_cost_volume_layout_cleanup("
+            "shared_model_ir_pass_context)"
+        ),
     )
 
     following_scope = body[late_index + 1]

@@ -265,6 +265,7 @@ from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration i
 from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     run_elementwise_gate_layout_cleanup,  # noqa: F401 - compatibility re-export
     run_gate_layout,
+    run_late_ndhwc_cost_volume_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
@@ -462,11 +463,11 @@ from onnx2tf.tflite_builder.passes.dual_postconv_gate_layout import (
 from onnx2tf.tflite_builder.passes.ndhwc_gate_layout import (
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains as _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains_pass,
     _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains as _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains_pass,
-    run_ndhwc_gate_layout_cleanup,
+    run_ndhwc_gate_layout_cleanup,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.cost_volume_scatter_layout import (
     _optimize_transpose_cost_volume_scatter_ndhwc_chains as _optimize_transpose_cost_volume_scatter_ndhwc_chains_pass,
-    run_cost_volume_scatter_layout_cleanup,
+    run_cost_volume_scatter_layout_cleanup,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.add_concat_suffix_layout import (
     _optimize_transpose_add_concat_const_suffix_nhwc_chains as _optimize_transpose_add_concat_const_suffix_nhwc_chains_pass,
@@ -5141,25 +5142,11 @@ def lower_onnx_to_ir(
         "cleanup.post_sinet.dequant_hardsigmoid_bridge",
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir),
     )
-    late_ndhwc_cost_volume_state_scope = ModelIRPassStateScope(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    _late_ndhwc_gate_layout_stats = (
-        run_ndhwc_gate_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=late_ndhwc_cost_volume_state_scope,
-        )
-    )
-    _late_cost_volume_scatter_layout_stats = (
-        run_cost_volume_scatter_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=late_ndhwc_cost_volume_state_scope,
-        )
+    session.record_phase_result(
+        "cleanup.late.ndhwc_cost_volume",
+        run_late_ndhwc_cost_volume_layout_cleanup(
+            shared_model_ir_pass_context,
+        ),
     )
     _late_cost_volume_conv_affine_stats = (
         _optimize_fold_conv_mul_add_affine_chains(
