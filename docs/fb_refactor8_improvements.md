@@ -4004,3 +4004,26 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves exact context forwarding plus stable and prune-only behavior, while the
 affected and architecture gates preserve child orchestration, raw ownership,
 and all neighboring repair boundaries.
+
+## Indexed Conv-input prune-aware summary family characterization
+
+The next repeated family contains two compatible sites: very-late primary and
+fallback. Both snapshot tensor count, invoke the shared indexed
+singleton-Reshape plus stale-Transpose Conv-input owner, and extend its exact
+two-key mapping with `pruned_unused_tensors`. The final primary site is
+explicitly excluded because it invokes only the stale-Transpose repair and has
+a different one-key schema.
+
+`tests/test_flatbuffer_direct_indexed_conv_input_summary_orchestration.py`
+fixes both current two-statement representations, model arguments, prune
+expressions, predecessors, very-late successor, fallback reconciliation guard,
+and retained raw lowerer wrapper. Its strict expected failure requires one
+shared pass-module prune-aware summary owner. No production source, indexed
+repair, graph mutation, guard, store entry, public API, artifact, dependency,
+or TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`115 passed, 1 xfailed in 2.65s` across the dedicated family contract and
+related indexed Conv-input, very-late normalization, fallback, terminal-layout,
+and phase-store contracts. The sole expected failure is the intentionally
+absent shared summary owner.

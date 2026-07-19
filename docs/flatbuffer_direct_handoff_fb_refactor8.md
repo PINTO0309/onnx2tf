@@ -3532,3 +3532,27 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Indexed Conv-input prune-aware summary family characterization
+
+The next selected family is the repeated indexed Conv-input count-plus-mapping
+boundary at the very-late primary and fallback sites. Both use the same
+two-repair indexed owner and two-key schema. The final primary site uses only
+the stale-Transpose repair and remains outside this family.
+
+The focused contract fixes both current representations, model arguments,
+prune expressions, predecessors, very-late successor, fallback conditional
+reconciliation, and raw wrapper retention. One strict xfail requires
+`run_indexed_conv_input_adapter_repairs_summary(model_ir)`.
+
+Sequential validation under core-only `uv` completed with
+`115 passed, 1 xfailed in 2.65s` across the new characterization and related
+indexed Conv-input, very-late normalization, fallback, terminal-layout, and
+store contracts. The sole expected failure is the unimplemented shared summary
+owner.
+
+Commit and push this characterization separately. At resume, implement only
+the shared owner and the two compatible sites, retain the raw lowerer wrapper,
+leave the final one-key site unchanged, update owner-aware contracts, and
+validate sequentially. Continue with commits and pushes only; never create,
+update, or reopen a pull request.
