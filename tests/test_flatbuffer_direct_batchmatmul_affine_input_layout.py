@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -17,6 +18,21 @@ from onnx2tf.tflite_builder.passes.batchmatmul_affine_input_layout import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+POST_SINET_RESULT_TARGETS = (
+    "_post_sinet_batchmatmul_affine_input_stats",
+    "_post_sinet_batchmatmul_reshape_se_stats",
+    "_post_sinet_batchmatmul_adj_flags_stats",
+)
+POST_SINET_PHASE_IDS = (
+    "cleanup.post_sinet.batchmatmul_affine_input",
+    "cleanup.post_sinet.batchmatmul_reshape_se",
+    "cleanup.post_sinet.batchmatmul_adj_flags",
+)
+POST_SINET_OWNER_EXPRESSIONS = (
+    "_optimize_batchmatmul_affine_transpose_input_chains(model_ir)",
+    "_optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)",
+    "_optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)",
+)
 
 
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
@@ -55,6 +71,21 @@ def _assert_phase_result_record(statement: ast.stmt, phase_id: str) -> None:
     assert record.func.attr == "record_phase_result"
     assert len(record.args) == 2
     assert ast.literal_eval(record.args[0]) == phase_id
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _fingerprint(model_ir: ModelIR) -> tuple[object, ...]:
@@ -248,3 +279,43 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
         assert call.keywords == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="post-SiNet BatchMatMul results have not moved to phase records",
+)
+def test_post_sinet_batchmatmul_results_use_phase_result_store() -> None:
+    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in POST_SINET_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == POST_SINET_PHASE_IDS
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        POST_SINET_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 3))
+    _assert_phase_result_record(
+        lowerer.body[indices[0] - 1],
+        "cleanup.post_cleanup.sa_pa_mirrorpad",
+    )
+    successor = lowerer.body[indices[-1] + 1]
+    assert isinstance(successor, ast.Assign)
+    assert len(successor.targets) == 1
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == "_post_sinet_qkv_attention_results"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in POST_SINET_RESULT_TARGETS
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )

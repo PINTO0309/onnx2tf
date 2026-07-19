@@ -837,6 +837,33 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and focused runtime contracts exercise
 both owners.
 
+## Post-SiNet BatchMatMul result characterization
+
+The next unit contains the three consecutive unconditional BatchMatMul
+observations immediately after post-cleanup SA/PA MirrorPad propagation:
+affine Transpose input cleanup, Reshape/SE NHWC cleanup, and Transpose-input
+adjoint-flag folding. The same owner schemas and graph effects are already
+covered at the guarded terminal boundary and by focused runtime tests. The
+three post-SiNet locals have no consumers.
+
+The affine-input result module now strictly expects the exact
+`cleanup.post_sinet.batchmatmul_*` records, nested owner expressions,
+three-statement adjacency, preceding post-cleanup MirrorPad phase record,
+following QKV-attention composite, and absence of result loads. The composite
+itself remains outside the bounded store. No production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `28 passed in 1.20s`. Characterization must preserve those passes and add
+one intentional strict expected failure. Targeted Ruff, bytecode compilation,
+and whitespace validation are required before committing and pushing this
+checkpoint.
+
+Implement only the three result destinations after that checkpoint. Preserve
+the owner calls, unconditional order, adjacent phase/composite boundaries,
+and all graph behavior; update the store from 118 to 121 records, run the
+sequential gates, document, commit, and push. Never create, update, or reopen
+a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

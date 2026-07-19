@@ -1961,3 +1961,25 @@ destination of already-computed one-counter mappings and focused runtime
 tests cover both owners. Commit and push this unit. Begin the next unit with a
 fresh characterize-first audit and never create, update, or reopen a pull
 request.
+
+## Post-SiNet BatchMatMul result characterization
+
+The next bounded-store unit is limited to the three consecutive post-SiNet
+BatchMatMul locals after `cleanup.post_cleanup.sa_pa_mirrorpad` and before the
+retained `_post_sinet_qkv_attention_results` composite. The affine-input,
+Reshape/SE, and adjoint-flag owners each return one bounded integer counter;
+their runtime semantics are already covered, and none of the three locals is
+loaded.
+
+The affine-input test module now has a strict expected-failure contract for
+the three exact `cleanup.post_sinet.batchmatmul_*` records. It fixes owner
+expressions, adjacency, both outer boundaries, and absence of consumers. No
+production source changed.
+
+The related baseline is `28 passed in 1.20s`. Run the same six focused modules
+and expect one additional strict xfail, then run targeted Ruff, bytecode
+compilation, and whitespace validation. Commit and push characterization
+before implementation. Then change only the three destinations, expand the
+store contract from 118 to 121, preserve the QKV composite, run sequential
+gates, document, commit, and push. Never create, update, or reopen a pull
+request.
