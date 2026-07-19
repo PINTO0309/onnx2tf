@@ -319,39 +319,24 @@ def test_se_fc_gather_preserves_main_model_boundaries() -> None:
     assert _direct_call_name(lowerer.body[invocation_index - 1]) == (
         "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains"
     )
-    default_stats = lowerer.body[invocation_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_final_se_fc_gather_static_shape_stats"
-    )
-    guard = lowerer.body[invocation_index + 2]
+    guard = lowerer.body[invocation_index + 1]
     assert isinstance(guard, ast.If)
     assert len(guard.body) == 1
-    assert _direct_call_name(guard.body[0]) == "_reconcile_static_tensor_shapes"
+    _assert_phase_result_record(
+        guard.body[0],
+        phase_id="shape_reconciliation.primary.final_se_fc_gather",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
+    )
 
 
 def test_main_se_fc_gather_stages_complete_reconciliation_result() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_index = _direct_invocation_index(lowerer.body)
 
-    default_stats = lowerer.body[invocation_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_final_se_fc_gather_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = lowerer.body[invocation_index + 2]
+    guard = lowerer.body[invocation_index + 1]
     assert isinstance(guard, ast.If)
     get_calls = [
         node
@@ -375,23 +360,16 @@ def test_main_se_fc_gather_stages_complete_reconciliation_result() -> None:
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_final_se_fc_gather_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.primary.final_se_fc_gather",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = lowerer.body[invocation_index + 3]
+    following = lowerer.body[invocation_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_prelu_tensor_count"
@@ -455,17 +433,7 @@ def test_terminal_se_fc_gather_reconciles_only_after_change_or_prune() -> None:
         assert isinstance(cluster_assignment.targets[0], ast.Tuple)
         assert len(cluster_assignment.targets[0].elts) == 2
 
-        if model_name == "fallback_ir":
-            result_name = None
-            guard = statements[sinet_index + 2]
-        else:
-            result_name = "_final_se_fc_gather_static_shape_stats"
-            default_stats = statements[sinet_index + 2]
-            assert isinstance(default_stats, ast.Assign)
-            assert len(default_stats.targets) == 1
-            assert isinstance(default_stats.targets[0], ast.Name)
-            assert default_stats.targets[0].id == result_name
-            guard = statements[sinet_index + 3]
+        guard = statements[sinet_index + 2]
         assert isinstance(guard, ast.If)
         assert guard.orelse == []
         get_calls = [
@@ -495,30 +463,19 @@ def test_terminal_se_fc_gather_reconciles_only_after_change_or_prune() -> None:
         assert len(tensor_len_calls) == 1
         assert len(guard.body) == 1
         reconcile = guard.body[0]
-        if model_name == "fallback_ir":
-            _assert_phase_result_record(
-                reconcile,
-                phase_id="shape_reconciliation.fallback.se_fc_gather",
-                owner_expression=(
-                    "_reconcile_static_tensor_shapes(fallback_ir, "
-                    "include_mutation_count=True)"
-                ),
-            )
-        else:
-            assert isinstance(reconcile, ast.Assign)
-            assert len(reconcile.targets) == 1
-            assert isinstance(reconcile.targets[0], ast.Name)
-            assert reconcile.targets[0].id == result_name
-            assert {
-                keyword.arg: ast.unparse(keyword.value)
-                for keyword in reconcile.value.keywords
-            } == {"include_mutation_count": "True"}
-            assert isinstance(reconcile.value, ast.Call)
-            assert isinstance(reconcile.value.func, ast.Name)
-            assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
-            assert len(reconcile.value.args) == 1
-            assert isinstance(reconcile.value.args[0], ast.Name)
-            assert reconcile.value.args[0].id == model_name
+        phase_id = (
+            "shape_reconciliation.fallback.se_fc_gather"
+            if model_name == "fallback_ir"
+            else "shape_reconciliation.primary.final_se_fc_gather"
+        )
+        _assert_phase_result_record(
+            reconcile,
+            phase_id=phase_id,
+            owner_expression=(
+                f"_reconcile_static_tensor_shapes({model_name}, "
+                "include_mutation_count=True)"
+            ),
+        )
 
     assert_boundary(fallback_block.body, "fallback_ir")
     assert_boundary(lowerer.body, "model_ir")

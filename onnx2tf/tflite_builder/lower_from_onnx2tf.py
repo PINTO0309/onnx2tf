@@ -6151,21 +6151,18 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    _final_mixed_singleton_concat_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(
         final_mixed_singleton_concat_stats.get(
             "repaired_mixed_singleton_nchw_inputs_for_nhwc_concat",
             0,
         )
     ) > 0:
-        _final_mixed_singleton_concat_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_mixed_singleton_concat",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     final_placeholder_matmul_stats = (
         _restore_placeholder_matmul_flattened_inputs(
@@ -6174,10 +6171,6 @@ def lower_onnx_to_ir(
         )
     )
     _final_placeholder_matmul_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-    _final_placeholder_binary_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
     }
@@ -6211,11 +6204,12 @@ def lower_onnx_to_ir(
             final_placeholder_exact_binary_stats,
             final_placeholder_singleton_binary_stats,
         ) or len(model_ir.tensors) < final_placeholder_binary_tensor_count:
-            _final_placeholder_binary_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.primary.final_placeholder_binary",
                 _reconcile_static_tensor_shapes(
                     model_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
         session.record_phase_result(
             "topology.primary.final_placeholder",
@@ -6237,10 +6231,6 @@ def lower_onnx_to_ir(
             session.layout_state,
         )
     )
-    _final_se_fc_gather_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if (
         int(
             final_sinet_shuffle_stats.get(
@@ -6263,11 +6253,12 @@ def lower_onnx_to_ir(
         > 0
         or len(model_ir.tensors) < final_se_fc_gather_tensor_count
     ):
-        _final_se_fc_gather_static_shape_stats = (
+        session.record_phase_result(
+            "shape_reconciliation.primary.final_se_fc_gather",
             _reconcile_static_tensor_shapes(
                 model_ir,
                 include_mutation_count=True,
-            )
+            ),
         )
     # Absolute-final PRELU cleanup:
     # late layout/broadcast/singleton repairs can still recreate strict

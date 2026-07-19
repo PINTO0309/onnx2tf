@@ -808,3 +808,25 @@ assignments and remove only their defaults. Preserve the consumed
 placeholder-MatMul assignment and all nested guard logic. Then update terminal,
 SE/FC/Gather, architecture, and bounded-store contracts, validate, document,
 commit, and push. Never create, update, or reopen a pull request.
+
+## Primary generic final reconciliation implementation
+
+The mixed-singleton Concat, nested placeholder/binary, and SE/FC/Gather results
+now use stable invoked-only `shape_reconciliation.primary.final_*` records.
+Their zero defaults and local targets were removed. The separately consumed
+`_final_placeholder_matmul_static_shape_stats` assignment remains unchanged
+and still controls the nested binary-reconciliation guard.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct family, terminal, SE/FC/Gather, and store contracts:
+  `79 passed in 2.57s`;
+- broader affected contracts: `144 passed in 3.83s`;
+- lowerer architecture contracts: `258 passed in 19.17s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+The bounded store now covers 39 phase IDs. No real-model conversion was
+required. After committing and pushing, treat the six final SiNet-specific
+reconciliations as their own semantic family. Characterize the complete chain
+and successor order before migration; do not mix it with earlier late/static
+shape observations. Never create, update, or reopen a pull request.

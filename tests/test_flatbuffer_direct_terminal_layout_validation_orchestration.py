@@ -459,36 +459,32 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
         and statement.targets[0].id == "final_placeholder_matmul_stats"
     )
 
-    result_names = (
-        "_final_placeholder_matmul_static_shape_stats",
-        "_final_placeholder_binary_static_shape_stats",
-    )
-    for offset, result_name in enumerate(result_names, start=1):
-        default_stats = body[restore_index + offset]
-        assert isinstance(default_stats, ast.Assign)
-        assert isinstance(default_stats.targets[0], ast.Name)
-        assert default_stats.targets[0].id == result_name
-        assert isinstance(default_stats.value, ast.Dict)
-        assert {
-            key.value: value.value
-            for key, value in zip(
-                default_stats.value.keys,
-                default_stats.value.values,
-            )
-            if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-        } == {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
+    result_name = "_final_placeholder_matmul_static_shape_stats"
+    default_stats = body[restore_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == result_name
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(
+            default_stats.value.keys,
+            default_stats.value.values,
+        )
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
 
-    outer_guard = body[restore_index + 3]
+    outer_guard = body[restore_index + 2]
     assert isinstance(outer_guard, ast.If)
     assert len(outer_guard.body) == 6
 
     first_reconciliation = outer_guard.body[0]
     assert isinstance(first_reconciliation, ast.Assign)
     assert isinstance(first_reconciliation.targets[0], ast.Name)
-    assert first_reconciliation.targets[0].id == result_names[0]
+    assert first_reconciliation.targets[0].id == result_name
     assert isinstance(first_reconciliation.value, ast.Call)
     assert isinstance(first_reconciliation.value.func, ast.Name)
     assert first_reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
@@ -543,16 +539,14 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
     )
     assert len(binary_guard.body) == 1
     second_reconciliation = binary_guard.body[0]
-    assert isinstance(second_reconciliation, ast.Assign)
-    assert isinstance(second_reconciliation.targets[0], ast.Name)
-    assert second_reconciliation.targets[0].id == result_names[1]
-    assert isinstance(second_reconciliation.value, ast.Call)
-    assert isinstance(second_reconciliation.value.func, ast.Name)
-    assert second_reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in second_reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
+    _assert_phase_result_record(
+        second_reconciliation,
+        phase_id="shape_reconciliation.primary.final_placeholder_binary",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
+    )
 
     topology_checkpoint = outer_guard.body[5]
     _assert_phase_result_record(
@@ -561,7 +555,7 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
         owner_expression="_topologically_sort_operators(model_ir)",
     )
 
-    following = body[restore_index + 4]
+    following = body[restore_index + 3]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_se_fc_gather_tensor_count"
@@ -578,22 +572,7 @@ def test_primary_path_stages_final_mixed_singleton_concat_reconciliation() -> No
         and statement.targets[0].id == "final_mixed_singleton_concat_stats"
     )
 
-    result_name = "_final_mixed_singleton_concat_static_shape_stats"
-    default_stats = body[stats_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == result_name
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[stats_index + 2]
+    guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
     get_calls = [
         node
@@ -609,21 +588,16 @@ def test_primary_path_stages_final_mixed_singleton_concat_reconciliation() -> No
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == result_name
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.primary.final_mixed_singleton_concat",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
+    )
 
-    following = body[stats_index + 3]
+    following = body[stats_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_placeholder_matmul_stats"

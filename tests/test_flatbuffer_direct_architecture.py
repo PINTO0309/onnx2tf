@@ -9170,26 +9170,7 @@ def test_absolute_final_mixed_singleton_concat_reconciles_only_after_change() ->
         and statement.value.func.id == owner_name
     )
 
-    default_stats = lowerer.body[assignment_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_final_mixed_singleton_concat_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(
-            default_stats.value.keys,
-            default_stats.value.values,
-        )
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = lowerer.body[assignment_index + 2]
+    guard = lowerer.body[assignment_index + 1]
     assert isinstance(guard, ast.If)
     assert guard.orelse == []
     get_calls = [
@@ -9204,21 +9185,13 @@ def test_absolute_final_mixed_singleton_concat_reconciles_only_after_change() ->
     assert get_calls[0].args[0].value == counter_name
     assert len(guard.body) == 1
     reconcile = guard.body[0]
-    assert isinstance(reconcile, ast.Assign)
-    assert isinstance(reconcile.targets[0], ast.Name)
-    assert reconcile.targets[0].id == (
-        "_final_mixed_singleton_concat_static_shape_stats"
+    assert isinstance(reconcile, ast.Expr)
+    assert ast.unparse(reconcile) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.final_mixed_singleton_concat', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
     )
-    assert isinstance(reconcile.value, ast.Call)
-    assert isinstance(reconcile.value.func, ast.Name)
-    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
-    assert len(reconcile.value.args) == 1
-    assert isinstance(reconcile.value.args[0], ast.Name)
-    assert reconcile.value.args[0].id == "model_ir"
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconcile.value.keywords
-    } == {"include_mutation_count": "True"}
 
 
 def test_absolute_final_consecutive_reshape_reconciles_only_after_change() -> None:
@@ -9469,18 +9442,14 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
         == "_restore_placeholder_matmul_flattened_inputs"
     )
 
-    result_names = (
-        "_final_placeholder_matmul_static_shape_stats",
-        "_final_placeholder_binary_static_shape_stats",
-    )
-    for offset, result_name in enumerate(result_names, start=1):
-        default_stats = lowerer.body[restore_index + offset]
-        assert isinstance(default_stats, ast.Assign)
-        assert isinstance(default_stats.targets[0], ast.Name)
-        assert default_stats.targets[0].id == result_name
-        assert isinstance(default_stats.value, ast.Dict)
+    result_name = "_final_placeholder_matmul_static_shape_stats"
+    default_stats = lowerer.body[restore_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == result_name
+    assert isinstance(default_stats.value, ast.Dict)
 
-    outer_guard = lowerer.body[restore_index + 3]
+    outer_guard = lowerer.body[restore_index + 2]
     assert isinstance(outer_guard, ast.If)
     assert len(outer_guard.body) == 6
     legacy_projection = outer_guard.body[1]
@@ -9492,7 +9461,7 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
     for statement, target_name, call_name in (
         (
             outer_guard.body[0],
-            result_names[0],
+            result_name,
             "_reconcile_static_tensor_shapes",
         ),
         (
@@ -9545,16 +9514,13 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
     )
     assert len(reconcile_guard.body) == 1
     reconcile = reconcile_guard.body[0]
-    assert isinstance(reconcile, ast.Assign)
-    assert isinstance(reconcile.targets[0], ast.Name)
-    assert reconcile.targets[0].id == result_names[1]
-    assert isinstance(reconcile.value, ast.Call)
-    assert isinstance(reconcile.value.func, ast.Name)
-    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconcile.value.keywords
-    } == {"include_mutation_count": "True"}
+    assert isinstance(reconcile, ast.Expr)
+    assert ast.unparse(reconcile) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.final_placeholder_binary', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
+    )
 
     topology_sort = outer_guard.body[5]
     assert isinstance(topology_sort, ast.Expr)

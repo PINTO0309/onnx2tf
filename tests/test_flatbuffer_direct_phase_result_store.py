@@ -39,7 +39,10 @@ EXPECTED_RESULT_TARGETS = (
     "_final_instancenorm_topology_layout_stats",
     "_final_broadcast_static_shape_stats",
     "_final_broadcast_topology_layout_stats",
+    "_final_mixed_singleton_concat_static_shape_stats",
+    "_final_placeholder_binary_static_shape_stats",
     "_final_placeholder_topology_stats",
+    "_final_se_fc_gather_static_shape_stats",
     "_final_prelu_static_shape_stats",
     "_final_consecutive_reshape_static_shape_stats",
     "_final_high_rank_bmm_static_shape_stats",
@@ -77,7 +80,10 @@ EXPECTED_OWNERS = (
     "run_topology_layout_refresh",
     "_reconcile_static_tensor_shapes",
     "run_topology_layout_refresh",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
     "_topologically_sort_operators",
+    "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
     "run_static_shape_topology_reconciliation",
@@ -91,7 +97,7 @@ EXPECTED_OWNERS = (
 EXPECTED_MODEL_ARGUMENTS = (
     *("model_ir",) * 3,
     *("fallback_ir",) * 14,
-    *("model_ir",) * 19,
+    *("model_ir",) * 22,
 )
 EXPECTED_PHASE_IDS = (
     "shape_resolution.core.dynamic_reshape",
@@ -120,7 +126,10 @@ EXPECTED_PHASE_IDS = (
     "topology_layout.primary.final_instancenorm",
     "shape_reconciliation.primary.final_broadcast",
     "topology_layout.primary.final_broadcast",
+    "shape_reconciliation.primary.final_mixed_singleton_concat",
+    "shape_reconciliation.primary.final_placeholder_binary",
     "topology.primary.final_placeholder",
+    "shape_reconciliation.primary.final_se_fc_gather",
     "shape_reconciliation.primary.final_prelu",
     "shape_reconciliation.primary.final_consecutive_reshape",
     "shape_topology.primary.final_high_rank_batch_matmul",
@@ -170,7 +179,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_thirty_six_observations_use_the_bounded_session_store() -> None:
+def test_thirty_nine_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -181,7 +190,7 @@ def test_thirty_six_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 36
+    assert len(records) == 39
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

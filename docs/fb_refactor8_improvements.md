@@ -652,6 +652,36 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented bounded-store
 migration.
 
+## Primary generic final reconciliation implementation
+
+The three selected results now record as:
+
+- `shape_reconciliation.primary.final_mixed_singleton_concat`;
+- `shape_reconciliation.primary.final_placeholder_binary`;
+- `shape_reconciliation.primary.final_se_fc_gather`.
+
+All records remain inside their original mutation/pruning guards. The consumed
+`_final_placeholder_matmul_static_shape_stats` assignment remains unchanged
+and still feeds `final_placeholder_reconcile_stats`; only the nested,
+unconsumed binary reconciliation result moved. The three selected zero defaults
+and local targets were removed.
+
+No guard, owner argument, reconciliation, adapter cleanup, topology checkpoint,
+graph scan, mutation, successor, public result, report, artifact, dependency,
+or TensorFlow boundary changed. The bounded store now covers 39 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct family, terminal, SE/FC/Gather, and store contracts:
+  `79 passed in 2.57s`;
+- broader affected contracts: `144 passed in 3.83s`;
+- lowerer architecture contracts: `258 passed in 19.17s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because this is a result-destination-only
+change with the consumed placeholder control-flow input explicitly preserved.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
