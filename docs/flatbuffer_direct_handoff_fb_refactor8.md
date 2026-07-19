@@ -6145,3 +6145,34 @@ result-driven branches, progress updates, phase records, wrappers, and
 independent routes. Characterize before production changes, run every test
 sequentially under `uv`, and commit/push only. Do not create, update, reopen,
 or otherwise modify a pull request.
+
+## Next 46-result candidate audit (not yet characterized)
+
+The refreshed read-only inventory selects the two adjacent observations after
+the recorded layout-pass-set-1 dequant-Mean phase: QLinear/Mean/Concat recovery
+followed by final layout/reshape/attention recovery. Both calls are
+unconditional inside the existing layout-Transpose guard, neither result is
+consumed, and no phase, branch, progress update, or other mutation lies between
+them.
+
+`qlinear_recovery_context` is the shared session `ModelIRPassContext`.
+`layout_recovery_context.pass_context` is the exact same session object, while
+the latter context additionally retains the original boundary-BatchMatMul,
+pre-Concat, and channel-shuffle/Gather callback identities. The recorded
+`cleanup.layout_pass_set_1.dequant_mean_quantize` phase is the immediate
+predecessor; recorded `cleanup.layout_pass_set_1.instancenorm_prepost` is the
+immediate successor.
+
+A safe owner can accept the existing `LayoutRecoveryContext`, call
+`run_qlinear_mean_concat_recovery(context.pass_context)` first, call
+`run_layout_reshape_attention_recovery_prefix(context)` second, and return both
+complete raw tuples unchanged. Retain both lowerer wrappers, the separate
+layout-recovery-prefix route, layout-pass-set-2 QLinear and recovery routes,
+and every callback-bearing independent path.
+
+Before production changes, characterize exact source order, the outer guard
+and phase IDs, shared pass-context identity, all three callback identities,
+both complete nested schemas, observation-only status, raw-result identity
+requirements, and independent routes. The expected inventory reduction after
+a correct implementation is 46 to 45. No production or test change was made
+during this audit.
