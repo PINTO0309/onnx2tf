@@ -3,10 +3,14 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 INDEXED_SHAPE_CONVERGENCE = "_run_indexed_shape_convergence_cleanup"
 FINAL_CONVERGENCE = "_run_indexed_final_shape_activation_convergence"
+PHASE_ID = "shape_topology.terminal.indexed_convergence"
 
 
 def _module_functions() -> dict[str, ast.FunctionDef]:
@@ -46,6 +50,21 @@ def _direct_invocations(function: ast.FunctionDef) -> list[ast.stmt]:
         for statement in function.body
         if _call_name(statement) == INDEXED_SHAPE_CONVERGENCE
     ]
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> None:
@@ -115,6 +134,41 @@ def test_lowerer_retains_top_level_indexed_shape_convergence_result() -> None:
     assert _call_name(previous) == "_run_singleton_reshape_layout_pass_cluster"
     assert _single_target(following) == "_very_late_sinet_layout_recovery_results"
     assert _call_name(following) == "_run_sinet_terminal_layout_recovery_sequence"
+
+    nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
+    assert len(nested_invocations) == 1
+    assert _single_target(nested_invocations[0]) == "convergence_stats"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="top-level indexed shape convergence has not moved to a phase record",
+)
+def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
+    functions = _module_functions()
+    lowerer = functions["lower_onnx_to_ir"]
+    records = [
+        statement for statement in lowerer.body if _phase_id(statement) == PHASE_ID
+    ]
+    assert len(records) == 1
+    record = records[0]
+    index = lowerer.body.index(record)
+
+    assert ast.unparse(record.value.args[1]) == (
+        "_run_indexed_shape_convergence_cleanup("
+        "model_ir, layout_state=session.layout_state)"
+    )
+    assert _single_target(lowerer.body[index - 1]) == (
+        "_post_terminal_singleton_reshape_results"
+    )
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_very_late_sinet_layout_recovery_results"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_post_terminal_indexed_shape_convergence_stats"
+        for node in ast.walk(lowerer)
+    )
 
     nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
     assert len(nested_invocations) == 1

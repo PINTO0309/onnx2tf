@@ -890,6 +890,30 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and the existing focused runtime tests
 exercise both owners.
 
+## Post-terminal indexed shape convergence characterization
+
+The next source-order non-composite boundary is the top-level indexed
+shape/topology convergence observation between the post-terminal singleton-
+reshape composite and very-late SiNet recovery composite.
+
+The owner shares one `ModelIRGraphIndex` across dead-operator pruning, dynamic
+Reshape resolution, and static-shape reconciliation, and returns three bounded
+integer counters. Its local result has no default or consumer. The existing
+result module now adds a strict expected failure for
+`shape_topology.terminal.indexed_convergence`, fixing the exact owner
+arguments, both composite boundaries, and preservation of the separate nested
+convergence result. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- related indexed-convergence/SiNet baseline: `10 passed in 0.71s`;
+- characterization plus related contracts: `10 passed, 1 xfailed in 0.78s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented top-level
+destination migration.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

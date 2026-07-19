@@ -1807,3 +1807,26 @@ Validation completed sequentially under core-only `uv`:
 No root-model conversion was required because focused runtime tests cover both
 owners. Commit and push this unit. Start the next unit with a fresh
 characterize-first audit and never create, update, or reopen a pull request.
+
+## Post-terminal indexed shape convergence characterization
+
+The next unit contains the single top-level indexed shape/topology convergence
+mapping between the post-terminal singleton and very-late SiNet composites.
+Its owner reuses one graph index for pruning, dynamic Reshape resolution, and
+static-shape reconciliation, returning three bounded integer counters. The
+local has no default or load.
+
+The existing focused result module now strictly expects
+`shape_topology.terminal.indexed_convergence` with exact owner arguments and
+both composite boundaries while preserving the separate nested convergence
+result. No production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `10 passed in 0.71s`; characterization plus related contracts is
+`10 passed, 1 xfailed in 0.78s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push the characterization before replacing only the top-level
+mapping destination. Preserve both composites and the nested result, update
+structural contracts, run sequential gates, document, commit, and push. Never
+create, update, or reopen a pull request.
