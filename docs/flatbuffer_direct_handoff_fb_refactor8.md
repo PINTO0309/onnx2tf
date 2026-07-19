@@ -1450,3 +1450,26 @@ changed and the runtime suite exercises both guarded paths. After committing
 and pushing, retain the 81/128 phase-cap audit and keep composite results
 outside the bounded integer mapping store. Never create, update, or reopen a
 pull request.
+
+## Layout pass-set 2 residual cleanup characterization
+
+The remaining direct mapping family in the second layout pass-set contains
+eight consecutive elementwise/Concat/SPP/layout cleanup observations and one
+later SA/PA MirrorPad observation. All nine share the outer layout guard, have
+explicit bounded integer schemas, and have no defaults or consumers.
+
+The contract fixes exact owner expressions, the eight-result adjacency,
+composite boundaries on both clusters, the isolated SA/PA position, and
+absence of loads. Composite recovery results remain excluded. Its strict
+expected failure requires nine stable `cleanup.layout_pass_set_2.*` records.
+
+Validation completed sequentially under core-only `uv`: the owner/schema
+baseline is `22 passed in 1.42s`; the characterization plus those contracts is
+`23 passed, 1 xfailed in 1.59s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only the nine mapping
+destinations. Preserve the outer guard, adjacency, and every composite
+boundary, then update multi-occurrence owner and bounded-store contracts,
+validate, document, commit, and push. Never create, update, or reopen a pull
+request.

@@ -779,6 +779,34 @@ No root-model corpus conversion was run because this is an observation-
 destination-only change and the synthetic runtime suite executes the guarded
 layout paths.
 
+## Layout pass-set 2 residual cleanup characterization
+
+The remaining direct mapping observations in layout pass-set 2 are limited to
+nine results. Eight consecutive results cover elementwise/Concat/Conv, SPP,
+pre-Concat, NDHWC Concat, StridedSlice pre-Concat, mixed-Split pre-Concat,
+Concat input-adapter, and Slice/Logistic/Concat-tail cleanup. The ninth covers
+SA/PA MirrorPad propagation after the channel-shuffle and attention composite
+clusters.
+
+All nine share the existing `optimize_layout_transpose_chains` guard, have
+bounded integer schemas fixed by existing owner tests, and have no defaults or
+consumers. The characterization fixes exact owner calls and keywords, the
+eight-result adjacency, composite predecessor/successor boundaries, the
+isolated SA/PA boundary, and absence of loads. Composite recovery results stay
+outside the migration. A strict expected failure requires nine stable
+`cleanup.layout_pass_set_2.*` records. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- existing owner/schema baseline: `22 passed in 1.42s`;
+- dedicated characterization plus existing owner/schema contracts:
+  `23 passed, 1 xfailed in 1.59s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented nine-result
+destination migration.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:
