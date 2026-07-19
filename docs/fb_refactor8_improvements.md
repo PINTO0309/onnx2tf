@@ -978,6 +978,38 @@ failure to `72 passed, 1 xfailed in 2.18s`; the sole xfail is the separately
 characterized, intentionally unimplemented core-cleanup result migration.
 Targeted Ruff, bytecode compilation, and whitespace validation pass.
 
+## Core cleanup phase-result characterization
+
+The next selected family is limited to the nine direct `Dict[str, int]`
+results in the unconditional `core cleanup passes` stage:
+
+- pseudo-LeakyReLU and YOLO decode cleanup;
+- consecutive-Mul folding;
+- terminal Dequantize and exact-grid Q/DQ cleanup;
+- Conv affine and Conv activation folding;
+- Squeeze/Reshape identity cleanup;
+- indexed prune/reconcile cleanup.
+
+Composite cluster `*_results`, guarded layout-pass results, and later terminal
+families are intentionally excluded. The dedicated contract fixes all nine
+targets, owner expressions and keyword arguments, source order, progress
+boundaries, absence of consumers, and the existing
+`shape_resolution.core.dynamic_reshape` record between the seventh and eighth
+owners. A strict expected failure requires nine stable `cleanup.core.*` phase
+records. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization: `1 passed, 1 xfailed in 0.15s`;
+- characterization plus dynamic-Reshape, Squeeze/Reshape, indexed
+  prune/reconcile, and terminal orchestration contracts:
+  `72 passed, 1 xfailed in 2.18s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented nine-result
+destination migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

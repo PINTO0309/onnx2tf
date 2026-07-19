@@ -1076,3 +1076,28 @@ checks pass.
 Commit and push this stale-contract correction independently. Then commit the
 core-cleanup characterization separately before changing production source.
 Never create, update, or reopen a pull request.
+
+## Core cleanup phase-result characterization
+
+The next family contains only the nine unconditional mapping results in the
+`core cleanup passes` progress stage. It excludes composite cluster results,
+guarded layout-pass results, and later cleanup stages. The owners cover pseudo-
+LeakyReLU, YOLO decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine,
+Conv activation, Squeeze/Reshape identity, and indexed prune/reconcile cleanup.
+
+The contract fixes exact targets, owner arguments and keywords, source order,
+progress boundaries, absence of loads, and the already-recorded dynamic-
+Reshape phase between owner seven and owner eight. Its strict expected failure
+requires nine `cleanup.core.*` phase records.
+
+Validation completed sequentially under core-only `uv`: the dedicated test is
+`1 passed, 1 xfailed in 0.15s`; the broader relevant structural gate is
+`72 passed, 1 xfailed in 2.18s`; Ruff, bytecode compilation, and whitespace
+checks pass. No production source changed.
+
+Commit and push this characterization before replacing only the nine result
+destinations. Preserve owner calls, arguments, source order, unconditional
+execution, progress boundaries, and the dynamic-Reshape record position. Then
+update all existing result-retention contracts and the bounded-store inventory,
+validate, document, commit, and push. Never create, update, or reopen a pull
+request.
