@@ -5800,3 +5800,37 @@ default-direct, and `-cotof` tests. The phase-result store remains exactly 128
 IDs and 128 owners. No real-model conversion was repeated because this is a
 straight-line ownership extraction with explicit state, schema, order, and
 boundary coverage.
+
+## Terminal layout/shape composite characterization
+
+The refreshed unconsumed-result inventory selected the next four consecutive
+unconditional observations after the terminal activation bridge: absolute
+pre-ConCat cleanup, late Shape-extract cleanup, the prune-aware late
+layout/Mean/SPP/Gather/constant-fold/Cast summary, and terminal
+Expand/Squeeze-to-Reshape cleanup. All four operate on the same ModelIR; the
+layout-aware children share the same `LayoutState`, the pre-ConCat owner also
+receives the same diagnostics list, and the late layout summary uses an
+identity alias of `shared_model_ir_pass_context`.
+
+`tests/test_flatbuffer_direct_terminal_layout_shape_orchestration.py` fixes
+the exact four-child order, current wrapper/summary arguments, shared-context
+alias, both layout-option variants, absence of result consumers, complete
+empty-model mapping schemas, and both outer boundaries. The terminal
+activation composite remains the predecessor. The recorded complete static-
+shape reconciliation and following progress update remain outside the
+candidate owner and define its successor boundary.
+
+The affected inventory also exposed one stale Shape-extract mutation-evidence
+expectation left by the already-implemented terminal activation composite. It
+still expected the removed direct Split/Conv/Concat result after terminal QKV.
+The test now resolves the existing activation composite without changing
+production or mutation-route counts.
+
+Sequential characterization under core-only `uv` completed with
+`3 passed, 1 xfailed in 0.61s` focused and
+`404 passed, 1 xfailed in 18.91s` across the four child families, shared
+context, terminal boundaries, architecture, validation, and phase-store
+contracts. The sole expected failure requires one shared-context owner that
+returns all four raw mappings unchanged and replaces only the four unconsumed
+lowerer locals. No pass result or store entry changes; the store remains
+exactly 128 IDs and 128 owners.

@@ -1204,3 +1204,13 @@ contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
 tests. Public behavior, conversion policy, graph rewrites, artifacts,
 dependencies, TensorFlow isolation, and the exactly 128-ID/128-owner store are
 unchanged.
+
+The next characterization selects the terminal layout/shape tail immediately
+after the activation bridge: absolute pre-ConCat cleanup, late Shape-extract,
+the prune-aware late layout/Mean/SPP/Gather/constant-fold/Cast summary, and
+terminal Expand/Squeeze-to-Reshape cleanup. It fixes the exact shared
+ModelIR/LayoutState/diagnostics identity, layout-option policy, complete raw
+schemas and order, terminal-activation predecessor, and the separate recorded
+static-shape-reconciliation successor. Production remains unchanged pending a
+four-stage shared-context owner. Focused and affected validation report
+`3 passed, 1 xfailed` and `404 passed, 1 xfailed`.

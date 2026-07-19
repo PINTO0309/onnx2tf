@@ -5019,3 +5019,35 @@ At resume, first rerun the read-only inventory of remaining unconsumed lowerer
 results. Characterize the next smallest source-adjacent, semantically closed
 cluster before changing production, then implement it as a separate
 checkpoint with all validation sequential and single-process under `uv`.
+
+## Terminal layout/shape composite characterization checkpoint
+
+The next candidate is now characterized but not implemented. It consists of
+four consecutive unconsumed results after terminal activation:
+
+1. absolute-final pre-ConCat cleanup;
+2. late NHWC-to-NCHW Shape-extract cleanup;
+3. prune-aware late layout/Mean/SPP/Gather/constant-fold/Cast summary;
+4. terminal Expand/Squeeze-to-Reshape cleanup.
+
+The contract requires one `ModelIRPassContext` owner, exact child order, the
+same ModelIR/LayoutState/diagnostics objects, unchanged
+`include_layout_transpose` forwarding, and raw mapping identity. The owner
+must not absorb the following phase-recorded complete static-shape
+reconciliation or `_advance_post_progress`; those are the fixed successor
+boundary. The terminal activation composite is the fixed predecessor.
+
+Focused characterization reports `3 passed, 1 xfailed`; complete affected
+characterization reports `404 passed, 1 xfailed`. The only xfail is the
+intentionally absent owner. A stale terminal-QKV successor expectation in the
+Shape-extract suite was corrected to the already-committed terminal activation
+owner; production was unchanged. The phase-result store remains exactly 128
+IDs and 128 owners.
+
+At resume, implement
+`passes/terminal_layout_shape_orchestration.py` as a straight-line four-stage
+owner. Accept the shared context plus keyword-only
+`include_layout_transpose`, forward exact state to every child, return all raw
+mappings unchanged, replace only the four characterized lowerer locals, and
+preserve both outer boundaries. Run affected and standard gates sequentially,
+then commit and push only. Do not create or modify a pull request.
