@@ -2288,3 +2288,25 @@ Final sequential validation under core-only `uv`:
 The store remains fixed at 128/128. Commit and push this implementation unit.
 Resume with the next non-store late orchestration audit; do not create, update,
 or reopen a pull request.
+
+## Late attention-layout composite characterization
+
+The next selected unit owns the adjacent late QKV reshape, attention-Gather
+cleanup, axis-0 Gather reshape, and attention pre-projection rank-lift passes.
+Their mappings are unconsumed, and their argument policy is
+layout/model/layout/model.
+
+`tests/test_flatbuffer_direct_late_attention_layout_orchestration.py` fixes
+the current order, exact arguments, late channel-shuffle predecessor,
+window-partition successor, and absence of consumers. Its strict expected
+failure requires one
+`run_late_attention_layout_cleanup(shared_model_ir_pass_context)` tuple outside
+the full phase store and removal of the four old locals.
+
+The characterization gate completed with
+`214 passed, 1 xfailed in 1.18s`; Ruff, bytecode compilation, and whitespace
+checks passed. Commit and push this checkpoint first. Implementation must add
+runtime order/context/argument/tuple coverage, update only source-
+representation contracts, run the sequential focused/core/result/architecture
+gates, document, commit, and push. Keep the store at 128/128 and never create,
+update, or reopen a pull request.

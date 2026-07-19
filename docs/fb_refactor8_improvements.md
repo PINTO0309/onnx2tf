@@ -1223,6 +1223,27 @@ No root-model conversion was run because this is a characterized three-call
 owner extraction with focused runtime equivalence and unchanged serialization
 inputs.
 
+## Late attention-layout composite characterization
+
+The next non-store unit covers four adjacent attention repairs: QKV
+Reshape/Transpose simplification, attention-Gather cleanup, axis-0 Gather to
+Reshape input normalization, and pre-projection BatchMatMul rank lifting. The
+four unconsumed mappings use the fixed layout/model/layout/model argument
+policy.
+
+The focused characterization fixes their exact order and arguments, the late
+channel-shuffle predecessor, the window-partition successor, and the absence
+of result consumers. A strict expected failure requires one
+`run_late_attention_layout_cleanup` owner and one ordered
+`_late_attention_layout_results` tuple outside the full phase store. No
+production source changed.
+
+Sequential validation under core-only `uv` completed with
+`214 passed, 1 xfailed in 1.18s`; the sole xfail is the intentionally absent
+composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed. Commit and push this characterization before implementation. Keep the
+phase store fixed at 128/128 and never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
