@@ -25,6 +25,14 @@ OWNER_PATH = (
     / "late_reshape_shuffle_attention_window_orchestration.py"
 )
 OWNER = "run_late_reshape_shuffle_attention_window_cleanup"
+FULL_POST_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_channel_preadd_orchestration.py"
+)
+FULL_POST_OWNER = "run_layout_pass_set_2_channel_preadd_recovery"
 CHILD_OWNERS = (
     "run_late_reshape_layout_cleanup",
     "run_channel_shuffle_gather",
@@ -137,15 +145,21 @@ def test_late_reshape_shuffle_attention_window_independent_policy_is_fixed() -> 
         and isinstance(node.func, ast.Name)
         and node.func.id == CURRENT_CHILD_OWNERS[1]
     ]
-    assert len(helper_calls) == 1
-    policies = tuple(
-        {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        }
-        for call in sorted(helper_calls, key=lambda call: call.lineno)
-    )
-    assert policies == ({"include_post_gather_cleanup": "True"},)
+    assert helper_calls == []
+
+    full_post_owner = _functions(FULL_POST_OWNER_PATH)[FULL_POST_OWNER]
+    full_post_calls = [
+        node
+        for node in ast.walk(full_post_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CHILD_OWNERS[1]
+    ]
+    assert len(full_post_calls) == 1
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in full_post_calls[0].keywords
+    } == {"include_post_gather_cleanup": "True"}
 
     owner = _functions(OWNER_PATH)[OWNER]
     channel_calls = [

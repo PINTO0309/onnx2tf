@@ -6516,3 +6516,40 @@ coverage, and update only structural expectations made stale by the new outer
 route. Run affected and standard gates sequentially under `uv`, confirm the
 expected inventory reduction from 41 to 40, then commit and push the complete
 unit. Do not create, update, reopen, or otherwise modify a pull request.
+
+## Layout-pass-set-2 channel/pre-add implementation checkpoint
+
+`passes/layout_pass_set_2_channel_preadd_orchestration.py` now provides
+`run_layout_pass_set_2_channel_preadd_recovery()`. It calls
+`run_channel_shuffle_gather()` with the exact embedded pass context and
+`include_post_gather_cleanup=True`, then calls
+`run_preadd_mean_attention_recovery()` with the original callback-bearing
+attention context. Runtime injection proves exact child order, context and
+option identity, absence of extra options, and both result identities.
+
+The lowerer replaces only `_layout_opt_channel_shuffle_gather_results` and
+`_layout_opt_preadd_mean_attention_results` with
+`_layout_pass_set_2_channel_preadd_results`. The recorded
+`cleanup.layout_pass_set_2.slice_logistic_concat_tail` phase remains the direct
+predecessor, and recorded `cleanup.layout_pass_set_2.sa_pa_mirrorpad` remains
+the direct successor. Both lowerer wrappers, the base layout-recovery callback,
+the late reshape/shuffle/attention/window owner, the earlier pre-add/attention
+owner, and every public child route remain available.
+
+Eleven stale direct-call, route-count, policy, or neighbor expectations were
+updated to follow the public children through the new owner while retaining
+total route coverage. Sequential validation passes: focused `4`, complete
+affected `426`, terminal-layout/efficiency `92`, core `55`, result contracts
+`196`, phase store `2`, and TensorFlow import-blocking/default-direct/`-cotof`
+`11`. Ruff, bytecode compilation, and whitespace checks pass. The phase-result
+store remains exactly 128 IDs and 128 owners, and the read-only unconsumed-
+result inventory decreases from 41 to 40. No real-model conversion was
+repeated for this straight-line ownership-only extraction.
+
+At resume, refresh the 40-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, recorded phase boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.

@@ -211,6 +211,13 @@ LAYOUT_PASS_SET_2_PREADD_ATTENTION_GATE_OWNER_PATH = (
     / "passes"
     / "layout_pass_set_2_preadd_attention_gate_orchestration.py"
 )
+LAYOUT_PASS_SET_2_CHANNEL_PREADD_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_channel_preadd_orchestration.py"
+)
 
 
 def _layout_pass_set_1_mean_attention_gate_calls(
@@ -344,6 +351,29 @@ def _layout_pass_set_2_preadd_attention_gate_calls(
         if isinstance(node, ast.FunctionDef)
         and node.name
         == "run_layout_pass_set_2_preadd_attention_gate_recovery"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _layout_pass_set_2_channel_preadd_calls(
+    child_owner: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_2_CHANNEL_PREADD_OWNER_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_layout_pass_set_2_channel_preadd_recovery"
     )
     return [
         node
@@ -1499,89 +1529,26 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
     assert helper_call.args[0].id == "attention_recovery_context"
     assert helper_call.keywords == []
 
-    recovery_block = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.If)
-        and isinstance(statement.test, ast.Name)
-        and statement.test.id == "optimize_layout_transpose_chains"
-        and sum(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == helper_name
-            for node in ast.walk(statement)
-        )
-        == 1
-    )
-    invocation_indexes = [
-        index
-        for index, statement in enumerate(recovery_block.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_layout_opt_preadd_mean_attention_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+    direct_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
     ]
-    assert len(invocation_indexes) == 1
-    assert [
-        recovery_block.body[index].targets[0].id
-        for index in invocation_indexes
-        if isinstance(recovery_block.body[index], ast.Assign)
-        and isinstance(recovery_block.body[index].targets[0], ast.Name)
-    ] == ["_layout_opt_preadd_mean_attention_results"]
-    previous_call_names = []
-    next_call_names = []
-    for index in invocation_indexes:
-        invocation = recovery_block.body[index].value
-        assert invocation.args == []
-        assert invocation.keywords == []
-        previous = recovery_block.body[index - 1]
-        following = recovery_block.body[index + 1]
-        boundary_calls = []
-        for boundary in (previous, following):
-            assert isinstance(boundary, (ast.Assign, ast.Expr))
-            assert isinstance(boundary.value, ast.Call)
-            boundary_call = boundary.value
-            if (
-                isinstance(boundary_call.func, ast.Attribute)
-                and isinstance(boundary_call.func.value, ast.Name)
-                and boundary_call.func.value.id == "session"
-                and boundary_call.func.attr == "record_phase_result"
-                and len(boundary_call.args) == 2
-                and isinstance(boundary_call.args[1], ast.Call)
-            ):
-                boundary_call = boundary_call.args[1]
-            assert isinstance(boundary_call.func, ast.Name)
-            boundary_calls.append(boundary_call)
-        previous_call_names.append(boundary_calls[0].func.id)
-        next_call_names.append(boundary_calls[1].func.id)
-    assert previous_call_names == [
-        "_run_channel_shuffle_gather_layout_pass_cluster",
-    ]
-    assert next_call_names == [
-        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
-    ]
-    full_post_boundary = recovery_block.body[invocation_indexes[0] - 1]
-    assert isinstance(full_post_boundary, ast.Assign)
-    assert isinstance(full_post_boundary.targets[0], ast.Name)
-    assert full_post_boundary.targets[0].id == (
-        "_layout_opt_channel_shuffle_gather_results"
-    )
-    sa_pa_boundary = recovery_block.body[invocation_indexes[0] + 1]
-    assert ast.unparse(sa_pa_boundary) == (
-        "session.record_phase_result('cleanup.layout_pass_set_2.sa_pa_mirrorpad', "
-        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir, "
-        "layout_state=session.layout_state))"
-    )
+    assert direct_invocations == []
     owner_invocations = _layout_pass_set_2_preadd_attention_gate_calls(
         "run_preadd_mean_attention_recovery"
     )
     assert len(owner_invocations) == 1
     assert ast.unparse(owner_invocations[0].args[0]) == "context"
     assert owner_invocations[0].keywords == []
+    later_owner_invocations = _layout_pass_set_2_channel_preadd_calls(
+        "run_preadd_mean_attention_recovery"
+    )
+    assert len(later_owner_invocations) == 1
+    assert ast.unparse(later_owner_invocations[0].args[0]) == "context"
+    assert later_owner_invocations[0].keywords == []
 
 
 def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
@@ -9071,12 +9038,16 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == channel_helper_name
     ]
+    channel_preadd_invocations = _layout_pass_set_2_channel_preadd_calls(
+        "run_channel_shuffle_gather"
+    )
     assert (
         len(channel_invocations)
         + _orchestrated_pass_count(channel_helper_name)
         + _late_reshape_shuffle_attention_window_call_count(
             "run_channel_shuffle_gather"
         )
+        + len(channel_preadd_invocations)
         == 3
     )
     assert sum(
@@ -9087,7 +9058,19 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
             for keyword in call.keywords
         )
         for call in channel_invocations
+    ) + sum(
+        any(
+            keyword.arg == "include_post_gather_cleanup"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        for call in channel_preadd_invocations
     ) == 1
+    assert len(channel_preadd_invocations) == 1
+    assert ast.unparse(channel_preadd_invocations[0].args[0]) == (
+        "context.pass_context"
+    )
     assert (
         _late_reshape_shuffle_attention_window_call_count(
             "run_channel_shuffle_gather"

@@ -197,7 +197,7 @@ def test_lowerer_records_both_direct_sa_pa_mirrorpad_results() -> None:
     assert ast.unparse(layout_guard.test) == "optimize_layout_transpose_chains"
     first_index = layout_guard.body.index(direct_results[0])
     assert _call_name(layout_guard.body[first_index - 1]) == (
-        "_run_preadd_mean_attention_recovery_sequence"
+        "run_layout_pass_set_2_channel_preadd_recovery"
     )
     assert _call_name(layout_guard.body[first_index + 1]) == (
         "_run_gate_layout_pass_cluster"

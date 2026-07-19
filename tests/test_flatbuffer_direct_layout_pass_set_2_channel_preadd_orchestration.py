@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    layout_pass_set_2_channel_preadd_orchestration,
+)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     PREADD_MEAN_ATTENTION_PASS_IDS,
     AttentionRecoveryContext,
@@ -169,36 +172,23 @@ def _dict_schema(values: tuple[Any, ...]) -> tuple[tuple[str, ...], ...]:
 
 def test_layout_pass_set_2_channel_preadd_current_contract() -> None:
     body = _guard_body()
-    assignments = [
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "attention_recovery_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indexes = [body.index(statement) for statement in assignments]
-    assert indexes[1] == indexes[0] + 1
-    assert _phase_id(body[indexes[0] - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(body[indexes[-1] + 1]) == SUCCESSOR_PHASE_ID
-
-    first_call = _call(assignments[0])
-    second_call = _call(assignments[1])
-    assert first_call is not None
-    assert second_call is not None
-    assert first_call.args == []
-    assert {
-        keyword.arg: ast.literal_eval(keyword.value)
-        for keyword in first_call.keywords
-    } == {"include_post_gather_cleanup": True}
-    assert second_call.args == []
-    assert second_call.keywords == []
+    assert call.keywords == []
+    assert _phase_id(body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for node in ast.walk(_lowerer())
     )
@@ -234,10 +224,6 @@ def test_layout_pass_set_2_channel_preadd_child_schemas() -> None:
     assert preadd_results[6] is mean_results
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout-pass-set-2 channel/pre-add owner is not implemented",
-)
 def test_layout_pass_set_2_channel_preadd_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -295,3 +281,48 @@ def test_layout_pass_set_2_channel_preadd_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_layout_pass_set_2_channel_preadd_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, _ = _context()
+    expected_results = (
+        tuple({f"channel_{index}": index} for index in range(7)),
+        tuple({f"preadd_{index}": index} for index in range(7)),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def channel(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return expected_results[0]
+
+    def preadd(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context, {}))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        layout_pass_set_2_channel_preadd_orchestration,
+        CHILD_OWNERS[0],
+        channel,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_2_channel_preadd_orchestration,
+        CHILD_OWNERS[1],
+        preadd,
+    )
+
+    actual = layout_pass_set_2_channel_preadd_orchestration.run_layout_pass_set_2_channel_preadd_recovery(
+        context
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context.pass_context,
+            {"include_post_gather_cleanup": True},
+        ),
+        (CHILD_OWNERS[1], context, {}),
+    ]

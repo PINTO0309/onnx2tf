@@ -68,8 +68,8 @@ EXPECTED_OWNER_EXPRESSIONS = (
 PREFIX_PREDECESSOR_TARGET = (
     "_layout_pass_set_2_quantized_activation_binary_results"
 )
-PREFIX_SUCCESSOR_TARGET = "_layout_opt_channel_shuffle_gather_results"
-SA_PA_PREDECESSOR_TARGET = "_layout_opt_preadd_mean_attention_results"
+PREFIX_SUCCESSOR_TARGET = "_layout_pass_set_2_channel_preadd_results"
+SA_PA_PREDECESSOR_TARGET = "_layout_pass_set_2_channel_preadd_results"
 SA_PA_SUCCESSOR_TARGET = "_layout_opt_gate_layout_results"
 
 

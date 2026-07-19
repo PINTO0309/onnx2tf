@@ -1798,3 +1798,17 @@ Focused and reference-based affected sequential validation report
 the deliberately absent future owner. Production behavior, dependencies,
 TensorFlow isolation, the 41-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a dedicated layout-pass-set-2 channel/pre-add
+owner. Full channel-shuffle/Gather recovery receives the exact pass context
+embedded in the callback-bearing attention context and retains post-Gather
+cleanup; pre-add/mean/attention recovery then receives the original attention
+context. Both complete seven-slot results preserve order and object identity.
+
+Only the two observation-only lowerer assignments are replaced. Recorded
+phase boundaries, compatibility wrappers, independent callbacks and late
+owners, graph behavior, APIs, artifacts, dependencies, and TensorFlow
+isolation remain unchanged. Focused `4`, affected `426`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
+from 41 to 40.

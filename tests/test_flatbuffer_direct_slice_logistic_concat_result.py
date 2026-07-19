@@ -28,7 +28,6 @@ OWNER_NAME = (
 CONCAT_INPUT_ADAPTER = (
     "_optimize_transpose_input_chains_pre_concat_to_single_post_adapter"
 )
-CHANNEL_SHUFFLE_GATHER = "_run_channel_shuffle_gather_layout_pass_cluster"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -183,12 +182,14 @@ def test_lowerer_retains_slice_logistic_concat_result() -> None:
     assert _call_name(previous) == CONCAT_INPUT_ADAPTER
     following = layout_guard.body[result_index + 1]
     assert _single_target(following) == (
-        "_layout_opt_channel_shuffle_gather_results"
+        "_layout_pass_set_2_channel_preadd_results"
     )
-    assert _call_name(following) == CHANNEL_SHUFFLE_GATHER
+    assert _call_name(following) == (
+        "run_layout_pass_set_2_channel_preadd_recovery"
+    )
     following_call = _statement_call(following)
     assert following_call is not None
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in following_call.keywords
-    } == {"include_post_gather_cleanup": "True"}
+    assert [ast.unparse(argument) for argument in following_call.args] == [
+        "attention_recovery_context"
+    ]
+    assert following_call.keywords == []

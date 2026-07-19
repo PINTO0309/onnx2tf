@@ -201,6 +201,9 @@ from onnx2tf.tflite_builder.passes.layout_pass_set_1_mean_attention_gate_orchest
 from onnx2tf.tflite_builder.passes.layout_pass_set_2_preadd_attention_gate_orchestration import (
     run_layout_pass_set_2_preadd_attention_gate_recovery,
 )
+from onnx2tf.tflite_builder.passes.layout_pass_set_2_channel_preadd_orchestration import (
+    run_layout_pass_set_2_channel_preadd_recovery,
+)
 from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
     run_quantized_activation_binary_recovery,
     run_safe_binary_recovery,
@@ -4570,13 +4573,10 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             ),
         )
-        _layout_opt_channel_shuffle_gather_results = (
-            _run_channel_shuffle_gather_layout_pass_cluster(
-                include_post_gather_cleanup=True,
+        _layout_pass_set_2_channel_preadd_results = (
+            run_layout_pass_set_2_channel_preadd_recovery(
+                attention_recovery_context
             )
-        )
-        _layout_opt_preadd_mean_attention_results = (
-            _run_preadd_mean_attention_recovery_sequence()
         )
         session.record_phase_result(
             "cleanup.layout_pass_set_2.sa_pa_mirrorpad",

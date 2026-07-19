@@ -7014,3 +7014,25 @@ Focused and reference-based affected sequential validation report
 `2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
 the deliberately absent owner module. The characterized inventory remains 41,
 and the phase-result store remains exactly 128 IDs and 128 owners.
+
+## Extract the layout-pass-set-2 channel/pre-add boundary
+
+`passes/layout_pass_set_2_channel_preadd_orchestration.py` now owns the
+characterized pair. It forwards the exact embedded `ModelIRPassContext` to
+public channel-shuffle/Gather recovery with post-Gather cleanup enabled, then
+forwards the original callback-bearing `AttentionRecoveryContext` to public
+pre-add/mean/attention recovery. Both complete seven-slot tuples are returned
+in source order and by identity.
+
+The lowerer replaces only the two observation-only locals with
+`_layout_pass_set_2_channel_preadd_results`. The recorded slice/logistic/
+Concat-tail and SA/PA MirrorPad phases remain the direct boundaries. Both
+compatibility wrappers and every layout-recovery callback, late-window owner,
+earlier attention owner, and child route remain intact.
+
+Eleven stale structural assertions now follow the public children through the
+outer owner while retaining total route counts, policies, and neighbor
+coverage. Sequential validation passes: focused `4`, affected `426`, and
+standard `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace
+checks pass. The phase store remains exactly 128 IDs and 128 owners, while the
+unconsumed lowerer-result inventory decreases from 41 to 40.
