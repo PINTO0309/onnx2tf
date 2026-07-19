@@ -278,14 +278,8 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
     run_late_concat_layout_cleanup,
 )
-from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
-    run_late_reshape_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.late_attention_layout_orchestration import (
-    run_late_attention_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
-    run_late_window_layout_cleanup,
+from onnx2tf.tflite_builder.passes.late_reshape_shuffle_attention_window_orchestration import (
+    run_late_reshape_shuffle_attention_window_cleanup,
 )
 from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
     run_final_boundary_channel_layout_cleanup,
@@ -5128,20 +5122,10 @@ def lower_onnx_to_ir(
                 model_ir
             )
         )
-    _late_reshape_layout_results = run_late_reshape_layout_cleanup(
-        shared_model_ir_pass_context,
-    )
-    _late_channel_shuffle_gather_results = (
-        _run_channel_shuffle_gather_layout_pass_cluster(
-            include_two_way_shuffle=False,
-            include_nhwc_shuffle=False,
+    _late_reshape_shuffle_attention_window_results = (
+        run_late_reshape_shuffle_attention_window_cleanup(
+            shared_model_ir_pass_context,
         )
-    )
-    _late_attention_layout_results = run_late_attention_layout_cleanup(
-        shared_model_ir_pass_context,
-    )
-    _late_window_layout_results = run_late_window_layout_cleanup(
-        shared_model_ir_pass_context,
     )
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.

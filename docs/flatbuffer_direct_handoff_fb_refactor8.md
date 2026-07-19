@@ -4691,3 +4691,33 @@ preserve the base-only channel flags and all raw tuple identities, retain the
 lowerer channel-shuffle wrapper for its guarded full-policy and callback users,
 and preserve both outer boundaries. Run affected and standard gates
 sequentially. Never create, update, or reopen a pull request.
+
+## Late reshape/shuffle/attention/window composite implementation
+
+The four-stage owner is now implemented in
+`passes/late_reshape_shuffle_attention_window_orchestration.py`. It invokes
+reshape, base-only channel shuffle/Gather, attention, and window cleanup with
+the exact shared context, retains both disabled base-channel flags, and returns
+all four raw tuples unchanged in source order. The lowerer replaces four
+unconsumed locals with one composite result and removes only imports made
+redundant by that move.
+
+The lowerer channel-shuffle wrapper remains for the guarded full-policy route
+and argument-free layout-recovery callback. The optional elementwise-fanout
+guard and indexed final shape/activation convergence remain the exact outer
+boundaries. Owner-aware AST coverage and runtime injection prove order,
+context identity, raw-result identity, nested schema, keyword policy, and
+independent routes.
+
+Sequential validation passed: focused `4`, owner-aware focused `356`, affected
+`405`, terminal/efficiency `92`, core runtime `55`, result contracts `196`,
+phase-store `2`, and TensorFlow isolation/default-direct/`-cotof` `11`. Ruff,
+bytecode compilation, and whitespace checks passed. The store remains exactly
+128 IDs and 128 owners; no model conversion was run.
+
+At resume, rerun the read-only unconsumed-result inventory after removal of
+these four locals. Select the next smallest source-adjacent and semantically
+closed cluster whose children are already pass-module-owned, characterize it
+before production changes, and keep every verification under `uv` sequential
+and single-process. Never create, update, or reopen a pull request; use
+appropriately scoped commits and pushes only.

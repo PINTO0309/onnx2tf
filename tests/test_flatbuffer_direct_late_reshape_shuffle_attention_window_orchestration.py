@@ -8,17 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
-    run_channel_shuffle_gather,
-)
-from onnx2tf.tflite_builder.passes.late_attention_layout_orchestration import (
-    run_late_attention_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
-    run_late_reshape_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
-    run_late_window_layout_cleanup,
+from onnx2tf.tflite_builder.passes import (
+    late_reshape_shuffle_attention_window_orchestration,
 )
 
 
@@ -91,49 +82,28 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    indices = tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    assert indices == tuple(range(indices[0], indices[0] + len(indices)))
-    predecessor = lowerer.body[indices[0] - 1]
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert call.keywords == []
+    predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == "optimize_layout_transpose_chains"
     assert [_single_target(statement) for statement in predecessor.body] == [
         PREDECESSOR_TARGET
     ]
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-
-    calls = tuple(_call(lowerer.body[index]) for index in indices)
-    assert all(call is not None for call in calls)
-    assert tuple(_call_name(lowerer.body[index]) for index in indices) == (
-        CURRENT_CHILD_OWNERS
-    )
-    assert [ast.unparse(argument) for argument in calls[0].args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert calls[0].keywords == []
-    assert calls[1].args == []
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in calls[1].keywords
-    } == {
-        "include_two_way_shuffle": "False",
-        "include_nhwc_shuffle": "False",
-    }
-    for call in calls[2:]:
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "shared_model_ir_pass_context"
-        ]
-        assert call.keywords == []
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
-        isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id in RESULT_TARGETS
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
 
@@ -143,15 +113,8 @@ def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> 
         layout_state=LayoutState.from_model_ir(model_ir),
         diagnostics=[],
     )
-    results = (
-        run_late_reshape_layout_cleanup(context),
-        run_channel_shuffle_gather(
-            context,
-            include_two_way_shuffle=False,
-            include_nhwc_shuffle=False,
-        ),
-        run_late_attention_layout_cleanup(context),
-        run_late_window_layout_cleanup(context),
+    results = late_reshape_shuffle_attention_window_orchestration.run_late_reshape_shuffle_attention_window_cleanup(
+        context
     )
     assert tuple(type(result) for result in results) == (tuple,) * 4
     assert tuple(len(result) for result in results) == (3, 2, 4, 2)
@@ -171,7 +134,7 @@ def test_late_reshape_shuffle_attention_window_independent_policy_is_fixed() -> 
         and isinstance(node.func, ast.Name)
         and node.func.id == CURRENT_CHILD_OWNERS[1]
     ]
-    assert len(helper_calls) == 2
+    assert len(helper_calls) == 1
     policies = tuple(
         {
             keyword.arg: ast.unparse(keyword.value)
@@ -179,19 +142,26 @@ def test_late_reshape_shuffle_attention_window_independent_policy_is_fixed() -> 
         }
         for call in sorted(helper_calls, key=lambda call: call.lineno)
     )
-    assert policies == (
-        {"include_post_gather_cleanup": "True"},
-        {
-            "include_two_way_shuffle": "False",
-            "include_nhwc_shuffle": "False",
-        },
-    )
+    assert policies == ({"include_post_gather_cleanup": "True"},)
+
+    owner = _functions(OWNER_PATH)[OWNER]
+    channel_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CHILD_OWNERS[1]
+    ]
+    assert len(channel_calls) == 1
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in channel_calls[0].keywords
+    } == {
+        "include_two_way_shuffle": "False",
+        "include_nhwc_shuffle": "False",
+    }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late reshape/shuffle/attention/window sequence has no context owner",
-)
 def test_late_reshape_shuffle_attention_window_has_one_context_owner() -> None:
     owner = _functions(OWNER_PATH)[OWNER]
     calls = sorted(
@@ -239,3 +209,55 @@ def test_late_reshape_shuffle_attention_window_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_late_reshape_shuffle_attention_window_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("late_reshape_shuffle_attention_window_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    results = tuple({"stage": index} for index in range(len(CHILD_OWNERS)))
+    calls: list[
+        tuple[str, ModelIRPassContext, dict[str, bool]]
+    ] = []
+
+    def callback(index: int):
+        def run(
+            active_context: ModelIRPassContext,
+            **kwargs: bool,
+        ) -> dict[str, int]:
+            calls.append((CHILD_OWNERS[index], active_context, kwargs))
+            return results[index]
+
+        return run
+
+    for index, name in enumerate(CHILD_OWNERS):
+        monkeypatch.setattr(
+            late_reshape_shuffle_attention_window_orchestration,
+            name,
+            callback(index),
+        )
+
+    actual = late_reshape_shuffle_attention_window_orchestration.run_late_reshape_shuffle_attention_window_cleanup(
+        context
+    )
+
+    assert actual == results
+    assert all(actual[index] is results[index] for index in range(len(results)))
+    assert calls == [
+        (CHILD_OWNERS[0], context, {}),
+        (
+            CHILD_OWNERS[1],
+            context,
+            {
+                "include_two_way_shuffle": False,
+                "include_nhwc_shuffle": False,
+            },
+        ),
+        (CHILD_OWNERS[2], context, {}),
+        (CHILD_OWNERS[3], context, {}),
+    ]

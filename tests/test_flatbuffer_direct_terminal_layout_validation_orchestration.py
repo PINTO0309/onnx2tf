@@ -114,6 +114,19 @@ VERY_LATE_DYNAMIC_ADAPTER_OWNER_PATH = (
 VERY_LATE_DYNAMIC_ADAPTER_OWNER = (
     "run_very_late_dynamic_adapter_cleanup"
 )
+LATE_LAYOUT_COMPOSITE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_reshape_shuffle_attention_window_orchestration.py"
+)
+LATE_LAYOUT_COMPOSITE_OWNER = (
+    "run_late_reshape_shuffle_attention_window_cleanup"
+)
+LATE_LAYOUT_COMPOSITE_RESULT = (
+    "_late_reshape_shuffle_attention_window_results"
+)
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -124,6 +137,44 @@ def _lowerer_body() -> list[ast.stmt]:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
     return lowerer.body
+
+
+def _late_layout_composite_owner_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(
+        LATE_LAYOUT_COMPOSITE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == LATE_LAYOUT_COMPOSITE_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _late_layout_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
+    assignment = next(
+        statement
+        for statement in body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == LATE_LAYOUT_COMPOSITE_RESULT
+    )
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == LATE_LAYOUT_COMPOSITE_OWNER
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert assignment.value.keywords == []
+    return assignment
 
 
 def _very_late_owner_call_count(function_name: str) -> int:
@@ -1904,16 +1955,16 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
     assert len(guards) == 2
 
     expected = (
-            (
-                "_late_concat_elementwise_fanout_stats",
-                "_late_concat_layout_results",
-                "run_late_reshape_layout_cleanup",
-            ),
-            (
-                "_terminal_elementwise_fanout_stats",
-                "_terminal_concat_bridge_layout_results",
-                "_run_terminal_singleton_maxpool_reshape_pass_pair",
-            ),
+        (
+            "_late_concat_elementwise_fanout_stats",
+            "_late_concat_layout_results",
+            LATE_LAYOUT_COMPOSITE_OWNER,
+        ),
+        (
+            "_terminal_elementwise_fanout_stats",
+            "_terminal_concat_bridge_layout_results",
+            "_run_terminal_singleton_maxpool_reshape_pass_pair",
+        ),
     )
     for guard, (target_name, predecessor_name, successor_name) in zip(
         guards,
@@ -1951,21 +2002,14 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
 
 def test_primary_path_retains_late_reshape_layout_composite() -> None:
     body = _lowerer_body()
-    indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement))
-        == "run_late_reshape_layout_cleanup"
-    ]
-    assert len(indices) == 1
-    index = indices[0]
-    statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_late_reshape_layout_results"
-    assert ast.unparse(statement.value) == (
-        "run_late_reshape_layout_cleanup(shared_model_ir_pass_context)"
+    statement = _late_layout_composite_assignment(body)
+    index = body.index(statement)
+    calls = _late_layout_composite_owner_calls(
+        "run_late_reshape_layout_cleanup"
     )
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert calls[0].keywords == []
 
     preceding_guard = body[index - 1]
     assert isinstance(preceding_guard, ast.If)
@@ -1977,7 +2021,7 @@ def test_primary_path_retains_late_reshape_layout_composite() -> None:
         "_late_concat_elementwise_fanout_stats"
     )
     assert _call_name(_statement_call(body[index + 1])) == (
-        "_run_channel_shuffle_gather_layout_pass_cluster"
+        "_run_indexed_final_shape_activation_convergence"
     )
 
 
@@ -1993,22 +2037,11 @@ def test_primary_path_removes_late_reshape_layout_result_locals() -> None:
         for statement in body
         for node in ast.walk(statement)
     )
-    index = next(
-        index
-        for index, statement in enumerate(body)
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_reshape_layout_results"
-    )
-    successor = body[index + 1]
-    assert _call_name(_statement_call(successor)) == (
-        "_run_channel_shuffle_gather_layout_pass_cluster"
-    )
-    successor_call = _statement_call(successor)
-    assert successor_call is not None
+    calls = _late_layout_composite_owner_calls("run_channel_shuffle_gather")
+    assert len(calls) == 1
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in successor_call.keywords
+        for keyword in calls[0].keywords
     } == {
         "include_two_way_shuffle": "False",
         "include_nhwc_shuffle": "False",
@@ -2017,36 +2050,13 @@ def test_primary_path_removes_late_reshape_layout_result_locals() -> None:
 
 def test_primary_path_retains_late_attention_layout_composite() -> None:
     body = _lowerer_body()
-    indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement))
-        == "run_late_attention_layout_cleanup"
-    ]
-    assert len(indices) == 1
-    index = indices[0]
-    statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_late_attention_layout_results"
-    assert ast.unparse(statement.value) == (
-        "run_late_attention_layout_cleanup(shared_model_ir_pass_context)"
+    _late_layout_composite_assignment(body)
+    calls = _late_layout_composite_owner_calls(
+        "run_late_attention_layout_cleanup"
     )
-
-    predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_late_channel_shuffle_gather_results"
-
-    successor_call = _statement_call(body[index + 1])
-    assert _call_name(successor_call) == (
-        "run_late_window_layout_cleanup"
-    )
-    assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert successor_call.keywords == []
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert calls[0].keywords == []
 
 
 def test_primary_path_removes_late_attention_layout_result_locals() -> None:
@@ -2066,26 +2076,14 @@ def test_primary_path_removes_late_attention_layout_result_locals() -> None:
 
 def test_primary_path_retains_late_window_layout_composite() -> None:
     body = _lowerer_body()
-    indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement))
-        == "run_late_window_layout_cleanup"
-    ]
-    assert len(indices) == 1
-    index = indices[0]
-    statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_late_window_layout_results"
-    assert ast.unparse(statement.value) == (
-        "run_late_window_layout_cleanup(shared_model_ir_pass_context)"
+    statement = _late_layout_composite_assignment(body)
+    index = body.index(statement)
+    calls = _late_layout_composite_owner_calls(
+        "run_late_window_layout_cleanup"
     )
-
-    predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_late_attention_layout_results"
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert calls[0].keywords == []
 
     successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == (
@@ -2143,7 +2141,7 @@ def test_primary_path_retains_late_final_shape_activation_convergence_result() -
     predecessor = body[index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_late_window_layout_results"
+    assert predecessor.targets[0].id == LATE_LAYOUT_COMPOSITE_RESULT
 
     successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == (

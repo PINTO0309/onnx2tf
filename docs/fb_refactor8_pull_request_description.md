@@ -1077,3 +1077,16 @@ raw tuple schemas and order, the optional elementwise-fanout predecessor, the
 indexed final-shape successor, independent full-policy and callback routes,
 and the full 128-ID/128-owner store. Production remains unchanged pending a
 separate context-owner implementation.
+
+The latest checkpoint implements that late reshape/shuffle/attention/window
+context owner. One orchestration module now forwards the same
+`ModelIRPassContext` to all four children, preserves the base-only channel
+flags, and returns every raw nested tuple unchanged in source order. The
+lowerer replaces four observation-only locals with one composite result while
+retaining the generic channel wrapper for its guarded full-policy and callback
+routes. The optional elementwise-fanout predecessor, indexed final-shape
+successor, child owners, pass IDs, phase results, public behavior, artifacts,
+dependency boundaries, and TensorFlow-free direct/`-cotof` behavior remain
+unchanged. Runtime identity tests, 405 affected contracts, and the full
+sequential standard gate set pass; the phase-result store remains exactly 128
+IDs and 128 owners.

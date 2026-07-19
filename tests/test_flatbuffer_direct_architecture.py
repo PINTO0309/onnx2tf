@@ -294,6 +294,31 @@ def _pre_terminal_cleanup_call_count(function_name: str) -> int:
     )
 
 
+def _late_reshape_shuffle_attention_window_call_count(
+    function_name: str,
+) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_reshape_shuffle_attention_window_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_reshape_shuffle_attention_window_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -3725,10 +3750,14 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_late_window_layout_results"
+    assert previous_boundary.targets[0].id == (
+        "_late_reshape_shuffle_attention_window_results"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
-    assert previous_boundary.value.func.id == "run_late_window_layout_cleanup"
+    assert previous_boundary.value.func.id == (
+        "run_late_reshape_shuffle_attention_window_cleanup"
+    )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert isinstance(next_boundary.targets[0], ast.Name)
@@ -8478,7 +8507,14 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == channel_helper_name
     ]
-    assert len(channel_invocations) + _orchestrated_pass_count(channel_helper_name) == 3
+    assert (
+        len(channel_invocations)
+        + _orchestrated_pass_count(channel_helper_name)
+        + _late_reshape_shuffle_attention_window_call_count(
+            "run_channel_shuffle_gather"
+        )
+        == 3
+    )
     assert sum(
         any(
             keyword.arg == "include_post_gather_cleanup"
@@ -8488,22 +8524,11 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         )
         for call in channel_invocations
     ) == 1
-    late_nchw_invocations = [
-        call
-        for call in channel_invocations
-        if any(
-            keyword.arg == "include_two_way_shuffle"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is False
-            for keyword in call.keywords
+    assert (
+        _late_reshape_shuffle_attention_window_call_count(
+            "run_channel_shuffle_gather"
         )
-    ]
-    assert len(late_nchw_invocations) == 1
-    assert any(
-        keyword.arg == "include_nhwc_shuffle"
-        and isinstance(keyword.value, ast.Constant)
-        and keyword.value.value is False
-        for keyword in late_nchw_invocations[0].keywords
+        == 1
     )
 
     unary_helper_name = "_run_transpose_unary_fanout_layout_pass_cluster"
@@ -8564,44 +8589,43 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    helper_name = "_run_channel_shuffle_gather_layout_pass_cluster"
+    owner_name = "run_late_reshape_shuffle_attention_window_cleanup"
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
-        and any(
-            keyword.arg == "include_two_way_shuffle"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is False
-            for keyword in statement.value.keywords
-        )
+        and statement.value.func.id == owner_name
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_late_channel_shuffle_gather_results"
-    previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_late_reshape_layout_results"
+    assert invocation.targets[0].id == (
+        "_late_reshape_shuffle_attention_window_results"
     )
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id == "run_late_reshape_layout_cleanup"
+    previous_boundary = lowerer.body[invocation_index - 1]
+    assert isinstance(previous_boundary, ast.If)
+    assert ast.unparse(previous_boundary.test) == (
+        "optimize_layout_transpose_chains"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_late_attention_layout_results"
+    assert next_boundary.targets[0].id == (
+        "_late_final_shape_activation_convergence_stats"
+    )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
-        next_boundary.value.func.id == "run_late_attention_layout_cleanup"
+        next_boundary.value.func.id
+        == "_run_indexed_final_shape_activation_convergence"
+    )
+    assert (
+        _late_reshape_shuffle_attention_window_call_count(
+            "run_channel_shuffle_gather"
+        )
+        == 1
     )
 
 

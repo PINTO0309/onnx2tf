@@ -5402,3 +5402,48 @@ No production callback, graph mutation, result schema, context identity, pass
 order, public API, artifact, dependency, TensorFlow boundary, or store entry
 changed. No real-model conversion was run; the phase-result store remains
 exactly 128 IDs and 128 owners.
+
+## Late reshape/shuffle/attention/window composite implementation
+
+`passes/late_reshape_shuffle_attention_window_orchestration.py` now owns the
+characterized four-stage late-layout sequence. It passes the exact same
+`ModelIRPassContext` object to reshape cleanup, base-only channel
+shuffle/Gather, attention cleanup, and window cleanup in their original order.
+The base channel policy still sets `include_two_way_shuffle=False` and
+`include_nhwc_shuffle=False`. All four raw result tuples are returned unchanged
+inside one ordered outer tuple, preserving child identities and nested schemas.
+
+The lowerer replaces four unconsumed locals with
+`_late_reshape_shuffle_attention_window_results` and removes the three
+now-unused direct child imports. The generic channel-shuffle wrapper remains:
+its guarded full-policy caller still requests post-Gather cleanup, and its
+argument-free callback remains wired into layout recovery. The optional late
+Concat elementwise-fanout guard remains the predecessor, and indexed final
+shape/activation convergence remains the successor.
+
+Existing child-family contracts now inspect their specialized owner for pass
+internals and the new composite for top-level ownership. Channel-policy tests
+count the guarded wrapper and base composite independently. Runtime callback
+injection proves exact four-stage order, shared-context identity, raw-result
+identity, and exact keyword policy.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite boundary, schema, policy, and runtime identity:
+  `4 passed in 0.58s`;
+- focused owner-aware child, terminal-boundary, and architecture coverage:
+  `356 passed in 20.24s`;
+- complete affected suite: `405 passed in 18.74s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.73s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 8.91s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.57s`.
+
+Ruff, Python bytecode compilation, and whitespace checks passed. No phase
+result, graph mutation, callback, guard, public API, artifact, dependency,
+TensorFlow boundary, or result schema changed. The store remains exactly 128
+IDs and 128 owners. No real-model conversion was repeated because this is a
+straight-line ownership move and runtime injection proves all state, result,
+policy, order, and boundary contracts.
