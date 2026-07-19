@@ -36,7 +36,8 @@ LATE_OWNER_PATH = (
     / "late_dequant_hardsigmoid_unary_orchestration.py"
 )
 LATE_OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
-LATE_RESULT = "_late_dequant_hardsigmoid_unary_results"
+LOWERER_LATE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+LATE_RESULT = "_late_dequant_swish_layout_tail_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -212,9 +213,9 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
     assert _single_target(branch.body[0]) == (
         "_terminal_convpool_output_passthrough_stats"
     )
-    assert _call_name(late_assignment) == LATE_OWNER
-    assert _call_name(lowerer.body[late_index + 1]) == (
-        "run_late_swish_layout_tail_cleanup"
+    assert _call_name(late_assignment) == LOWERER_LATE_OWNER
+    assert _phase_id(lowerer.body[late_index + 1]) == (
+        "shape_reconciliation.primary.very_late_broadcast"
     )
     late_owner = _functions(LATE_OWNER_PATH)[LATE_OWNER]
     late_calls = [

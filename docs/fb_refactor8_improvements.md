@@ -6627,3 +6627,35 @@ shared-context, architecture, efficiency, result, phase-store, and terminal
 validation contracts. The sole xfail is the intentionally absent owner.
 Production, dependencies, TensorFlow isolation, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+## Late dequant/swish-layout-tail composite implementation
+
+`passes/late_dequant_swish_layout_tail_orchestration.py` now owns the
+characterized adjacent composites. It passes the exact shared
+`ModelIRPassContext` to late dequant/hard-sigmoid/unary cleanup, then to late
+swish/very-late-layout-tail cleanup, forwarding the normalized
+`include_layout_transpose` option only to the second child. Both complete
+nested tuples are returned unchanged and in source order, preserving their raw
+identities.
+
+The lowerer replaces only `_late_dequant_hardsigmoid_unary_results` and
+`_late_swish_layout_tail_results` with
+`_late_dequant_swish_layout_tail_results`. The layout/no-layout branch remains
+the immediate predecessor, and phase-recorded very-late broadcast shape
+reconciliation remains the immediate successor. All nested owner modules,
+lowerer compatibility wrappers, independent fallback routes, and detailed
+result schemas remain intact.
+
+Thirty-six stale lowerer-entry assertions were updated to use the new outer
+owner while continuing to traverse and validate the unchanged dequant,
+fan-out, swish, Conv1D/decoder, Pad/InstanceNorm, singleton-Reshape, and
+broadcast child modules. Runtime injection proves shared-context identity,
+exact order, policy forwarding, and both raw-result identities for both layout
+policies. Sequential validation reports `5 passed` focused, `373 passed`
+owner-aware, `435 passed` affected, and all standard gates passing: 92
+terminal-layout/efficiency, 55 core, 196 result contracts, 2 phase-store, and
+11 TensorFlow-isolation/default-direct/`-cotof` tests. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed lowerer-result inventory
+decreases from 52 to 51. No real-model conversion was repeated because this
+is a straight-line orchestration-only extraction with complete context,
+option, order, schema, identity, nested-route, and boundary coverage.

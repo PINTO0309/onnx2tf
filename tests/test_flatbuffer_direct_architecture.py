@@ -6394,14 +6394,14 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_late_dequant_hardsigmoid_unary_cleanup"
+        == "run_late_dequant_swish_layout_tail_cleanup"
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_late_dequant_hardsigmoid_unary_results"
+        "_late_dequant_swish_layout_tail_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)
@@ -6409,14 +6409,10 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
         "optimize_layout_transpose_chains"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert len(next_boundary.targets) == 1
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_late_swish_layout_tail_results"
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert (
-        next_boundary.value.func.id == "run_late_swish_layout_tail_cleanup"
+    assert isinstance(next_boundary, ast.Expr)
+    assert ast.unparse(next_boundary).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.very_late_broadcast'"
     )
     owner_path = (
         REPO_ROOT

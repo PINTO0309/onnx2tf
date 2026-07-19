@@ -24,7 +24,7 @@ MUL_ADD_CONST = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 DEQUANT_HARDSIGMOID = (
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
 )
-LATE_DEQUANT_COMPOSITE = "run_late_dequant_hardsigmoid_unary_cleanup"
+LATE_DEQUANT_COMPOSITE = "run_late_dequant_swish_layout_tail_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

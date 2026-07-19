@@ -39,8 +39,8 @@ RESULT_SCHEMAS = (
         "optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains": 0,
     },
 )
-COMPOSITE_TARGET = "_late_swish_layout_tail_results"
-COMPOSITE_OWNER = "run_late_swish_layout_tail_cleanup"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

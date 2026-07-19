@@ -23,9 +23,9 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 OWNER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "pad_layout.py"
 OWNER = "run_pad_layout_cleanup"
 RESULT_TARGET = "_very_late_pad_layout_stats"
-COMPOSITE_TARGET = "_late_swish_layout_tail_results"
-COMPOSITE_OWNER = "run_late_swish_layout_tail_cleanup"
-PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 RESULT_SCHEMA = {
     "optimized_transpose_pad_prepost_nhwc_chains": 0,
@@ -180,7 +180,9 @@ def test_very_late_pad_moves_to_composite_and_keeps_consumed_fallback() -> None:
     )
     index = lowerer.body.index(composite)
     assert _call_name(composite) == COMPOSITE_OWNER
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
 
     owner_calls = [

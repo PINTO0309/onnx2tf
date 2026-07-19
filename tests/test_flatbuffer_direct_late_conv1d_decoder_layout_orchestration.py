@@ -36,9 +36,9 @@ COMPOSITE_OWNER_PATH = (
     / "very_late_layout_tail_orchestration.py"
 )
 COMPOSITE_OWNER = "run_very_late_layout_tail_cleanup"
-LOWERER_OWNER = "run_late_swish_layout_tail_cleanup"
-RESULT_TARGET = "_late_swish_layout_tail_results"
-PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+RESULT_TARGET = "_late_dequant_swish_layout_tail_results"
+PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 OLD_RESULT_TARGETS = (
     "_late_conv1d_squeeze_unary_stats",
@@ -116,7 +116,9 @@ def test_late_conv1d_decoder_cluster_uses_composite_result_outside_store() -> No
     )
     index = lowerer.body.index(assignment)
     assert _call_name(assignment) == LOWERER_OWNER
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
@@ -162,7 +164,9 @@ def test_late_conv1d_decoder_cluster_uses_one_composite_owner() -> None:
     )
     index = lowerer.body.index(assignment)
     assert _call_name(assignment) == LOWERER_OWNER
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS

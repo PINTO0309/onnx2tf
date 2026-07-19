@@ -1550,3 +1550,21 @@ Focused and affected sequential characterization report
 `2 passed, 1 xfailed` and `432 passed, 1 xfailed`; the sole expected failure is
 the intentionally absent owner. Production behavior, dependencies, TensorFlow
 isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest checkpoint implements the late dequant/swish-layout-tail owner. It
+forwards the exact shared `ModelIRPassContext` through both existing child
+composites in source order and forwards the normalized layout-Transpose option
+only to the second. Both complete nested results and their object identities
+are preserved.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The layout/no-layout branch and phase-recorded very-late broadcast
+reconciliation remain the immediate boundaries. Nested owners, compatibility
+wrappers, independent routes, graph mutations, public behavior, artifacts,
+dependencies, and TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 435 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 52 to 51.

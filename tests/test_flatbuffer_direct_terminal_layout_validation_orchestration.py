@@ -34,8 +34,8 @@ VERY_LATE_LAYOUT_TAIL_OWNER_PATH = (
 )
 VERY_LATE_LAYOUT_TAIL_OWNER = "run_very_late_layout_tail_cleanup"
 VERY_LATE_LAYOUT_TAIL_RESULT = "_very_late_layout_tail_results"
-LOWERER_LAYOUT_TAIL_OWNER = "run_late_swish_layout_tail_cleanup"
-LOWERER_LAYOUT_TAIL_RESULT = "_late_swish_layout_tail_results"
+LOWERER_LAYOUT_TAIL_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+LOWERER_LAYOUT_TAIL_RESULT = "_late_dequant_swish_layout_tail_results"
 SHARED_LATE_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -1871,11 +1871,8 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
     )
 
     predecessor = body[very_late_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_late_dequant_hardsigmoid_unary_results"
-    )
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == "optimize_layout_transpose_chains"
 
     successor = body[very_late_index + 1]
     _assert_phase_result_record(
@@ -2826,10 +2823,9 @@ def test_primary_path_retains_very_late_instancenorm_post_bias_result() -> None:
         and node.id == "_very_late_instancenorm_post_bias_stats"
         for node in ast.walk(ast.Module(body=body, type_ignores=[]))
     )
-    assert isinstance(body[index - 1], ast.Assign)
-    assert isinstance(body[index - 1].targets[0], ast.Name)
-    assert body[index - 1].targets[0].id == (
-        "_late_dequant_hardsigmoid_unary_results"
+    assert isinstance(body[index - 1], ast.If)
+    assert ast.unparse(body[index - 1].test) == (
+        "optimize_layout_transpose_chains"
     )
     _assert_phase_result_record(
         body[index + 1],

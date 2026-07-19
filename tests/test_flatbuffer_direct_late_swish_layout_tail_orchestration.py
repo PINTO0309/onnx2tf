@@ -24,7 +24,15 @@ OWNER_PATH = (
     / "passes"
     / "late_swish_layout_tail_orchestration.py"
 )
+LOWERER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_dequant_swish_layout_tail_orchestration.py"
+)
 OWNER = "run_late_swish_layout_tail_cleanup"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 CHILD_OWNERS = (
     "optimize_swish_transpose_passthrough_chains",
     "run_very_late_layout_tail_cleanup",
@@ -37,8 +45,8 @@ RESULT_TARGETS = (
     "_late_swish_transpose_passthrough_stats",
     "_very_late_layout_tail_results",
 )
-COMPOSITE_TARGET = "_late_swish_layout_tail_results"
-PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 SWISH_SCHEMA = {"rewritten_swish_transpose_passthrough_chains": 0}
 TAIL_PREFIX_SCHEMA = (
@@ -156,7 +164,7 @@ def test_late_swish_layout_tail_current_boundary_and_schema(
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -166,7 +174,9 @@ def test_late_swish_layout_tail_current_boundary_and_schema(
         keyword.arg: ast.unparse(keyword.value)
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
@@ -223,6 +233,14 @@ def test_late_swish_layout_tail_has_one_context_owner() -> None:
         for keyword in calls[1].keywords
     } == {"include_layout_transpose": "include_layout_transpose"}
 
+    lowerer_owner = _functions(LOWERER_OWNER_PATH)[LOWERER_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+        for node in ast.walk(lowerer_owner)
+    ) == 1
+
     lowerer = _lowerer()
     assert CURRENT_CHILD_OWNERS[0] in _functions(LOWERER_PATH)
     assignment = next(
@@ -231,7 +249,7 @@ def test_late_swish_layout_tail_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -241,7 +259,9 @@ def test_late_swish_layout_tail_has_one_context_owner() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS

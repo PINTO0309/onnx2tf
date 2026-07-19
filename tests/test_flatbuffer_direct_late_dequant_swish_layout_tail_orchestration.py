@@ -8,11 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.late_dequant_hardsigmoid_unary_orchestration import (
-    run_late_dequant_hardsigmoid_unary_cleanup,
-)
-from onnx2tf.tflite_builder.passes.late_swish_layout_tail_orchestration import (
-    run_late_swish_layout_tail_cleanup,
+from onnx2tf.tflite_builder.passes import (
+    late_dequant_swish_layout_tail_orchestration,
 )
 
 
@@ -90,33 +87,26 @@ def test_late_dequant_swish_layout_tail_current_boundary_and_schema(
     include_layout_transpose: bool,
 ) -> None:
     lowerer = _lowerer()
-    assignments = [
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CHILD_OWNERS
-    )
-    indices = [lowerer.body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-    assert all(
-        [ast.unparse(argument) for argument in statement.value.args]
-        == ["shared_model_ir_pass_context"]
-        for statement in assignments
-    )
-    assert assignments[0].value.keywords == []
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in assignments[1].value.keywords
+        for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    predecessor = lowerer.body[indices[0] - 1]
+    predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _phase_id(lowerer.body[indices[1] + 1]) == SUCCESSOR_PHASE_ID
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -131,11 +121,10 @@ def test_late_dequant_swish_layout_tail_current_boundary_and_schema(
         diagnostics=[],
     )
     results = (
-        run_late_dequant_hardsigmoid_unary_cleanup(context),
-        run_late_swish_layout_tail_cleanup(
+        late_dequant_swish_layout_tail_orchestration.run_late_dequant_swish_layout_tail_cleanup(
             context,
             include_layout_transpose=include_layout_transpose,
-        ),
+        )
     )
     assert tuple(type(result) for result in results) == (tuple, tuple)
     assert tuple(len(result) for result in results) == (2, 2)
@@ -150,10 +139,6 @@ def test_late_dequant_swish_layout_tail_current_boundary_and_schema(
     assert isinstance(broadcast_results[1], dict)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late dequant/swish-layout-tail composite owner is not implemented",
-)
 def test_late_dequant_swish_layout_tail_has_one_shared_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -203,3 +188,61 @@ def test_late_dequant_swish_layout_tail_has_one_shared_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_late_dequant_swish_layout_tail_runtime_order_option_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    model_ir = ModelIR("late_dequant_swish_layout_tail_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        ({"dequant": 1}, tuple({f"fanout_{index}": index} for index in range(3))),
+        ({"swish": 1}, tuple({f"tail_{index}": index} for index in range(4))),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def dequant(active_context: ModelIRPassContext) -> tuple[object, ...]:
+        observed.append((CHILD_OWNERS[0], active_context, {}))
+        return expected_results[0]
+
+    def swish(
+        active_context: ModelIRPassContext,
+        **options: object,
+    ) -> tuple[object, ...]:
+        observed.append((CHILD_OWNERS[1], active_context, options))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        late_dequant_swish_layout_tail_orchestration,
+        CHILD_OWNERS[0],
+        dequant,
+    )
+    monkeypatch.setattr(
+        late_dequant_swish_layout_tail_orchestration,
+        CHILD_OWNERS[1],
+        swish,
+    )
+
+    actual = (
+        late_dequant_swish_layout_tail_orchestration.run_late_dequant_swish_layout_tail_cleanup(
+            context,
+            include_layout_transpose=include_layout_transpose,
+        )
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context, {}),
+        (
+            CHILD_OWNERS[1],
+            context,
+            {"include_layout_transpose": include_layout_transpose},
+        ),
+    ]

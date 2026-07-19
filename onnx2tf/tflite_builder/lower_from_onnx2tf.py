@@ -231,8 +231,8 @@ from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestrat
 from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
     run_late_dequant_unary_fanout,
 )
-from onnx2tf.tflite_builder.passes.late_dequant_hardsigmoid_unary_orchestration import (
-    run_late_dequant_hardsigmoid_unary_cleanup,
+from onnx2tf.tflite_builder.passes.late_dequant_swish_layout_tail_orchestration import (
+    run_late_dequant_swish_layout_tail_cleanup,
 )
 from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
     run_transpose_unary_fanout,
@@ -287,9 +287,6 @@ from onnx2tf.tflite_builder.passes.late_reshape_shuffle_attention_window_orchest
 )
 from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration import (
     run_final_boundary_slice_concat_cleanup,
-)
-from onnx2tf.tflite_builder.passes.late_swish_layout_tail_orchestration import (
-    run_late_swish_layout_tail_cleanup,
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_qkv_layout_shape_orchestration import (
     run_terminal_affine_qkv_layout_shape_cleanup,
@@ -5149,18 +5146,13 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-    _late_dequant_hardsigmoid_unary_results = (
-        run_late_dequant_hardsigmoid_unary_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
     # Keep Conv1D/decoder, Pad/InstanceNorm, singleton Reshape, and broadcast
     # repairs in their fixed very-late order. Norm fallback can recreate
     # channelwise [1,C,1,1]->[1,1,1,C] adapters in no-layout mode.
-    _late_swish_layout_tail_results = (
-        run_late_swish_layout_tail_cleanup(
+    _late_dequant_swish_layout_tail_results = (
+        run_late_dequant_swish_layout_tail_cleanup(
             shared_model_ir_pass_context,
             include_layout_transpose=optimize_layout_transpose_chains,
         )

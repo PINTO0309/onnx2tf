@@ -5770,3 +5770,29 @@ characterized lowerer locals, retain nested owners and wrappers, update only
 stale boundary contracts, and run affected and standard gates sequentially.
 Commit and push only; do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Late dequant/swish-layout-tail implementation checkpoint
+
+`run_late_dequant_swish_layout_tail_cleanup(context, *,
+include_layout_transpose)` is implemented in
+`passes/late_dequant_swish_layout_tail_orchestration.py`. It preserves the
+exact shared context, dequant-before-swish order, second-child-only option, and
+both complete nested result identities. The lowerer has one
+`_late_dequant_swish_layout_tail_results` observation in place of the two
+characterized locals; child owners, wrappers, and independent routes remain
+available.
+
+Focused, owner-aware, affected, and standard sequential gates pass with
+`5`, `373`, `435`, and `92 / 55 / 196 / 2 / 11` tests respectively. Thirty-six
+stale entry-point assertions now resolve the outer composite while retaining
+direct validation of every nested pass family. The phase store remains exactly
+128 IDs and 128 owners, and the characterized unconsumed lowerer-result
+inventory is now 51. No real-model conversion was repeated for this exact
+orchestration-only extraction.
+
+At resume, refresh the 51-result inventory and select the next smallest
+straight-line observation-only boundary. Characterize state, options, guards,
+schemas, nested and independent routes, and outer phase/progress boundaries
+before production changes. Continue with core-only `uv`, sequential tests,
+and complete checkpoint commits/pushes only. Do not create, update, reopen, or
+otherwise modify a pull request.

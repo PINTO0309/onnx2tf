@@ -24,7 +24,15 @@ OWNER_PATH = (
     / "passes"
     / "late_dequant_hardsigmoid_unary_orchestration.py"
 )
+LOWERER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_dequant_swish_layout_tail_orchestration.py"
+)
 OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 CHILD_OWNERS = (
     "optimize_transpose_dequant_hardsigmoid_quantize_bridges",
     "run_late_dequant_unary_fanout",
@@ -37,10 +45,9 @@ RESULT_TARGETS = (
     "_late_dequant_hardsigmoid_bridge_stats",
     "_late_dequant_unary_fanout_results",
 )
-COMPOSITE_TARGET = "_late_dequant_hardsigmoid_unary_results"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
 PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
-SUCCESSOR_TARGET = "_late_swish_layout_tail_results"
-SUCCESSOR_OWNER = "run_late_swish_layout_tail_cleanup"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 EXPECTED_SCHEMAS = (
     {"removed_transpose_dequant_hardsigmoid_quantize_bridges": 0},
     (
@@ -85,6 +92,18 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_late_dequant_hardsigmoid_unary_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
     assignment = next(
@@ -93,18 +112,19 @@ def test_late_dequant_hardsigmoid_unary_current_boundary_and_schema() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
-    assert _call_name(lowerer.body[index + 1]) == SUCCESSOR_OWNER
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -147,6 +167,14 @@ def test_late_dequant_hardsigmoid_unary_has_one_context_owner() -> None:
     assert [ast.unparse(argument) for argument in calls[1].args] == ["context"]
     assert calls[1].keywords == []
 
+    lowerer_owner = _functions(LOWERER_OWNER_PATH)[LOWERER_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+        for node in ast.walk(lowerer_owner)
+    ) == 1
+
     lowerer = _lowerer()
     assert CURRENT_CHILD_OWNERS[0] in _functions(LOWERER_PATH)
     assert any(
@@ -160,18 +188,19 @@ def test_late_dequant_hardsigmoid_unary_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
-    assert _call_name(lowerer.body[index + 1]) == SUCCESSOR_OWNER
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

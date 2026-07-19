@@ -33,6 +33,7 @@ OUTER_OWNER_PATH = (
 )
 OWNER = "run_very_late_layout_tail_cleanup"
 OUTER_OWNER = "run_late_swish_layout_tail_cleanup"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 CHILD_OWNERS = (
     "run_late_conv1d_decoder_layout_cleanup",
     "run_very_late_pad_instancenorm_layout_cleanup",
@@ -52,8 +53,8 @@ RESULT_TARGETS = (
     "_very_late_singleton_consecutive_reshape_results",
     "_very_late_layout_broadcast_results",
 )
-COMPOSITE_TARGET = "_late_swish_layout_tail_results"
-PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_PHASE = "shape_reconciliation.primary.very_late_broadcast"
 
 
@@ -115,7 +116,7 @@ def test_very_late_layout_tail_current_boundary_and_schema(
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OUTER_OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -125,7 +126,9 @@ def test_very_late_layout_tail_current_boundary_and_schema(
         keyword.arg: ast.unparse(keyword.value)
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
@@ -220,7 +223,7 @@ def test_very_late_layout_tail_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OUTER_OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -230,7 +233,9 @@ def test_very_late_layout_tail_has_one_context_owner() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS

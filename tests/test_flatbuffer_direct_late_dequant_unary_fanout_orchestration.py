@@ -31,7 +31,8 @@ COMPOSITE_PATH = (
     / "late_dequant_hardsigmoid_unary_orchestration.py"
 )
 COMPOSITE_OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
-COMPOSITE_RESULT = "_late_dequant_hardsigmoid_unary_results"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+LOWERER_RESULT = "_late_dequant_swish_layout_tail_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -203,33 +204,31 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == COMPOSITE_OWNER
+        and statement.value.func.id == LOWERER_OWNER
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == COMPOSITE_RESULT
+    assert invocation.targets[0].id == LOWERER_RESULT
 
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.If)
     assert ast.unparse(previous.test) == "optimize_layout_transpose_chains"
 
-    following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_late_swish_layout_tail_results"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_late_swish_layout_tail_cleanup"
-    assert tuple(_expression_path(arg) for arg in following.value.args) == (
+    assert tuple(_expression_path(arg) for arg in invocation.value.args) == (
         "shared_model_ir_pass_context",
     )
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in following.value.keywords
+        for keyword in invocation.value.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.very_late_broadcast'"
+    )
     assert len(_composite_calls()) == 1
 
 

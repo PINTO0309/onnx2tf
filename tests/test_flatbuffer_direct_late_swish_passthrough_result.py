@@ -35,9 +35,10 @@ ORCHESTRATION_PATH = (
 WRAPPER = "_optimize_swish_transpose_passthrough_chains"
 DISPATCH = "_optimize_swish_transpose_passthrough_chains_pass"
 ORCHESTRATION_OWNER = "run_late_swish_layout_tail_cleanup"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 PUBLIC_OWNER = "optimize_swish_transpose_passthrough_chains"
-RESULT_TARGET = "_late_swish_layout_tail_results"
-PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
+RESULT_TARGET = "_late_dequant_swish_layout_tail_results"
+PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
 RESULT_SCHEMA = {"rewritten_swish_transpose_passthrough_chains": 0}
 
 
@@ -78,7 +79,7 @@ def _direct_location() -> tuple[ast.FunctionDef, int]:
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == ORCHESTRATION_OWNER
+        if _call_name(statement) == LOWERER_OWNER
     )
 
 
@@ -138,7 +139,9 @@ def test_late_swish_direct_and_layout_recovery_route_are_explicit() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert sum(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)

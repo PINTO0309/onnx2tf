@@ -28,8 +28,7 @@ ORCHESTRATION_PATH = (
 )
 OWNER = "_run_late_dequant_unary_fanout_pass_cluster"
 RESULT_TARGET = "_late_dequant_unary_fanout_results"
-PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_bridge_stats"
-SUCCESSOR = "run_late_swish_layout_tail_cleanup"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 COMPOSITE_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -38,7 +37,8 @@ COMPOSITE_PATH = (
     / "late_dequant_hardsigmoid_unary_orchestration.py"
 )
 COMPOSITE_OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
-COMPOSITE_TARGET = "_late_dequant_hardsigmoid_unary_results"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -79,6 +79,18 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def _context(name: str) -> ModelIRPassContext:
     model_ir = ModelIR(name)
     return ModelIRPassContext(
@@ -93,7 +105,7 @@ def _direct_location() -> tuple[ast.FunctionDef, int]:
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == COMPOSITE_OWNER
+        if _call_name(statement) == LOWERER_OWNER
     )
 
 
@@ -131,7 +143,7 @@ def test_late_dequant_unary_fanout_result_contract_is_explicit() -> None:
     assert observed_lowerer.name == lowerer.name
     assert _single_target(observed_lowerer.body[index]) == COMPOSITE_TARGET
     assert isinstance(observed_lowerer.body[index - 1], ast.If)
-    assert _call_name(observed_lowerer.body[index + 1]) == SUCCESSOR
+    assert _phase_id(observed_lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)

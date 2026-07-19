@@ -20,8 +20,8 @@ OWNER_PATH = (
 )
 OWNER = "_optimize_tencoder_add_expand_transpose_conv_nhwc_chains"
 RESULT_TARGET = "_late_conv1d_tencoder_stats"
-COMPOSITE_TARGET = "_late_swish_layout_tail_results"
-COMPOSITE_OWNER = "run_late_swish_layout_tail_cleanup"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 RESULT_SCHEMA = {"optimized_tencoder_add_expand_transpose_conv_nhwc_chains": 0}
 
 
