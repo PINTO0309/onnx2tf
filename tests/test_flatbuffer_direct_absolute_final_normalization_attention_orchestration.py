@@ -26,7 +26,14 @@ from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 ABSOLUTE_FINAL_NORMALIZATION_ATTENTION = (
-    "_run_absolute_final_normalization_attention_pass_pair"
+    "run_absolute_final_normalization_attention_rank1_cleanup"
+)
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_normalization_attention_orchestration.py"
 )
 VERY_LATE_PAD_INSTANCENORM = (
     "run_very_late_pad_instancenorm_layout_cleanup"
@@ -60,9 +67,12 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
+    owner_tree = ast.parse(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH.read_text(encoding="utf-8")
+    )
     helper = next(
         node
-        for node in lowerer.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
     )
@@ -176,8 +186,8 @@ def test_absolute_final_normalization_attention_is_a_straight_line_delegate() ->
     _, helper = _lowerer_and_helper()
 
     assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 4
-    assert helper.args.args == []
+    assert helper.end_lineno - helper.lineno + 1 == 10
+    assert [argument.arg for argument in helper.args.args] == ["context"]
     assert helper.args.posonlyargs == []
     assert helper.args.kwonlyargs == []
     assert helper.args.vararg is None
@@ -252,7 +262,7 @@ def test_absolute_final_normalization_attention_preserves_cleanup_contracts() ->
     assert rebuilt_scope is not scopes[0]
 
 
-def test_absolute_final_normalization_attention_invocation_is_zero_argument() -> None:
+def test_absolute_final_normalization_attention_invocation_uses_shared_context() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [
         node
@@ -263,7 +273,9 @@ def test_absolute_final_normalization_attention_invocation_is_zero_argument() ->
     ]
 
     assert len(invocations) == 1
-    assert invocations[0].args == []
+    assert [ast.unparse(argument) for argument in invocations[0].args] == [
+        "shared_model_ir_pass_context"
+    ]
     assert invocations[0].keywords == []
 
 
@@ -276,7 +288,7 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_absolute_final_normalization_attention_results"
+        == "_absolute_final_normalization_attention_rank1_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
@@ -305,15 +317,10 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
         "shared_model_ir_pass_context"
     ]
     assert previous.value.keywords == []
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_dynamic_rank1_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert (
-        following.value.func.id
-        == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following) == (
+        "session.record_phase_result('topology_layout.primary.absolute_final', "
+        "run_topology_layout_refresh(model_ir))"
     )
 
 
@@ -326,7 +333,7 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_absolute_final_normalization_attention_results"
+        == "_absolute_final_normalization_attention_rank1_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
@@ -361,7 +368,7 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == (
-        "_absolute_final_normalization_attention_results"
+        "_absolute_final_normalization_attention_rank1_results"
     )
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
@@ -444,7 +451,7 @@ def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() ->
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == (
-        "_absolute_final_normalization_attention_results"
+        "_absolute_final_normalization_attention_rank1_results"
     )
 
     owner_calls = _absolute_final_affine_instancenorm_calls(
@@ -485,33 +492,53 @@ def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() ->
     assert first_target.id == "_very_late_affine_post_add_stats"
 
 
-def test_absolute_final_normalization_attention_context_and_wrapper_are_explicit() -> (
+def test_absolute_final_normalization_attention_context_and_composite_are_explicit() -> (
     None
 ):
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
     assert isinstance(statement, ast.Return)
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == "run_absolute_final_normalization_attention"
-    assert tuple(_expression_path(arg) for arg in call.args) == (
-        "absolute_final_normalization_attention_context",
+    assert isinstance(statement.value, ast.Tuple)
+    assert len(statement.value.elts) == 2
+    normalization_call = statement.value.elts[0]
+    dynamic_call = statement.value.elts[1]
+    assert isinstance(normalization_call, ast.Call)
+    assert isinstance(normalization_call.func, ast.Name)
+    assert normalization_call.func.id == "run_absolute_final_normalization_attention"
+    assert tuple(_expression_path(arg) for arg in normalization_call.args) == (
+        "context",
     )
-    assert call.keywords == []
+    assert normalization_call.keywords == []
+    assert isinstance(dynamic_call, ast.Call)
+    assert isinstance(dynamic_call.func, ast.Name)
+    assert dynamic_call.func.id == (
+        "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
+    assert tuple(_expression_path(arg) for arg in dynamic_call.args) == (
+        "context.model_ir",
+    )
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in dynamic_call.keywords
+    } == {"layout_state": "context.layout_state"}
 
-    context_assignment = next(
+    invocation = next(
         statement
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
-        and any(
-            isinstance(target, ast.Name)
-            and target.id == "absolute_final_normalization_attention_context"
-            for target in statement.targets
-        )
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_normalization_attention_rank1_results"
     )
-    assert isinstance(context_assignment.value, ast.Name)
-    assert context_assignment.value.id == "shared_model_ir_pass_context"
+    assert ast.unparse(invocation.value) == (
+        "run_absolute_final_normalization_attention_rank1_cleanup("
+        "shared_model_ir_pass_context)"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "absolute_final_normalization_attention_context"
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_absolute_final_normalization_attention_runner_preserves_order(
@@ -575,9 +602,12 @@ def test_absolute_final_normalization_attention_lowerer_captures_results() -> No
     assert len(helper.body) == 1
     helper_statement = helper.body[0]
     assert isinstance(helper_statement, ast.Return)
-    assert isinstance(helper_statement.value, ast.Call)
-    assert isinstance(helper_statement.value.func, ast.Name)
-    assert helper_statement.value.func.id == "run_absolute_final_normalization_attention"
+    assert isinstance(helper_statement.value, ast.Tuple)
+    assert len(helper_statement.value.elts) == 2
+    raw_call = helper_statement.value.elts[0]
+    assert isinstance(raw_call, ast.Call)
+    assert isinstance(raw_call.func, ast.Name)
+    assert raw_call.func.id == "run_absolute_final_normalization_attention"
 
     invocation_index = next(
         index
@@ -586,14 +616,16 @@ def test_absolute_final_normalization_attention_lowerer_captures_results() -> No
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_absolute_final_normalization_attention_results"
+        == "_absolute_final_normalization_attention_rank1_results"
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
     assert invocation.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
-    assert invocation.value.args == []
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
     assert invocation.value.keywords == []
 
     previous = lowerer.body[invocation_index - 1]
@@ -603,9 +635,11 @@ def test_absolute_final_normalization_attention_lowerer_captures_results() -> No
     assert previous.targets[0].id == (
         "_absolute_final_affine_instancenorm_results"
     )
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_dynamic_rank1_stats"
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following) == (
+        "session.record_phase_result('topology_layout.primary.absolute_final', "
+        "run_topology_layout_refresh(model_ir))"
+    )
 
 
 def test_absolute_final_normalization_attention_module_does_not_import_lowerer() -> (

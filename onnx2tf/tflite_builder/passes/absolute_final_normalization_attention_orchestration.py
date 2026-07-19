@@ -7,6 +7,9 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScop
 from onnx2tf.tflite_builder.passes.attention_layout import (
     run_mixed_attention_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.dynamic_reshape import (
+    rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
+)
 from onnx2tf.tflite_builder.passes.pad_layout import (
     run_normalization_pad_layout_cleanup,
 )
@@ -66,4 +69,16 @@ def run_absolute_final_normalization_attention(
         build_absolute_final_normalization_attention_invocations(context),
         expected_pass_ids=ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS,
         phase_name="absolute-final normalization/attention",
+    )
+
+
+def run_absolute_final_normalization_attention_rank1_cleanup(
+    context: AbsoluteFinalNormalizationAttentionContext,
+) -> Tuple[Tuple[Dict[str, int], ...], Dict[str, int]]:
+    return (
+        run_absolute_final_normalization_attention(context),
+        rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+            context.model_ir,
+            layout_state=context.layout_state,
+        ),
     )

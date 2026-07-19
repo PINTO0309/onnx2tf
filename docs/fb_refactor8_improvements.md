@@ -4767,3 +4767,43 @@ context owner. Focused Ruff and whitespace checks passed.
 This checkpoint changes no production source, callback, context lifetime,
 graph mutation, pass order, result schema, store entry, API, artifact,
 dependency, or TensorFlow boundary. No real-model conversion was repeated.
+
+## Absolute-final normalization/attention rank-one implementation
+
+The existing
+`passes/absolute_final_normalization_attention_orchestration.py` now exposes
+`run_absolute_final_normalization_attention_rank1_cleanup(context)`. It first
+runs the existing normalization/pad plus mixed-attention owner, then runs
+dynamic rank-one Unsqueeze/Reshape repair with the same ModelIR/LayoutState.
+It returns a nested ordered pair: the original two-mapping normalization/
+attention tuple followed by the unchanged rank-one mapping. No result is
+flattened or normalized.
+
+The lowerer now retains one composite result instead of two unconsumed locals.
+Its redundant zero-argument closure and dedicated shared-context alias are
+removed. The affine/InstanceNorm predecessor, absolute-final topology/layout
+successor, raw dynamic-rank-one lowerer wrapper, safety-fallback and very-late
+rank-one callers, internal shared state scope, and all result schemas remain
+unchanged. The composite remains outside the full 128/128 phase-result store
+and adds no scan, control-flow decision, dependency, TensorFlow import, public
+API, or artifact behavior.
+
+Final sequential validation under core-only `uv`:
+
+- focused nested-schema contracts: `3 passed in 0.69s`;
+- affected normalization/attention, affine/InstanceNorm, shared-context,
+  topology/layout, safety-fallback, dynamic-Reshape, terminal, store, and
+  architecture contracts: `425 passed in 20.73s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.84s`;
+- synthetic core runtime contracts: `55 passed in 0.95s`;
+- result contracts: `196 passed in 9.30s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.98s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model conversion was repeated because runtime callback injection
+proves the exact nested schema, context identity, callback order, and argument
+policy, while owner-aware structural coverage accounts for every independent
+dynamic-rank-one caller and both neighboring boundaries.

@@ -242,7 +242,7 @@ from onnx2tf.tflite_builder.passes.absolute_final_affine_instancenorm_orchestrat
     run_absolute_final_affine_instancenorm_cleanup,
 )
 from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
-    run_absolute_final_normalization_attention,
+    run_absolute_final_normalization_attention_rank1_cleanup,
 )
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     run_qkv_attention,
@@ -4214,11 +4214,6 @@ def lower_onnx_to_ir(
             include_layout_transpose=include_layout_transpose,
         )
 
-    def _run_absolute_final_normalization_attention_pass_pair() -> Tuple[Dict[str, int], ...]:
-        return run_absolute_final_normalization_attention(
-            absolute_final_normalization_attention_context
-        )
-
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> Tuple[
         Dict[str, int], ...
     ]:
@@ -4264,7 +4259,6 @@ def lower_onnx_to_ir(
     boundary_batchmatmul_unary_context = shared_model_ir_pass_context
     channel_slice_pad_mul_context = shared_model_ir_pass_context
     late_hard_activation_layout_context = shared_model_ir_pass_context
-    absolute_final_normalization_attention_context = shared_model_ir_pass_context
     qkv_attention_context = shared_model_ir_pass_context
     duplicate_quantized_prelu_context = shared_model_ir_pass_context
     very_late_gather_constant_normalization_context = shared_model_ir_pass_context
@@ -5770,13 +5764,9 @@ def lower_onnx_to_ir(
             shared_model_ir_pass_context
         )
     )
-    _absolute_final_normalization_attention_results = (
-        _run_absolute_final_normalization_attention_pass_pair()
-    )
-    _absolute_final_dynamic_rank1_stats = (
-        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
-            model_ir,
-            layout_state=session.layout_state,
+    _absolute_final_normalization_attention_rank1_results = (
+        run_absolute_final_normalization_attention_rank1_cleanup(
+            shared_model_ir_pass_context
         )
     )
     session.record_phase_result(

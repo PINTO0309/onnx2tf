@@ -41,6 +41,16 @@ ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
 ABSOLUTE_FINAL_AFFINE_INSTANCENORM = (
     "run_absolute_final_affine_instancenorm_cleanup"
 )
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_normalization_attention_orchestration.py"
+)
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION = (
+    "run_absolute_final_normalization_attention_rank1_cleanup"
+)
 
 
 def _absolute_final_affine_instancenorm_call_count(
@@ -54,6 +64,28 @@ def _absolute_final_affine_instancenorm_call_count(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
+def _absolute_final_normalization_attention_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
     )
     return sum(
         isinstance(node, ast.Call)
@@ -767,7 +799,6 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
     assert [assignment.targets[0].id for assignment in result_assignments] == [
         "_very_late_dynamic_rank1_reshape_stats",
         "_fallback_dynamic_rank1_stats",
-        "_absolute_final_dynamic_rank1_stats",
     ]
     assignment_inputs = []
     for assignment in result_assignments:
@@ -775,7 +806,13 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
         argument = assignment.value.args[0]
         assert isinstance(argument, ast.Name)
         assignment_inputs.append(argument.id)
-    assert assignment_inputs == ["model_ir", "fallback_ir", "model_ir"]
+    assert assignment_inputs == ["model_ir", "fallback_ir"]
+    assert (
+        _absolute_final_normalization_attention_call_count(
+            "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+        )
+        == 1
+    )
 
     remaining_expressions = [
         node

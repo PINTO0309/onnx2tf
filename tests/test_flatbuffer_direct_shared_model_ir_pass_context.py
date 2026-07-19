@@ -84,7 +84,6 @@ SHARED_CONTEXT_TYPES = (
     ),
 )
 MAIN_SHARED_CONTEXT_NAMES = (
-    "absolute_final_normalization_attention_context",
     "boundary_batchmatmul_unary_context",
     "channel_shuffle_gather_context",
     "channel_slice_pad_mul_context",

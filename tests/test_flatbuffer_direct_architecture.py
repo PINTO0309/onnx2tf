@@ -6436,7 +6436,9 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert len(summary_owner_calls) == 1
 
 
-def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> None:
+def test_lowerer_absolute_final_normalization_attention_rank1_owner_is_explicit() -> (
+    None
+):
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -6446,25 +6448,45 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    helper_name = "_run_absolute_final_normalization_attention_pass_pair"
-    helper = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    owner_name = "run_absolute_final_normalization_attention_rank1_cleanup"
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "absolute_final_normalization_attention_orchestration.py"
     )
-    expected_order = [
-        "run_normalization_pad_layout_cleanup",
-        "run_mixed_attention_layout_cleanup",
-    ]
-    assert tuple(expected_order) == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS
-    helper_calls = [
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
         node
-        for node in ast.walk(helper)
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = [
+        node
+        for node in ast.walk(owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "run_absolute_final_normalization_attention"
+        and node.func.id
+        in {
+            "run_absolute_final_normalization_attention",
+            "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs",
+        }
     ]
-    assert len(helper_calls) == 1
+    owner_calls.sort(key=lambda node: (node.lineno, node.col_offset))
+    assert [call.func.id for call in owner_calls] == [
+        "run_absolute_final_normalization_attention",
+        "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs",
+    ]
+    assert tuple(ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PASS_IDS) == (
+        "run_normalization_pad_layout_cleanup",
+        "run_mixed_attention_layout_cleanup",
+    )
+    assert not any(
+        isinstance(node, ast.FunctionDef)
+        and node.name == "_run_absolute_final_normalization_attention_pass_pair"
+        for node in lowerer.body
+    )
 
     invocation_index = next(
         index
@@ -6473,10 +6495,10 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_absolute_final_normalization_attention_results"
+        == "_absolute_final_normalization_attention_rank1_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id == owner_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
@@ -6495,28 +6517,24 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
         ast.unparse(argument) for argument in previous_boundary.value.args
     ] == ["shared_model_ir_pass_context"]
     assert previous_boundary.value.keywords == []
-    affine_boundary = lowerer.body[invocation_index - 2]
-    assert isinstance(affine_boundary, ast.Assign)
-    assert len(affine_boundary.targets) == 1
-    assert isinstance(affine_boundary.targets[0], ast.Name)
-    assert affine_boundary.targets[0].id == (
+    signature_boundary = lowerer.body[invocation_index - 2]
+    assert isinstance(signature_boundary, ast.Assign)
+    assert len(signature_boundary.targets) == 1
+    assert isinstance(signature_boundary.targets[0], ast.Name)
+    assert signature_boundary.targets[0].id == (
         "_absolute_final_boundary_signature_results"
     )
-    assert isinstance(affine_boundary.value, ast.Call)
-    assert isinstance(affine_boundary.value.func, ast.Name)
+    assert isinstance(signature_boundary.value, ast.Call)
+    assert isinstance(signature_boundary.value.func, ast.Name)
     assert (
-        affine_boundary.value.func.id
+        signature_boundary.value.func.id
         == "run_boundary_shape_signature_cleanup"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_absolute_final_dynamic_rank1_stats"
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert (
-        next_boundary.value.func.id
-        == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    assert isinstance(next_boundary, ast.Expr)
+    assert ast.unparse(next_boundary) == (
+        "session.record_phase_result('topology_layout.primary.absolute_final', "
+        "run_topology_layout_refresh(model_ir))"
     )
 
 

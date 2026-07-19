@@ -39,7 +39,7 @@ INSTANCENORM_OWNER = (
     "optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
 )
 PREDECESSOR_TARGET = "_absolute_final_boundary_signature_results"
-SUCCESSOR_TARGET = "_absolute_final_normalization_attention_results"
+SUCCESSOR_TARGET = "_absolute_final_normalization_attention_rank1_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

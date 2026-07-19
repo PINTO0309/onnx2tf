@@ -4226,3 +4226,37 @@ lowerer results with one nested pair, remove only the now-redundant lowerer
 closure and context alias, retain the raw dynamic-rank-one wrapper and all
 other callers, then validate sequentially. Keep the store at 128/128 and never
 create, update, or reopen a pull request.
+
+## Absolute-final normalization/attention rank-one implementation
+
+`run_absolute_final_normalization_attention_rank1_cleanup(context)` now lives
+in the existing normalization/attention orchestration module. It invokes the
+unchanged two-pass owner first and dynamic rank-one repair second, forwarding
+the same ModelIR/LayoutState and returning `(normalization_attention_results,
+dynamic_rank1_result)` without flattening either schema.
+
+The lowerer replaces two unconsumed locals with one composite target and
+removes the now-redundant zero-argument closure and context alias. The
+affine/InstanceNorm predecessor, topology/layout successor, raw lowerer
+wrapper, other rank-one callers, shared normalization/attention state scope,
+and exact mutation order remain intact. The store stays 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused nested-schema contracts: `3 passed in 0.69s`;
+- affected owner-aware contracts: `425 passed in 20.73s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.84s`;
+- synthetic core runtime contracts: `55 passed in 0.95s`;
+- result contracts: `196 passed in 9.30s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.98s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model conversion was repeated; runtime and owner-aware structural
+coverage prove the unchanged composite contract. Commit and push this
+checkpoint. On resume, inventory the next small semantically closed
+unconsumed-result cluster before production changes. Keep all validation
+sequential and continue with commits and pushes only; never create, update, or
+reopen a pull request.

@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    absolute_final_normalization_attention_orchestration,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -75,51 +82,26 @@ def _assert_topology_refresh(statement: ast.stmt) -> None:
     assert ast.unparse(call.args[1]) == "run_topology_layout_refresh(model_ir)"
 
 
-def test_absolute_final_normalization_attention_rank1_raw_boundaries_are_fixed() -> (
+def test_absolute_final_normalization_attention_rank1_summary_boundaries_are_fixed() -> (
     None
 ):
     lowerer = _lowerer()
-    normalization_index = _target_index(lowerer, OLD_TARGETS[0])
-    assert _target_index(lowerer, OLD_TARGETS[1]) == normalization_index + 1
-    assert (
-        _single_target(lowerer.body[normalization_index - 1])
-        == PREDECESSOR_TARGET
-    )
-    _assert_topology_refresh(lowerer.body[normalization_index + 2])
+    summary_index = _target_index(lowerer, SUMMARY_TARGET)
+    assert _single_target(lowerer.body[summary_index - 1]) == PREDECESSOR_TARGET
+    _assert_topology_refresh(lowerer.body[summary_index + 1])
 
-    normalization = lowerer.body[normalization_index]
-    dynamic_rank1 = lowerer.body[normalization_index + 1]
-    assert isinstance(normalization, ast.Assign)
-    assert ast.unparse(normalization.value) == f"{NORMALIZATION_WRAPPER}()"
-    assert isinstance(dynamic_rank1, ast.Assign)
-    assert ast.unparse(dynamic_rank1.value) == (
-        f"{DYNAMIC_WRAPPER}(model_ir, layout_state=session.layout_state)"
+    summary = lowerer.body[summary_index]
+    assert isinstance(summary, ast.Assign)
+    assert ast.unparse(summary.value) == (
+        f"{SUMMARY_OWNER}(shared_model_ir_pass_context)"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in {*OLD_TARGETS, CONTEXT_ALIAS, NORMALIZATION_WRAPPER}
+        for node in ast.walk(lowerer)
     )
 
-    nested = next(
-        node
-        for node in lowerer.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == NORMALIZATION_WRAPPER
-    )
-    assert len(nested.body) == 1
-    assert isinstance(nested.body[0], ast.Return)
-    assert ast.unparse(nested.body[0].value) == (
-        f"{NORMALIZATION_OWNER}({CONTEXT_ALIAS})"
-    )
-    context_assignment = next(
-        statement
-        for statement in lowerer.body
-        if _single_target(statement) == CONTEXT_ALIAS
-    )
-    assert isinstance(context_assignment, ast.Assign)
-    assert ast.unparse(context_assignment.value) == "shared_model_ir_pass_context"
 
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="absolute-final normalization/attention and rank-one repair lack one owner",
-)
 def test_absolute_final_normalization_attention_rank1_uses_one_context_owner() -> (
     None
 ):
@@ -161,3 +143,60 @@ def test_absolute_final_normalization_attention_rank1_uses_one_context_owner() -
         for node in ast.walk(lowerer)
     )
     assert DYNAMIC_WRAPPER in _functions(LOWERER_PATH)
+
+
+def test_absolute_final_normalization_attention_rank1_preserves_nested_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("absolute_final_normalization_attention_rank1")
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict[str, object]] = []
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+    normalization_results = (
+        {"normalization_pad": 2},
+        {"mixed_attention": 3},
+    )
+    dynamic_result = {
+        "rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs": 4
+    }
+    events: list[tuple[str, object, dict[str, object]]] = []
+
+    def _run_normalization(
+        candidate: ModelIRPassContext,
+    ) -> tuple[dict[str, int], ...]:
+        events.append((NORMALIZATION_OWNER, candidate, {}))
+        return tuple(dict(result) for result in normalization_results)
+
+    def _run_dynamic(
+        candidate: ModelIR,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        events.append((DYNAMIC_OWNER, candidate, dict(kwargs)))
+        return dict(dynamic_result)
+
+    monkeypatch.setattr(
+        absolute_final_normalization_attention_orchestration,
+        NORMALIZATION_OWNER,
+        _run_normalization,
+    )
+    monkeypatch.setattr(
+        absolute_final_normalization_attention_orchestration,
+        DYNAMIC_OWNER,
+        _run_dynamic,
+    )
+
+    owner_module = absolute_final_normalization_attention_orchestration
+    runner = owner_module.run_absolute_final_normalization_attention_rank1_cleanup
+    assert runner(context) == (normalization_results, dynamic_result)
+    assert events == [
+        (NORMALIZATION_OWNER, context, {}),
+        (
+            DYNAMIC_OWNER,
+            model_ir,
+            {"layout_state": layout_state},
+        ),
+    ]

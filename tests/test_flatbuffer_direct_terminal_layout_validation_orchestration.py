@@ -68,6 +68,16 @@ ABSOLUTE_FINAL_AFFINE_INSTANCENORM_OWNER_PATH = (
 ABSOLUTE_FINAL_AFFINE_INSTANCENORM_OWNER = (
     "run_absolute_final_affine_instancenorm_cleanup"
 )
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_normalization_attention_orchestration.py"
+)
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_OWNER = (
+    "run_absolute_final_normalization_attention_rank1_cleanup"
+)
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -271,6 +281,29 @@ def _absolute_final_affine_instancenorm_owner_call_count(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM_OWNER
+    )
+    owner_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+        for node in ast.walk(owner)
+    )
+
+
+def _absolute_final_normalization_attention_owner_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_OWNER_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_OWNER
     )
     owner_name = function_name.removeprefix("_")
     return sum(
@@ -969,19 +1002,34 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == owner_name
     ]
-    assert len(direct_indices) == 2
+    assert len(direct_indices) == 1
+    assert (
+        _absolute_final_normalization_attention_owner_call_count(owner_name)
+        == 1
+    )
 
     very_late = body[direct_indices[0]]
     assert isinstance(very_late, ast.Assign)
     assert isinstance(very_late.targets[0], ast.Name)
     assert very_late.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
 
-    final_index = direct_indices[1]
+    final_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_normalization_attention_rank1_results"
+    )
     final = body[final_index]
     assert isinstance(final, ast.Assign)
     assert isinstance(final.targets[0], ast.Name)
-    assert final.targets[0].id == "_absolute_final_dynamic_rank1_stats"
-    assert _call_name(_statement_call(final)) == owner_name
+    assert final.targets[0].id == (
+        "_absolute_final_normalization_attention_rank1_results"
+    )
+    assert _call_name(_statement_call(final)) == (
+        "run_absolute_final_normalization_attention_rank1_cleanup"
+    )
 
     topology_layout_refresh = body[final_index + 1]
     _assert_phase_result_record(
@@ -1011,7 +1059,12 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
         ),
         key=lambda call: call.lineno,
     )
-    assert len(all_calls) == 3
+    assert len(all_calls) == 2
+    assert (
+        len(all_calls)
+        + _absolute_final_normalization_attention_owner_call_count(owner_name)
+        == 3
+    )
 
 
 def test_primary_path_retains_absolute_final_boundary_signature_results() -> None:

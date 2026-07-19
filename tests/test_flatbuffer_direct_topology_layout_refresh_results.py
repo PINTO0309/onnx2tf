@@ -44,7 +44,7 @@ EXPECTED_MODEL_ARGUMENTS = (
 EXPECTED_PREDECESSOR_IDS = (
     "_fallback_dynamic_rank1_stats",
     "shape_reconciliation.fallback.broadcast",
-    "_absolute_final_dynamic_rank1_stats",
+    "_absolute_final_normalization_attention_rank1_results",
     "shape_reconciliation.primary.final_convinteger",
     "shape_reconciliation.primary.final_instancenorm",
     "shape_reconciliation.primary.final_broadcast",
