@@ -6476,3 +6476,30 @@ shared-context, pass-efficiency, terminal-validation, architecture, result,
 and phase-store contracts. The sole xfail is the intentionally absent owner.
 Production, public behavior, dependencies, TensorFlow isolation, and the
 exactly 128-ID/128-owner store remain unchanged.
+
+## Very-late SiNet recovery-tail characterization checkpoint
+
+The current characterized inventory contains 54 unconsumed lowerer-result
+assignments. The next selected pair is the absolute-end SiNet terminal-layout
+recovery followed immediately by the same context's pre-add/resize recovery
+callback. Both are observation-only, and there is no guard, phase record,
+progress callback, result consumer, or other mutation between them.
+
+The proposed owner must pass the exact `SINetTerminalLayoutRecoveryContext` to
+the terminal-layout child and then invoke that context's unchanged
+`preadd_resize_recovery` callback. It must preserve call order and return both
+complete raw tuples without copying or normalization. The recorded terminal
+indexed-shape convergence remains the predecessor, and recorded very-late
+residual affine/PRELU cleanup remains the successor outside the owner. Both
+lowerer wrappers and every other independent recovery route remain intact.
+
+`tests/test_flatbuffer_direct_very_late_sinet_recovery_tail_orchestration.py`
+fixes adjacency, zero-argument wrapper contracts, context construction,
+callback ownership, complete nested result schemas, observation-only result
+use, and both outer phase boundaries. Sequential characterization under the
+core-only `uv` environment reports `1 passed, 1 xfailed in 0.59s` focused and
+`456 passed, 1 xfailed in 18.89s` across the affected SiNet, singleton
+Reshape, CSP-attention, shared-context, callback-composition, architecture,
+efficiency, phase-store, and terminal-validation contracts. The sole xfail is
+the intentionally absent owner. Production, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner store remain unchanged.

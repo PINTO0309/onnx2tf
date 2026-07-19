@@ -1468,3 +1468,17 @@ report `2 passed, 1 xfailed` and `1140 passed, 1 xfailed`; the sole expected
 failure is the intentionally absent owner. Production behavior, dependencies,
 TensorFlow isolation, and the exactly 128-ID/128-owner phase store remain
 unchanged.
+
+The next characterization selects the adjacent absolute-end SiNet
+terminal-layout recovery and its context-owned pre-add/resize callback. The
+new owner must pass the exact `SINetTerminalLayoutRecoveryContext` to the first
+child, invoke its unchanged callback second, and preserve both complete raw
+tuples and their identities. Recorded terminal indexed-shape convergence and
+very-late residual affine/PRELU cleanup remain the immediate outer phase
+boundaries. Both lowerer wrappers and every independent recovery route remain
+unchanged; production is unchanged pending one straight-line owner.
+
+Focused and affected sequential characterization report
+`1 passed, 1 xfailed` and `456 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.

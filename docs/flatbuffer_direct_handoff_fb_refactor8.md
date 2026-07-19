@@ -5639,3 +5639,31 @@ Preserve the guard, phase record, progress callback, and all child owners. Add
 runtime order/context/option/result-identity injection, run affected and
 standard gates sequentially, then commit and push only. Do not create, update,
 or reopen a pull request.
+
+## Very-late SiNet recovery-tail characterization checkpoint
+
+After the terminal Clamp/SiNet extraction, the characterized inventory is 54
+unconsumed lowerer-result assignments. The next safe boundary is the adjacent
+absolute-end SiNet terminal-layout recovery and pre-add/resize callback. The
+recorded `shape_topology.terminal.indexed_convergence` call is the predecessor;
+the recorded `cleanup.very_late.residual_affine_prelu` call is the successor.
+There is no intervening decision, phase-store write, progress callback, or
+consumer.
+
+Focused characterization reports `1 passed, 1 xfailed`; the affected suite
+reports `456 passed, 1 xfailed`. The only xfail requires the intentionally
+absent `passes/very_late_sinet_recovery_tail_orchestration.py`. The tests fix
+the exact shared `SINetTerminalLayoutRecoveryContext`, its original
+pre-add/resize callback, source order, both complete nested schemas, and the
+unchanged outer boundaries. Production and the 128-ID/128-owner phase store
+are unchanged.
+
+At resume, implement
+`run_very_late_sinet_recovery_tail_cleanup(context)` as a straight-line owner:
+call `run_sinet_terminal_layout_recovery(context)`, then
+`context.preadd_resize_recovery()`, and return both raw results unchanged.
+Replace only the two characterized lowerer locals, retain both zero-argument
+wrappers and all independent routes, update only stale direct-boundary tests,
+and run all affected and standard gates sequentially. Commit and push the
+completed unit only. Do not create, update, reopen, or otherwise modify a pull
+request.
