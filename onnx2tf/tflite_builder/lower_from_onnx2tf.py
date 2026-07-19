@@ -281,14 +281,8 @@ from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_reshape_shuffle_attention_window_orchestration import (
     run_late_reshape_shuffle_attention_window_cleanup,
 )
-from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
-    run_final_boundary_channel_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.final_slice_pre_concat_layout_orchestration import (
-    run_final_slice_pre_concat_layout_cleanup,
-)
-from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
-    run_terminal_concat_bridge_layout_cleanup,
+from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration import (
+    run_final_boundary_slice_concat_cleanup,
 )
 from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
     run_late_conv1d_decoder_layout_cleanup,
@@ -5135,25 +5129,12 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    # Final boundary cleanup after all late transpose/layout rewrites.
-    _final_boundary_channel_layout_results = (
-        run_final_boundary_channel_layout_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
-    _final_slice_concat_recovery_results = (
-        _run_terminal_slice_concat_layout_recovery_sequence()
-    )
-    # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
-    # can recreate CONCAT(axis=1)+post-transpose wrappers.
-    _final_slice_pre_concat_layout_results = (
-        run_final_slice_pre_concat_layout_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
-    _terminal_concat_bridge_layout_results = (
-        run_terminal_concat_bridge_layout_cleanup(
-            shared_model_ir_pass_context,
+    # Final boundary/Slice/Concat cleanup after all late transpose/layout
+    # rewrites. Late strict rewrites can recreate CONCAT(axis=1)+post-
+    # transpose wrappers, so keep this at the terminal boundary.
+    _final_boundary_slice_concat_results = (
+        run_final_boundary_slice_concat_cleanup(
+            terminal_slice_concat_recovery_context,
         )
     )
     if optimize_layout_transpose_chains:

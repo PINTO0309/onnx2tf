@@ -36,6 +36,15 @@ LAYOUT_TRANSPOSE_PATH = (
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "layout_transpose.py"
 )
 TERMINAL_SLICE_CONCAT = "_run_terminal_slice_concat_layout_recovery_sequence"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
 RESULT_TARGETS = (
     "_terminal_slice_concat_recovery_results",
     "_final_slice_concat_recovery_results",
@@ -80,6 +89,17 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_SLICE_CONCAT
     )
     return lowerer, helper
+
+
+def _composite_recovery_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_slice_concat_recovery"
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -303,9 +323,14 @@ def test_terminal_slice_concat_recovery_invocations_remain_zero_argument() -> No
         and node.func.id == TERMINAL_SLICE_CONCAT
     ]
 
-    assert len(invocations) == 2
+    assert len(invocations) == 1
     assert all(call.args == [] for call in invocations)
     assert all(call.keywords == [] for call in invocations)
+    composite_calls = _composite_recovery_calls()
+    assert len(composite_calls) == 1
+    assert [ast.unparse(argument) for argument in composite_calls[0].args] == [
+        "context"
+    ]
 
 
 def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
@@ -320,7 +345,7 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
         and statement.value.func.id == TERMINAL_SLICE_CONCAT
     ]
 
-    assert len(invocation_indexes) == 2
+    assert len(invocation_indexes) == 1
     observed: list[
         tuple[str | None, str, tuple[str | None, ...], str | None, str]
     ] = []
@@ -387,14 +412,18 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             None,
             "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
         ),
-        (
-            "_final_boundary_channel_layout_results",
-            "run_final_boundary_channel_layout_cleanup",
-            (),
-            "_final_slice_pre_concat_layout_results",
-            "run_final_slice_pre_concat_layout_cleanup",
-        ),
     ]
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(composite)
+    assert _single_target(lowerer.body[index - 1]) == (
+        "_late_final_shape_activation_convergence_stats"
+    )
+    assert isinstance(lowerer.body[index + 1], ast.If)
+    assert len(_composite_recovery_calls()) == 1
 
 
 def test_terminal_slice_concat_recovery_context_and_wrapper_are_explicit() -> None:
@@ -524,10 +553,11 @@ def test_terminal_slice_concat_propagates_and_retains_both_ordered_results(
         for statement in lowerer.body
         if _direct_call_name(statement) == TERMINAL_SLICE_CONCAT
     ]
-    assert len(production_results) == 2
+    assert len(production_results) == 1
     assert tuple(_single_target(statement) for statement in production_results) == (
-        RESULT_TARGETS
+        RESULT_TARGETS[:1]
     )
+    assert len(_composite_recovery_calls()) == 1
     for target in RESULT_TARGETS:
         assert not any(
             isinstance(node, ast.Name)

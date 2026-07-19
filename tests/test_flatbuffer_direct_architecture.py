@@ -319,6 +319,29 @@ def _late_reshape_shuffle_attention_window_call_count(
     )
 
 
+def _final_boundary_slice_concat_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "final_boundary_slice_concat_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_final_boundary_slice_concat_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -2244,7 +2267,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
-    assert len(invocation_indexes) == 2
+    assert len(invocation_indexes) == 1
     previous_targets = []
     previous_call_names = []
     previous_keyword_names = []
@@ -2307,21 +2330,23 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         next_call_names.append(following_call.func.id)
     assert previous_targets == [
         None,
-        "_final_boundary_channel_layout_results",
     ]
     assert previous_call_names == [
         "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
-        "run_final_boundary_channel_layout_cleanup",
     ]
-    assert previous_keyword_names == [["layout_state"], []]
+    assert previous_keyword_names == [["layout_state"]]
     assert next_targets == [
         None,
-        "_final_slice_pre_concat_layout_results",
     ]
     assert next_call_names == [
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
-        "run_final_slice_pre_concat_layout_cleanup",
     ]
+    assert (
+        _final_boundary_slice_concat_call_count(
+            "run_terminal_slice_concat_recovery"
+        )
+        == 1
+    )
 
 
 def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
@@ -3762,12 +3787,12 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert isinstance(next_boundary, ast.Assign)
     assert isinstance(next_boundary.targets[0], ast.Name)
     assert next_boundary.targets[0].id == (
-        "_final_boundary_channel_layout_results"
+        "_final_boundary_slice_concat_results"
     )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert next_boundary.value.func.id == (
-        "run_final_boundary_channel_layout_cleanup"
+        "run_final_boundary_slice_concat_cleanup"
     )
 
     fusion_wrapper = next(

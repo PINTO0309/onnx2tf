@@ -1078,6 +1078,18 @@ indexed final-shape successor, independent full-policy and callback routes,
 and the full 128-ID/128-owner store. Production remains unchanged pending a
 separate context-owner implementation.
 
+The latest checkpoint implements that final boundary/Slice/Concat context
+owner. It accepts the existing callback-bearing recovery context, passes its
+exact nested shared context to the three layout children, passes the complete
+context to terminal Slice/Concat recovery, and returns every raw tuple
+unchanged in source order. The lowerer replaces four observation-only locals
+with one composite result while retaining its compatibility wrapper and the
+earlier independent recovery call. Outer boundaries, specialized owners, pass
+IDs, phase results, public behavior, artifacts, dependency boundaries, and
+TensorFlow-free direct/`-cotof` behavior remain unchanged. Runtime identity
+tests, 400 affected contracts, and the full sequential standard gate set pass;
+the phase-result store remains exactly 128 IDs and 128 owners.
+
 The latest checkpoint implements that late reshape/shuffle/attention/window
 context owner. One orchestration module now forwards the same
 `ModelIRPassContext` to all four children, preserves the base-only channel

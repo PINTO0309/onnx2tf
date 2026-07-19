@@ -12,6 +12,15 @@ OWNER_PATH = (
     / "passes"
     / "concat_unary_conv_layout.py"
 )
+FINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+FINAL_COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+FINAL_COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
 RUNNER = "run_concat_unary_conv_layout_cleanup"
 OWNER = "_optimize_transpose_concat_unary_fanout_conv_nhwc_chains"
 CONCAT_INPUT_ADAPTER = (
@@ -151,8 +160,13 @@ def test_lowerer_moves_terminal_concat_unary_conv_to_composite() -> None:
     composite = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == "_terminal_concat_bridge_layout_results"
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
     )
-    assert _call_name(composite) == (
-        "run_terminal_concat_bridge_layout_cleanup"
-    )
+    assert _call_name(composite) == FINAL_COMPOSITE_OWNER
+    owner = _functions(FINAL_COMPOSITE_PATH)[FINAL_COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_concat_bridge_layout_cleanup"
+        for node in ast.walk(owner)
+    ) == 1

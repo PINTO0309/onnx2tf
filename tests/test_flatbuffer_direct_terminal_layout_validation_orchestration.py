@@ -127,6 +127,15 @@ LATE_LAYOUT_COMPOSITE_OWNER = (
 LATE_LAYOUT_COMPOSITE_RESULT = (
     "_late_reshape_shuffle_attention_window_results"
 )
+FINAL_BOUNDARY_COMPOSITE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+FINAL_BOUNDARY_COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+FINAL_BOUNDARY_COMPOSITE_RESULT = "_final_boundary_slice_concat_results"
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -172,6 +181,46 @@ def _late_layout_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
     assert assignment.value.func.id == LATE_LAYOUT_COMPOSITE_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "shared_model_ir_pass_context"
+    ]
+    assert assignment.value.keywords == []
+    return assignment
+
+
+def _final_boundary_composite_owner_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        FINAL_BOUNDARY_COMPOSITE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == FINAL_BOUNDARY_COMPOSITE_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _final_boundary_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
+    assignment = next(
+        statement
+        for statement in body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == FINAL_BOUNDARY_COMPOSITE_RESULT
+    )
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == FINAL_BOUNDARY_COMPOSITE_OWNER
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "terminal_slice_concat_recovery_context"
     ]
     assert assignment.value.keywords == []
     return assignment
@@ -1962,7 +2011,7 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
         ),
         (
             "_terminal_elementwise_fanout_stats",
-            "_terminal_concat_bridge_layout_results",
+            FINAL_BOUNDARY_COMPOSITE_RESULT,
             "_run_terminal_singleton_maxpool_reshape_pass_pair",
         ),
     )
@@ -2145,48 +2194,36 @@ def test_primary_path_retains_late_final_shape_activation_convergence_result() -
 
     successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == (
-        "run_final_boundary_channel_layout_cleanup"
+        FINAL_BOUNDARY_COMPOSITE_OWNER
     )
     assert successor_call is not None
     assert [ast.unparse(argument) for argument in successor_call.args] == [
-        "shared_model_ir_pass_context"
+        "terminal_slice_concat_recovery_context"
     ]
     assert successor_call.keywords == []
 
 
 def test_primary_path_retains_final_boundary_channel_layout_composite() -> None:
     body = _lowerer_body()
-    indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement))
-        == "run_final_boundary_channel_layout_cleanup"
+    statement = _final_boundary_composite_assignment(body)
+    index = body.index(statement)
+    calls = _final_boundary_composite_owner_calls(
+        "run_final_boundary_channel_layout_cleanup"
+    )
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == [
+        "context.pass_context"
     ]
-    assert len(indices) == 1
-    index = indices[0]
-    statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == (
-        "_final_boundary_channel_layout_results"
-    )
-    assert ast.unparse(statement.value) == (
-        "run_final_boundary_channel_layout_cleanup("
-        "shared_model_ir_pass_context)"
-    )
+    assert calls[0].keywords == []
     predecessor = body[index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == (
         "_late_final_shape_activation_convergence_stats"
     )
-    successor_call = _statement_call(body[index + 1])
-    assert _call_name(successor_call) == (
-        "_run_terminal_slice_concat_layout_recovery_sequence"
-    )
-    assert successor_call is not None
-    assert successor_call.args == []
-    assert successor_call.keywords == []
+    successor = body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
 
 
 def test_primary_path_retains_terminal_boundary_input_normalization_result() -> None:

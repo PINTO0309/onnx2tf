@@ -5242,6 +5242,51 @@ pass order, API, artifact, dependency, TensorFlow boundary, or store entry
 changed. No real-model conversion was run; the phase-result store remains
 exactly 128 IDs and 128 owners.
 
+## Final boundary/Slice/Concat composite implementation
+
+`passes/final_boundary_slice_concat_orchestration.py` now owns the
+characterized four-stage final-layout sequence. It accepts the existing
+`TerminalSliceConcatRecoveryContext`, passes that complete callback-bearing
+context to terminal Slice/Concat recovery, and passes its exact
+`context.pass_context` object to boundary channel, final Slice/pre-Concat, and
+terminal Concat bridge cleanup. The four raw result tuples are returned
+unchanged inside one ordered outer tuple.
+
+The lowerer replaces four unconsumed locals with
+`_final_boundary_slice_concat_results` and removes only the three direct child
+imports made redundant by the move. Its terminal Slice/Concat compatibility
+wrapper remains available and retains the earlier independent invocation. The
+indexed final shape/activation result remains the predecessor, and the
+optional terminal elementwise-fanout guard remains the successor.
+
+Child-family and affected result tests now follow both ownership levels: the
+new final composite owns the specialized layout composites, while each child
+continues to own its existing pass family. Runtime callback injection proves
+exact order, callback-context identity, shared pass-context identity, and raw
+result identity. The lowerer wrapper and direct composite recovery call are
+counted independently.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite boundary, nested schema, route, and runtime identity:
+  `4 passed in 0.55s`;
+- focused owner-aware child, result, terminal-boundary, and architecture
+  coverage: `349 passed in 20.39s`;
+- complete affected suite: `400 passed in 19.35s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.75s`;
+- synthetic core runtime contracts: `55 passed in 0.91s`;
+- result contracts: `196 passed in 8.91s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.48s`.
+
+Ruff, Python bytecode compilation, and whitespace checks passed. No phase
+result, graph mutation, callback behavior, guard, public API, artifact,
+dependency, TensorFlow boundary, or nested result schema changed. The store
+remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
+because runtime injection directly proves the custom/shared context, results,
+order, independent route, and boundary contracts.
+
 ## Late input/affine/normalization composite implementation
 
 `passes/late_input_affine_normalization_orchestration.py` now owns the

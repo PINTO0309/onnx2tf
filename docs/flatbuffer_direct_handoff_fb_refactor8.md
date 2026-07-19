@@ -4748,3 +4748,31 @@ Slice/Concat recovery, return all four raw tuples unchanged, retain the lowerer
 wrapper and earlier independent caller, and preserve both outer boundaries.
 Run affected and standard gates sequentially. Never create, update, or reopen
 a pull request.
+
+## Final boundary/Slice/Concat composite implementation
+
+The four-stage owner is now implemented in
+`passes/final_boundary_slice_concat_orchestration.py`. It accepts the existing
+callback-bearing terminal Slice/Concat context, forwards that complete context
+to recovery, forwards the exact nested shared pass context to the three layout
+children, and returns all four raw tuples unchanged. The lowerer replaces four
+unconsumed locals with one result and removes only redundant direct imports.
+
+The compatibility wrapper and earlier independent Slice/Concat invocation
+remain. Indexed final shape/activation convergence and the optional terminal
+elementwise-fanout guard remain the exact outer boundaries. Owner-aware AST
+coverage and runtime injection prove order, custom/shared context identity,
+raw-result identity, nested schema, and both recovery routes.
+
+Sequential validation passed: focused `4`, owner-aware focused `349`, affected
+`400`, terminal/efficiency `92`, core runtime `55`, result contracts `196`,
+phase-store `2`, and TensorFlow isolation/default-direct/`-cotof` `11`. Ruff,
+bytecode compilation, and whitespace checks passed. The store remains exactly
+128 IDs and 128 owners; no model conversion was run.
+
+At resume, rerun the read-only unconsumed-result inventory after removal of
+these four locals. Select the next smallest source-adjacent and semantically
+closed pass-module-owned cluster, characterize it before production changes,
+and keep all verification under `uv` sequential and single-process. Never
+create, update, or reopen a pull request; use appropriately scoped commits and
+pushes only.

@@ -12,13 +12,19 @@ OWNER_PATH = (
     / "passes"
     / "slice_prepost_layout.py"
 )
+FINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
 SLICE_PREPOST = "_optimize_transpose_slice_prepost_nhwc_passthrough_chains"
 OWNER_NAME = "optimize_transpose_slice_prepost_nhwc_passthrough_chains"
 RESULT_TARGET = "_final_slice_prepost_passthrough_stats"
-PREVIOUS_TARGET = "_final_slice_concat_recovery_results"
-COMPOSITE_TARGET = "_final_slice_pre_concat_layout_results"
-COMPOSITE_OWNER = "run_final_slice_pre_concat_layout_cleanup"
-NEXT_TARGET = "_terminal_concat_bridge_layout_results"
+PREVIOUS_TARGET = "_late_final_shape_activation_convergence_stats"
+COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
+COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -114,4 +120,11 @@ def test_final_slice_prepost_result_moves_to_final_pair_composite() -> None:
     assert isinstance(composite.value.func, ast.Name)
     assert composite.value.func.id == COMPOSITE_OWNER
     assert _single_target(lowerer.body[composite_index - 1]) == PREVIOUS_TARGET
-    assert _single_target(lowerer.body[composite_index + 1]) == NEXT_TARGET
+    assert isinstance(lowerer.body[composite_index + 1], ast.If)
+    owner = _functions(FINAL_COMPOSITE_PATH)[COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_final_slice_pre_concat_layout_cleanup"
+        for node in ast.walk(owner)
+    ) == 1

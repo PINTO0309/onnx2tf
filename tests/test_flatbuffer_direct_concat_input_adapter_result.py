@@ -19,6 +19,15 @@ ORCHESTRATION_PATH = (
     / "passes"
     / "layout_recovery_orchestration.py"
 )
+FINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+FINAL_COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+FINAL_COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
 CONCAT_INPUT_ADAPTER = (
     "_optimize_transpose_input_chains_pre_concat_to_single_post_adapter"
 )
@@ -200,8 +209,13 @@ def test_lowerer_retains_guarded_input_adapter_and_terminal_composite() -> None:
     terminal_composite = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == "_terminal_concat_bridge_layout_results"
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
     )
-    assert _call_name(terminal_composite) == (
-        "run_terminal_concat_bridge_layout_cleanup"
-    )
+    assert _call_name(terminal_composite) == FINAL_COMPOSITE_OWNER
+    owner = _functions(FINAL_COMPOSITE_PATH)[FINAL_COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_concat_bridge_layout_cleanup"
+        for node in ast.walk(owner)
+    ) == 1

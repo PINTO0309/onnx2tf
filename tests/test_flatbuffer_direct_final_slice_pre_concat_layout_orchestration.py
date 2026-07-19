@@ -28,9 +28,18 @@ OWNER_PATH = (
     / "final_slice_pre_concat_layout_orchestration.py"
 )
 OWNER = "run_final_slice_pre_concat_layout_cleanup"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
 RESULT_TARGET = "_final_slice_pre_concat_layout_results"
-PREDECESSOR_TARGET = "_final_slice_concat_recovery_results"
-SUCCESSOR_TARGET = "_terminal_concat_bridge_layout_results"
+PREDECESSOR_TARGET = "_late_final_shape_activation_convergence_stats"
+SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 OLD_RESULT_TARGETS = (
     "_final_slice_prepost_passthrough_stats",
     "_final_pre_concat_stats",
@@ -78,20 +87,34 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
+def _composite_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+
+
 def test_final_slice_pre_concat_pair_uses_composite_result_outside_store() -> None:
     lowerer = _lowerer()
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_final_slice_pre_concat_layout_cleanup("
-        "shared_model_ir_pass_context)"
+        "run_final_boundary_slice_concat_cleanup("
+        "terminal_slice_concat_recovery_context)"
     )
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -124,15 +147,18 @@ def test_final_slice_pre_concat_pair_uses_one_composite_owner() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_final_slice_pre_concat_layout_cleanup("
-        "shared_model_ir_pass_context)"
+        "run_final_boundary_slice_concat_cleanup("
+        "terminal_slice_concat_recovery_context)"
     )
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
