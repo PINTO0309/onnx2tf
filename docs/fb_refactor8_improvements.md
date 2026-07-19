@@ -5171,3 +5171,36 @@ This checkpoint changes no production source, mutation, result schema,
 GraphIndex policy, caller, PyTorch behavior, API, artifact, dependency,
 TensorFlow boundary, or pass order. No real-model conversion was run, and the
 phase-result store remains exactly 128 IDs and 128 owners.
+
+## Recurrent-alias repair mapping-owner implementation
+
+`passes/recurrent_alias_repair_orchestration.py` now owns direct-TFLite result
+normalization for the shared indexed recurrent-alias repair. It forwards the
+optional GraphIndex unchanged, invokes the existing raw mutation owner once,
+and returns the same one-key integer mapping.
+
+The lowerer's `_repair_orphan_recurrent_step_tensors` remains available as a
+one-return compatibility adapter, and its sole primary production caller is
+unchanged. `passes/recurrent_alias.py` remains the only graph-mutation owner.
+The PyTorch recurrent wrapper continues to call that raw owner directly, so
+its return convention and normalization pipeline are unaffected. Owner-aware
+architecture coverage distinguishes these two intentional routes.
+
+Final sequential validation under core-only `uv`:
+
+- focused mapping-owner structure and runtime identity: `3 passed in 0.56s`;
+- affected recurrent alias, late input repair, unbound input, PyTorch
+  recurrent normalization, direct lowering, very-late, architecture, and
+  phase-store contracts: `309 passed in 19.23s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.73s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 8.89s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.55s`.
+
+No phase result, public API, artifact, dependency, TensorFlow boundary, graph
+mutation, pass order, GraphIndex policy, or result schema changed. The store
+remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
+because runtime injection and affected direct/PyTorch synthetic coverage prove
+the complete mechanical owner move.

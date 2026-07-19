@@ -1023,3 +1023,11 @@ still resides in the lowerer. The new strict contract preserves raw arguments,
 GraphIndex forwarding, exact mapping schema, the sole primary caller, the
 independent PyTorch path, and the full 128-ID/128-owner store. Production is
 unchanged pending the separate mapping-owner extraction.
+
+The latest checkpoint implements that recurrent-alias mapping owner. The raw
+indexed graph mutation remains uniquely shared by direct TFLite and PyTorch,
+while a small orchestration module now owns only direct-TFLite's existing
+one-key integer result. The lowerer keeps its compatibility wrapper and sole
+caller; PyTorch behavior, GraphIndex identity, result schemas, pass order, and
+the 128-ID/128-owner store are unchanged. Focused, affected, and standard
+sequential gates all pass.

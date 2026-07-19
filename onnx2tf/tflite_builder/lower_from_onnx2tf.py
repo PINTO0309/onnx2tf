@@ -65,8 +65,8 @@ from onnx2tf.tflite_builder.passes.precision_cleanup_orchestration import (
 from onnx2tf.tflite_builder.passes.no_layout_final_cleanup_orchestration import (
     run_no_layout_final_cleanup,
 )
-from onnx2tf.tflite_builder.passes.recurrent_alias import (
-    repair_orphan_recurrent_step_tensors,
+from onnx2tf.tflite_builder.passes.recurrent_alias_repair_orchestration import (
+    repair_orphan_recurrent_step_tensors_summary,
 )
 from onnx2tf.tflite_builder.passes.unbound_input_layout import (
     find_unbound_nonconstant_operator_inputs,
@@ -909,11 +909,10 @@ def _repair_orphan_recurrent_step_tensors(
     `*_h_step_*` tensor. That later surfaces as `Input tensor N lacks data` in
     TFLite because the orphan tensor has no producer and no constant buffer.
     """
-    repaired = repair_orphan_recurrent_step_tensors(
+    return repair_orphan_recurrent_step_tensors_summary(
         model_ir,
         graph_index=graph_index,
     )
-    return {"repaired_orphan_recurrent_step_tensors": int(repaired)}
 
 
 def _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(

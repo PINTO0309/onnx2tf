@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import recurrent_alias_repair_orchestration
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -67,7 +71,7 @@ def _assert_mapping_contract(function: ast.FunctionDef) -> None:
 
 def test_recurrent_alias_repair_lowerer_mapping_contract_is_fixed() -> None:
     functions = _functions(LOWERER_PATH)
-    _assert_mapping_contract(functions[WRAPPER])
+    _assert_mapping_contract(_functions(OWNER_PATH)[OWNER])
 
     calls = _ordered_calls(functions["lower_onnx_to_ir"], (WRAPPER,))
     assert len(calls) == 1
@@ -77,10 +81,6 @@ def test_recurrent_alias_repair_lowerer_mapping_contract_is_fixed() -> None:
     assert calls[0].keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="recurrent-alias result normalization still lives in the lowerer",
-)
 def test_recurrent_alias_repair_has_one_pass_module_mapping_owner() -> None:
     _assert_mapping_contract(_functions(OWNER_PATH)[OWNER])
 
@@ -96,3 +96,33 @@ def test_recurrent_alias_repair_has_one_pass_module_mapping_owner() -> None:
     calls = _ordered_calls(_functions(LOWERER_PATH)["lower_onnx_to_ir"], (WRAPPER,))
     assert len(calls) == 1
     assert ast.unparse(calls[0].args[0]) == "model_ir"
+
+
+def test_recurrent_alias_repair_owner_preserves_index_and_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("recurrent_alias_repair_owner")
+    graph_index = ModelIRGraphIndex(model_ir)
+    calls: list[tuple[ModelIR, ModelIRGraphIndex | None]] = []
+
+    def repair(
+        active_model_ir: ModelIR,
+        *,
+        graph_index: ModelIRGraphIndex | None = None,
+    ) -> int:
+        calls.append((active_model_ir, graph_index))
+        return 3
+
+    monkeypatch.setattr(
+        recurrent_alias_repair_orchestration,
+        RAW_OWNER,
+        repair,
+    )
+
+    result = recurrent_alias_repair_orchestration.repair_orphan_recurrent_step_tensors_summary(
+        model_ir,
+        graph_index=graph_index,
+    )
+
+    assert result == {RESULT_KEY: 3}
+    assert calls == [(model_ir, graph_index)]

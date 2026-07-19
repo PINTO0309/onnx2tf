@@ -5164,6 +5164,13 @@ def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "recurrent_alias_repair_orchestration.py"
+    )
     pytorch_path = (
         REPO_ROOT
         / "onnx2tf"
@@ -5194,8 +5201,28 @@ def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
     assert "replace_operator_inputs" in owner_call_names
     assert "for op in model_ir.operators" not in owner_source
 
+    orchestration_source = orchestration_path.read_text(encoding="utf-8")
+    orchestration_tree = ast.parse(orchestration_source)
+    summary_owner_name = "repair_orphan_recurrent_step_tensors_summary"
+    summary_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == summary_owner_name
+    )
+    summary_raw_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert len(summary_raw_calls) == 1
+
     wrapper_name = "_repair_orphan_recurrent_step_tensors"
-    for wrapper_path in [lowerer_path, pytorch_path]:
+    for wrapper_path, expected_owner_name in [
+        (lowerer_path, summary_owner_name),
+        (pytorch_path, owner_name),
+    ]:
         wrapper_source = wrapper_path.read_text(encoding="utf-8")
         wrapper_tree = ast.parse(wrapper_source)
         assert f"def {owner_name}(" not in wrapper_source
@@ -5209,7 +5236,7 @@ def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
             for node in ast.walk(wrapper)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == owner_name
+            and node.func.id == expected_owner_name
         ]
         assert len(owner_calls) == 1
         index_keyword = next(

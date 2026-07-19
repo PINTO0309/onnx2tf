@@ -4557,3 +4557,23 @@ At resume, implement only
 and primary caller, and leave PyTorch's raw owner path unchanged. Run focused,
 affected, and standard gates sequentially, then reassess the now-fully-owned
 adjacent late-result cluster. Never create, update, or reopen a pull request.
+
+## Recurrent-alias repair mapping-owner implementation
+
+`passes/recurrent_alias_repair_orchestration.py` now owns the direct-TFLite
+integer-to-mapping conversion. The lowerer retains a one-return compatibility
+adapter and its sole primary caller. The raw indexed mutation owner and the
+independent PyTorch wrapper remain unchanged, including GraphIndex identity and
+PyTorch's void return convention.
+
+Sequential gates passed: focused `3`, affected `309`, terminal/efficiency
+`92`, core runtime `55`, results `196`, phase-store `2`, and TensorFlow
+isolation/default-direct/`-cotof` `11`. The store remains 128 IDs and 128
+owners; no model conversion was run.
+
+At resume, rerun the unconsumed-result inventory and characterize the smallest
+semantically closed prefix of the adjacent late orphan/unbound/affine/
+normalization sequence, whose individual mapping boundaries are now all
+pass-module-owned. Preserve its progress predecessor and dynamic-adapter
+successor, validate sequentially, and never create, update, or reopen a pull
+request.
