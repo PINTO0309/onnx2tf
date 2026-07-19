@@ -2467,17 +2467,42 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         )
         == 1
     )
+    terminal_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_affine_slice_spp_orchestration.py"
+    )
+    terminal_owner_tree = ast.parse(
+        terminal_owner_path.read_text(encoding="utf-8")
+    )
+    terminal_owner = next(
+        node
+        for node in terminal_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_affine_slice_spp_cleanup"
+    )
+    terminal_summary_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "run_terminal_affine_concat_split_recovery_summary"
+    ]
+    assert len(terminal_summary_calls) == 1
     statement = next(
         candidate
         for candidate in lowerer.body
         if isinstance(candidate, ast.Assign)
         and isinstance(candidate.targets[0], ast.Name)
-        and candidate.targets[0].id == "_terminal_affine_stats"
+        and candidate.targets[0].id == "_terminal_affine_slice_spp_results"
     )
     index = lowerer.body.index(statement)
     assert ast.unparse(statement.value) == (
-        "run_terminal_affine_concat_split_recovery_summary("
-        "terminal_affine_concat_split_recovery_context)"
+        "run_terminal_affine_slice_spp_cleanup("
+        "shared_model_ir_pass_context)"
     )
     assert isinstance(lowerer.body[index - 1], ast.Assign)
     assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
@@ -2487,7 +2512,7 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
     assert lowerer.body[index + 1].targets[0].id == (
-        "_terminal_slice_pad_concat_stats"
+        "_late_pre_qkv_shape_extract_stats"
     )
 
 
@@ -6532,23 +6557,17 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_spp_stats"
+        and statement.targets[0].id == "_terminal_affine_slice_spp_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_late_spp_concat_unary_conv_summary"
+        == "run_terminal_affine_slice_spp_cleanup"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_terminal_slice_pad_concat_stats"
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
-    )
+    assert previous_boundary.targets[0].id == "_pre_terminal_cleanup_results"
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
@@ -6582,6 +6601,28 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         and node.func.id == "run_late_spp_concat_unary_conv"
     ]
     assert len(raw_owner_calls) == 1
+    terminal_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_affine_slice_spp_orchestration.py"
+    )
+    terminal_owner_tree = ast.parse(
+        terminal_owner_path.read_text(encoding="utf-8")
+    )
+    terminal_owner = next(
+        node
+        for node in terminal_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_affine_slice_spp_cleanup"
+    )
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_spp_concat_unary_conv_summary"
+        for node in ast.walk(terminal_owner)
+    ) == 1
 
 
 def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:

@@ -48,7 +48,7 @@ OWNER_CALLS = (
     "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
 )
 PREDECESSOR_TARGET = "_pre_terminal_channel_slice_pad_mul_stats"
-SUCCESSOR_TARGET = "_terminal_affine_stats"
+SUCCESSOR_TARGET = "_terminal_affine_slice_spp_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

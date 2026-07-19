@@ -351,12 +351,12 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_spp_stats"
+    assert previous.targets[0].id == "_terminal_affine_slice_spp_results"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "run_late_spp_concat_unary_conv_summary"
+    assert previous.value.func.id == "run_terminal_affine_slice_spp_cleanup"
     assert [ast.unparse(argument) for argument in previous.value.args] == [
-        "late_spp_concat_unary_conv_context"
+        "shared_model_ir_pass_context"
     ]
     assert previous.value.keywords == []
     following = lowerer.body[invocation_index + 1]

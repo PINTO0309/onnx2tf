@@ -83,7 +83,9 @@ def test_channel_slice_pad_mul_summary_boundary_is_fixed() -> None:
         f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET
@@ -130,7 +132,9 @@ def test_channel_slice_pad_mul_uses_one_direct_summary_owner() -> None:
         f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET

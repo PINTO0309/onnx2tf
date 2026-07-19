@@ -52,6 +52,15 @@ PRE_TERMINAL_CLEANUP_PATH = (
     / "pre_terminal_cleanup_orchestration.py"
 )
 PRE_TERMINAL_CLEANUP = "run_pre_terminal_cleanup"
+TERMINAL_AFFINE_SLICE_SPP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_affine_slice_spp_orchestration.py"
+)
+TERMINAL_AFFINE_SLICE_SPP = "run_terminal_affine_slice_spp_cleanup"
+TERMINAL_AFFINE_SLICE_SPP_RESULT = "_terminal_affine_slice_spp_results"
 _STATS = {
     "optimized_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains": 1,
 }
@@ -87,6 +96,25 @@ def _pre_terminal_cleanup_calls(function_name: str) -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == PRE_TERMINAL_CLEANUP
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _terminal_affine_slice_spp_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(
+        TERMINAL_AFFINE_SLICE_SPP_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_AFFINE_SLICE_SPP
     )
     return [
         node
@@ -1255,6 +1283,12 @@ def test_slice_pad_concat_keeps_owner_wrapper_and_ordered_calls() -> None:
     ]
     assert (
         len(calls)
+        + len(
+            _terminal_affine_slice_spp_calls(
+                "_optimize_transpose_stridedslice_pad_concat_mul_add_"
+                "posttranspose_nhwc_chains"
+            )
+        )
         + TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS.count(
             "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
         )
@@ -1290,35 +1324,28 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_slice_pad_concat_stats"
+        and statement.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
-        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
-    )
+    assert invocation.value.func.id == TERMINAL_AFFINE_SLICE_SPP
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
+    assert invocation.value.args[0].id == "shared_model_ir_pass_context"
     assert invocation.value.keywords == []
 
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_affine_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "run_terminal_affine_concat_split_recovery_summary"
-    )
+    assert previous.targets[0].id == "_pre_terminal_cleanup_results"
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_late_spp_stats"
+    assert following.targets[0].id == "_late_pre_qkv_shape_extract_stats"
 
     direct_statements = [
         statement
@@ -1331,10 +1358,18 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 1
-    assert direct_statements[0] is invocation
+    assert direct_statements == []
+    terminal_calls = _terminal_affine_slice_spp_calls(
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_"
+        "posttranspose_nhwc_chains"
+    )
+    assert len(terminal_calls) == 1
+    assert [ast.unparse(argument) for argument in terminal_calls[0].args] == [
+        "context.model_ir"
+    ]
     assert (
         len(direct_statements)
+        + len(terminal_calls)
         + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
             "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
         )
@@ -1378,7 +1413,7 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_affine_stats"
+    assert following.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
 
     owner_calls = _pre_terminal_cleanup_calls(
         "run_pre_terminal_affine_tail_cleanup"
@@ -1400,11 +1435,12 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 1
-    assert isinstance(direct_statements[0], ast.Assign)
-    second_target = direct_statements[0].targets[0]
-    assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_terminal_slice_pad_concat_stats"
+    assert direct_statements == []
+    terminal_calls = _terminal_affine_slice_spp_calls(
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_"
+        "posttranspose_nhwc_chains"
+    )
+    assert len(terminal_calls) == 1
 
 
 def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> None:
@@ -1444,7 +1480,7 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
 
     following = lowerer.body[slice_index + 1]
     assert isinstance(following, ast.Assign)
-    assert following.targets[0].id == "_terminal_affine_stats"
+    assert following.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
 
     owner_calls = _pre_terminal_cleanup_calls(
         "run_pre_terminal_affine_tail_cleanup"

@@ -58,6 +58,15 @@ PRE_TERMINAL_CLEANUP_PATH = (
 )
 PRE_TERMINAL_CLEANUP = "run_pre_terminal_cleanup"
 PRE_TERMINAL_CLEANUP_RESULT = "_pre_terminal_cleanup_results"
+TERMINAL_AFFINE_SLICE_SPP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_affine_slice_spp_orchestration.py"
+)
+TERMINAL_AFFINE_SLICE_SPP = "run_terminal_affine_slice_spp_cleanup"
+TERMINAL_AFFINE_SLICE_SPP_RESULT = "_terminal_affine_slice_spp_results"
 ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -130,6 +139,25 @@ def _pre_terminal_cleanup_calls(function_name: str) -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == PRE_TERMINAL_CLEANUP
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _terminal_affine_slice_spp_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(
+        TERMINAL_AFFINE_SLICE_SPP_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_AFFINE_SLICE_SPP
     )
     return [
         node
@@ -316,13 +344,7 @@ def test_terminal_affine_concat_split_invocations_remain_zero_argument() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == TERMINAL_AFFINE_SUMMARY
     ]
-    assert len(invocations) == 1
-    assert all(
-        [ast.unparse(argument) for argument in call.args]
-        == ["terminal_affine_concat_split_recovery_context"]
-        for call in invocations
-    )
-    assert all(call.keywords == [] for call in invocations)
+    assert invocations == []
     composite_invocations = _pre_terminal_cleanup_calls(
         TERMINAL_AFFINE_SUMMARY
     )
@@ -331,6 +353,14 @@ def test_terminal_affine_concat_split_invocations_remain_zero_argument() -> None
         "context"
     ]
     assert composite_invocations[0].keywords == []
+    terminal_invocations = _terminal_affine_slice_spp_calls(
+        TERMINAL_AFFINE_SUMMARY
+    )
+    assert len(terminal_invocations) == 1
+    assert [ast.unparse(arg) for arg in terminal_invocations[0].args] == [
+        "context"
+    ]
+    assert terminal_invocations[0].keywords == []
 
 
 def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
@@ -352,16 +382,16 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
     terminal = lowerer.body[composite_index + 1]
     assert isinstance(terminal, ast.Assign)
     assert isinstance(terminal.targets[0], ast.Name)
-    assert terminal.targets[0].id == "_terminal_affine_stats"
+    assert terminal.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
     assert ast.unparse(terminal.value) == (
-        "run_terminal_affine_concat_split_recovery_summary("
-        "terminal_affine_concat_split_recovery_context)"
+        "run_terminal_affine_slice_spp_cleanup("
+        "shared_model_ir_pass_context)"
     )
     assert isinstance(lowerer.body[composite_index + 2], ast.Assign)
     assert isinstance(lowerer.body[composite_index + 2].targets[0], ast.Name)
     assert (
         lowerer.body[composite_index + 2].targets[0].id
-        == "_terminal_slice_pad_concat_stats"
+        == "_late_pre_qkv_shape_extract_stats"
     )
 
 
@@ -502,12 +532,12 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_affine_stats"
+        and statement.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
     )
     index = lowerer.body.index(summary)
     assert ast.unparse(summary.value) == (
-        "run_terminal_affine_concat_split_recovery_summary("
-        "terminal_affine_concat_split_recovery_context)"
+        "run_terminal_affine_slice_spp_cleanup("
+        "shared_model_ir_pass_context)"
     )
     assert isinstance(lowerer.body[index - 1], ast.Assign)
     assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
@@ -517,8 +547,15 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
     assert lowerer.body[index + 1].targets[0].id == (
-        "_terminal_slice_pad_concat_stats"
+        "_late_pre_qkv_shape_extract_stats"
     )
+    terminal_calls = _terminal_affine_slice_spp_calls(
+        TERMINAL_AFFINE_SUMMARY
+    )
+    assert len(terminal_calls) == 1
+    assert [ast.unparse(argument) for argument in terminal_calls[0].args] == [
+        "context"
+    ]
 
 
 def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:

@@ -98,7 +98,9 @@ def test_pre_terminal_instancenorm_layout_boundary_is_fixed() -> None:
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     calls = _composite_calls()
     assert len(calls) == 1
     assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
@@ -139,7 +141,9 @@ def test_pre_terminal_instancenorm_layout_uses_one_composite_owner() -> None:
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS

@@ -5643,3 +5643,36 @@ No production callback, graph mutation, result schema, context identity, pass
 order, public API, artifact, dependency, TensorFlow boundary, or phase-store
 entry changed. No real-model conversion was run; the store remains exactly
 128 IDs and 128 owners.
+
+## Terminal affine/Slice-SPP composite implementation
+
+`passes/terminal_affine_slice_spp_orchestration.py` now owns the characterized
+three-stage terminal tail. It forwards the exact shared `ModelIRPassContext`
+to the prune-aware terminal affine/Concat/Split summary and late
+SPP/Concat/Unary summary, passes `context.model_ir` to the strict
+StridedSlice/Pad/Concat bridge, and returns all three raw mapping objects
+unchanged in their original order.
+
+The lowerer replaces `_terminal_affine_stats`,
+`_terminal_slice_pad_concat_stats`, and `_late_spp_stats` with the single
+`_terminal_affine_slice_spp_results` tuple. Only summary imports made redundant
+by the ownership move were removed. The lowerer-local raw wrappers and shared
+context aliases remain because earlier independent recovery routes still use
+them. The pre-terminal composite remains the immediate predecessor, and QKV
+shape-extract cleanup remains the immediate successor.
+
+Existing terminal affine, StridedSlice, late SPP, pre-terminal, shape-extract,
+architecture, and mutation-evidence tests now resolve the specialized child
+owner through the new outer owner. Runtime callback injection proves exact
+three-stage order, shared context/model identity, and raw result identity.
+Child pass IDs, mutation totals, result schemas, graph rewrites, public APIs,
+artifacts, dependency boundaries, and TensorFlow-free direct/`-cotof`
+behavior remain unchanged.
+
+Final sequential validation under core-only `uv` passed with 4 focused tests,
+520 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. The phase-result store remains exactly 128
+IDs and 128 owners. No real-model conversion was repeated because this is a
+straight-line ownership extraction with explicit runtime identity, boundary,
+schema, and independent-route coverage.

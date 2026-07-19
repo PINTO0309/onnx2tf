@@ -40,7 +40,7 @@ RESULT_TARGETS = (
     "_pre_terminal_affine_tail_results",
 )
 COMPOSITE_TARGET = "_pre_terminal_cleanup_results"
-SUCCESSOR_TARGET = "_terminal_affine_stats"
+SUCCESSOR_TARGET = "_terminal_affine_slice_spp_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

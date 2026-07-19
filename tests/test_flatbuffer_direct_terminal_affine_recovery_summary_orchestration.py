@@ -35,6 +35,15 @@ COMPOSITE_PATH = (
 )
 COMPOSITE_OWNER = "run_pre_terminal_cleanup"
 COMPOSITE_TARGET = "_pre_terminal_cleanup_results"
+TERMINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_affine_slice_spp_orchestration.py"
+)
+TERMINAL_COMPOSITE_OWNER = "run_terminal_affine_slice_spp_cleanup"
+TERMINAL_COMPOSITE_TARGET = "_terminal_affine_slice_spp_results"
 SUMMARY_TARGETS = (
     "_pre_terminal_affine_stats",
     "_terminal_affine_stats",
@@ -91,9 +100,20 @@ def _terminal_summary(lowerer: ast.FunctionDef) -> ast.Assign:
     return next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == "_terminal_affine_stats"
+        if _single_target(statement) == TERMINAL_COMPOSITE_TARGET
         and isinstance(statement, ast.Assign)
     )
+
+
+def _terminal_composite_summary_calls() -> list[ast.Call]:
+    owner = _functions(TERMINAL_COMPOSITE_PATH)[TERMINAL_COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
 
 
 def test_terminal_affine_recovery_summary_boundaries_are_fixed() -> None:
@@ -116,13 +136,18 @@ def test_terminal_affine_recovery_summary_boundaries_are_fixed() -> None:
     summary = _terminal_summary(lowerer)
     index = lowerer.body.index(summary)
     assert ast.unparse(summary.value) == (
-        "run_terminal_affine_concat_split_recovery_summary("
-        "terminal_affine_concat_split_recovery_context)"
+        "run_terminal_affine_slice_spp_cleanup("
+        "shared_model_ir_pass_context)"
     )
     assert _single_target(lowerer.body[index - 1]) == COMPOSITE_TARGET
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_slice_pad_concat_stats"
+        "_late_pre_qkv_shape_extract_stats"
     )
+    terminal_calls = _terminal_composite_summary_calls()
+    assert len(terminal_calls) == 1
+    assert [ast.unparse(argument) for argument in terminal_calls[0].args] == [
+        "context"
+    ]
     assert not any(
         isinstance(node, ast.Name)
         and node.id in (*COUNT_TARGETS, *RAW_RESULT_TARGETS)
@@ -146,15 +171,16 @@ def test_terminal_affine_recovery_uses_one_summary_owner_twice() -> None:
 
     lowerer = _lowerer()
     assert len(_composite_summary_calls()) == 1
+    assert len(_terminal_composite_summary_calls()) == 1
     summary = _terminal_summary(lowerer)
     index = lowerer.body.index(summary)
     assert ast.unparse(summary.value) == (
-        "run_terminal_affine_concat_split_recovery_summary("
-        "terminal_affine_concat_split_recovery_context)"
+        "run_terminal_affine_slice_spp_cleanup("
+        "shared_model_ir_pass_context)"
     )
     assert _single_target(lowerer.body[index - 1]) == COMPOSITE_TARGET
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_slice_pad_concat_stats"
+        "_late_pre_qkv_shape_extract_stats"
     )
 
     assert not any(

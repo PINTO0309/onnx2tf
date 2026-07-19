@@ -84,7 +84,9 @@ def test_pre_terminal_pre_add_prune_evidence_boundary_is_fixed() -> None:
         "run_pre_terminal_cleanup(shared_model_ir_pass_context)"
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == COUNT_TARGET
@@ -117,7 +119,9 @@ def test_pre_terminal_pre_add_uses_one_prune_aware_owner() -> None:
         "run_pre_terminal_cleanup(shared_model_ir_pass_context)"
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert _single_target(lowerer.body[index + 1]) == "_terminal_affine_stats"
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == COUNT_TARGET

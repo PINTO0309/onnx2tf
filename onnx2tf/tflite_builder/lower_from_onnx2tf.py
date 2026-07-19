@@ -208,7 +208,6 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
     run_terminal_affine_concat_split_recovery,
-    run_terminal_affine_concat_split_recovery_summary,
 )
 from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
     run_sinet_preadd_resize_recovery,
@@ -231,7 +230,6 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
     run_late_spp_concat_unary_conv,
-    run_late_spp_concat_unary_conv_summary,
 )
 from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
     run_boundary_batchmatmul_unary,
@@ -286,6 +284,9 @@ from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration imp
 )
 from onnx2tf.tflite_builder.passes.very_late_layout_tail_orchestration import (
     run_very_late_layout_tail_cleanup,
+)
+from onnx2tf.tflite_builder.passes.terminal_affine_slice_spp_orchestration import (
+    run_terminal_affine_slice_spp_cleanup,
 )
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     run_shared_late_reconciliation_cleanup,
@@ -5245,18 +5246,10 @@ def lower_onnx_to_ir(
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
     # Keep this after pre_add/slice/pad strict rewrites: those passes can
     # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
-    _terminal_affine_stats = (
-        run_terminal_affine_concat_split_recovery_summary(
-            terminal_affine_concat_split_recovery_context,
+    _terminal_affine_slice_spp_results = (
+        run_terminal_affine_slice_spp_cleanup(
+            shared_model_ir_pass_context,
         )
-    )
-    _terminal_slice_pad_concat_stats = (
-        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
-            model_ir
-        )
-    )
-    _late_spp_stats = run_late_spp_concat_unary_conv_summary(
-        late_spp_concat_unary_conv_context,
     )
     _late_pre_qkv_shape_extract_stats = (
         _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)

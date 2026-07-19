@@ -716,6 +716,31 @@ predecessor contract and bounded-store inventory, run focused and architecture
 gates, document, commit, and push. Never create, update, or reopen a pull
 request.
 
+## Terminal affine/Slice-SPP composite implementation checkpoint
+
+The characterized three-stage owner is implemented in
+`passes/terminal_affine_slice_spp_orchestration.py`. It passes the exact shared
+context to terminal affine and late SPP summaries, passes the shared model to
+the strict Slice bridge, and returns the three original mappings without
+copying. The lowerer now stores one ordered composite tuple in place of the
+three unconsumed child locals while retaining all wrappers and context aliases
+needed by earlier independent routes.
+
+The pre-terminal composite and QKV shape-extract result remain the exact outer
+boundaries. Owner-aware tests preserve specialized child behavior and mutation
+counts, and runtime injection verifies call order, context/model identity, and
+raw-result identity. Sequential validation passed: focused 4, affected 520,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase-store 2,
+and TensorFlow isolation/default-direct/`-cotof` 11. No test is failing, no
+phase entry changed, and the store remains exactly 128 IDs and 128 owners.
+
+At resume, rerun the read-only unconsumed-result inventory after removal of
+these three locals. Select the next smallest adjacent semantically closed
+cluster whose execution guard and context policy are uniform, characterize it
+before production changes, and keep all `uv` validation sequential and
+single-process. Commit and push each checkpoint only. Never create, update,
+reopen, or otherwise modify a pull request.
+
 ## Primary final layout-refresh reconciliation implementation
 
 The final ConvInteger, InstanceNorm, and broadcast reconciliations now use

@@ -8,14 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
-    run_late_spp_concat_unary_conv_summary,
-)
-from onnx2tf.tflite_builder.passes.stridedslice_pad_concat_bridge_layout import (
-    _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains,
-)
-from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
-    run_terminal_affine_concat_split_recovery_summary,
+from onnx2tf.tflite_builder.passes import (
+    terminal_affine_slice_spp_orchestration,
 )
 
 
@@ -105,39 +99,23 @@ def _call_name(statement: ast.stmt) -> str | None:
 
 def test_terminal_affine_slice_spp_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    indices = tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    assert indices == tuple(range(indices[0], indices[0] + len(indices)))
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    assert tuple(_call_name(lowerer.body[index]) for index in indices) == (
-        CHILD_OWNERS
-    )
-
-    calls = tuple(_call(lowerer.body[index]) for index in indices)
-    assert all(call is not None for call in calls)
-    assert [ast.unparse(argument) for argument in calls[0].args] == [
-        "terminal_affine_concat_split_recovery_context"
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
     ]
-    assert calls[0].keywords == []
-    assert [ast.unparse(argument) for argument in calls[1].args] == [
-        "model_ir"
-    ]
-    assert calls[1].keywords == []
-    assert [ast.unparse(argument) for argument in calls[2].args] == [
-        "late_spp_concat_unary_conv_context"
-    ]
-    assert calls[2].keywords == []
+    assert call.keywords == []
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
-        isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id in RESULT_TARGETS
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
 
@@ -148,12 +126,11 @@ def test_terminal_affine_slice_spp_current_boundary_and_schema() -> None:
         diagnostics=[],
     )
     assert (
-        run_terminal_affine_concat_split_recovery_summary(context),
-        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
-            model_ir
-        ),
-        run_late_spp_concat_unary_conv_summary(context),
-    ) == EXPECTED_SCHEMAS
+        terminal_affine_slice_spp_orchestration.run_terminal_affine_slice_spp_cleanup(
+            context
+        )
+        == EXPECTED_SCHEMAS
+    )
 
 
 def test_terminal_affine_and_spp_context_aliases_remain_shared() -> None:
@@ -176,10 +153,6 @@ def test_terminal_affine_and_spp_context_aliases_remain_shared() -> None:
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal affine/Slice-SPP tail has no shared-context owner",
-)
 def test_terminal_affine_slice_spp_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -221,3 +194,61 @@ def test_terminal_affine_slice_spp_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_terminal_affine_slice_spp_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("terminal_affine_slice_spp_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = tuple(
+        {f"stage_{index}": index} for index in range(len(CHILD_OWNERS))
+    )
+    observed: list[tuple[str, object]] = []
+
+    def _context_callback(index: int):
+        def run(active_context: ModelIRPassContext) -> dict[str, int]:
+            observed.append((CHILD_OWNERS[index], active_context))
+            return expected_results[index]
+
+        return run
+
+    def _model_callback(active_model_ir: ModelIR) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[1], active_model_ir))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        terminal_affine_slice_spp_orchestration,
+        CHILD_OWNERS[0],
+        _context_callback(0),
+    )
+    monkeypatch.setattr(
+        terminal_affine_slice_spp_orchestration,
+        CHILD_OWNERS[1],
+        _model_callback,
+    )
+    monkeypatch.setattr(
+        terminal_affine_slice_spp_orchestration,
+        CHILD_OWNERS[2],
+        _context_callback(2),
+    )
+
+    actual = (
+        terminal_affine_slice_spp_orchestration.run_terminal_affine_slice_spp_cleanup(
+            context
+        )
+    )
+    assert actual == expected_results
+    assert all(
+        actual[index] is expected_results[index]
+        for index in range(len(expected_results))
+    )
+    assert observed == [
+        (CHILD_OWNERS[0], context),
+        (CHILD_OWNERS[1], context.model_ir),
+        (CHILD_OWNERS[2], context),
+    ]

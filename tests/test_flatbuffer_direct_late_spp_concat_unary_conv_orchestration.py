@@ -26,6 +26,15 @@ LATE_SPP_CONCAT_UNARY_CONV = "_run_late_spp_concat_unary_conv_pass_pair"
 LATE_SPP_CONCAT_UNARY_CONV_SUMMARY = (
     "run_late_spp_concat_unary_conv_summary"
 )
+TERMINAL_AFFINE_SLICE_SPP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_affine_slice_spp_orchestration.py"
+)
+TERMINAL_AFFINE_SLICE_SPP = "run_terminal_affine_slice_spp_cleanup"
+TERMINAL_AFFINE_SLICE_SPP_RESULT = "_terminal_affine_slice_spp_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -41,6 +50,25 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == LATE_SPP_CONCAT_UNARY_CONV
     )
     return lowerer, helper
+
+
+def _terminal_affine_slice_spp_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(
+        TERMINAL_AFFINE_SLICE_SPP_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_AFFINE_SLICE_SPP
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -163,11 +191,13 @@ def test_late_spp_concat_unary_conv_invocation_remains_zero_argument() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
     ]
-    assert len(summary_invocations) == 1
-    assert [ast.unparse(arg) for arg in summary_invocations[0].args] == [
-        "late_spp_concat_unary_conv_context"
-    ]
-    assert summary_invocations[0].keywords == []
+    assert summary_invocations == []
+    owner_calls = _terminal_affine_slice_spp_calls(
+        LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
+    )
+    assert len(owner_calls) == 1
+    assert [ast.unparse(arg) for arg in owner_calls[0].args] == ["context"]
+    assert owner_calls[0].keywords == []
 
 
 def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
@@ -178,10 +208,10 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_spp_stats"
+        and statement.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
+        and statement.value.func.id == TERMINAL_AFFINE_SLICE_SPP
     )
 
     previous = lowerer.body[invocation_index - 1]
@@ -189,13 +219,7 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_slice_pad_concat_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
-    )
+    assert previous.targets[0].id == "_pre_terminal_cleanup_results"
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -314,15 +338,15 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_spp_stats"
+        and statement.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
     )
     first_index = lowerer.body.index(summary)
     summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
+    assert summary_call.func.id == TERMINAL_AFFINE_SLICE_SPP
     assert [ast.unparse(arg) for arg in summary_call.args] == [
-        "late_spp_concat_unary_conv_context"
+        "shared_model_ir_pass_context"
     ]
     assert summary_call.keywords == []
 
@@ -330,17 +354,17 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_slice_pad_concat_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
-    )
+    assert previous.targets[0].id == "_pre_terminal_cleanup_results"
     following = lowerer.body[first_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+    owner_calls = _terminal_affine_slice_spp_calls(
+        LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
+    )
+    assert len(owner_calls) == 1
+    assert [ast.unparse(arg) for arg in owner_calls[0].args] == ["context"]
 
 
 def test_late_spp_concat_unary_conv_module_does_not_import_lowerer() -> None:

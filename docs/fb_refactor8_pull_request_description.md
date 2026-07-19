@@ -1150,3 +1150,13 @@ order, pre-terminal and QKV shape-extract boundaries, and the full
 three-stage context-owner implementation. Focused and affected sequential
 validation report `2 passed, 1 xfailed` and `518 passed, 1 xfailed`; the sole
 expected failure is the intentionally absent owner.
+
+The latest checkpoint implements that three-stage terminal owner. The lowerer
+now replaces three unconsumed locals with one ordered result while preserving
+the pre-terminal and QKV shape-extract boundaries. The exact shared context is
+forwarded to both summary owners, its model is forwarded to the strict Slice
+bridge, and every raw mapping object is returned unchanged. Independent raw
+wrappers and context aliases remain available. Runtime identity coverage and
+520 affected tests pass, as do the full standard sequential gates; public
+behavior, mutation schemas, dependency isolation, and the 128-ID/128-owner
+phase store are unchanged.

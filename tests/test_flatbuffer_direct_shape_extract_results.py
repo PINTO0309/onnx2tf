@@ -117,7 +117,9 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
         )
 
     pre_qkv_index = lowerer.body.index(direct_results[0])
-    assert _single_target(lowerer.body[pre_qkv_index - 1]) == "_late_spp_stats"
+    assert _single_target(lowerer.body[pre_qkv_index - 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert _single_target(lowerer.body[pre_qkv_index + 1]) == (
         "_late_qkv_stats"
     )

@@ -29,6 +29,15 @@ RAW_TARGET = "late_spp_results"
 SUMMARY_TARGET = "_late_spp_stats"
 PREDECESSOR_TARGET = "_terminal_slice_pad_concat_stats"
 SUCCESSOR_TARGET = "_late_pre_qkv_shape_extract_stats"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_affine_slice_spp_orchestration.py"
+)
+COMPOSITE_OWNER = "run_terminal_affine_slice_spp_cleanup"
+COMPOSITE_TARGET = "_terminal_affine_slice_spp_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -50,20 +59,36 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _composite_summary_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+
+
 def test_late_spp_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(late_spp_concat_unary_conv_context)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index - 1]) == (
+        "_pre_terminal_cleanup_results"
+    )
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    calls = _composite_summary_calls()
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
     assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET
         for node in ast.walk(lowerer)
@@ -101,15 +126,18 @@ def test_late_spp_uses_one_direct_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(late_spp_concat_unary_conv_context)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index - 1]) == (
+        "_pre_terminal_cleanup_results"
+    )
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_composite_summary_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET
         for node in ast.walk(lowerer)
