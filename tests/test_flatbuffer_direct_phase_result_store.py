@@ -21,6 +21,7 @@ EXPECTED_RESULT_TARGETS = (
     "_late_binary_layout_recovery_static_shape_stats",
     "_terminal_expand_squeeze_static_shape_stats",
     "_very_late_static_shape_stats",
+    "_post_split_fallback_static_shape_stats",
     "_fallback_norm_static_shape_stats",
     "_fallback_dynamic_rank1_topology_layout_stats",
     "_fallback_broadcast_static_shape_stats",
@@ -73,6 +74,7 @@ EXPECTED_OWNERS = (
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
     "run_static_shape_topology_reconciliation",
     "run_topology_layout_refresh",
     "_reconcile_static_tensor_shapes",
@@ -117,7 +119,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 8,
+    *("model_ir",) * 9,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -130,6 +132,7 @@ EXPECTED_PHASE_IDS = (
     "shape_reconciliation.primary.late_binary_layout_recovery",
     "shape_reconciliation.terminal.expand_squeeze",
     "shape_reconciliation.primary.very_late_final",
+    "shape_reconciliation.primary.post_split_fallback",
     "shape_topology.fallback.norm",
     "topology_layout.fallback.post_dynamic_rank1",
     "shape_reconciliation.fallback.broadcast",
@@ -212,7 +215,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_fifty_observations_use_the_bounded_session_store() -> None:
+def test_fifty_one_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -223,7 +226,7 @@ def test_fifty_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 50
+    assert len(records) == 51
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

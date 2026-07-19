@@ -799,42 +799,25 @@ def test_post_split_fallback_reconciliation_captures_complete_mutation_evidence(
         and statement.targets[0].id == "split_fallback_stats"
     )
 
-    default_stats = lowerer.body[split_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert len(default_stats.targets) == 1
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == "_post_split_fallback_static_shape_stats"
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = lowerer.body[split_index + 2]
+    guard = lowerer.body[split_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(split_fallback_stats.get('replaced_unsupported_split_with_slice', 0)) > 0"
     )
     assert len(guard.body) == 1
     invocation = guard.body[0]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_post_split_fallback_static_shape_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in invocation.value.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in invocation.value.keywords
-    } == {"include_mutation_count": "True"}
+    assert isinstance(invocation, ast.Expr)
+    assert ast.unparse(invocation) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.post_split_fallback', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
+    )
+
+    following = lowerer.body[split_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "unbound_inputs"
 
 
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:

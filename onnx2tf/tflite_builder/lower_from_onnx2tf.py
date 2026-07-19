@@ -5752,14 +5752,13 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _post_split_fallback_static_shape_stats = {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
     if int(split_fallback_stats.get("replaced_unsupported_split_with_slice", 0)) > 0:
-        _post_split_fallback_static_shape_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
+        session.record_phase_result(
+            "shape_reconciliation.primary.post_split_fallback",
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            ),
         )
 
     # Safety fallback:

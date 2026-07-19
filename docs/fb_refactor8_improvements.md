@@ -930,6 +930,38 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented result-destination
 migration.
 
+## Post-split fallback reconciliation implementation
+
+The guarded result now records under
+`shape_reconciliation.primary.post_split_fallback`. The unconsumed all-zero
+default was removed, and the phase remains absent when the existing positive
+replacement guard is false. This matches the invoked-phase-only semantics of
+the other guarded reconciliation records.
+
+Only the default and result destination changed. The Split-to-Slice owner,
+`layout_state=session.layout_state`, replacement-count predicate,
+`_reconcile_static_tensor_shapes(model_ir,
+include_mutation_count=True)` call, evaluation count, ModelIR mutations,
+unbound-input safety check, public results, reports, artifacts, dependencies,
+and TensorFlow import boundaries are unchanged. The bounded store now covers
+51 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused post-split, very-late, Split fallback, terminal, and bounded-store
+  contracts: `96 passed in 2.39s`;
+- broader phase-result, owner, fallback, terminal, shape, and topology
+  contracts: `196 passed in 5.25s`;
+- lowerer architecture contracts: `258 passed in 16.47s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because this is a result-destination-only
+change at an already-characterized boundary. An AST audit confirms that
+`lower_onnx_to_ir` now has no unconsumed `*static_shape_stats` assignment. The
+remaining `_final_placeholder_matmul_static_shape_stats` local is intentionally
+retained because its counters are loaded by an existing downstream guard.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

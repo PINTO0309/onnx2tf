@@ -1035,3 +1035,27 @@ default and replacing only the guarded result destination. Preserve the Split
 owner, positive guard, and safety-fallback successor. Then update the existing
 orchestration and bounded-store inventories, validate, document, commit, and
 push. Never create, update, or reopen a pull request.
+
+## Post-split fallback reconciliation implementation
+
+The final unconsumed static-shape result now uses the stable
+`shape_reconciliation.primary.post_split_fallback` record. Its unconsumed zero
+default was removed, so a skipped guard leaves the phase absent while an
+invoked stable reconciliation is still recorded. The bounded store now covers
+51 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused post-split, very-late, Split fallback, terminal, and store contracts:
+  `96 passed in 2.39s`;
+- broader affected contracts: `196 passed in 5.25s`;
+- lowerer architecture contracts: `258 passed in 16.47s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required. An AST audit reports no unconsumed
+`*static_shape_stats` assignments in `lower_onnx_to_ir`. The sole remaining
+matching local, `_final_placeholder_matmul_static_shape_stats`, is consumed by
+its established downstream guard and must remain local unless that control-
+flow contract is redesigned separately. After committing and pushing this
+checkpoint, inventory the next unconsumed result family rather than altering
+that consumed value. Never create, update, or reopen a pull request.
