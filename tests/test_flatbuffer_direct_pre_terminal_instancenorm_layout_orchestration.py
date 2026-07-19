@@ -36,6 +36,15 @@ COMPOSITE_PATH = (
 )
 COMPOSITE_OWNER = "run_pre_terminal_cleanup"
 COMPOSITE_TARGET = "_pre_terminal_cleanup_results"
+OUTER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_affine_slice_spp_orchestration.py"
+)
+OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+OUTER_TARGET = "_pre_terminal_affine_slice_spp_results"
 RESULT_TARGET = "_pre_terminal_instancenorm_layout_results"
 PREDECESSOR_GUARD = (
     "_late_binary_layout_recovery_requires_reconciliation"
@@ -83,24 +92,40 @@ def _composite_calls() -> list[ast.Call]:
     ]
 
 
+def _outer_calls() -> list[ast.Call]:
+    owner = _functions(OUTER_PATH)[OUTER_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == COMPOSITE_OWNER
+    ]
+
+
 def test_pre_terminal_instancenorm_layout_boundary_is_fixed() -> None:
     lowerer = _lowerer()
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(assignment)
     assert isinstance(assignment, ast.Assign)
     assert ast.unparse(assignment.value) == (
-        "run_pre_terminal_cleanup(shared_model_ir_pass_context)"
+        "run_pre_terminal_affine_slice_spp_cleanup("
+        "shared_model_ir_pass_context)"
     )
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_affine_slice_spp_results"
+        "_terminal_qkv_shape_attention_results"
     )
+    assert len(_outer_calls()) == 1
+    assert [ast.unparse(argument) for argument in _outer_calls()[0].args] == [
+        "context"
+    ]
     calls = _composite_calls()
     assert len(calls) == 1
     assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
@@ -132,18 +157,20 @@ def test_pre_terminal_instancenorm_layout_uses_one_composite_owner() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_pre_terminal_cleanup(shared_model_ir_pass_context)"
+        "run_pre_terminal_affine_slice_spp_cleanup("
+        "shared_model_ir_pass_context)"
     )
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_affine_slice_spp_results"
+        "_terminal_qkv_shape_attention_results"
     )
+    assert len(_outer_calls()) == 1
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS

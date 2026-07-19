@@ -1272,3 +1272,13 @@ shape/attention remains the successor. Production is unchanged pending one
 straight-line two-child owner. Focused and affected sequential validation
 report `1 passed, 1 xfailed` and `512 passed, 1 xfailed`; the sole expected
 failure is the intentionally absent owner.
+
+The latest checkpoint implements that pre-terminal affine/Slice/SPP owner.
+It forwards the exact shared context through both existing child composites
+and returns their complete nested five-result and three-result tuples
+unchanged in source order. The lowerer replaces only the two observation-only
+locals. The optional late-binary reconciliation predecessor, terminal QKV
+successor, specialized child owners, raw wrappers, callbacks, and independent
+routes remain fixed. Runtime identity coverage, 514 affected tests, and every
+standard sequential gate pass; public behavior, graph rewrites, TensorFlow
+isolation, and the exactly 128-ID/128-owner store are unchanged.

@@ -35,6 +35,15 @@ TERMINAL_AFFINE_SLICE_SPP_PATH = (
 )
 TERMINAL_AFFINE_SLICE_SPP = "run_terminal_affine_slice_spp_cleanup"
 TERMINAL_AFFINE_SLICE_SPP_RESULT = "_terminal_affine_slice_spp_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_affine_slice_spp_orchestration.py"
+)
+OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+OUTER_RESULT = "_pre_terminal_affine_slice_spp_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -68,6 +77,22 @@ def _terminal_affine_slice_spp_calls(function_name: str) -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
+    ]
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_AFFINE_SLICE_SPP
     ]
 
 
@@ -208,18 +233,15 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
+        and statement.targets[0].id == OUTER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_AFFINE_SLICE_SPP
+        and statement.value.func.id == OUTER_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_cleanup_results"
+    assert isinstance(previous, ast.If)
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -232,6 +254,7 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
         following.value.func.id
         == "run_terminal_qkv_shape_attention_cleanup"
     )
+    assert len(_outer_calls()) == 1
 
 
 def test_late_spp_concat_unary_conv_context_and_wrapper_are_explicit() -> None:
@@ -340,23 +363,20 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
+        and statement.targets[0].id == OUTER_RESULT
     )
     first_index = lowerer.body.index(summary)
     summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == TERMINAL_AFFINE_SLICE_SPP
+    assert summary_call.func.id == OUTER_OWNER
     assert [ast.unparse(arg) for arg in summary_call.args] == [
         "shared_model_ir_pass_context"
     ]
     assert summary_call.keywords == []
 
     previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_cleanup_results"
+    assert isinstance(previous, ast.If)
     following = lowerer.body[first_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -364,6 +384,7 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
     assert following.targets[0].id == (
         "_terminal_qkv_shape_attention_results"
     )
+    assert len(_outer_calls()) == 1
     owner_calls = _terminal_affine_slice_spp_calls(
         LATE_SPP_CONCAT_UNARY_CONV_SUMMARY
     )

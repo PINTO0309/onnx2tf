@@ -5220,3 +5220,34 @@ preserve both outer boundaries. Update child-family ownership tests, add
 runtime order/context/result-identity injection, run affected and standard
 gates sequentially, then commit and push only. Never create, update, or
 reopen a pull request.
+
+## Pre-terminal affine/Slice/SPP composite implementation checkpoint
+
+`passes/pre_terminal_affine_slice_spp_orchestration.py` now owns the fixed
+two-child sequence. It passes the exact shared `ModelIRPassContext` to the
+existing pre-terminal cleanup and terminal affine/Slice/SPP owners in source
+order and returns both nested raw tuples without copying or flattening them.
+
+The lowerer replaces only `_pre_terminal_cleanup_results` and
+`_terminal_affine_slice_spp_results` with one
+`_pre_terminal_affine_slice_spp_results` tuple. The preceding optional
+late-binary layout-recovery reconciliation guard and following terminal QKV
+shape/attention composite remain separate. Child owners, raw wrappers,
+callbacks, independent routes, graph behavior, and the 128-ID/128-owner phase
+store are unchanged.
+
+Sequential core-only `uv` validation passed: focused 3, complete affected
+514, terminal-layout/efficiency 92, core 55, result contracts 196,
+phase-store 2, and TensorFlow import-blocking/default-direct/`-cotof` 11.
+Owner-aware structural coverage and runtime injection prove exact order,
+shared-context identity, nested schemas, outer boundaries, independent route
+counts, and both raw-result identities. No test is failing and no new
+production issue is known. No real-model conversion was repeated for this
+ownership-only move.
+
+At resume, rerun the read-only inventory of remaining unconsumed lowerer
+results. Select the next smallest source-adjacent, semantically closed cluster
+whose children already have pass-module owners. Characterize it before any
+production change, keep all tests sequential and single-process under `uv`,
+and commit/push completed checkpoints only. Never create, update, or reopen a
+pull request.

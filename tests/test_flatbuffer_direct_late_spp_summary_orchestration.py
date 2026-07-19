@@ -38,6 +38,15 @@ COMPOSITE_PATH = (
 )
 COMPOSITE_OWNER = "run_terminal_affine_slice_spp_cleanup"
 COMPOSITE_TARGET = "_terminal_affine_slice_spp_results"
+OUTER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_affine_slice_spp_orchestration.py"
+)
+OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+OUTER_TARGET = "_pre_terminal_affine_slice_spp_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -70,22 +79,32 @@ def _composite_summary_calls() -> list[ast.Call]:
     ]
 
 
+def _outer_calls() -> list[ast.Call]:
+    owner = _functions(OUTER_PATH)[OUTER_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == COMPOSITE_OWNER
+    ]
+
+
 def test_late_spp_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
+        f"{OUTER_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == (
-        "_pre_terminal_cleanup_results"
-    )
+    assert isinstance(lowerer.body[index - 1], ast.If)
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_outer_calls()) == 1
     calls = _composite_summary_calls()
     assert len(calls) == 1
     assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
@@ -126,17 +145,16 @@ def test_late_spp_uses_one_direct_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context)"
+        f"{OUTER_OWNER}(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == (
-        "_pre_terminal_cleanup_results"
-    )
+    assert isinstance(lowerer.body[index - 1], ast.If)
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_outer_calls()) == 1
     assert len(_composite_summary_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET

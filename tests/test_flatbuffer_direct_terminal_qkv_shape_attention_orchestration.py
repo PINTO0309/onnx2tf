@@ -38,7 +38,7 @@ RESULT_TARGETS = (
     "_late_qkv_stats",
 )
 COMPOSITE_TARGET = "_terminal_qkv_shape_attention_results"
-PREDECESSOR_TARGET = "_terminal_affine_slice_spp_results"
+PREDECESSOR_TARGET = "_pre_terminal_affine_slice_spp_results"
 SUCCESSOR_TARGET = "_terminal_activation_bridge_results"
 TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
     REPO_ROOT

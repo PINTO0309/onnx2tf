@@ -294,6 +294,29 @@ def _pre_terminal_cleanup_call_count(function_name: str) -> int:
     )
 
 
+def _pre_terminal_affine_slice_spp_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pre_terminal_affine_slice_spp_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_pre_terminal_affine_slice_spp_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _late_reshape_shuffle_attention_window_call_count(
     function_name: str,
 ) -> int:
@@ -2580,22 +2603,25 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         for candidate in lowerer.body
         if isinstance(candidate, ast.Assign)
         and isinstance(candidate.targets[0], ast.Name)
-        and candidate.targets[0].id == "_terminal_affine_slice_spp_results"
+        and candidate.targets[0].id
+        == "_pre_terminal_affine_slice_spp_results"
     )
     index = lowerer.body.index(statement)
     assert ast.unparse(statement.value) == (
-        "run_terminal_affine_slice_spp_cleanup("
+        "run_pre_terminal_affine_slice_spp_cleanup("
         "shared_model_ir_pass_context)"
     )
-    assert isinstance(lowerer.body[index - 1], ast.Assign)
-    assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
-    assert lowerer.body[index - 1].targets[0].id == (
-        "_pre_terminal_cleanup_results"
-    )
+    assert isinstance(lowerer.body[index - 1], ast.If)
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
     assert lowerer.body[index + 1].targets[0].id == (
         "_terminal_qkv_shape_attention_results"
+    )
+    assert (
+        _pre_terminal_affine_slice_spp_call_count(
+            "run_terminal_affine_slice_spp_cleanup"
+        )
+        == 1
     )
 
 
@@ -5880,7 +5906,7 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
     assert previous_boundary.targets[0].id == (
-        "_terminal_affine_slice_spp_results"
+        "_pre_terminal_affine_slice_spp_results"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
@@ -6649,17 +6675,15 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_affine_slice_spp_results"
+        and statement.targets[0].id
+        == "_pre_terminal_affine_slice_spp_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_terminal_affine_slice_spp_cleanup"
+        == "run_pre_terminal_affine_slice_spp_cleanup"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_pre_terminal_cleanup_results"
+    assert isinstance(previous_boundary, ast.If)
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
@@ -6672,6 +6696,12 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
     assert (
         next_boundary.value.func.id
         == "run_terminal_qkv_shape_attention_cleanup"
+    )
+    assert (
+        _pre_terminal_affine_slice_spp_call_count(
+            "run_terminal_affine_slice_spp_cleanup"
+        )
+        == 1
     )
     owner_path = (
         REPO_ROOT

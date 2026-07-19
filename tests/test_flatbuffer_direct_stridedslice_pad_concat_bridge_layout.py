@@ -61,6 +61,15 @@ TERMINAL_AFFINE_SLICE_SPP_PATH = (
 )
 TERMINAL_AFFINE_SLICE_SPP = "run_terminal_affine_slice_spp_cleanup"
 TERMINAL_AFFINE_SLICE_SPP_RESULT = "_terminal_affine_slice_spp_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_affine_slice_spp_orchestration.py"
+)
+OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+OUTER_RESULT = "_pre_terminal_affine_slice_spp_results"
 _STATS = {
     "optimized_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains": 1,
 }
@@ -115,6 +124,22 @@ def _terminal_affine_slice_spp_calls(function_name: str) -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == TERMINAL_AFFINE_SLICE_SPP
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _outer_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
     )
     return [
         node
@@ -1324,23 +1349,20 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
+        and statement.targets[0].id == OUTER_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == TERMINAL_AFFINE_SLICE_SPP
+    assert invocation.value.func.id == OUTER_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
     assert invocation.value.keywords == []
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_cleanup_results"
+    assert isinstance(previous, ast.If)
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -1348,6 +1370,7 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
     assert following.targets[0].id == (
         "_terminal_qkv_shape_attention_results"
     )
+    assert len(_outer_calls(TERMINAL_AFFINE_SLICE_SPP)) == 1
 
     direct_statements = [
         statement
@@ -1399,13 +1422,13 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_pre_terminal_cleanup_results"
+        and statement.targets[0].id == OUTER_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == PRE_TERMINAL_CLEANUP
+    assert invocation.value.func.id == OUTER_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
@@ -1415,7 +1438,8 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
+    assert following.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert len(_outer_calls(PRE_TERMINAL_CLEANUP)) == 1
 
     owner_calls = _pre_terminal_cleanup_calls(
         "run_pre_terminal_affine_tail_cleanup"
@@ -1465,16 +1489,16 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_pre_terminal_cleanup_results"
+        and statement.targets[0].id == OUTER_RESULT
     )
     invocation = lowerer.body[slice_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_pre_terminal_cleanup_results"
+    assert invocation.targets[0].id == OUTER_RESULT
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == PRE_TERMINAL_CLEANUP
+    assert invocation.value.func.id == OUTER_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
@@ -1482,7 +1506,8 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
 
     following = lowerer.body[slice_index + 1]
     assert isinstance(following, ast.Assign)
-    assert following.targets[0].id == TERMINAL_AFFINE_SLICE_SPP_RESULT
+    assert following.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert len(_outer_calls(PRE_TERMINAL_CLEANUP)) == 1
 
     owner_calls = _pre_terminal_cleanup_calls(
         "run_pre_terminal_affine_tail_cleanup"

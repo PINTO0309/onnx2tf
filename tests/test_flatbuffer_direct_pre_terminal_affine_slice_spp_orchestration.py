@@ -8,11 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.pre_terminal_cleanup_orchestration import (
-    run_pre_terminal_cleanup,
-)
-from onnx2tf.tflite_builder.passes.terminal_affine_slice_spp_orchestration import (
-    run_terminal_affine_slice_spp_cleanup,
+from onnx2tf.tflite_builder.passes import (
+    pre_terminal_affine_slice_spp_orchestration,
 )
 
 
@@ -147,33 +144,25 @@ def _call_name(statement: ast.stmt) -> str | None:
 
 def test_pre_terminal_affine_slice_spp_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    statements = tuple(
-        next(
-            statement
-            for statement in lowerer.body
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    indices = tuple(lowerer.body.index(statement) for statement in statements)
-    assert indices == (indices[0], indices[0] + 1)
-    predecessor = lowerer.body[indices[0] - 1]
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert call.keywords == []
+    predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    assert tuple(_call_name(statement) for statement in statements) == (
-        CHILD_OWNERS
-    )
-    for statement in statements:
-        call = _call(statement)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "shared_model_ir_pass_context"
-        ]
-        assert call.keywords == []
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
@@ -185,15 +174,13 @@ def test_pre_terminal_affine_slice_spp_current_boundary_and_schema() -> None:
         diagnostics=[],
     )
     assert (
-        run_pre_terminal_cleanup(context),
-        run_terminal_affine_slice_spp_cleanup(context),
-    ) == EXPECTED_SCHEMAS
+        pre_terminal_affine_slice_spp_orchestration.run_pre_terminal_affine_slice_spp_cleanup(
+            context
+        )
+        == EXPECTED_SCHEMAS
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pre-terminal affine/Slice/SPP tail has no shared-context owner",
-)
 def test_pre_terminal_affine_slice_spp_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -236,3 +223,46 @@ def test_pre_terminal_affine_slice_spp_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_pre_terminal_affine_slice_spp_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("pre_terminal_affine_slice_spp_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        tuple({f"pre_terminal_{index}": index} for index in range(5)),
+        tuple({f"affine_slice_spp_{index}": index} for index in range(3)),
+    )
+    observed: list[tuple[str, ModelIRPassContext]] = []
+
+    def _callback(index: int):
+        def _run(active_context: ModelIRPassContext) -> tuple[dict[str, int], ...]:
+            observed.append((CHILD_OWNERS[index], active_context))
+            return expected_results[index]
+
+        return _run
+
+    for index, child_owner in enumerate(CHILD_OWNERS):
+        monkeypatch.setattr(
+            pre_terminal_affine_slice_spp_orchestration,
+            child_owner,
+            _callback(index),
+        )
+
+    actual = (
+        pre_terminal_affine_slice_spp_orchestration.run_pre_terminal_affine_slice_spp_cleanup(
+            context
+        )
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context),
+        (CHILD_OWNERS[1], context),
+    ]

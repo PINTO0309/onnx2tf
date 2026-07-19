@@ -41,6 +41,16 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_pre_terminal_cleanup_results"
 SUCCESSOR_TARGET = "_terminal_affine_slice_spp_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_affine_slice_spp_orchestration.py"
+)
+OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+OUTER_TARGET = "_pre_terminal_affine_slice_spp_results"
+OUTER_SUCCESSOR_TARGET = "_terminal_qkv_shape_attention_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -75,14 +85,25 @@ def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
 
 
+def _outer_calls() -> list[ast.Call]:
+    owner = _functions(OUTER_OWNER_PATH)[OUTER_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+
+
 def test_pre_terminal_cleanup_current_boundary_and_schemas() -> None:
     lowerer = _lowerer()
     index, invocation = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
-    assert _call_name(invocation) == OWNER
+    assert _call_name(invocation) == OUTER_OWNER
     call = _call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -94,7 +115,12 @@ def test_pre_terminal_cleanup_current_boundary_and_schemas() -> None:
         ast.unparse(lowerer.body[index - 1].test)
         == "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == OUTER_SUCCESSOR_TARGET
+    assert len(_outer_calls()) == 1
+    assert [
+        ast.unparse(argument) for argument in _outer_calls()[0].args
+    ] == ["context"]
+    assert _outer_calls()[0].keywords == []
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -167,9 +193,9 @@ def test_pre_terminal_cleanup_has_one_context_owner() -> None:
     index, invocation = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
-    assert _call_name(invocation) == OWNER
+    assert _call_name(invocation) == OUTER_OWNER
     call = _call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -181,7 +207,8 @@ def test_pre_terminal_cleanup_has_one_context_owner() -> None:
         ast.unparse(lowerer.body[index - 1].test)
         == "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == OUTER_SUCCESSOR_TARGET
+    assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

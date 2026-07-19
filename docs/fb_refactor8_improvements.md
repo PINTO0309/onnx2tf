@@ -6017,3 +6017,39 @@ SPP, QKV, late-binary recovery, shared-context, terminal-validation,
 architecture, and phase-store contracts. Production, public behavior,
 dependency boundaries, and the exactly 128-ID/128-owner store remain
 unchanged.
+
+## Pre-terminal affine/Slice/SPP composite implementation
+
+`passes/pre_terminal_affine_slice_spp_orchestration.py` now owns the
+characterized two-stage terminal-preparation sequence. It forwards the exact
+same `ModelIRPassContext` first to `run_pre_terminal_cleanup(context)` and
+then to `run_terminal_affine_slice_spp_cleanup(context)`. The owner returns
+the complete five-result pre-terminal tuple and three-result affine/Slice/SPP
+tuple unchanged, without copying, flattening, summarizing, or using either
+result as control flow.
+
+The lowerer replaces only `_pre_terminal_cleanup_results` and
+`_terminal_affine_slice_spp_results` with
+`_pre_terminal_affine_slice_spp_results`. The two now-unused direct imports
+were removed. The optional late-binary layout-recovery reconciliation guard
+remains the immediate predecessor, and terminal QKV shape/attention remains
+the immediate successor. All specialized child owners, raw compatibility
+wrappers, callbacks, independent routes, comments describing required order,
+and graph mutations remain intact.
+
+Owner-aware pre-terminal InstanceNorm, terminal affine, pre-Add, channel
+Slice/Pad/Mul, affine-tail, strict StridedSlice/Pad/Concat, late SPP, QKV,
+late-binary recovery, architecture, and boundary tests now follow their
+specialized operations through the new outer owner. Runtime injection proves
+fixed two-child order, exact shared-context identity, and identity of both raw
+nested result tuples. No compatibility alias was reintroduced in the lowerer.
+
+Final sequential validation under core-only `uv` passed with 3 focused tests,
+514 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. No guard, pass invocation, graph rewrite,
+phase result, public API, artifact, dependency, or TensorFlow boundary
+changed. The bounded store remains exactly 128 IDs and 128 owners. No
+real-model conversion was repeated because this is a straight-line ownership
+extraction with exact state, order, schema, result-identity, route-count, and
+boundary coverage.

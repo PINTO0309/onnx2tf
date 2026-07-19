@@ -279,8 +279,8 @@ from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration imp
 from onnx2tf.tflite_builder.passes.very_late_layout_tail_orchestration import (
     run_very_late_layout_tail_cleanup,
 )
-from onnx2tf.tflite_builder.passes.terminal_affine_slice_spp_orchestration import (
-    run_terminal_affine_slice_spp_cleanup,
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_slice_spp_orchestration import (
+    run_pre_terminal_affine_slice_spp_cleanup,
 )
 from onnx2tf.tflite_builder.passes.terminal_qkv_shape_attention_orchestration import (
     run_terminal_qkv_shape_attention_cleanup,
@@ -299,9 +299,6 @@ from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestration import (
     run_optional_late_binary_layout_recovery_cleanup,
-)
-from onnx2tf.tflite_builder.passes.pre_terminal_cleanup_orchestration import (
-    run_pre_terminal_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
@@ -5232,17 +5229,12 @@ def lower_onnx_to_ir(
     # shape/layout repair passes can recreate the exact tail pattern.
     # Late bridge rewrites can also recreate strict
     # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
-    _pre_terminal_cleanup_results = (
-        run_pre_terminal_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
-    # Strict slice/merge cleanup above can recreate simple affine bridge tails:
+    # Strict slice/merge cleanup can recreate simple affine bridge tails:
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
-    # Keep this after pre_add/slice/pad strict rewrites: those passes can
-    # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
-    _terminal_affine_slice_spp_results = (
-        run_terminal_affine_slice_spp_cleanup(
+    # Keep the affine/Slice/SPP child after pre_add/slice/pad strict rewrites:
+    # those passes can recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
+    _pre_terminal_affine_slice_spp_results = (
+        run_pre_terminal_affine_slice_spp_cleanup(
             shared_model_ir_pass_context,
         )
     )

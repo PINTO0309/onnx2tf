@@ -35,6 +35,15 @@ PRE_TERMINAL_CLEANUP_PATH = (
 )
 PRE_TERMINAL_CLEANUP = "run_pre_terminal_cleanup"
 PRE_TERMINAL_CLEANUP_RESULT = "_pre_terminal_cleanup_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_affine_slice_spp_orchestration.py"
+)
+OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+OUTER_RESULT = "_pre_terminal_affine_slice_spp_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -66,6 +75,22 @@ def _pre_terminal_cleanup_calls(function_name: str) -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
+    ]
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PRE_TERMINAL_CLEANUP
     ]
 
 
@@ -223,10 +248,10 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == PRE_TERMINAL_CLEANUP_RESULT
+        and statement.targets[0].id == OUTER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == PRE_TERMINAL_CLEANUP
+        and statement.value.func.id == OUTER_OWNER
     )
 
     predecessor = lowerer.body[invocation_index - 1]
@@ -242,7 +267,8 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_affine_slice_spp_results"
+    assert following.targets[0].id == "_terminal_qkv_shape_attention_results"
+    assert len(_outer_calls()) == 1
     assert len(_pre_terminal_cleanup_calls(PRE_TERMINAL_PRE_ADD)) == 1
     assert len(_pre_terminal_cleanup_calls(CHANNEL_SLICE_PAD_MUL_SUMMARY)) == 1
     assert len(
@@ -402,7 +428,7 @@ def test_pre_terminal_pre_add_uses_prune_aware_owner() -> None:
     assert any(
         isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == PRE_TERMINAL_CLEANUP_RESULT
+            and statement.targets[0].id == OUTER_RESULT
         for statement in lowerer.body
     )
 
