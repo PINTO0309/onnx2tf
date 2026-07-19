@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Thirteen late lowerer clusters now have focused orchestration owners. The first
+Fourteen late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -172,10 +172,17 @@ prune-only tensor-count change to one boolean. The lowerer again retains the
 conditional reconciliation record, and both guards around the following
 optional late-binary layout recovery remain unchanged.
 
+The fourteenth preserves the normalized enablement predicate around aggregate
+late-binary layout recovery and reduces the aggregate mapping to one boolean.
+Disabled recovery is still skipped completely; enabled recovery receives the
+same ModelIR, LayoutState, diagnostics, and independent layout-Transpose flag.
+The lowerer retains the direct conditional reconciliation record.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty unconsumed locals and two
-lowerer scope locals. They also replace twelve consumed mutation-evidence
-locals and two tensor-count snapshots with two explicit boolean decisions.
+lowerer scope locals. They also replace thirteen consumed mutation-evidence or
+aggregate-result locals and two tensor-count snapshots with three explicit
+boolean decisions.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
 
@@ -436,6 +443,8 @@ Final checkpoint results:
   **150 passed**;
 - late-binary repair decision and affected boundary contracts:
   **132 passed**;
+- optional late-binary layout-recovery decision and affected contracts:
+  **138 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
 - indexed, quantized, and legacy NHWC Concat family contracts:
   **285 passed**;

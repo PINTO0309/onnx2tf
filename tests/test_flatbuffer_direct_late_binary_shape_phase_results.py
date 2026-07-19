@@ -103,13 +103,22 @@ def test_two_late_binary_reconciliations_are_guarded_and_unconsumed() -> None:
     recovery_guard = parents[records[1]]
     assert isinstance(recovery_guard, ast.If)
     assert ast.unparse(recovery_guard.test) == (
-        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
-    outer_recovery_guard = parents[recovery_guard]
-    assert isinstance(outer_recovery_guard, ast.If)
-    assert ast.unparse(outer_recovery_guard.test) == (
-        "optimize_layout_transpose_chains or "
-        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    recovery_decision = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_late_binary_layout_recovery_requires_reconciliation"
+    )
+    assert ast.unparse(recovery_decision.value) == (
+        "run_optional_late_binary_layout_recovery_cleanup("
+        "shared_model_ir_pass_context, "
+        "enabled=optimize_layout_transpose_chains or "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
     assert not any(
         isinstance(node, ast.Name)

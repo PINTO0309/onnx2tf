@@ -45,6 +45,9 @@ LATE_BINARY_REPAIR_OWNER = "run_late_binary_repair_cleanup"
 LATE_BINARY_REPAIR_RESULT = (
     "_late_binary_repair_requires_reconciliation"
 )
+OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_RESULT = (
+    "_late_binary_layout_recovery_requires_reconciliation"
+)
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -1827,10 +1830,16 @@ def test_primary_path_retains_late_binary_repair_shape_result() -> None:
     )
 
     following = body[guard_index + 1]
-    assert isinstance(following, ast.If)
-    assert "optimize_layout_transpose_chains" in ast.unparse(following.test)
-    assert "apply_safe_transpose_reduction_lite_on_no_layout_opt" in ast.unparse(
-        following.test
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert (
+        following.targets[0].id
+        == OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_RESULT
+    )
+    assert "optimize_layout_transpose_chains" in ast.unparse(following.value)
+    assert (
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+        in ast.unparse(following.value)
     )
 
 

@@ -128,6 +128,9 @@ from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration impo
 from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
     LATE_BINARY_REPAIR_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestration import (
+    OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -219,6 +222,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *VERY_LATE_LAYOUT_BROADCAST_PASS_IDS,
     *SHARED_LATE_RECONCILIATION_PASS_IDS,
     *LATE_BINARY_REPAIR_PASS_IDS,
+    *OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -9723,10 +9727,10 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
         "include_mutation_count=True))"
     )
     successor = lowerer.body[decision_index + 2]
-    assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == (
-        "optimize_layout_transpose_chains or "
-        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    assert isinstance(successor, ast.Assign)
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
 
 
@@ -16593,6 +16597,54 @@ def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
 
 
 def test_late_binary_layout_recovery_uses_one_aggregate_runner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "optional_late_binary_layout_recovery_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_optional_late_binary_layout_recovery_cleanup"
+    )
+    assert OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS == (
+        "run_late_binary_layout_recovery",
+    )
+    aggregate_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_binary_layout_recovery"
+    ]
+    assert len(aggregate_calls) == 1
+    aggregate_call = aggregate_calls[0]
+    assert [ast.unparse(argument) for argument in aggregate_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in aggregate_call.keywords
+    } == {
+        "include_layout_transpose": "include_layout_transpose",
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+    }
+    disabled_guard = owner.body[1]
+    assert isinstance(disabled_guard, ast.If)
+    assert ast.unparse(disabled_guard.test) == "not enabled"
+    assert ast.unparse(disabled_guard.body[0]) == "return False"
+    owner_return = owner.body[-1]
+    assert isinstance(owner_return, ast.Return)
+    assert ast.unparse(owner_return.value) == (
+        "any((int(value) > 0 for value in stats.values()))"
+    )
+
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -16602,42 +16654,26 @@ def test_late_binary_layout_recovery_uses_one_aggregate_runner() -> None:
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    branch = next(
+    assignment = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.If)
-        and ast.unparse(statement.test)
-        == (
-            "optimize_layout_transpose_chains or "
-            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
-        )
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_late_binary_layout_recovery_requires_reconciliation"
     )
-
-    assert len(branch.body) == 2
-    assignment = branch.body[0]
-    assert isinstance(assignment, ast.Assign)
-    assert len(assignment.targets) == 1
-    assert isinstance(assignment.targets[0], ast.Name)
-    assert assignment.targets[0].id == "late_binary_layout_recovery_stats"
-    assert isinstance(assignment.value, ast.Call)
-    assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == "run_late_binary_layout_recovery"
-    assert [ast.unparse(argument) for argument in assignment.value.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in assignment.value.keywords
-    } == {
-        "include_layout_transpose": "optimize_layout_transpose_chains",
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
-
-    reconcile_guard = branch.body[1]
+    assignment_index = lowerer.body.index(assignment)
+    assert ast.unparse(assignment.value) == (
+        "run_optional_late_binary_layout_recovery_cleanup("
+        "shared_model_ir_pass_context, "
+        "enabled=optimize_layout_transpose_chains or "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
+    )
+    reconcile_guard = lowerer.body[assignment_index + 1]
     assert isinstance(reconcile_guard, ast.If)
     assert ast.unparse(reconcile_guard.test) == (
-        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
     assert len(reconcile_guard.body) == 1
     reconcile = reconcile_guard.body[0]

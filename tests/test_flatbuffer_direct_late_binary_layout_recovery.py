@@ -212,31 +212,30 @@ def test_late_binary_recovery_connects_to_terminal_evidence_boundary() -> None:
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    branch_index = next(
+    decision_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.If)
-        and ast.unparse(statement.test)
-        == (
-            "optimize_layout_transpose_chains or "
-            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
-        )
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_late_binary_layout_recovery_requires_reconciliation"
     )
-    branch = lowerer.body[branch_index]
-    assert isinstance(branch, ast.If)
-    assert len(branch.body) == 2
-    stats_assignment = branch.body[0]
-    assert isinstance(stats_assignment, ast.Assign)
-    assert len(stats_assignment.targets) == 1
-    assert isinstance(stats_assignment.targets[0], ast.Name)
-    assert stats_assignment.targets[0].id == "late_binary_layout_recovery_stats"
-    reconcile_guard = branch.body[1]
+    decision = lowerer.body[decision_index]
+    assert isinstance(decision, ast.Assign)
+    assert ast.unparse(decision.value) == (
+        "run_optional_late_binary_layout_recovery_cleanup("
+        "shared_model_ir_pass_context, "
+        "enabled=optimize_layout_transpose_chains or "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
+    )
+    reconcile_guard = lowerer.body[decision_index + 1]
     assert isinstance(reconcile_guard, ast.If)
     assert ast.unparse(reconcile_guard.test) == (
-        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
 
-    following = lowerer.body[branch_index + 1]
+    following = lowerer.body[decision_index + 2]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -264,26 +263,19 @@ def test_late_binary_recovery_retains_complete_shape_result() -> None:
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    branch = next(
+    decision = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.If)
-        and ast.unparse(statement.test)
-        == (
-            "optimize_layout_transpose_chains or "
-            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
-        )
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert len(branch.body) == 2
-    stats_assignment = branch.body[0]
-    assert isinstance(stats_assignment, ast.Assign)
-    assert isinstance(stats_assignment.targets[0], ast.Name)
-    assert stats_assignment.targets[0].id == "late_binary_layout_recovery_stats"
-
-    guard = branch.body[1]
+    decision_index = lowerer.body.index(decision)
+    guard = lowerer.body[decision_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
-        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
     assert len(guard.body) == 1
     statement = guard.body[0]

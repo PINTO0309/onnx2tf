@@ -9,6 +9,9 @@ from onnx import TensorProto, helper, numpy_helper
 import onnx2tf.tflite_builder.core.validation as validation_module
 import onnx2tf.tflite_builder.core.shape_readiness as shape_readiness_module
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+from onnx2tf.tflite_builder.passes import (
+    optional_late_binary_layout_recovery_orchestration as optional_recovery_module,
+)
 
 from onnx2tf.tflite_builder.core import (
     ConversionRequest,
@@ -1628,7 +1631,6 @@ def test_final_consecutive_reshape_counters_gate_shape_reconciliation(
 
 def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
     counter_name = "rewritten_prelu_transpose_passthrough_chains"
-    probe_name = "unused_final_prelu_probe"
     original_reconcile = lowering_module._reconcile_static_tensor_shapes
     reconcile_count = 0
     recovery_invocations = 0
@@ -1636,14 +1638,7 @@ def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
     def counted_reconcile(model_ir, *args, **kwargs):
         nonlocal reconcile_count
         reconcile_count += 1
-        result = original_reconcile(model_ir, *args, **kwargs)
-        model_ir.tensors[probe_name] = TensorIR(
-            name=probe_name,
-            dtype="FLOAT32",
-            shape=[1],
-            shape_signature=[1],
-        )
-        return result
+        return original_reconcile(model_ir, *args, **kwargs)
 
     monkeypatch.setattr(
         lowering_module,
@@ -1659,15 +1654,13 @@ def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
         def pass_result(model_ir, *args, **kwargs):
             nonlocal recovery_invocations
             recovery_invocations += 1
-            if outcome == "prune":
-                assert model_ir.tensors.pop(probe_name, None) is not None
             return {
                 counter_name: int(outcome == "rewrite"),
                 "pruned_unused_tensors": int(outcome == "prune"),
             }
 
         monkeypatch.setattr(
-            lowering_module,
+            optional_recovery_module,
             "run_late_binary_layout_recovery",
             pass_result,
         )
@@ -2004,18 +1997,12 @@ def test_late_binary_layout_recovery_reconciles_only_after_mutation(
         def runner_result(*args, **kwargs):
             nonlocal runner_invocations
             runner_invocations += 1
-            return {
-                "rewritten_prelu_transpose_passthrough_chains": int(
-                    outcome == "rewrite"
-                ),
-                "pruned_unused_tensors": int(outcome == "prune"),
-            }
+            return outcome != "unchanged"
 
         monkeypatch.setattr(
             lowering_module,
-            "run_late_binary_layout_recovery",
+            "run_optional_late_binary_layout_recovery_cleanup",
             runner_result,
-            raising=False,
         )
         lower_onnx_to_ir(
             _add_onnx_model(),

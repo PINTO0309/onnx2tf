@@ -1925,6 +1925,48 @@ Commit and push this characterization before production changes. Keep the
 store exactly 128/128 and continue with commits and pushes only; never create,
 update, or reopen a pull request.
 
+## Optional late-binary layout-recovery decision implementation
+
+`run_optional_late_binary_layout_recovery_cleanup` now owns the normalized
+enablement check, the existing aggregate recovery call, and its positive-count
+decision. When disabled it returns `False` without invoking recovery. When
+enabled it forwards the same ModelIR, LayoutState, diagnostics list, and
+independent layout-Transpose flag, then returns whether any aggregate counter
+is positive.
+
+The lowerer replaces the nested option branch, consumed aggregate result, and
+positive-summary branch with
+`_late_binary_layout_recovery_requires_reconciliation`. It continues to own
+the conditional `shape_reconciliation.primary.late_binary_layout_recovery`
+record and its direct `_reconcile_static_tensor_shapes(model_ir,
+include_mutation_count=True)` call. The preceding late-binary repair decision
+and following pre-terminal InstanceNorm cleanup remain adjacent. The bounded
+store remains exactly 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused disabled, stable, positive, flag, identity, and boundary contracts:
+  `6 passed in 0.57s`;
+- affected recovery, repair, terminal, core, and store contracts:
+  `138 passed in 2.82s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.99s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.15s`;
+- full architecture contracts: `258 passed in 18.96s`;
+- phase-store capacity contracts: `2 passed in 0.55s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No recovery call, repair order, mutation counter, reconciliation trigger,
+ModelIR mutation, diagnostic, public API, artifact, dependency, or TensorFlow
+boundary changed. No real-model conversion was run because runtime tests cover
+the disabled path, stable enabled path, positive enabled paths with both layout
+flag values, exact context identity, and lowerer reconciliation integration.
+Commit and push this checkpoint. On resume, characterize the next coherent
+pre-terminal affine/InstanceNorm decision boundary before production changes.
+Continue with commits and pushes only; never create, update, or reopen a pull
+request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

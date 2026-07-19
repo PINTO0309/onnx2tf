@@ -2930,3 +2930,36 @@ at 128/128. On resume, add the owner, retain the direct conditional
 reconciliation in the lowerer, update owner-aware contracts, and run the
 affected gates sequentially. Continue with commits and pushes only; never
 create, update, or reopen a pull request.
+
+## Optional late-binary layout-recovery decision implementation
+
+The new boolean owner preserves disabled-path skipping and forwards the exact
+ModelIR/LayoutState/diagnostics objects plus the independent layout-Transpose
+flag to the existing aggregate recovery owner. For enabled recovery it returns
+whether any aggregate mutation count is positive; it neither reconciles shapes
+nor records phase evidence.
+
+The lowerer retains the direct conditional
+`shape_reconciliation.primary.late_binary_layout_recovery` record. One consumed
+aggregate-result local and the two nested decision branches are replaced by
+`_late_binary_layout_recovery_requires_reconciliation`; the predecessor and
+successor remain adjacent and the store remains 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `6 passed in 0.57s`;
+- affected boundary contracts: `138 passed in 2.82s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.99s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.15s`;
+- architecture contracts: `258 passed in 18.96s`;
+- phase-store capacity contracts: `2 passed in 0.55s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No real-model conversion was required because the runtime matrix covers both
+enablement states, stable and positive summaries, both layout-flag values,
+context identity, and lowerer integration. Commit and push this checkpoint. At
+resume, characterize the adjacent pre-terminal affine/InstanceNorm decision
+boundary before production changes. Continue with commits and pushes only;
+never create, update, or reopen a pull request.

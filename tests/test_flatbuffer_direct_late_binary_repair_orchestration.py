@@ -29,9 +29,8 @@ OWNER = "run_late_binary_repair_cleanup"
 RESULT_TARGET = "_late_binary_repair_requires_reconciliation"
 PHASE_ID = "shape_reconciliation.primary.late_binary_repair"
 PREDECESSOR_GUARD = "_shared_late_requires_reconciliation"
-SUCCESSOR_GUARD = (
-    "optimize_layout_transpose_chains or "
-    "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+SUCCESSOR_TARGET = (
+    "_late_binary_layout_recovery_requires_reconciliation"
 )
 TENSOR_COUNT_TARGET = "late_binary_repair_tensor_count"
 EVIDENCE_TARGETS = (
@@ -91,8 +90,7 @@ def test_late_binary_repair_boolean_keeps_reconciliation_in_lowerer() -> None:
         "include_mutation_count=True))"
     )
     successor = lowerer.body[index + 2]
-    assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == SUCCESSOR_GUARD
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id in (TENSOR_COUNT_TARGET, *EVIDENCE_TARGETS)
@@ -142,8 +140,7 @@ def test_late_binary_repair_uses_one_boolean_owner() -> None:
         "include_mutation_count=True))"
     )
     successor = lowerer.body[index + 2]
-    assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == SUCCESSOR_GUARD
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id in (TENSOR_COUNT_TARGET, *EVIDENCE_TARGETS)

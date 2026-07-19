@@ -173,9 +173,6 @@ from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     run_layout_recovery_prefix,
     run_layout_reshape_attention_recovery_prefix,
 )
-from onnx2tf.tflite_builder.passes.late_binary_layout_recovery import (
-    run_late_binary_layout_recovery,
-)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     AttentionRecoveryContext,
     run_attention_gate_qdq_recovery,
@@ -301,6 +298,9 @@ from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration impo
 )
 from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
     run_late_binary_repair_cleanup,
+)
+from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestration import (
+    run_optional_late_binary_layout_recovery_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
@@ -5290,21 +5290,24 @@ def lower_onnx_to_ir(
                 include_mutation_count=True,
             ),
         )
-    if optimize_layout_transpose_chains or apply_safe_transpose_reduction_lite_on_no_layout_opt:
-        late_binary_layout_recovery_stats = run_late_binary_layout_recovery(
-            model_ir,
+    _late_binary_layout_recovery_requires_reconciliation = (
+        run_optional_late_binary_layout_recovery_cleanup(
+            shared_model_ir_pass_context,
+            enabled=(
+                optimize_layout_transpose_chains
+                or apply_safe_transpose_reduction_lite_on_no_layout_opt
+            ),
             include_layout_transpose=optimize_layout_transpose_chains,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
         )
-        if _stats_have_positive_count(late_binary_layout_recovery_stats):
-            session.record_phase_result(
-                "shape_reconciliation.primary.late_binary_layout_recovery",
-                _reconcile_static_tensor_shapes(
-                    model_ir,
-                    include_mutation_count=True,
-                ),
-            )
+    )
+    if _late_binary_layout_recovery_requires_reconciliation:
+        session.record_phase_result(
+            "shape_reconciliation.primary.late_binary_layout_recovery",
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            ),
+        )
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
     _pre_terminal_affine_instancenorm_post_bias_stats = (

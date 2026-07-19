@@ -5,6 +5,15 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    optional_late_binary_layout_recovery_orchestration,
+)
+from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestration import (
+    OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -25,10 +34,6 @@ OLD_RESULT_TARGET = "late_binary_layout_recovery_stats"
 PREDECESSOR_GUARD = "_late_binary_repair_requires_reconciliation"
 SUCCESSOR_TARGET = (
     "_pre_terminal_affine_instancenorm_post_bias_stats"
-)
-ENABLEMENT = (
-    "optimize_layout_transpose_chains or "
-    "apply_safe_transpose_reduction_lite_on_no_layout_opt"
 )
 PHASE_ID = "shape_reconciliation.primary.late_binary_layout_recovery"
 
@@ -70,35 +75,24 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_optional_late_binary_layout_recovery_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    branch = next(
+    assignment = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.If)
-        and ast.unparse(statement.test) == ENABLEMENT
-        and any(
-            _single_target(candidate) == OLD_RESULT_TARGET
-            for candidate in statement.body
-        )
+        if _single_target(statement) == RESULT_TARGET
     )
-    branch_index = lowerer.body.index(branch)
-    assert len(branch.body) == 2
-
-    assignment = branch.body[0]
-    assert _single_target(assignment) == OLD_RESULT_TARGET
+    assignment_index = lowerer.body.index(assignment)
     assert isinstance(assignment, ast.Assign)
     assert ast.unparse(assignment.value) == (
-        "run_late_binary_layout_recovery("
-        "model_ir, "
-        "include_layout_transpose=optimize_layout_transpose_chains, "
-        "layout_state=session.layout_state, "
-        "diagnostics=session.diagnostics)"
+        "run_optional_late_binary_layout_recovery_cleanup("
+        "shared_model_ir_pass_context, "
+        "enabled=optimize_layout_transpose_chains or "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
 
-    guard = branch.body[1]
+    guard = lowerer.body[assignment_index + 1]
     assert isinstance(guard, ast.If)
-    assert ast.unparse(guard.test) == (
-        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
-    )
+    assert ast.unparse(guard.test) == RESULT_TARGET
     assert guard.orelse == []
     assert len(guard.body) == 1
     assert _phase_id(guard.body[0]) == PHASE_ID
@@ -109,18 +103,18 @@ def test_optional_late_binary_layout_recovery_boundary_is_fixed() -> None:
         "include_mutation_count=True))"
     )
 
-    predecessor = lowerer.body[branch_index - 1]
+    predecessor = lowerer.body[assignment_index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[branch_index + 1]) == SUCCESSOR_TARGET
+    assert _single_target(lowerer.body[assignment_index + 2]) == (
+        SUCCESSOR_TARGET
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == OLD_RESULT_TARGET
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "optional late-binary layout recovery lacks a focused boolean owner"
-    ),
-)
 def test_optional_late_binary_layout_recovery_uses_boolean_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -165,4 +159,78 @@ def test_optional_late_binary_layout_recovery_uses_boolean_owner() -> None:
     assert not any(
         isinstance(node, ast.Name) and node.id == OLD_RESULT_TARGET
         for node in ast.walk(lowerer)
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "enabled",
+        "include_layout_transpose",
+        "mutation_count",
+        "expected_invocations",
+        "expected_result",
+    ),
+    (
+        (False, True, 1, 0, False),
+        (True, False, 0, 1, False),
+        (True, False, 1, 1, True),
+        (True, True, 1, 1, True),
+    ),
+)
+def test_optional_late_binary_layout_recovery_owner_preserves_decision(
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    include_layout_transpose: bool,
+    mutation_count: int,
+    expected_invocations: int,
+    expected_result: bool,
+) -> None:
+    model_ir = ModelIR("optional_late_binary_layout_recovery")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    observed: list[tuple[object, bool, object, object]] = []
+
+    def _recovery_callback(
+        candidate: ModelIR,
+        *,
+        include_layout_transpose: bool,
+        layout_state: object,
+        diagnostics: object,
+    ) -> dict[str, int]:
+        observed.append(
+            (
+                candidate,
+                include_layout_transpose,
+                layout_state,
+                diagnostics,
+            )
+        )
+        return {"mutation": mutation_count}
+
+    monkeypatch.setattr(
+        optional_late_binary_layout_recovery_orchestration,
+        "run_late_binary_layout_recovery",
+        _recovery_callback,
+    )
+
+    assert (
+        optional_late_binary_layout_recovery_orchestration.run_optional_late_binary_layout_recovery_cleanup(
+            context,
+            enabled=enabled,
+            include_layout_transpose=include_layout_transpose,
+        )
+        is expected_result
+    )
+    assert len(observed) == expected_invocations
+    if observed:
+        candidate, include_layout, layout_state, diagnostics = observed[0]
+        assert candidate is context.model_ir
+        assert include_layout is include_layout_transpose
+        assert layout_state is context.layout_state
+        assert diagnostics is context.diagnostics
+    assert OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS == (
+        "run_late_binary_layout_recovery",
     )
