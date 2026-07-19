@@ -25,6 +25,19 @@ TERMINAL_AFFINE_CONCAT_SPLIT = "_run_terminal_affine_concat_split_recovery_seque
 VERY_LATE_PAD_INSTANCENORM = (
     "run_very_late_pad_instancenorm_layout_cleanup"
 )
+PRE_TERMINAL_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_instancenorm_layout_orchestration.py"
+)
+PRE_TERMINAL_INSTANCENORM = (
+    "run_pre_terminal_instancenorm_layout_cleanup"
+)
+PRE_TERMINAL_INSTANCENORM_RESULT = (
+    "_pre_terminal_instancenorm_layout_results"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -52,6 +65,26 @@ def _very_late_pad_instancenorm_call_count(lowerer: ast.FunctionDef) -> int:
     )
 
 
+def _pre_terminal_instancenorm_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(
+        PRE_TERMINAL_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == PRE_TERMINAL_INSTANCENORM
+    )
+    owner_name = function_name.removeprefix("_")
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+
+
 def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Name):
         return node.id
@@ -60,21 +93,6 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
-
-
-def _phase_result_owner(statement: ast.stmt, phase_id: str) -> ast.Call:
-    assert isinstance(statement, ast.Expr)
-    record = statement.value
-    assert isinstance(record, ast.Call)
-    assert isinstance(record.func, ast.Attribute)
-    assert isinstance(record.func.value, ast.Name)
-    assert record.func.value.id == "session"
-    assert record.func.attr == "record_phase_result"
-    assert len(record.args) == 2
-    assert ast.literal_eval(record.args[0]) == phase_id
-    owner = record.args[1]
-    assert isinstance(owner, ast.Call)
-    return owner
 
 
 def _context() -> TerminalAffineConcatSplitRecoveryContext:
@@ -296,7 +314,7 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
 
     assert observed == [
         (
-            "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains",
+            "run_pre_terminal_instancenorm_layout_cleanup",
             "_optimize_transpose_pre_add_nhwc_chains",
         ),
         (
@@ -559,13 +577,11 @@ def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_dualstats_stats"
-    )
+    assert previous.targets[0].id == PRE_TERMINAL_INSTANCENORM_RESULT
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
-        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+        PRE_TERMINAL_INSTANCENORM
     )
     following = lowerer.body[first_index + 3]
     assert isinstance(following, ast.Assign)
@@ -591,7 +607,11 @@ def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
     assert recovery_statements[1].targets[0].id == "terminal_affine_results"
 
 
-def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> None:
+def _assert_pre_terminal_instancenorm_owner_call(
+    function_name: str,
+    *,
+    expected_total_calls: int,
+) -> None:
     lowerer, _ = _lowerer_and_helper()
     affine_count_index = next(
         index
@@ -605,37 +625,14 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_dualstats_stats"
-    )
+    assert invocation.targets[0].id == PRE_TERMINAL_INSTANCENORM_RESULT
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
-        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
-    )
+    assert invocation.value.func.id == PRE_TERMINAL_INSTANCENORM
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
-    assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
-
-    previous = lowerer.body[affine_count_index - 2]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
-    )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
-    )
+    assert invocation.value.args[0].id == "shared_model_ir_pass_context"
+    assert invocation.value.keywords == []
     following = lowerer.body[affine_count_index]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
@@ -649,184 +646,56 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
         and any(
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id
-            == "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+            and node.func.id == function_name
             for node in ast.walk(statement)
         )
     ]
+    owner_calls = _pre_terminal_instancenorm_calls(function_name)
+    assert len(owner_calls) == 1
+    owner_call = owner_calls[0]
+    assert [ast.unparse(argument) for argument in owner_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_call.keywords
+    } == {"layout_state": "context.layout_state"}
     assert (
         len(direct_statements)
         + _very_late_pad_instancenorm_call_count(lowerer)
-        == 3
+        + len(owner_calls)
+        == expected_total_calls
     )
-    terminal_owner = _phase_result_owner(
-        direct_statements[0],
-        "cleanup.terminal.instancenorm_dualstats",
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {
+            "_pre_terminal_affine_instancenorm_post_bias_stats",
+            "_pre_terminal_affine_instancenorm_residual_mul_concat_stats",
+            "_pre_terminal_affine_instancenorm_dualstats_stats",
+        }
+        for node in ast.walk(lowerer)
     )
-    assert isinstance(terminal_owner.func, ast.Name)
-    assert terminal_owner.func.id == (
-        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+
+
+def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> None:
+    _assert_pre_terminal_instancenorm_owner_call(
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains",
+        expected_total_calls=3,
     )
-    assert direct_statements[1] is invocation
 
 
 def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    dualstats_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_pre_terminal_affine_instancenorm_dualstats_stats"
+    _assert_pre_terminal_instancenorm_owner_call(
+        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains",
+        expected_total_calls=3,
     )
-    invocation = lowerer.body[dualstats_index - 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
-    )
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
-        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
-    )
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
-    assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
-
-    previous = lowerer.body[dualstats_index - 2]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_post_bias_stats"
-    )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
-    )
-    following = lowerer.body[dualstats_index]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_dualstats_stats"
-    )
-
-    direct_statements = [
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, (ast.Expr, ast.Assign))
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id
-            == "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
-            for node in ast.walk(statement)
-        )
-    ]
-    assert (
-        len(direct_statements)
-        + _very_late_pad_instancenorm_call_count(lowerer)
-        == 3
-    )
-    terminal_owner = _phase_result_owner(
-        direct_statements[0],
-        "cleanup.terminal.instancenorm_residual_mul_concat",
-    )
-    assert isinstance(terminal_owner.func, ast.Name)
-    assert terminal_owner.func.id == (
-        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
-    )
-    assert direct_statements[1] is invocation
 
 
 def test_pre_terminal_affine_post_bias_captures_mutation_evidence() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    residual_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
-    )
-    invocation = lowerer.body[residual_index - 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_post_bias_stats"
-    )
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
-        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
-    )
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
-    assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
-
-    previous = lowerer.body[residual_index - 2]
-    assert isinstance(previous, ast.If)
-    following = lowerer.body[residual_index]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
-    )
-
-    direct_statements = [
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, (ast.Expr, ast.Assign))
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id
-            == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
-            for node in ast.walk(statement)
-        )
-    ]
-    assert (
-        len(direct_statements)
-        + _very_late_pad_instancenorm_call_count(lowerer)
-        == 4
-    )
-    terminal_owner = _phase_result_owner(
-        direct_statements[0],
-        "cleanup.terminal.instancenorm_post_bias",
-    )
-    assert isinstance(terminal_owner.func, ast.Name)
-    assert terminal_owner.func.id == (
-        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
-    )
-    assert direct_statements[1] is invocation
-    assert isinstance(direct_statements[2], ast.Assign)
-    assert len(direct_statements[2].targets) == 1
-    assert isinstance(direct_statements[2].targets[0], ast.Name)
-    assert direct_statements[2].targets[0].id == (
-        "_absolute_final_instancenorm_post_bias_stats"
+    _assert_pre_terminal_instancenorm_owner_call(
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains",
+        expected_total_calls=4,
     )
 
 

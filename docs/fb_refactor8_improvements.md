@@ -1997,6 +1997,44 @@ Commit and push this characterization before production changes. Keep the
 store at 128/128 and continue with commits and pushes only; never create,
 update, or reopen a pull request.
 
+## Pre-terminal InstanceNorm layout composite implementation
+
+`run_pre_terminal_instancenorm_layout_cleanup` now owns the three
+characterized InstanceNorm repairs. It imports the pass-module owners directly,
+calls them in post-bias, residual-Mul/Concat, and dual-stat order, forwards the
+same ModelIR and LayoutState to every call, and returns all three independent
+mappings in a fixed tuple.
+
+The lowerer replaces three unconsumed locals with one
+`_pre_terminal_instancenorm_layout_results` assignment outside the full phase
+store. The optional late-binary recovery reconciliation remains immediately
+before the composite, and the first terminal-affine tensor-count snapshot
+remains immediately after it. Existing lowerer compatibility wrappers and all
+other production call sites are unchanged. The store remains exactly 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused order, mapping, identity, and boundary contracts:
+  `3 passed in 0.59s`;
+- affected InstanceNorm, terminal-affine, absolute-final, core, and store
+  contracts: `151 passed in 3.50s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.88s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.13s`;
+- full architecture contracts: `258 passed in 19.45s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No graph traversal, repair call, mutation mapping, callback order, layout
+state, diagnostics, public API, artifact, dependency, or TensorFlow boundary
+changed. No real-model conversion was run because the owner runtime contract
+proves exact call order, mapping identity, and shared context identity, while
+owner-aware architecture contracts prove the unchanged total call counts.
+Commit and push this checkpoint. On resume, characterize the adjacent first
+terminal-affine recovery evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

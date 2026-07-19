@@ -28,6 +28,16 @@ ABSOLUTE_FINAL_NORMALIZATION_ATTENTION = (
 VERY_LATE_PAD_INSTANCENORM = (
     "run_very_late_pad_instancenorm_layout_cleanup"
 )
+PRE_TERMINAL_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_instancenorm_layout_orchestration.py"
+)
+PRE_TERMINAL_INSTANCENORM = (
+    "run_pre_terminal_instancenorm_layout_cleanup"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -52,6 +62,25 @@ def _very_late_pad_instancenorm_call_count(lowerer: ast.FunctionDef) -> int:
         and isinstance(node.func, ast.Name)
         and node.func.id == VERY_LATE_PAD_INSTANCENORM
         for node in ast.walk(lowerer)
+    )
+
+
+def _pre_terminal_instancenorm_call_count(function_name: str) -> int:
+    tree = ast.parse(
+        PRE_TERMINAL_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == PRE_TERMINAL_INSTANCENORM
+    )
+    owner_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+        for node in ast.walk(owner)
     )
 
 
@@ -319,6 +348,9 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert (
         len(direct_statements)
         + _very_late_pad_instancenorm_call_count(lowerer)
+        + _pre_terminal_instancenorm_call_count(
+            "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+        )
         == 4
     )
     terminal_owner = _phase_result_owner(
@@ -329,11 +361,7 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert terminal_owner.func.id == (
         "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
-    assert isinstance(direct_statements[1], ast.Assign)
-    second_target = direct_statements[1].targets[0]
-    assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_pre_terminal_affine_instancenorm_post_bias_stats"
-    assert direct_statements[2] is invocation
+    assert direct_statements[1] is invocation
 
 
 def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() -> (

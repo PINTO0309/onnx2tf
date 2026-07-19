@@ -131,6 +131,9 @@ from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
 from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestration import (
     OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestration import (
+    PRE_TERMINAL_INSTANCENORM_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -223,6 +226,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *SHARED_LATE_RECONCILIATION_PASS_IDS,
     *LATE_BINARY_REPAIR_PASS_IDS,
     *OPTIONAL_LATE_BINARY_LAYOUT_RECOVERY_PASS_IDS,
+    *PRE_TERMINAL_INSTANCENORM_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -2197,7 +2201,7 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
         previous_call_names.append(previous.value.func.id)
         next_call_names.append(following_call.func.id)
     assert previous_call_names == [
-        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains",
+        "run_pre_terminal_instancenorm_layout_cleanup",
         "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
     ]
     assert next_call_names == [

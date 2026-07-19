@@ -2985,3 +2985,34 @@ Commit and push this characterization before implementation. Keep the store
 at 128/128. On resume, add the direct pass-module owner, update owner-aware
 InstanceNorm/terminal-affine contracts, validate sequentially, then document,
 commit, and push. Never create, update, or reopen a pull request.
+
+## Pre-terminal InstanceNorm layout composite implementation
+
+The new composite owner calls the existing post-bias,
+residual-Mul/Concat, and dual-stat InstanceNorm pass owners in source order. It
+forwards one shared ModelIR/LayoutState context and returns the three original
+mappings without aggregation.
+
+The lowerer now retains one ordered composite result instead of three
+unconsumed locals. The preceding optional recovery guard and following
+terminal-affine tensor snapshot remain adjacent; compatibility wrappers and
+the 128/128 phase store remain unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `3 passed in 0.59s`;
+- affected boundary contracts: `151 passed in 3.50s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.88s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.13s`;
+- architecture contracts: `258 passed in 19.45s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No real-model conversion was required because focused runtime and owner-aware
+architecture tests prove exact result order, object identity, and unchanged
+total production call counts. Commit and push this checkpoint. At resume,
+characterize the first terminal-affine recovery evidence boundary before
+production changes. Continue with commits and pushes only; never create,
+update, or reopen a pull request.

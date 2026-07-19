@@ -302,6 +302,9 @@ from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
 from onnx2tf.tflite_builder.passes.optional_late_binary_layout_recovery_orchestration import (
     run_optional_late_binary_layout_recovery_cleanup,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestration import (
+    run_pre_terminal_instancenorm_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5310,22 +5313,9 @@ def lower_onnx_to_ir(
         )
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
-    _pre_terminal_affine_instancenorm_post_bias_stats = (
-        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _pre_terminal_affine_instancenorm_residual_mul_concat_stats = (
-        _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _pre_terminal_affine_instancenorm_dualstats_stats = (
-        _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+    _pre_terminal_instancenorm_layout_results = (
+        run_pre_terminal_instancenorm_layout_cleanup(
+            shared_model_ir_pass_context,
         )
     )
     # Late bridge rewrites above can recreate strict

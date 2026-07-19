@@ -5,6 +5,15 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    pre_terminal_instancenorm_layout_orchestration,
+)
+from onnx2tf.tflite_builder.passes.pre_terminal_instancenorm_layout_orchestration import (
+    PRE_TERMINAL_INSTANCENORM_LAYOUT_PASS_IDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -54,54 +63,29 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
-def _call_name(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign):
-        return None
-    call = statement.value
-    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
-        return None
-    return call.func.id
-
-
 def test_pre_terminal_instancenorm_layout_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    assignments = [
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) in OLD_RESULT_TARGETS
-    ]
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        OLD_RESULT_TARGETS
+        if _single_target(statement) == RESULT_TARGET
     )
-    indices = [lowerer.body.index(statement) for statement in assignments]
-    assert indices == list(range(indices[0], indices[0] + len(assignments)))
-    assert tuple(_call_name(statement) for statement in assignments) == PASS_IDS
-    for statement in assignments:
-        assert isinstance(statement, ast.Assign)
-        assert isinstance(statement.value, ast.Call)
-        assert [
-            ast.unparse(argument) for argument in statement.value.args
-        ] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in statement.value.keywords
-        } == {"layout_state": "session.layout_state"}
-
-    predecessor = lowerer.body[indices[0] - 1]
+    index = lowerer.body.index(assignment)
+    assert isinstance(assignment, ast.Assign)
+    assert ast.unparse(assignment.value) == (
+        "run_pre_terminal_instancenorm_layout_cleanup("
+        "shared_model_ir_pass_context)"
+    )
+    predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    for target in OLD_RESULT_TARGETS:
-        assert sum(
-            isinstance(node, ast.Name) and node.id == target
-            for node in ast.walk(lowerer)
-        ) == 1
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pre-terminal InstanceNorm layout cluster lacks one owner",
-)
 def test_pre_terminal_instancenorm_layout_uses_one_composite_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -139,3 +123,48 @@ def test_pre_terminal_instancenorm_layout_uses_one_composite_owner() -> None:
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_pre_terminal_instancenorm_layout_owner_preserves_results_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("pre_terminal_instancenorm_layout")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = tuple(
+        {f"result_{index}": index}
+        for index in range(len(PASS_IDS))
+    )
+    observed: list[tuple[str, object, object]] = []
+
+    def _callback(pass_id: str, result: dict[str, int]):
+        def _owner(
+            candidate: ModelIR,
+            *,
+            layout_state: object,
+        ) -> dict[str, int]:
+            observed.append((pass_id, candidate, layout_state))
+            return result
+
+        return _owner
+
+    for pass_id, result in zip(PASS_IDS, expected_results):
+        monkeypatch.setattr(
+            pre_terminal_instancenorm_layout_orchestration,
+            pass_id.removeprefix("_"),
+            _callback(pass_id, result),
+        )
+
+    assert (
+        pre_terminal_instancenorm_layout_orchestration.run_pre_terminal_instancenorm_layout_cleanup(
+            context
+        )
+        == expected_results
+    )
+    assert [entry[0] for entry in observed] == list(PASS_IDS)
+    assert all(entry[1] is context.model_ir for entry in observed)
+    assert all(entry[2] is context.layout_state for entry in observed)
+    assert PRE_TERMINAL_INSTANCENORM_LAYOUT_PASS_IDS == PASS_IDS

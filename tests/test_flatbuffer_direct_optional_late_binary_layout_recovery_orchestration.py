@@ -33,7 +33,7 @@ RESULT_TARGET = (
 OLD_RESULT_TARGET = "late_binary_layout_recovery_stats"
 PREDECESSOR_GUARD = "_late_binary_repair_requires_reconciliation"
 SUCCESSOR_TARGET = (
-    "_pre_terminal_affine_instancenorm_post_bias_stats"
+    "_pre_terminal_instancenorm_layout_results"
 )
 PHASE_ID = "shape_reconciliation.primary.late_binary_layout_recovery"
 

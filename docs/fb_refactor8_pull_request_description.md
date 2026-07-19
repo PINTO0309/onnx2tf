@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Fourteen late lowerer clusters now have focused orchestration owners. The first
+Fifteen late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -178,8 +178,13 @@ Disabled recovery is still skipped completely; enabled recovery receives the
 same ModelIR, LayoutState, diagnostics, and independent layout-Transpose flag.
 The lowerer retains the direct conditional reconciliation record.
 
+The fifteenth runs the pre-terminal post-bias, residual-Mul/Concat, and
+dual-stat InstanceNorm layout repairs with one shared ModelIR/LayoutState
+context. It returns all three independent mappings in source order outside the
+full store and leaves both neighboring decision boundaries untouched.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing forty unconsumed locals and two
+and result schemas while removing forty-three unconsumed locals and two
 lowerer scope locals. They also replace thirteen consumed mutation-evidence or
 aggregate-result locals and two tensor-count snapshots with three explicit
 boolean decisions.
@@ -445,6 +450,8 @@ Final checkpoint results:
   **132 passed**;
 - optional late-binary layout-recovery decision and affected contracts:
   **138 passed**;
+- pre-terminal InstanceNorm composite and affected contracts:
+  **151 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
 - indexed, quantized, and legacy NHWC Concat family contracts:
   **285 passed**;
