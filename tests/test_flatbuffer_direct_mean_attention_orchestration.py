@@ -44,6 +44,13 @@ PHASE_PATH = (
     / "passes"
     / "mean_attention_orchestration.py"
 )
+LAYOUT_PASS_SET_1_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_mean_attention_gate_orchestration.py"
+)
 MEAN_ATTENTION = "_run_mean_attention_layout_pass_cluster"
 POLICIES = (
     (False, False),
@@ -66,6 +73,25 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == MEAN_ATTENTION
     )
     return lowerer, helper
+
+
+def _layout_pass_set_1_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_layout_pass_set_1_mean_attention_gate_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -314,7 +340,7 @@ def test_mean_attention_runner_preserves_all_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
-def test_mean_attention_propagates_policy_results_to_direct_primary_callers(
+def test_mean_attention_propagates_policy_results_to_primary_routes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(use_layout_state=True)
@@ -358,9 +384,8 @@ def test_mean_attention_propagates_policy_results_to_direct_primary_callers(
         ),
         key=lambda node: node.lineno,
     )
-    assert len(direct_results) == 2
+    assert len(direct_results) == 1
     assert [result.targets[0].id for result in direct_results] == [
-        "_layout_pass_set_1_mean_attention_results",
         "_terminal_mean_attention_results",
     ]
     assert [
@@ -370,9 +395,17 @@ def test_mean_attention_propagates_policy_results_to_direct_primary_callers(
         }
         for result in direct_results
     ] == [
-        {"include_layernorm": "True"},
         {"include_conv_attention": "False"},
     ]
+    owner_calls = _layout_pass_set_1_owner_calls("run_mean_attention")
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context.pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_calls[0].keywords
+    } == {"include_layernorm": "True"}
 
     callback_assignments = {
         target.id: statement
@@ -403,52 +436,16 @@ def test_mean_attention_propagates_policy_results_to_direct_primary_callers(
 
 
 def test_mean_attention_preserves_layernorm_conv_policy_and_boundaries() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    guard = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.If)
-        and isinstance(statement.test, ast.Name)
-        and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == MEAN_ATTENTION
-            and any(keyword.arg == "include_layernorm" for keyword in node.keywords)
-            for node in ast.walk(statement)
-        )
-    )
-    invocation_index = next(
-        index
-        for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == (
-            "_layout_pass_set_1_mean_attention_results"
-        )
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == MEAN_ATTENTION
-        and any(
-            keyword.arg == "include_layernorm" for keyword in statement.value.keywords
-        )
-    )
-    invocation = guard.body[invocation_index]
-
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert invocation.value.args == []
+    owner_calls = _layout_pass_set_1_owner_calls("run_mean_attention")
+    assert len(owner_calls) == 1
+    invocation = owner_calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.pass_context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in invocation.value.keywords
+        for keyword in invocation.keywords
     } == {"include_layernorm": True}
-    assert _direct_call_name(guard.body[invocation_index - 1]) == (
-        "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains"
-    )
-    assert _direct_call_name(guard.body[invocation_index + 1]) == (
-        "_run_attention_gate_qdq_recovery_sequence"
-    )
 
 
 def test_mean_attention_preserves_terminal_base_policy_and_boundaries() -> None:
@@ -577,7 +574,9 @@ def test_mean_attention_preserves_both_argument_free_default_callbacks() -> None
         and isinstance(node.func, ast.Name)
         and node.func.id == MEAN_ATTENTION
     ]
-    assert len(direct_invocations) == 2
+    owner_invocations = _layout_pass_set_1_owner_calls("run_mean_attention")
+    assert len(direct_invocations) == 1
+    assert len(owner_invocations) == 1
 
 
 def test_mean_attention_phase_imports_owners_without_lowerer() -> None:

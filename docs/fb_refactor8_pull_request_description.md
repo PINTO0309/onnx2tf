@@ -1639,3 +1639,17 @@ assertions to follow the already-extracted fallback precision/unbound owner
 and bounded phase records. Focused and affected sequential validation report
 `1 passed, 1 xfailed` and `373 passed, 1 xfailed`; the sole expected failure is
 the intentionally absent owner.
+
+The latest checkpoint adds a dedicated layout-pass-set-1 mean/attention and
+gate/QDQ owner. It forwards the exact embedded pass context to mean/attention,
+enables LayerNorm while retaining the default enabled Conv-attention policy,
+then forwards the original callback-bearing recovery context to the gate/QDQ
+child. Both complete nested tuples and their identities are preserved.
+
+Only the two observation-only lowerer locals are replaced. The recorded
+mean-affine and quantized-PRELU phases remain immediate boundaries; wrappers,
+callbacks, suffix and layout-pass-set-2 routes, graph behavior, public APIs,
+artifacts, and TensorFlow isolation are unchanged. Focused `3`, affected
+`375`, and standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase
+store remains exactly 128 IDs and 128 owners, and the unconsumed-result
+inventory decreases from 48 to 47.

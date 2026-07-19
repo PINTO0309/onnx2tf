@@ -169,6 +169,36 @@ from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+LAYOUT_PASS_SET_1_MEAN_ATTENTION_GATE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_mean_attention_gate_orchestration.py"
+)
+
+
+def _layout_pass_set_1_mean_attention_gate_calls(
+    child_owner: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_MEAN_ATTENTION_GATE_OWNER_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_layout_pass_set_1_mean_attention_gate_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
 
 
 def _phase_aware_call(statement: ast.stmt) -> tuple[ast.Call, str | None]:
@@ -1444,7 +1474,18 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 3
+    owner_invocations = _layout_pass_set_1_mean_attention_gate_calls(
+        "run_attention_gate_qdq_recovery"
+    )
+    assert (
+        len(helper_invocations)
+        + _orchestrated_pass_count(helper_name)
+        + len(owner_invocations)
+        == 3
+    )
+    assert len(owner_invocations) == 1
+    assert ast.unparse(owner_invocations[0].args[0]) == "context"
+    assert owner_invocations[0].keywords == []
 
     outer_index = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.index(helper_name)
     assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS[outer_index - 1] == (
@@ -1479,13 +1520,11 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
                     statement.body[index + 1].value,
                 )
             )
-    assert len(direct_boundaries) == 2
+    assert len(direct_boundaries) == 1
     assert [target for target, _, _ in direct_boundaries] == [
-        "_layout_pass_set_1_attention_gate_qdq_results",
         "_layout_pass_set_2_attention_gate_qdq_results",
     ]
     assert [previous.func.id for _, previous, _ in direct_boundaries] == [
-        "_run_mean_attention_layout_pass_cluster",
         "_run_preadd_mean_attention_recovery_sequence",
     ]
     following_calls = []
@@ -1502,23 +1541,9 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         assert isinstance(following.func, ast.Name)
         following_calls.append(following.func.id)
     assert following_calls == [
-        "run_quantized_prelu_cleanup",
         "_optimize_dequant_transposeconv_quantize_chains",
     ]
-    assert ast.unparse(direct_boundaries[0][2]) == (
-        "session.record_phase_result("
-        "'cleanup.layout_pass_set_1.quantized_prelu', "
-        "run_quantized_prelu_cleanup(model_ir, "
-        "layout_state=session.layout_state, "
-        "diagnostics=session.diagnostics))"
-    )
-    assert any(
-        keyword.arg == "include_layernorm"
-        and isinstance(keyword.value, ast.Constant)
-        and keyword.value.value is True
-        for keyword in direct_boundaries[0][1].keywords
-    )
-    assert direct_boundaries[1][1].keywords == []
+    assert direct_boundaries[0][1].keywords == []
 
 
 def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
@@ -2230,7 +2255,17 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
             for keyword in node.keywords
         )
     ]
-    assert len(layernorm_variant_calls) == 1
+    assert layernorm_variant_calls == []
+    owner_layernorm_variant_calls = (
+        _layout_pass_set_1_mean_attention_gate_calls("run_mean_attention")
+    )
+    assert len(owner_layernorm_variant_calls) == 1
+    owner_layernorm_call = owner_layernorm_variant_calls[0]
+    assert ast.unparse(owner_layernorm_call.args[0]) == "context.pass_context"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_layernorm_call.keywords
+    } == {"include_layernorm": "True"}
 
 
 def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
@@ -2297,6 +2332,7 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
     assert (
         len(helper_invocations)
         + _orchestrated_pass_count("_run_mean_attention_layout_pass_cluster")
+        + len(_layout_pass_set_1_mean_attention_gate_calls("run_mean_attention"))
         == 4
     )
 

@@ -36,7 +36,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
     ),
 )
 PREFIX_PREDECESSOR_TARGET = "_layout_pass_set_1_initial_attention_recovery_results"
-PREFIX_SUCCESSOR_TARGET = "_layout_pass_set_1_mean_attention_results"
+PREFIX_SUCCESSOR_TARGET = "_layout_pass_set_1_mean_attention_gate_results"
 POST_BINARY_PREDECESSOR_TARGET = (
     "_layout_pass_set_1_post_binary_attention_recovery_results"
 )

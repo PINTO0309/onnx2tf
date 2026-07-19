@@ -5989,3 +5989,45 @@ to runtime order/context/result-identity coverage. Update only stale structural
 entry assertions, then run affected and standard gates sequentially under
 `uv`. Commit and push only; do not create, update, reopen, or otherwise modify
 a pull request.
+
+## Layout-pass-set-1 mean/attention gate implementation checkpoint
+
+`passes/layout_pass_set_1_mean_attention_gate_orchestration.py` now provides
+`run_layout_pass_set_1_mean_attention_gate_cleanup()`. It accepts the existing
+`AttentionRecoveryContext`, passes `context.pass_context` directly to
+`run_mean_attention(..., include_layernorm=True)`, and deliberately omits the
+`include_conv_attention` keyword so the characterized enabled default remains
+authoritative. It then passes the exact original context to
+`run_attention_gate_qdq_recovery()`. Both complete raw tuples are returned in
+source order without copying, flattening, or normalization.
+
+The lowerer replaces only
+`_layout_pass_set_1_mean_attention_results` and
+`_layout_pass_set_1_attention_gate_qdq_results` with
+`_layout_pass_set_1_mean_attention_gate_results`. The recorded
+`cleanup.layout_pass_set_1.mean_affine_prepost` and
+`cleanup.layout_pass_set_1.quantized_prelu` calls remain the immediate
+neighbors. Both lowerer wrappers and their independent pre-add, suffix,
+layout-pass-set-2, and terminal routes remain available. No phase-result entry
+or control-flow decision was added.
+
+Runtime injection proves exact child order, pass-context and recovery-context
+identity, LayerNorm policy forwarding, omission of the Conv policy override,
+and both raw-result identities. Twelve stale structural assertions now count
+the public child calls through the new owner and continue to cover all direct
+and nested routes.
+
+Sequential validation passes: focused `3`, complete affected `375`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase store
+`2`, and TensorFlow import-blocking/default-direct/`-cotof` `11`. Ruff,
+bytecode compilation, and whitespace validation pass. The phase-result store
+remains exactly 128 IDs and 128 owners. The read-only unconsumed lowerer-result
+inventory decreases from 48 to 47. No real-model conversion was repeated for
+this straight-line ownership-only extraction.
+
+At resume, refresh the 47-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, options, context/callback identities, raw schemas, independent
+routes, and outer phase/progress boundaries before changing production.
+Continue with sequential `uv` validation and complete checkpoint commits and
+pushes only. Do not create, update, reopen, or otherwise modify a pull request.

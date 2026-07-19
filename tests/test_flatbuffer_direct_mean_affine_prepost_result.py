@@ -130,7 +130,7 @@ def test_direct_mean_affine_prepost_result_is_retained_observation_only() -> Non
         "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains"
     )
     assert _single_target(body[index + 1]) == (
-        "_layout_pass_set_1_mean_attention_results"
+        "_layout_pass_set_1_mean_attention_gate_results"
     )
     assert not any(
         isinstance(node, ast.Name)

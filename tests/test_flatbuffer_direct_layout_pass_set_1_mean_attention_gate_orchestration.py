@@ -9,9 +9,11 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    layout_pass_set_1_mean_attention_gate_orchestration,
+)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     AttentionRecoveryContext,
-    run_attention_gate_qdq_recovery,
 )
 from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     run_gate_layout,
@@ -159,7 +161,7 @@ def _guard_body() -> list[ast.stmt]:
         if isinstance(statement, ast.If)
         and ast.unparse(statement.test) == GUARD
         and any(
-            _single_target(candidate) in RESULT_TARGETS
+            _single_target(candidate) in (*RESULT_TARGETS, COMPOSITE_TARGET)
             for candidate in statement.body
         )
     )
@@ -195,36 +197,23 @@ def _context() -> tuple[ModelIRPassContext, AttentionRecoveryContext]:
 
 def test_layout_pass_set_1_mean_attention_gate_current_contract() -> None:
     body = _guard_body()
-    assignments = [
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "attention_recovery_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indices = [body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-    assert _phase_id(body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
-
-    mean_call = _call(assignments[0])
-    attention_call = _call(assignments[1])
-    assert mean_call is not None
-    assert attention_call is not None
-    assert mean_call.args == []
-    assert {
-        keyword.arg: ast.literal_eval(keyword.value)
-        for keyword in mean_call.keywords
-    } == {"include_layernorm": True}
-    assert attention_call.args == []
-    assert attention_call.keywords == []
+    assert call.keywords == []
+    assert _phase_id(body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for statement in body
         for node in ast.walk(statement)
@@ -261,18 +250,15 @@ def test_layout_pass_set_1_mean_attention_gate_current_contract() -> None:
         ),
     }
 
-    pass_context, recovery_context = _context()
+    _, recovery_context = _context()
     results = (
-        run_mean_attention(pass_context, include_layernorm=True),
-        run_attention_gate_qdq_recovery(recovery_context),
+        layout_pass_set_1_mean_attention_gate_orchestration.run_layout_pass_set_1_mean_attention_gate_cleanup(
+            recovery_context
+        )
     )
     assert _schema(results) == (MEAN_SCHEMA, ATTENTION_GATE_QDQ_SCHEMA)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout-pass-set-1 mean/attention gate owner is not implemented",
-)
 def test_layout_pass_set_1_mean_attention_gate_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -324,3 +310,44 @@ def test_layout_pass_set_1_mean_attention_gate_has_one_context_owner() -> None:
         if isinstance(node, ast.FunctionDef)
     }
     assert all(name in lowerer_functions for name in CURRENT_CHILD_OWNERS)
+
+
+def test_layout_pass_set_1_mean_attention_gate_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pass_context, recovery_context = _context()
+    expected_results = (
+        tuple({f"mean_{index}": index} for index in range(7)),
+        tuple({f"attention_{index}": index} for index in range(10)),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def mean(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return expected_results[0]
+
+    def attention(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context, {}))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        layout_pass_set_1_mean_attention_gate_orchestration,
+        CHILD_OWNERS[0],
+        mean,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_1_mean_attention_gate_orchestration,
+        CHILD_OWNERS[1],
+        attention,
+    )
+
+    actual = layout_pass_set_1_mean_attention_gate_orchestration.run_layout_pass_set_1_mean_attention_gate_cleanup(
+        recovery_context
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], pass_context, {"include_layernorm": True}),
+        (CHILD_OWNERS[1], recovery_context, {}),
+    ]

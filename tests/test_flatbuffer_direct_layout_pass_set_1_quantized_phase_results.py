@@ -29,7 +29,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
         "layout_state=session.layout_state, diagnostics=session.diagnostics)"
     ),
 )
-PREDECESSOR_TARGET = "_layout_pass_set_1_attention_gate_qdq_results"
+PREDECESSOR_TARGET = "_layout_pass_set_1_mean_attention_gate_results"
 SUCCESSOR_TARGET = "_layout_pass_set_1_quantized_activation_binary_results"
 
 

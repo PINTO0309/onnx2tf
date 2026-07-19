@@ -134,7 +134,7 @@ def test_direct_quantized_prelu_result_is_retained_observation_only() -> None:
         "diagnostics=session.diagnostics))"
     )
     assert _single_target(body[index - 1]) == (
-        "_layout_pass_set_1_attention_gate_qdq_results"
+        "_layout_pass_set_1_mean_attention_gate_results"
     )
     assert _call_name(body[index + 1]) == (
         "_optimize_dequant_transposeconv_quantize_chains"

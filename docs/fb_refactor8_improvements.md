@@ -6757,3 +6757,25 @@ and complete reference-based affected validation report `1 passed, 1 xfailed`
 and `373 passed, 1 xfailed`; the sole expected failure is the intentionally
 absent owner module. Ruff, bytecode compilation, and whitespace validation
 pass.
+
+## Extract layout-pass-set-1 mean/attention and gate/QDQ cleanup
+
+`passes/layout_pass_set_1_mean_attention_gate_orchestration.py` now owns the
+characterized pair. It calls public mean/attention cleanup with the exact
+embedded pass context and `include_layernorm=True`, intentionally leaves the
+Conv-attention option at its enabled default, and then passes the original
+`AttentionRecoveryContext` to attention/gate/QDQ recovery. Both complete raw
+tuples are returned unchanged and by identity.
+
+The lowerer replaces only the two observation-only locals with
+`_layout_pass_set_1_mean_attention_gate_results`. The recorded mean-affine and
+quantized-PRELU phases remain the immediate boundaries. Existing lowerer
+wrappers, callback-bearing contexts, layout-pass-set-2 and suffix routes, and
+the terminal mean/attention route remain intact.
+
+Twelve stale entry assertions now follow the new outer owner while continuing
+to count every independent wrapper and nested orchestration route. Sequential
+validation passes: focused `3`, affected `375`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
+pass. The phase store remains exactly 128 IDs and 128 owners, while the
+unconsumed lowerer-result inventory decreases from 48 to 47.

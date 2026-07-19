@@ -37,11 +37,20 @@ ORCHESTRATION_PATH = (
     / "passes"
     / "attention_recovery_orchestration.py"
 )
+LAYOUT_PASS_SET_1_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_mean_attention_gate_orchestration.py"
+)
 PREADD_MEAN_ATTENTION = "_run_preadd_mean_attention_recovery_sequence"
 ATTENTION_GATE_QDQ = "_run_attention_gate_qdq_recovery_sequence"
 ATTENTION_GATE_RESULT_TARGETS = (
-    "_layout_pass_set_1_attention_gate_qdq_results",
     "_layout_pass_set_2_attention_gate_qdq_results",
+)
+REMOVED_LAYOUT_PASS_SET_1_RESULT_TARGET = (
+    "_layout_pass_set_1_attention_gate_qdq_results"
 )
 PREADD_RESULT_TARGETS = (
     "_layout_pass_set_2_preadd_mean_attention_results",
@@ -62,6 +71,25 @@ def _lowerer_and_helper(helper_name: str) -> tuple[ast.FunctionDef, ast.Function
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     return lowerer, helper
+
+
+def _layout_pass_set_1_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_layout_pass_set_1_mean_attention_gate_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -367,7 +395,19 @@ def test_attention_recovery_invocation_boundaries_remain_zero_argument() -> None
         orchestrated_count = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.count(
             helper_name
         )
-        assert len(invocations) + orchestrated_count == expected_count
+        composite_count = (
+            len(
+                _layout_pass_set_1_owner_calls(
+                    "run_attention_gate_qdq_recovery"
+                )
+            )
+            if helper_name == ATTENTION_GATE_QDQ
+            else 0
+        )
+        assert (
+            len(invocations) + orchestrated_count + composite_count
+            == expected_count
+        )
         assert all(call.args == [] for call in invocations)
         assert all(call.keywords == [] for call in invocations)
 
@@ -458,7 +498,7 @@ def test_attention_recovery_runners_preserve_instrumented_order(
     assert events == list(expected_ids)
 
 
-def test_attention_gate_qdq_propagates_nested_results_to_both_direct_calls(
+def test_attention_gate_qdq_propagates_nested_results_to_all_routes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     unary_fanout_results = (
@@ -533,7 +573,7 @@ def test_attention_gate_qdq_propagates_nested_results_to_both_direct_calls(
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == ATTENTION_GATE_QDQ:
                 direct_results.append((statement.body, index))
-    assert len(direct_results) == 2
+    assert len(direct_results) == 1
     assert tuple(
         _single_target(body[index]) for body, index in direct_results
     ) == ATTENTION_GATE_RESULT_TARGETS
@@ -542,25 +582,33 @@ def test_attention_gate_qdq_propagates_nested_results_to_both_direct_calls(
         for body, index in direct_results
         if isinstance(body[index].value, ast.Call)
     )
-    assert _single_target(direct_results[0][0][direct_results[0][1] - 1]) == (
-        "_layout_pass_set_1_mean_attention_results"
-    )
     assert _direct_call_name(
-        direct_results[1][0][direct_results[1][1] - 1]
+        direct_results[0][0][direct_results[0][1] - 1]
     ) == "_run_preadd_mean_attention_recovery_sequence"
     assert tuple(
         _direct_call_name(body[index + 1]) for body, index in direct_results
     ) == (
-        "run_quantized_prelu_cleanup",
         "_optimize_dequant_transposeconv_quantize_chains",
     )
-    for target in ATTENTION_GATE_RESULT_TARGETS:
+    for target in (
+        *ATTENTION_GATE_RESULT_TARGETS,
+        REMOVED_LAYOUT_PASS_SET_1_RESULT_TARGET,
+    ):
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
             and isinstance(node.ctx, ast.Load)
             for node in ast.walk(lowerer)
         )
+
+    owner_calls = _layout_pass_set_1_owner_calls(
+        "run_attention_gate_qdq_recovery"
+    )
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
     nested_index = LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS.index(
         ATTENTION_GATE_QDQ
