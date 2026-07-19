@@ -19,6 +19,13 @@ LATE_BINARY_PATH = (
     / "passes"
     / "late_binary_layout_recovery.py"
 )
+LATE_CONCAT_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_concat_layout_orchestration.py"
+)
 OWNER = "run_layout_transpose_cleanup"
 INNER_OWNER = "_optimize_layout_transpose_chains"
 RESULT_TARGET = "_layout_pass_set_1_layout_transpose_cleanup_stats"
@@ -111,10 +118,9 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
 
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_calls = _direct_lowerer_calls(lowerer)
-    assert len(direct_calls) == 3
+    assert len(direct_calls) == 2
     assert [_single_target(statement) for statement in direct_calls] == [
         None,
-        "_late_concat_transpose_layout_stats",
         "_very_late_layout_transpose_cleanup_stats",
     ]
     assert all(
@@ -139,13 +145,32 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
         {
             "layout_state": "session.layout_state",
             "diagnostics": "session.diagnostics",
-            "state_scope": "late_concat_layout_state_scope",
-        },
-        {
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
         },
     ]
+
+    late_concat = _functions(LATE_CONCAT_PATH)[
+        "run_late_concat_layout_cleanup"
+    ]
+    late_concat_calls = [
+        node
+        for node in ast.walk(late_concat)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(late_concat_calls) == 1
+    late_concat_call = late_concat_calls[0]
+    assert [ast.unparse(argument) for argument in late_concat_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late_concat_call.keywords
+    } == {
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+        "state_scope": "state_scope",
+    }
 
     late_binary = _functions(LATE_BINARY_PATH)["run_late_binary_layout_recovery"]
     nested_calls = [

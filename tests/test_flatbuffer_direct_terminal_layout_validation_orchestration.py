@@ -1335,72 +1335,50 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
         ),
     )
 
-    following_scope = body[late_index + 1]
-    assert isinstance(following_scope, ast.Assign)
-    assert isinstance(following_scope.targets[0], ast.Name)
-    assert following_scope.targets[0].id == "late_concat_layout_state_scope"
-    assert ast.unparse(following_scope.value) == (
-        "ModelIRPassStateScope(model_ir, layout_state=session.layout_state)"
+    following_composite = body[late_index + 1]
+    assert isinstance(following_composite, ast.Assign)
+    assert isinstance(following_composite.targets[0], ast.Name)
+    assert following_composite.targets[0].id == "_late_concat_layout_results"
+    assert ast.unparse(following_composite.value) == (
+        "run_late_concat_layout_cleanup(shared_model_ir_pass_context)"
     )
 
 
-def test_primary_path_retains_late_concat_scope_results() -> None:
+def test_primary_path_retains_late_concat_composite_results() -> None:
     body = _lowerer_body()
-    scope_index = next(
+    result_index = next(
         index
         for index, statement in enumerate(body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_concat_layout_state_scope"
+        and statement.targets[0].id == "_late_concat_layout_results"
     )
 
-    previous = body[scope_index - 1]
+    previous = body[result_index - 1]
     assert isinstance(previous, ast.Assign)
     assert isinstance(previous.targets[0], ast.Name)
     assert previous.targets[0].id == "_late_cost_volume_conv_affine_stats"
-
-    expected = (
-        (
-            "_late_concat_axis3_const_layout_stats",
-            "run_axis3_const_concat_layout_cleanup",
-        ),
-        (
-            "_late_concat_dequant_quantize_layout_stats",
-            "run_dequant_concat_quantize_layout_cleanup",
-        ),
-        (
-            "_late_concat_layernorm_layout_stats",
-            "run_layernorm_statistics_layout_cleanup",
-        ),
-        (
-            "_late_concat_transpose_layout_stats",
-            "run_layout_transpose_cleanup",
-        ),
+    result = body[result_index]
+    assert isinstance(result, ast.Assign)
+    assert ast.unparse(result.value) == (
+        "run_late_concat_layout_cleanup(shared_model_ir_pass_context)"
     )
-    for offset, (target_name, callback_name) in enumerate(expected, start=1):
-        statement = body[scope_index + offset]
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == callback_name
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "model_ir"
-        ]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
-            "state_scope": "late_concat_layout_state_scope",
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {
+            "late_concat_layout_state_scope",
+            "_late_concat_axis3_const_layout_stats",
+            "_late_concat_dequant_quantize_layout_stats",
+            "_late_concat_layernorm_layout_stats",
+            "_late_concat_transpose_layout_stats",
         }
+        for statement in body
+        for node in ast.walk(statement)
+    )
 
-    following = body[scope_index + len(expected) + 1]
+    following = body[result_index + 1]
     assert isinstance(following, ast.If)
     assert ast.unparse(following.test) == "optimize_layout_transpose_chains"
     assert _call_name(_statement_call(following.body[0])) == (
@@ -1414,11 +1392,11 @@ def test_primary_path_retains_late_concat_scope_results() -> None:
         if isinstance(statement, (ast.Assign, ast.Expr))
         and _call_name(_statement_call(statement)) == "run_layout_transpose_cleanup"
     ]
-    assert len(layout_cleanup_statements) == 3
+    assert len(layout_cleanup_statements) == 2
     assert sum(
         isinstance(statement, ast.Assign)
         for statement in layout_cleanup_statements
-    ) == 2
+    ) == 1
     phase_records = [
         statement
         for statement in layout_cleanup_statements
@@ -1504,7 +1482,7 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         if isinstance(statement, (ast.Assign, ast.Expr))
         and _call_name(_statement_call(statement)) == callback_name
     ]
-    assert len(cleanup_statements) == 3
+    assert len(cleanup_statements) == 2
     _assert_phase_result_record(
         cleanup_statements[0],
         phase_id="cleanup.layout_pass_set_1.layout_transpose",
@@ -1521,7 +1499,6 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         and isinstance(statement.targets[0], ast.Name)
     ]
     assert assigned_targets == [
-        "_late_concat_transpose_layout_stats",
         "_very_late_layout_transpose_cleanup_stats",
     ]
 
@@ -1765,7 +1742,7 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
     expected = (
         (
             "_late_concat_elementwise_fanout_stats",
-            "_late_concat_transpose_layout_stats",
+            "_late_concat_layout_results",
             "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains",
         ),
         (

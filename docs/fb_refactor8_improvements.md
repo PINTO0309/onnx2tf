@@ -1122,6 +1122,45 @@ merging schemas, prove callback order and shared scope identity, keep the
 128-phase bound unchanged, run sequential gates, document, commit, and push.
 Never create, update, or reopen a pull request.
 
+## Late Concat shared-scope implementation
+
+The new `run_late_concat_layout_cleanup(context)` owner creates one internal
+`ModelIRPassStateScope` and invokes the four characterized owners in order.
+It returns their mappings as an ordered tuple, preserving each independent
+schema. The lowerer retains that tuple as `_late_concat_layout_results`
+through `shared_model_ir_pass_context`; it is deliberately not written to the
+full phase-result store.
+
+The former scope and four unconsumed locals are absent, and the scope now
+falls out of lifetime immediately after the composite owner returns. Direct
+low-level imports remain compatibility re-exports where necessary. The now
+unused lowerer-level `ModelIRPassStateScope` import was removed. A focused
+runtime contract proves callback order, identical model/layout/diagnostics
+objects, shared scope identity, and tuple ordering.
+
+Broad gates exposed only stale representation contracts: four focused
+assertions expected the old scope/four-assignment sequence or direct
+layout-Transpose call, and two architecture assertions expected a direct
+axis-3 call or omitted it from orchestrated ownership. They now verify the
+composite, internal scope, nested owner arguments, and
+`LATE_CONCAT_LAYOUT_PASS_IDS`. No graph or numerical failure occurred.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused late-Concat owner and affected owner contracts:
+  `76 passed in 3.10s`;
+- terminal-layout and pass-efficiency contracts: `94 passed in 1.94s`;
+- synthetic core runtime contracts: `55 passed in 1.04s`;
+- broader result and phase-result contracts: `196 passed in 9.20s`;
+- focused architecture ownership repairs: `2 passed in 2.29s`;
+- full lowerer architecture contracts after repair: `258 passed in 16.86s`;
+- targeted Ruff, bytecode compilation, fixed-capacity AST audit, and
+  whitespace checks: passed.
+
+The phase store remains exactly 128/128. No root-model conversion was run
+because this is a characterized four-call orchestration extraction with a
+focused runtime equivalence test.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

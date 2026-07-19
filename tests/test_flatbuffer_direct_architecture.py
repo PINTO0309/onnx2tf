@@ -92,6 +92,9 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     GATE_LAYOUT_REQUIRED_PASS_IDS,
     LATE_NDHWC_COST_VOLUME_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
+    LATE_CONCAT_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -171,6 +174,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
     *GATE_LAYOUT_PASS_IDS,
     *LATE_NDHWC_COST_VOLUME_PASS_IDS,
+    *LATE_CONCAT_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -7714,26 +7718,28 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_concat_layout_orchestration.py"
+    )
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowerer = next(
         node
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-
-    assignment_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_concat_layout_state_scope"
+    orchestration_tree = ast.parse(
+        orchestration_path.read_text(encoding="utf-8")
     )
-    assignment = lowerer.body[assignment_index]
-    assert isinstance(assignment, ast.Assign)
-    assert isinstance(assignment.value, ast.Call)
-    assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == "ModelIRPassStateScope"
+    owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_concat_layout_cleanup"
+    )
 
     def _statement_call(statement: ast.stmt) -> ast.Call:
         assert isinstance(statement, (ast.Assign, ast.Expr))
@@ -7741,34 +7747,59 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
         assert isinstance(statement.value.func, ast.Name)
         return statement.value
 
-    previous_raw_boundary = _statement_call(lowerer.body[assignment_index - 1])
-    assert previous_raw_boundary.func.id == "_optimize_fold_conv_mul_add_affine_chains"
+    scope_assignment = next(
+        statement
+        for statement in owner.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "state_scope"
+    )
+    assert _statement_call(scope_assignment).func.id == "ModelIRPassStateScope"
+    runner_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in LATE_CONCAT_LAYOUT_PASS_IDS
+    ]
+    assert [call.func.id for call in runner_calls] == list(
+        LATE_CONCAT_LAYOUT_PASS_IDS
+    )
+    for call in runner_calls:
+        assert [ast.unparse(argument) for argument in call.args] == [
+            "context.model_ir"
+        ]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        } == {
+            "layout_state": "context.layout_state",
+            "diagnostics": "context.diagnostics",
+            "state_scope": "state_scope",
+        }
+
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_late_concat_layout_results"
+    )
+    assignment_index = lowerer.body.index(composite)
+    composite_call = _statement_call(composite)
+    assert composite_call.func.id == "run_late_concat_layout_cleanup"
+    assert [ast.unparse(argument) for argument in composite_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert composite_call.keywords == []
+
     previous_boundary = lowerer.body[assignment_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert isinstance(previous_boundary.targets[0], ast.Name)
     assert previous_boundary.targets[0].id == (
         "_late_cost_volume_conv_affine_stats"
     )
-
-    expected_order = [
-        "run_axis3_const_concat_layout_cleanup",
-        "run_dequant_concat_quantize_layout_cleanup",
-        "run_layernorm_statistics_layout_cleanup",
-        "run_layout_transpose_cleanup",
-    ]
-    runner_calls = [
-        _statement_call(lowerer.body[assignment_index + offset])
-        for offset in range(1, 5)
-    ]
-    assert [call.func.id for call in runner_calls] == expected_order
-    for call in runner_calls:
-        scope_keyword = next(
-            keyword for keyword in call.keywords if keyword.arg == "state_scope"
-        )
-        assert isinstance(scope_keyword.value, ast.Name)
-        assert scope_keyword.value.id == "late_concat_layout_state_scope"
-
-    next_boundary = lowerer.body[assignment_index + 5]
+    next_boundary = lowerer.body[assignment_index + 1]
     assert isinstance(next_boundary, ast.If)
     next_raw_boundary = _statement_call(next_boundary.body[0])
     assert (
@@ -7780,6 +7811,18 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     assert isinstance(next_raw_statement.targets[0], ast.Name)
     assert next_raw_statement.targets[0].id == (
         "_late_concat_elementwise_fanout_stats"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {
+            "late_concat_layout_state_scope",
+            "_late_concat_axis3_const_layout_stats",
+            "_late_concat_dequant_quantize_layout_stats",
+            "_late_concat_layernorm_layout_stats",
+            "_late_concat_transpose_layout_stats",
+        }
+        for node in ast.walk(lowerer)
     )
 
 
@@ -12956,7 +12999,11 @@ def test_axis3_const_concat_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_axis3_const_concat_layout_cleanup"
     ]
-    assert len(runner_calls) == 1
+    assert (
+        len(runner_calls)
+        + _orchestrated_pass_count("run_axis3_const_concat_layout_cleanup")
+        == 1
+    )
 
 
 def test_dequant_concat_quantize_layout_rewrite_has_single_owner() -> None:
@@ -13340,6 +13387,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
 
     orchestrated_runner_names = runner_names & ORCHESTRATED_PASS_IDS
     assert orchestrated_runner_names == {
+        "run_axis3_const_concat_layout_cleanup",
         "run_clamp_cleanup",
         "run_consecutive_reshape_cleanup",
         "run_concat_unary_conv_layout_cleanup",

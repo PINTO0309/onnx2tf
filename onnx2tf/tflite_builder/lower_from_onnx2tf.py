@@ -16,7 +16,6 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.node import NodeView as _NodeWrap
-from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _topologically_sort_operators,
     _clone_quantization,
@@ -81,7 +80,7 @@ from onnx2tf.tflite_builder.passes.mean_layout import (
 from onnx2tf.tflite_builder.passes.layernorm_layout import (
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains as _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains_pass,
     _optimize_transpose_layernorm_stats_nhwc_propagation_chains as _optimize_transpose_layernorm_stats_nhwc_propagation_chains_pass,
-    run_layernorm_statistics_layout_cleanup,
+    run_layernorm_statistics_layout_cleanup,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.instance_normalization_layout import (
     _repair_decomposed_instance_normalization_layouts as _repair_decomposed_instance_normalization_layouts_pass,
@@ -266,6 +265,9 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     run_elementwise_gate_layout_cleanup,  # noqa: F401 - compatibility re-export
     run_gate_layout,
     run_late_ndhwc_cost_volume_layout_cleanup,
+)
+from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
+    run_late_concat_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
@@ -477,7 +479,7 @@ from onnx2tf.tflite_builder.passes.dual_mul_concat_layout import (
 )
 from onnx2tf.tflite_builder.passes.axis3_const_concat_layout import (
     _optimize_transpose_axis3_const_concat_bridge_nhwc_chains as _optimize_transpose_axis3_const_concat_bridge_nhwc_chains_pass,
-    run_axis3_const_concat_layout_cleanup,
+    run_axis3_const_concat_layout_cleanup,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.concat_global_pool_layout import (
     _repair_nchw_concat_global_pool_conv_axes as _repair_nchw_concat_global_pool_conv_axes_pass,
@@ -514,7 +516,7 @@ from onnx2tf.tflite_builder.passes.terminal_squeeze_mean_layout import (
 )
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
-    run_dequant_concat_quantize_layout_cleanup,
+    run_dequant_concat_quantize_layout_cleanup,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.qlinear_concat_conv_compat import (
     optimize_nhwc_propagation_qlinear_concat_conv as _optimize_nhwc_propagation_qlinear_concat_conv_pass,
@@ -5155,39 +5157,8 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    late_concat_layout_state_scope = ModelIRPassStateScope(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    _late_concat_axis3_const_layout_stats = (
-        run_axis3_const_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=late_concat_layout_state_scope,
-        )
-    )
-    _late_concat_dequant_quantize_layout_stats = (
-        run_dequant_concat_quantize_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=late_concat_layout_state_scope,
-        )
-    )
-    _late_concat_layernorm_layout_stats = (
-        run_layernorm_statistics_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=late_concat_layout_state_scope,
-        )
-    )
-    _late_concat_transpose_layout_stats = run_layout_transpose_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_concat_layout_state_scope,
+    _late_concat_layout_results = run_late_concat_layout_cleanup(
+        shared_model_ir_pass_context,
     )
     if optimize_layout_transpose_chains:
         _late_concat_elementwise_fanout_stats = (

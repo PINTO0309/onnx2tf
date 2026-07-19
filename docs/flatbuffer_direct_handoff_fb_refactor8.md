@@ -2200,3 +2200,37 @@ whitespace validation. Commit and push characterization first. Implementation
 must leave the store at 128/128, add a runtime shared-scope/order/tuple test,
 update structural ownership counts, run sequential gates, document, commit,
 and push. Never create, update, or reopen a pull request.
+
+## Late Concat shared-scope implementation
+
+`run_late_concat_layout_cleanup` now creates the scope internally, calls the
+four owners in the fixed order, and returns their four mappings as an ordered
+tuple. The lowerer keeps one `_late_concat_layout_results` composite via the
+shared pass context. It remains outside the phase store, which stays fixed at
+128/128.
+
+The former scope and four unconsumed locals are gone, shortening lowerer state
+and the scope lifetime. Low-level imports remain compatibility re-exports;
+the unused lowerer core scope import was removed. A runtime test proves order,
+context identity, shared scope identity, and tuple order.
+
+Four focused and two architecture assertions initially reflected the old
+source representation. They now require the composite, internal scope,
+nested owner arguments, and the new four-ID orchestration sequence. No runtime
+or numerical failure occurred.
+
+Final sequential validation under core-only `uv`:
+
+- focused late-Concat/owner contracts: `76 passed in 3.10s`;
+- terminal-layout/pass-efficiency contracts: `94 passed in 1.94s`;
+- synthetic core runtime contracts: `55 passed in 1.04s`;
+- broader result contracts: `196 passed in 9.20s`;
+- focused architecture ownership repairs: `2 passed in 2.29s`;
+- full architecture contracts: `258 passed in 16.86s`;
+- targeted Ruff, bytecode compilation, fixed-capacity AST audit, and
+  whitespace checks: passed.
+
+No root-model conversion was required because focused runtime equivalence
+covers the mechanical four-call extraction. Commit and push this unit. Resume
+with another non-store orchestration audit, keep the 128-phase bound fixed,
+and never create, update, or reopen a pull request.

@@ -104,6 +104,19 @@ Full validation strings remain only in ModelIR metadata. The returned mapping
 contains bounded integer evidence, avoiding duplicate retention of diagnostic
 text. Cycle behavior and stale-error removal are covered explicitly.
 
+### Late shared-scope orchestration owners
+
+Two late lowerer clusters now have focused orchestration owners. The first
+combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
+bounded phase result while sharing one short-lived pass state. The second runs
+four late Concat/layout owners with one internal state scope and returns their
+independent mappings as an ordered composite tuple outside the full phase
+store.
+
+These extractions preserve callback order, model/layout/diagnostics identity,
+and result schemas while removing six unconsumed locals and two lowerer scope
+locals. Focused runtime tests verify shared scope identity and ordered results.
+
 ### Explicit topology checkpoints
 
 Five existing direct topological-sort calls now have stable phase identities:
@@ -322,6 +335,8 @@ Final checkpoint results:
 - post-SiNet attention/activation/state-scope/store contracts: **17 passed**;
 - late NDHWC/cost-volume pair, gate, store, and architecture contracts:
   **20 passed**;
+- late Concat composite, owner, terminal-layout, and architecture contracts:
+  **76 passed**;
 - broader result and phase-result contracts: **196 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
