@@ -652,6 +652,37 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented bounded-store
 migration.
 
+## Layout pass-set 1 affine cleanup characterization
+
+The next migration is restricted to five mapping-only affine observations in
+layout pass-set 1: the initial and post-binary affine-chain folds, affine
+pre/post propagation, pre-unary affine fan-out, and mean-affine pre/post
+propagation. All five share the existing `optimize_layout_transpose_chains`
+guard, return bounded integer mappings with explicit schema tests, and have no
+defaults or consumers.
+
+The characterization fixes the exact owner calls and keywords, the contiguous
+four-result prefix, both composite recovery boundaries, the isolated
+post-binary fold boundary, and absence of loads. Composite attention,
+quantized, and safe-binary recovery results remain outside this migration. A
+strict expected failure requires five stable
+`cleanup.layout_pass_set_1.*` affine records. No production source changed.
+
+The first focused run exposed one stale adjacent-owner assertion that still
+expected the previously migrated safe-transpose result to be an outer
+`ast.Name` call. The test helper now unwraps the exact nested phase-record owner;
+production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization and existing owner/schema contracts:
+  `9 passed, 1 xfailed in 0.97s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented five-result
+destination migration.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:

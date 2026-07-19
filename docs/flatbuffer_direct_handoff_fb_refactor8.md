@@ -1346,3 +1346,28 @@ changed and the runtime suite exercises the guarded path. After committing and
 pushing, retain the 72/128 phase-cap audit and keep composite results outside
 the bounded integer mapping store. Never create, update, or reopen a pull
 request.
+
+## Layout pass-set 1 affine cleanup characterization
+
+The next family is restricted to five mapping-only affine results under the
+first layout guard: two affine-chain folds plus affine pre/post, pre-unary
+affine fan-out, and mean-affine pre/post cleanup. Existing tests fix their
+bounded integer schemas. They have no defaults or consumers.
+
+The contract fixes exact owner arguments and keywords, the four-result prefix,
+the separate post-binary fold, both composite recovery boundaries, the common
+guard, and absence of loads. Composite return values remain excluded. Its
+strict expected failure requires five `cleanup.layout_pass_set_1.*` affine
+records.
+
+The first focused run exposed one stale adjacency assertion for the previously
+migrated safe-transpose phase record. Its helper now unwraps and verifies the
+exact nested owner; production behavior was not implicated. The dedicated
+characterization and existing owner/schema contracts are
+`9 passed, 1 xfailed in 0.97s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only the five mapping
+destinations. Preserve the guard and every composite boundary, then update
+multi-occurrence owner and bounded-store contracts, validate, document,
+commit, and push. Never create, update, or reopen a pull request.
