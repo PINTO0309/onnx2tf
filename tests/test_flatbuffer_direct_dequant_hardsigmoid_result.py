@@ -191,7 +191,7 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
     terminal_index = lowerer.body.index(direct_results[0])
     assert _call_name(lowerer.body[terminal_index - 1]) == HARDSWISH_SE
     assert _single_target(lowerer.body[terminal_index + 1]) == (
-        "_terminal_sinet_preadd_resize_results"
+        "_terminal_sinet_singleton_reshape_results"
     )
 
     post_sinet_index = lowerer.body.index(direct_results[1])

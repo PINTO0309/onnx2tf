@@ -40,7 +40,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
     ),
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)",
 )
-SINET_PREADD_TARGET = "_terminal_sinet_preadd_resize_results"
+SINET_RECOVERY_TARGET = "_terminal_sinet_singleton_reshape_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -184,7 +184,7 @@ def test_terminal_hardswish_hardsigmoid_results_use_phase_result_store() -> None
     )
     assert indices == [indices[0], indices[0] + 1]
     assert _single_target(lowerer.body[indices[0] - 1]) == SINET_TERMINAL_TARGET
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SINET_PREADD_TARGET
+    assert _single_target(lowerer.body[indices[-1] + 1]) == SINET_RECOVERY_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id in {RESULT_TARGET, DEQUANT_TARGET}

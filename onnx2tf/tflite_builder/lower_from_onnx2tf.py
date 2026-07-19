@@ -222,6 +222,9 @@ from onnx2tf.tflite_builder.passes.terminal_clamp_sinet_layout_orchestration imp
 from onnx2tf.tflite_builder.passes.very_late_sinet_recovery_tail_orchestration import (
     run_very_late_sinet_recovery_tail_cleanup,
 )
+from onnx2tf.tflite_builder.passes.terminal_sinet_singleton_reshape_orchestration import (
+    run_terminal_sinet_singleton_reshape_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
     run_terminal_singleton_maxpool_reshape,
 )
@@ -4969,16 +4972,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir),
     )
     # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
-    _terminal_sinet_preadd_resize_results = (
-        _run_sinet_preadd_resize_recovery_sequence()
-    )
-    # Apply singleton transpose->reshape rewrite regardless of layout-opt mode.
-    # This is required for fallback relowering (optimize_layout_transpose_chains=False)
-    # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
-    _post_terminal_singleton_reshape_results = (
-        _run_singleton_reshape_layout_pass_cluster(
-            include_duplicate_fanout=True,
-            include_spatial_concat_post_transpose=False,
+    # Also apply singleton transpose->reshape regardless of layout-opt mode so
+    # fallback relowering can remove channelwise TRANSPOSE adapters.
+    _terminal_sinet_singleton_reshape_results = (
+        run_terminal_sinet_singleton_reshape_cleanup(
+            shared_model_ir_pass_context,
         )
     )
     session.record_phase_result(

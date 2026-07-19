@@ -139,7 +139,7 @@ def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
         "model_ir, layout_state=session.layout_state)"
     )
     assert _single_target(lowerer.body[index - 1]) == (
-        "_post_terminal_singleton_reshape_results"
+        "_terminal_sinet_singleton_reshape_results"
     )
     assert _single_target(lowerer.body[index + 1]) == (
         "_very_late_sinet_recovery_tail_results"

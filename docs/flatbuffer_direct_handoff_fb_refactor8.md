@@ -5719,3 +5719,28 @@ unchanged. Replace only the two characterized lowerer locals, retain the
 wrappers and independent routes, update only stale boundary contracts, and
 run affected and standard gates sequentially. Commit and push only; do not
 create, update, reopen, or otherwise modify a pull request.
+
+## Terminal SiNet/singleton-Reshape implementation checkpoint
+
+`run_terminal_sinet_singleton_reshape_cleanup(context)` is implemented in
+`passes/terminal_sinet_singleton_reshape_orchestration.py`. It passes the exact
+shared context through SiNet recovery and singleton-Reshape recovery in source
+order and fixes the second child's duplicate-fanout/spatial-Concat options.
+Both raw tuples and identities are preserved. The lowerer now has one
+`_terminal_sinet_singleton_reshape_results` observation in place of the two
+characterized locals; wrappers and independent routes remain available.
+
+Focused, owner-aware, affected, and standard sequential gates pass with
+`3`, `314`, `457`, and `92 / 55 / 196 / 2 / 11` tests respectively. Eleven
+stale direct-call or neighbor assertions now resolve the composite and still
+verify every independent route and fixed policy. The phase store remains
+exactly 128 IDs and 128 owners, and the characterized unconsumed lowerer-result
+inventory is now 52. No real-model conversion was repeated for this exact
+orchestration-only extraction.
+
+At resume, refresh the 52-result inventory and select the next smallest
+straight-line observation-only boundary. Characterize exact state, options,
+guards, schemas, independent routes, and outer phase/progress boundaries before
+production changes. Continue with core-only `uv`, sequential tests, and
+complete checkpoint commits/pushes only. Do not create, update, reopen, or
+otherwise modify a pull request.

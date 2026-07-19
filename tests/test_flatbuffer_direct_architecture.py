@@ -2748,21 +2748,19 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
         in {
-            "_terminal_sinet_preadd_resize_results",
             "_post_cleanup_sinet_preadd_resize_results",
         }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
-    assert len(invocation_indexes) == 2
+    assert len(invocation_indexes) == 1
     assert [
         lowerer.body[index].targets[0].id
         for index in invocation_indexes
         if isinstance(lowerer.body[index], ast.Assign)
         and isinstance(lowerer.body[index].targets[0], ast.Name)
     ] == [
-        "_terminal_sinet_preadd_resize_results",
         "_post_cleanup_sinet_preadd_resize_results",
     ]
     previous_call_names = []
@@ -2783,25 +2781,38 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         previous_call_names.append(_phase_aware_call(previous)[0].func.id)
         next_call_names.append(_phase_aware_call(following)[0].func.id)
     assert _phase_aware_call(lowerer.body[invocation_indexes[0] - 1])[1] == (
-        "cleanup.terminal.dequant_hardsigmoid_bridge"
-    )
-    assert _phase_aware_call(lowerer.body[invocation_indexes[1] - 1])[1] == (
         "cleanup.very_late.prune_reconcile"
     )
-    assert _phase_aware_call(lowerer.body[invocation_indexes[1] + 1])[1] == (
+    assert _phase_aware_call(lowerer.body[invocation_indexes[0] + 1])[1] == (
         "cleanup.post_cleanup.csp_attention"
     )
     assert previous_call_names == [
-        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
         "run_indexed_prune_reconcile_cleanup",
     ]
     assert next_call_names == [
-        "_run_singleton_reshape_layout_pass_cluster",
         "_optimize_transpose_csp_attention_nhwc_chains",
     ]
-    assert assigned_boundary_targets == [
-        "_post_terminal_singleton_reshape_results",
-    ]
+    assert assigned_boundary_targets == []
+
+    terminal_composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_sinet_singleton_reshape_results"
+    )
+    terminal_index = lowerer.body.index(terminal_composite)
+    assert isinstance(terminal_composite.value, ast.Call)
+    assert isinstance(terminal_composite.value.func, ast.Name)
+    assert terminal_composite.value.func.id == (
+        "run_terminal_sinet_singleton_reshape_cleanup"
+    )
+    assert _phase_aware_call(lowerer.body[terminal_index - 1])[1] == (
+        "cleanup.terminal.dequant_hardsigmoid_bridge"
+    )
+    assert _phase_aware_call(lowerer.body[terminal_index + 1])[1] == (
+        "shape_topology.terminal.indexed_convergence"
+    )
 
     very_late_composite = next(
         statement
@@ -2830,7 +2841,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 3
+    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 2
 
 
 def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
@@ -3425,7 +3436,7 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_post_terminal_singleton_reshape_results"
+    assert previous.targets[0].id == "_terminal_sinet_singleton_reshape_results"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert isinstance(following, ast.Assign)
@@ -3434,7 +3445,7 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     assert following.targets[0].id == "_very_late_sinet_recovery_tail_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert previous.value.func.id == "_run_singleton_reshape_layout_pass_cluster"
+    assert previous.value.func.id == "run_terminal_sinet_singleton_reshape_cleanup"
     assert following.value.func.id == "run_very_late_sinet_recovery_tail_cleanup"
 
 
@@ -9199,7 +9210,7 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == long_helper_name
     ]
-    assert len(long_invocations) == 2
+    assert len(long_invocations) == 1
     assert sum(
         any(
             keyword.arg == "include_layout_transpose"
@@ -9215,6 +9226,41 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         )
         for call in long_invocations
     ) == 1
+
+    terminal_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_sinet_singleton_reshape_orchestration.py"
+    )
+    terminal_owner = next(
+        node
+        for node in ast.parse(
+            terminal_owner_path.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_sinet_singleton_reshape_cleanup"
+    )
+    terminal_singleton_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_reshape"
+    ]
+    assert len(terminal_singleton_calls) == 1
+    terminal_singleton_call = terminal_singleton_calls[0]
+    assert [ast.unparse(argument) for argument in terminal_singleton_call.args] == [
+        "context"
+    ]
+    assert {
+        keyword.arg: ast.literal_eval(keyword.value)
+        for keyword in terminal_singleton_call.keywords
+    } == {
+        "include_duplicate_fanout": True,
+        "include_spatial_concat_post_transpose": False,
+    }
     assert sum(
         any(
             keyword.arg == "include_duplicate_fanout"
@@ -9229,7 +9275,7 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
             for keyword in call.keywords
         )
         for call in long_invocations
-    ) == 1
+    ) == 0
 
     short_helper_name = "_run_singleton_consecutive_reshape_pass_cluster"
     assert SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS == (

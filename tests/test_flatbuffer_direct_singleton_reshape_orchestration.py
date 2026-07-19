@@ -37,6 +37,15 @@ PHASE_PATH = (
     / "singleton_reshape_orchestration.py"
 )
 SINGLETON_RESHAPE = "_run_singleton_reshape_layout_pass_cluster"
+TERMINAL_COMPOSITE_OWNER = "run_terminal_sinet_singleton_reshape_cleanup"
+TERMINAL_COMPOSITE_TARGET = "_terminal_sinet_singleton_reshape_results"
+TERMINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_sinet_singleton_reshape_orchestration.py"
+)
 POLICIES = tuple(product((False, True), repeat=4))
 
 
@@ -429,7 +438,7 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
         ),
         key=lambda node: node.lineno,
     )
-    assert len(direct_results) == 2
+    assert len(direct_results) == 1
     assert all(isinstance(result, ast.Assign) for result in direct_results)
     assert [
         result.targets[0].id
@@ -439,7 +448,6 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
         and isinstance(result.targets[0], ast.Name)
     ] == [
         "_terminal_singleton_reshape_results",
-        "_post_terminal_singleton_reshape_results",
     ]
     assert [
         {
@@ -452,11 +460,19 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
             "include_layout_transpose": True,
             "include_multi_branch_gate": True,
         },
-        {
-            "include_duplicate_fanout": True,
-            "include_spatial_concat_post_transpose": False,
-        },
     ]
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == TERMINAL_COMPOSITE_TARGET
+    )
+    assert _direct_call_name(composite) == TERMINAL_COMPOSITE_OWNER
+    assert [ast.unparse(argument) for argument in composite.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert composite.value.keywords == []
 
 
 def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> None:
@@ -510,33 +526,45 @@ def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> Non
 
 def test_singleton_reshape_preserves_duplicate_spatial_policy_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_index = next(
+    owner = next(
+        node
+        for node in ast.parse(
+            TERMINAL_COMPOSITE_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_COMPOSITE_OWNER
+    )
+    singleton_call = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_reshape"
+    )
+    assert [ast.unparse(argument) for argument in singleton_call.args] == [
+        "context"
+    ]
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in singleton_call.keywords
+    } == {
+        "include_duplicate_fanout": True,
+        "include_spatial_concat_post_transpose": False,
+    }
+    composite_index = next(
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_post_terminal_singleton_reshape_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == SINGLETON_RESHAPE
+        and statement.targets[0].id == TERMINAL_COMPOSITE_TARGET
     )
-    invocation = lowerer.body[invocation_index]
-
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert invocation.value.args == []
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in invocation.value.keywords
-    } == {
-        "include_duplicate_fanout": True,
-        "include_spatial_concat_post_transpose": False,
-    }
-    assert _direct_call_name(lowerer.body[invocation_index - 1]) == (
-        "_run_sinet_preadd_resize_recovery_sequence"
+    assert _direct_call_name(lowerer.body[composite_index]) == (
+        TERMINAL_COMPOSITE_OWNER
     )
-    assert _direct_call_name(lowerer.body[invocation_index + 1]) == (
+    assert _direct_call_name(lowerer.body[composite_index - 1]) == (
+        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
+    )
+    assert _direct_call_name(lowerer.body[composite_index + 1]) == (
         "_run_indexed_shape_convergence_cleanup"
     )
 

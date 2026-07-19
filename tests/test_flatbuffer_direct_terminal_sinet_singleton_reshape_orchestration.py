@@ -8,11 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
-    run_sinet_preadd_resize_recovery,
-)
-from onnx2tf.tflite_builder.passes.singleton_reshape_orchestration import (
-    run_singleton_reshape,
+from onnx2tf.tflite_builder.passes import (
+    terminal_sinet_singleton_reshape_orchestration,
 )
 
 
@@ -31,10 +28,6 @@ OWNER = "run_terminal_sinet_singleton_reshape_cleanup"
 CHILD_OWNERS = (
     "run_sinet_preadd_resize_recovery",
     "run_singleton_reshape",
-)
-CURRENT_CHILD_OWNERS = (
-    "_run_sinet_preadd_resize_recovery_sequence",
-    "_run_singleton_reshape_layout_pass_cluster",
 )
 RESULT_TARGETS = (
     "_terminal_sinet_preadd_resize_results",
@@ -95,28 +88,21 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_terminal_sinet_singleton_reshape_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    assignments = [
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indices = [lowerer.body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-    assert assignments[0].value.args == []
-    assert assignments[0].value.keywords == []
-    assert assignments[1].value.args == []
-    assert {
-        keyword.arg: ast.literal_eval(keyword.value)
-        for keyword in assignments[1].value.keywords
-    } == SINGLETON_POLICY
-    assert _phase_id(lowerer.body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(lowerer.body[indices[1] + 1]) == SUCCESSOR_PHASE_ID
+    assert call.keywords == []
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -150,8 +136,9 @@ def test_terminal_sinet_singleton_reshape_current_boundary_and_schema() -> None:
         diagnostics=[],
     )
     results = (
-        run_sinet_preadd_resize_recovery(context),
-        run_singleton_reshape(context, **SINGLETON_POLICY),
+        terminal_sinet_singleton_reshape_orchestration.run_terminal_sinet_singleton_reshape_cleanup(
+            context
+        )
     )
     assert tuple(type(result) for result in results) == (tuple, tuple)
     assert tuple(len(result) for result in results) == (6, 8)
@@ -159,10 +146,6 @@ def test_terminal_sinet_singleton_reshape_current_boundary_and_schema() -> None:
     assert tuple(type(result) for result in results[1]) == (dict,) * 8
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal SiNet/singleton-reshape composite owner is not implemented",
-)
 def test_terminal_sinet_singleton_reshape_has_one_shared_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -207,3 +190,54 @@ def test_terminal_sinet_singleton_reshape_has_one_shared_context_owner() -> None
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_terminal_sinet_singleton_reshape_runtime_order_policy_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("terminal_sinet_singleton_reshape_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        tuple({f"sinet_{index}": index} for index in range(6)),
+        tuple({f"singleton_{index}": index} for index in range(8)),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def sinet(active_context: ModelIRPassContext) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[0], active_context, {}))
+        return expected_results[0]
+
+    def singleton(
+        active_context: ModelIRPassContext,
+        **options: object,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[1], active_context, options))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        terminal_sinet_singleton_reshape_orchestration,
+        CHILD_OWNERS[0],
+        sinet,
+    )
+    monkeypatch.setattr(
+        terminal_sinet_singleton_reshape_orchestration,
+        CHILD_OWNERS[1],
+        singleton,
+    )
+
+    actual = (
+        terminal_sinet_singleton_reshape_orchestration.run_terminal_sinet_singleton_reshape_cleanup(
+            context
+        )
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context, {}),
+        (CHILD_OWNERS[1], context, SINGLETON_POLICY),
+    ]

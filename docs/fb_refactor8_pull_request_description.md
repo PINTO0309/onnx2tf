@@ -1517,3 +1517,21 @@ Focused and affected sequential characterization report
 `1 passed, 1 xfailed` and `455 passed, 1 xfailed`; the sole expected failure is
 the intentionally absent owner. Production behavior, dependencies, TensorFlow
 isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest checkpoint implements the terminal SiNet/singleton-Reshape owner.
+It forwards the exact shared `ModelIRPassContext` through both children in
+source order and applies the unchanged duplicate-fanout/spatial-ConCat policy
+only to singleton recovery. Both complete raw tuples and their object
+identities are preserved.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. Recorded terminal dequant/hard-sigmoid cleanup and terminal
+indexed-shape convergence remain the immediate phase boundaries. Both lowerer
+wrappers, every independent route, nested pass owners, graph mutations, public
+behavior, artifacts, dependencies, and TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 457 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 53 to 52.

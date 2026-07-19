@@ -6564,3 +6564,37 @@ architecture, efficiency, result, phase-store, and terminal-validation
 contracts. The sole xfail is the intentionally absent owner. Production,
 dependencies, TensorFlow isolation, and the exactly 128-ID/128-owner phase
 store remain unchanged.
+
+## Terminal SiNet/singleton-Reshape composite implementation
+
+`passes/terminal_sinet_singleton_reshape_orchestration.py` now owns the
+characterized terminal pair. It invokes `run_sinet_preadd_resize_recovery`
+with the exact shared `ModelIRPassContext`, then invokes
+`run_singleton_reshape` with the same object and the fixed
+`include_duplicate_fanout=True` and
+`include_spatial_concat_post_transpose=False` policy. The complete six-result
+and eight-result tuples are returned unchanged and in source order, preserving
+both raw identities.
+
+The lowerer replaces only `_terminal_sinet_preadd_resize_results` and
+`_post_terminal_singleton_reshape_results` with
+`_terminal_sinet_singleton_reshape_results`. Recorded terminal
+dequant/hard-sigmoid cleanup and terminal indexed-shape convergence remain the
+immediate outer phase boundaries. The lowerer wrappers, guarded terminal
+layout/multi-branch singleton route, post-cleanup SiNet route, terminal-layout
+callback routes, and every nested pass owner remain intact. The unconditional
+fallback-relowering singleton policy is now explicit in the pass owner and its
+lowerer comment.
+
+Eleven stale direct-boundary assertions were updated to resolve the new owner
+while preserving route counts, context aliases, policy checks, and neighboring
+phase ownership. Runtime injection proves exact shared-context forwarding,
+order, policy, and both raw-result identities. Sequential validation reports
+`3 passed` focused, `314 passed` owner-aware, `457 passed` affected, and all
+standard gates passing: 92 terminal-layout/efficiency, 55 core, 196 result
+contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests. The phase store remains exactly 128 IDs and 128 owners, and the
+unconsumed lowerer-result inventory decreases from 53 to 52. No real-model
+conversion was repeated because this is a straight-line orchestration-only
+extraction with complete context, option, order, schema, identity, wrapper,
+route, and boundary coverage.
