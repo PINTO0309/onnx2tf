@@ -30,7 +30,7 @@ OWNER_PATH = (
 OWNER = "run_late_conv1d_decoder_layout_cleanup"
 RESULT_TARGET = "_late_conv1d_decoder_layout_results"
 PREDECESSOR_TARGET = "_late_swish_transpose_passthrough_stats"
-SUCCESSOR_TARGET = "_very_late_pad_layout_stats"
+SUCCESSOR_TARGET = "_very_late_pad_instancenorm_layout_results"
 OLD_RESULT_TARGETS = (
     "_late_conv1d_squeeze_unary_stats",
     "_late_conv1d_rank4_unary_stats",

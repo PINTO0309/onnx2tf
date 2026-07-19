@@ -5287,6 +5287,49 @@ remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
 because runtime injection directly proves the custom/shared context, results,
 order, independent route, and boundary contracts.
 
+## Very-late layout-tail composite characterization
+
+The refreshed inventory selected four consecutive unconditional results after
+late Swish passthrough cleanup: Conv1D/decoder layout cleanup, Pad/InstanceNorm
+layout cleanup, singleton/consecutive Reshape cleanup, and optional layout-
+Transpose plus broadcast repair. All four results are observation-only and
+unconsumed.
+
+The Conv1D, Pad/InstanceNorm, and broadcast owners already receive the shared
+`ModelIRPassContext`. The primary singleton wrapper constructs an equivalent
+context from the same ModelIR, LayoutState, and diagnostics; its fallback
+caller remains independent and uses `fallback_ir` with no LayoutState. The
+broadcast policy must preserve
+`include_layout_transpose=optimize_layout_transpose_chains`. The following
+very-late broadcast reconciliation remains phase-recorded and outside the
+cluster.
+
+`tests/test_flatbuffer_direct_very_late_layout_tail_orchestration.py` fixes
+the four child owners, exact primary arguments and option policy, late-Swish
+predecessor, recorded reconciliation successor, both singleton wrapper routes,
+absence of consumers, and both empty-graph nested schemas. The result lengths
+are `(8, 4, 3, 2)`; the final first element is `None` when layout-Transpose is
+disabled and a mapping when enabled. Its strict expected failure requires one
+shared-context owner returning all four raw tuples in order.
+
+Two inherited tests were corrected independently before this checkpoint. The
+Conv1D composite successor had already become the Pad/InstanceNorm composite,
+and an affine post-Add occurrence had already moved from a direct lowerer call
+to terminal Slice/Concat recovery. Both failed against unchanged production.
+
+Sequential characterization under core-only `uv` completed with
+`3 passed, 1 xfailed in 0.61s` focused and
+`435 passed, 1 xfailed in 19.98s` across all four child families, option and
+fallback routes, related result contracts, shared-late and absolute-final
+owners, terminal layout, shared-context, architecture, and phase-store
+contracts. The sole expected failure is the intentionally absent composite.
+Ruff and whitespace checks passed.
+
+No production callback, graph mutation, nested schema, context identity,
+option policy, pass order, public API, artifact, dependency, TensorFlow
+boundary, or store entry changed. No real-model conversion was run; the
+phase-result store remains exactly 128 IDs and 128 owners.
+
 ## Late input/affine/normalization composite implementation
 
 `passes/late_input_affine_normalization_orchestration.py` now owns the

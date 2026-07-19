@@ -4776,3 +4776,30 @@ closed pass-module-owned cluster, characterize it before production changes,
 and keep all verification under `uv` sequential and single-process. Never
 create, update, or reopen a pull request; use appropriately scoped commits and
 pushes only.
+
+## Very-late layout-tail composite characterization
+
+The fresh inventory selected four adjacent unconsumed results after late Swish
+cleanup: Conv1D/decoder, Pad/InstanceNorm, singleton/consecutive Reshape, and
+layout/broadcast cleanup. The primary calls share ModelIR, LayoutState, and
+diagnostics; broadcast retains its option-dependent layout-Transpose flag. The
+late-Swish result and phase-recorded very-late broadcast reconciliation define
+the outer boundaries. The singleton wrapper's fallback call remains
+independent with `fallback_ir` and no LayoutState.
+
+The strict contract preserves exact child order, context and flag policy, both
+singleton routes, raw tuple schema `(8, 4, 3, 2)`, both broadcast schema
+variants, and absence of consumers. Focused validation reports
+`3 passed, 1 xfailed`; affected sequential validation reports
+`435 passed, 1 xfailed`. Two pre-existing stale expectations were corrected to
+their already-extracted owners; production remained unchanged. Ruff and
+whitespace checks passed. TensorFlow isolation and the 128-ID/128-owner store
+remain unchanged; no model conversion was run.
+
+At resume, implement `passes/very_late_layout_tail_orchestration.py` as a
+straight-line four-stage owner accepting the shared `ModelIRPassContext` and
+keyword-only `include_layout_transpose`. Call the singleton pass-module owner
+directly with that exact context, retain the lowerer wrapper and fallback
+caller, preserve the broadcast flag and all raw tuples, and retain both outer
+boundaries. Run affected and standard gates sequentially. Never create,
+update, or reopen a pull request.

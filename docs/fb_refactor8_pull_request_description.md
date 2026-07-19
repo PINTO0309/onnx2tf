@@ -1090,6 +1090,14 @@ TensorFlow-free direct/`-cotof` behavior remain unchanged. Runtime identity
 tests, 400 affected contracts, and the full sequential standard gate set pass;
 the phase-result store remains exactly 128 IDs and 128 owners.
 
+The next characterization fixes four adjacent very-late layout composites:
+Conv1D/decoder, Pad/InstanceNorm, singleton/consecutive Reshape, and optional
+layout-Transpose/broadcast cleanup. It preserves shared state identity, the
+option-dependent broadcast schema, the independent fallback singleton route,
+all raw tuple schemas and order, the late-Swish predecessor, the recorded
+broadcast-reconciliation successor, and the full 128-ID/128-owner store.
+Production remains unchanged pending a separate context-owner implementation.
+
 The latest checkpoint implements that late reshape/shuffle/attention/window
 context owner. One orchestration module now forwards the same
 `ModelIRPassContext` to all four children, preserves the base-only channel

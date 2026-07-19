@@ -21,6 +21,9 @@ from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orches
 from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
     PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
+    TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -486,13 +489,13 @@ def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() ->
         + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
             "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
         )
+        + TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
         + len(owner_calls)
         == 3
     )
-    assert isinstance(direct_statements[0], ast.Assign)
-    first_target = direct_statements[0].targets[0]
-    assert isinstance(first_target, ast.Name)
-    assert first_target.id == "_very_late_affine_post_add_stats"
+    assert direct_statements == []
 
 
 def test_absolute_final_normalization_attention_context_and_composite_are_explicit() -> (
