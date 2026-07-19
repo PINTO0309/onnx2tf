@@ -232,11 +232,9 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
     assert isinstance(post_sinet.targets[0], ast.Name)
     assert post_sinet.targets[0].id == "_post_sinet_batchmatmul_affine_input_stats"
     post_sinet_predecessor = lowerer.body[post_sinet_index - 1]
-    assert isinstance(post_sinet_predecessor, ast.Assign)
-    assert len(post_sinet_predecessor.targets) == 1
-    assert isinstance(post_sinet_predecessor.targets[0], ast.Name)
-    assert post_sinet_predecessor.targets[0].id == (
-        "_post_cleanup_sa_pa_mirrorpad_stats"
+    _assert_phase_result_record(
+        post_sinet_predecessor,
+        "cleanup.post_cleanup.sa_pa_mirrorpad",
     )
     assert _call_name(post_sinet_predecessor) == (
         "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains"

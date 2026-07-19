@@ -5072,17 +5072,19 @@ def lower_onnx_to_ir(
         _run_sinet_preadd_resize_recovery_sequence()
     )
     # Late SiNet rewrites can recreate SA/PA MIRROR_PAD NCHW<->NHWC bridges.
-    _post_cleanup_csp_attention_stats = (
+    session.record_phase_result(
+        "cleanup.post_cleanup.csp_attention",
         _optimize_transpose_csp_attention_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _post_cleanup_sa_pa_mirrorpad_stats = (
+    session.record_phase_result(
+        "cleanup.post_cleanup.sa_pa_mirrorpad",
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
     _post_sinet_batchmatmul_affine_input_stats = (
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)

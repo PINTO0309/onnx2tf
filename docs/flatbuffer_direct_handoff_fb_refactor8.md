@@ -1929,3 +1929,35 @@ change only the two result destinations, grow the store contract from 116 to
 118 records, keep the existing owner calls and phase boundaries, run all
 sequential gates, document, commit, and push. Never create, update, or reopen
 a pull request.
+
+## Post-cleanup attention result implementation
+
+The two results now record under the characterized
+`cleanup.post_cleanup.csp_attention` and
+`cleanup.post_cleanup.sa_pa_mirrorpad` phase IDs. The change removes only the
+two unconsumed local destinations; calls, arguments, execution count, order,
+layout-state use, surrounding composite and BatchMatMul boundaries, graph
+behavior, public contracts, dependencies, and TensorFlow isolation are
+unchanged.
+
+The bounded store now contains 118/128 records, leaving 10 slots. Affected
+structural assertions unwrap phase records and retain exact phase, nested
+owner, argument, and boundary checks. The strict characterization expectation
+now passes.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused boundary/store contracts: `17 passed in 1.12s`;
+- focused CSP/MirrorPad runtime and orchestration contracts:
+  `68 passed in 1.20s`;
+- synthetic core runtime contracts: `55 passed in 1.12s`;
+- broader result contracts: `192 passed in 9.46s`;
+- lowerer architecture contracts: `258 passed in 21.25s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because this unit changes only the
+destination of already-computed one-counter mappings and focused runtime
+tests cover both owners. Commit and push this unit. Begin the next unit with a
+fresh characterize-first audit and never create, update, or reopen a pull
+request.

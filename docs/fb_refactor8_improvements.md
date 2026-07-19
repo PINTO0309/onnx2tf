@@ -803,6 +803,40 @@ all owner calls and surrounding composite boundaries, update structural
 contracts, run the sequential gates, document, commit, and push. Never create,
 update, or reopen a pull request.
 
+## Post-cleanup attention result implementation
+
+The two characterized observations now record consecutively under:
+
+- `cleanup.post_cleanup.csp_attention`;
+- `cleanup.post_cleanup.sa_pa_mirrorpad`.
+
+Only the unused local destinations changed. Both owner calls, layout-state
+arguments, unconditional execution, source adjacency, preceding SiNet
+pre-Add/Resize composite, following post-SiNet BatchMatMul result, ModelIR
+mutations, public outputs, reports, artifacts, dependencies, and TensorFlow
+isolation remain unchanged. The bounded store now covers 118/128 phase IDs,
+leaving 10 slots.
+
+Affected CSP, MirrorPad, SiNet-boundary, BatchMatMul, store, and architecture
+contracts now unwrap the phase records and preserve exact phase, owner,
+argument, and boundary checks. The strict characterization expectation is now
+a passing contract.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused boundary and phase-store contracts: `17 passed in 1.12s`;
+- focused CSP and indexed MirrorPad runtime/orchestration contracts:
+  `68 passed in 1.20s`;
+- synthetic core runtime contracts: `55 passed in 1.12s`;
+- broader result and phase-result contracts: `192 passed in 9.46s`;
+- lowerer architecture contracts: `258 passed in 21.25s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and focused runtime contracts exercise
+both owners.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

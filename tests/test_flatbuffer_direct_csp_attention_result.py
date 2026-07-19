@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -52,7 +50,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -141,7 +149,7 @@ def test_csp_attention_result_schema_and_cleanup_semantics_are_explicit() -> Non
     )
 
 
-def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
+def test_lowerer_records_post_cleanup_csp_attention_result() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     invocations = [
         statement
@@ -150,7 +158,7 @@ def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
     ]
     assert len(invocations) == 1
     invocation = invocations[0]
-    assert _single_target(invocation) == "_post_cleanup_csp_attention_stats"
+    assert _phase_id(invocation) == "cleanup.post_cleanup.csp_attention"
 
     call = _statement_call(invocation)
     assert call is not None
@@ -165,7 +173,7 @@ def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
     following = lowerer.body[invocation_index + 1]
     assert _single_target(previous) == "_post_cleanup_sinet_preadd_resize_results"
     assert _call_name(previous) == "_run_sinet_preadd_resize_recovery_sequence"
-    assert _single_target(following) == "_post_cleanup_sa_pa_mirrorpad_stats"
+    assert _phase_id(following) == "cleanup.post_cleanup.sa_pa_mirrorpad"
     assert _call_name(following) == SA_PA_MIRRORPAD
     following_call = _statement_call(following)
     assert following_call is not None
@@ -175,10 +183,6 @@ def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
     } == {"layout_state": "session.layout_state"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="post-cleanup attention results have not moved to phase records",
-)
 def test_post_cleanup_attention_results_use_phase_result_store() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     records = [

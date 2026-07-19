@@ -79,6 +79,8 @@ EXPECTED_RESULT_TARGETS = (
     "_very_late_residual_affine_prelu_stats",
     "_very_late_residual_affine_fanout_stats",
     "_very_late_prune_reconcile_stats",
+    "_post_cleanup_csp_attention_stats",
+    "_post_cleanup_sa_pa_mirrorpad_stats",
     "_no_layout_safe_transpose_reduction_stats",
     "_very_late_broadcast_static_shape_stats",
     "_shared_late_static_shape_stats",
@@ -197,6 +199,8 @@ EXPECTED_OWNERS = (
     "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
     "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains",
     "run_indexed_prune_reconcile_cleanup",
+    "_optimize_transpose_csp_attention_nhwc_chains",
+    "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
     "_apply_safe_transpose_reduction_lite",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
@@ -249,7 +253,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 74,
+    *("model_ir",) * 76,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -320,6 +324,8 @@ EXPECTED_PHASE_IDS = (
     "cleanup.very_late.residual_affine_prelu",
     "cleanup.very_late.residual_affine_fanout",
     "cleanup.very_late.prune_reconcile",
+    "cleanup.post_cleanup.csp_attention",
+    "cleanup.post_cleanup.sa_pa_mirrorpad",
     "layout.no_layout.safe_transpose_reduction",
     "shape_reconciliation.primary.very_late_broadcast",
     "shape_reconciliation.primary.shared_late",
@@ -410,7 +416,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_one_hundred_sixteen_observations_use_the_bounded_session_store() -> None:
+def test_one_hundred_eighteen_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -421,7 +427,7 @@ def test_one_hundred_sixteen_observations_use_the_bounded_session_store() -> Non
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 116
+    assert len(records) == 118
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
