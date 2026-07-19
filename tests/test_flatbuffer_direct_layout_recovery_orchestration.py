@@ -35,7 +35,6 @@ LAYOUT_RESULT_TARGET = "_layout_pass_set_2_layout_recovery_prefix_results"
 ATTENTION_RESULT_TARGETS = (
     "_layout_pass_set_1_initial_attention_recovery_results",
     "_layout_pass_set_1_post_binary_attention_recovery_results",
-    "_layout_pass_set_1_final_attention_recovery_results",
 )
 
 
@@ -577,7 +576,7 @@ def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == ATTENTION_PREFIX:
                 direct_results.append((statement.body, index))
-    assert len(direct_results) == 3
+    assert len(direct_results) == 2
     assert tuple(
         _single_target(body[index]) for body, index in direct_results
     ) == ATTENTION_RESULT_TARGETS
@@ -593,7 +592,6 @@ def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
     ) == (
         "run_layout_transpose_cleanup",
         "run_duplicate_fanout_cleanup",
-        "_run_qlinear_mean_concat_recovery_sequence",
     )
     assert tuple(
         _phase_or_direct_call_name(body[index + 1])
@@ -601,7 +599,6 @@ def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
     ) == (
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_fold_mul_add_mul_affine_chains",
-        "_optimize_transpose_instancenorm_prepost_nhwc_chains",
     )
     for target in ATTENTION_RESULT_TARGETS:
         assert not any(

@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER = "_optimize_transpose_instancenorm_prepost_nhwc_chains"
 RESULT_TARGET = "_layout_pass_set_1_instancenorm_prepost_stats"
-PREVIOUS_TARGET = "_layout_pass_set_1_final_attention_recovery_results"
+PREVIOUS_TARGET = "_layout_pass_set_1_qlinear_attention_recovery_results"
 FOLLOWING_OWNER = "run_squeeze_reshape_identity_cleanup"
 STATS_KEY = "optimized_transpose_instancenorm_prepost_nhwc_chains"
 

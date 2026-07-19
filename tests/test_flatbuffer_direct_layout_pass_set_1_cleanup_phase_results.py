@@ -24,7 +24,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
         "diagnostics=session.diagnostics)"
     ),
 )
-PREDECESSOR_TARGET = "_layout_pass_set_1_final_attention_recovery_results"
+PREDECESSOR_TARGET = "_layout_pass_set_1_qlinear_attention_recovery_results"
 SUCCESSOR_TARGET = "_layout_pass_set_1_final_attention_quantized_suffix_results"
 
 

@@ -16,7 +16,7 @@ WRAPPER = "_optimize_transpose_dequantize_mean_quantize_bridges"
 INNER_OWNER = WRAPPER
 RESULT_TARGET = "_layout_pass_set_1_dequant_mean_quantize_stats"
 PREVIOUS_TARGET = "_layout_pass_set_1_attention_quantized_safe_binary_results"
-FOLLOWING_TARGET = "_layout_pass_set_1_qlinear_mean_concat_results"
+FOLLOWING_TARGET = "_layout_pass_set_1_qlinear_attention_recovery_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

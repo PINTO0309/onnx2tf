@@ -28,7 +28,6 @@ ORCHESTRATION_PATH = (
 )
 QLINEAR_MEAN_CONCAT = "_run_qlinear_mean_concat_recovery_sequence"
 RESULT_TARGETS = (
-    "_layout_pass_set_1_qlinear_mean_concat_results",
     "_layout_pass_set_2_qlinear_mean_concat_results",
 )
 
@@ -181,7 +180,7 @@ def test_qlinear_recovery_invocations_remain_zero_argument() -> None:
         and node.func.id == QLINEAR_MEAN_CONCAT
     ]
 
-    assert len(invocations) == 2
+    assert len(invocations) == 1
     assert all(call.args == [] for call in invocations)
     assert all(call.keywords == [] for call in invocations)
 
@@ -228,10 +227,6 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
                 )
 
     assert boundaries == [
-        (
-            "_optimize_transpose_dequantize_mean_quantize_bridges",
-            "_run_layout_reshape_attention_recovery_prefix",
-        ),
         (
             "_set_post_progress_desc",
             "_run_layout_recovery_prefix_pass_sequence",
@@ -350,7 +345,7 @@ def test_qlinear_recovery_propagates_both_ordered_results(
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == QLINEAR_MEAN_CONCAT:
                 direct_results.append((statement.body, index))
-    assert len(direct_results) == 2
+    assert len(direct_results) == 1
     assert tuple(
         _single_target(body[index]) for body, index in direct_results
     ) == RESULT_TARGETS
@@ -363,13 +358,11 @@ def test_qlinear_recovery_propagates_both_ordered_results(
     assert tuple(
         _direct_call_name(body[index - 1]) for body, index in direct_results
     ) == (
-        "_optimize_transpose_dequantize_mean_quantize_bridges",
         "_set_post_progress_desc",
     )
     assert tuple(
         _single_target(body[index + 1]) for body, index in direct_results
     ) == (
-        "_layout_pass_set_1_final_attention_recovery_results",
         "_layout_pass_set_2_layout_recovery_prefix_results",
     )
     for target in RESULT_TARGETS:

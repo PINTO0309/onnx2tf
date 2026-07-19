@@ -6838,3 +6838,25 @@ sequential validation reports `1 passed, 1 xfailed`; the sole expected failure
 requires the intentionally absent owner module. Ruff, bytecode compilation,
 and whitespace validation pass. The unconsumed-result inventory remains 46 and
 the phase-result store remains unchanged.
+
+## Extract the layout-pass-set-1 QLinear/attention boundary
+
+`passes/layout_pass_set_1_qlinear_attention_recovery_orchestration.py` now
+owns the characterized pair. It forwards the exact embedded
+`ModelIRPassContext` to public QLinear/Mean/Concat recovery, then forwards the
+original callback-bearing `LayoutRecoveryContext` to public final
+layout/reshape/attention recovery. Both complete nested tuples are returned in
+source order without copying, flattening, or normalization.
+
+The lowerer replaces only the two observation-only locals with
+`_layout_pass_set_1_qlinear_attention_recovery_results`. The recorded
+dequant-Mean and InstanceNorm phases remain the immediate boundaries. Both
+lowerer compatibility wrappers, the independent layout-pass-set-2 QLinear and
+layout-recovery-prefix routes, and every callback path remain available.
+
+Ten stale structural assertions now follow the outer owner while continuing
+to verify the independent direct routes. Sequential validation passes:
+focused `3`, affected `394`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
+bytecode compilation, and whitespace checks pass. The phase store remains
+exactly 128 IDs and 128 owners, while the unconsumed lowerer-result inventory
+decreases from 46 to 45.

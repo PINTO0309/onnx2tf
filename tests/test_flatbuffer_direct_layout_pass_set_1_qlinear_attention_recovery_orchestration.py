@@ -15,6 +15,9 @@ from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration impo
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
+from onnx2tf.tflite_builder.passes import (
+    layout_pass_set_1_qlinear_attention_recovery_orchestration,
+)
 from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     LayoutRecoveryContext,
     run_layout_reshape_attention_recovery_prefix,
@@ -190,7 +193,7 @@ def _guard_body() -> list[ast.stmt]:
         if isinstance(statement, ast.If)
         and ast.unparse(statement.test) == GUARD
         and any(
-            _single_target(candidate) in RESULT_TARGETS
+            _single_target(candidate) in (*RESULT_TARGETS, COMPOSITE_TARGET)
             for candidate in statement.body
         )
     )
@@ -227,29 +230,25 @@ def _context() -> LayoutRecoveryContext:
 
 def test_layout_pass_set_1_qlinear_attention_current_contract() -> None:
     body = _guard_body()
-    assignments = [
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_recovery_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indices = [body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-    assert _phase_id(body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
-    assert all(_call(statement).args == [] for statement in assignments)
-    assert all(_call(statement).keywords == [] for statement in assignments)
+    assert call.keywords == []
+    assert _phase_id(body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
-        for statement in body
-        for node in ast.walk(statement)
+        for node in ast.walk(_lowerer())
     )
 
     lowerer = _lowerer()
@@ -303,15 +302,11 @@ def test_layout_pass_set_1_qlinear_attention_current_contract() -> None:
         for child_owner in CURRENT_CHILD_OWNERS
     }
     assert direct_counts == {
-        CURRENT_CHILD_OWNERS[0]: 2,
-        CURRENT_CHILD_OWNERS[1]: 3,
+        CURRENT_CHILD_OWNERS[0]: 1,
+        CURRENT_CHILD_OWNERS[1]: 2,
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout-pass-set-1 QLinear/attention owner is not implemented",
-)
 def test_layout_pass_set_1_qlinear_attention_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -360,3 +355,44 @@ def test_layout_pass_set_1_qlinear_attention_has_one_context_owner() -> None:
         if isinstance(node, ast.FunctionDef)
     }
     assert all(name in lowerer_functions for name in CURRENT_CHILD_OWNERS)
+
+
+def test_layout_pass_set_1_qlinear_attention_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    expected_results = (
+        tuple({f"qlinear_{index}": index} for index in range(5)),
+        tuple({f"attention_{index}": index} for index in range(15)),
+    )
+    observed: list[tuple[str, object]] = []
+
+    def qlinear(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return expected_results[0]
+
+    def attention(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        layout_pass_set_1_qlinear_attention_recovery_orchestration,
+        CHILD_OWNERS[0],
+        qlinear,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_1_qlinear_attention_recovery_orchestration,
+        CHILD_OWNERS[1],
+        attention,
+    )
+
+    actual = layout_pass_set_1_qlinear_attention_recovery_orchestration.run_layout_pass_set_1_qlinear_attention_recovery(
+        context
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context.pass_context),
+        (CHILD_OWNERS[1], context),
+    ]

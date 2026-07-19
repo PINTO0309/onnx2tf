@@ -183,6 +183,13 @@ LAYOUT_PASS_SET_1_ATTENTION_QUANTIZED_SAFE_OWNER_PATH = (
     / "passes"
     / "layout_pass_set_1_attention_quantized_safe_binary_orchestration.py"
 )
+LAYOUT_PASS_SET_1_QLINEAR_ATTENTION_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_qlinear_attention_recovery_orchestration.py"
+)
 
 
 def _layout_pass_set_1_mean_attention_gate_calls(
@@ -222,6 +229,29 @@ def _layout_pass_set_1_attention_quantized_safe_calls(
         if isinstance(node, ast.FunctionDef)
         and node.name
         == "run_layout_pass_set_1_attention_quantized_safe_binary_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _layout_pass_set_1_qlinear_attention_calls(
+    child_owner: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_QLINEAR_ATTENTION_OWNER_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_layout_pass_set_1_qlinear_attention_recovery"
     )
     return [
         node
@@ -1245,7 +1275,7 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
             and node.func.id == helper_name
             for node in ast.walk(statement)
         )
-        == 3
+        == 2
     )
     invocation_indexes = [
         index
@@ -1257,13 +1287,12 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         in {
             "_layout_pass_set_1_initial_attention_recovery_results",
             "_layout_pass_set_1_post_binary_attention_recovery_results",
-            "_layout_pass_set_1_final_attention_recovery_results",
         }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
-    assert len(invocation_indexes) == 3
+    assert len(invocation_indexes) == 2
     assert [
         layout_recovery.body[index].targets[0].id
         for index in invocation_indexes
@@ -1272,7 +1301,6 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
     ] == [
         "_layout_pass_set_1_initial_attention_recovery_results",
         "_layout_pass_set_1_post_binary_attention_recovery_results",
-        "_layout_pass_set_1_final_attention_recovery_results",
     ]
     next_call_names = []
     next_targets = []
@@ -1305,10 +1333,8 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
     assert next_call_names == [
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_fold_mul_add_mul_affine_chains",
-        "_optimize_transpose_instancenorm_prepost_nhwc_chains",
     ]
     assert next_targets == [
-        None,
         None,
         None,
     ]
@@ -1324,12 +1350,12 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         "_optimize_fold_mul_add_mul_affine_chains(model_ir, "
         "layout_state=session.layout_state))"
     )
-    assert ast.unparse(layout_recovery.body[invocation_indexes[2] + 1]) == (
-        "session.record_phase_result("
-        "'cleanup.layout_pass_set_1.instancenorm_prepost', "
-        "_optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir, "
-        "layout_state=session.layout_state))"
+    owner_invocations = _layout_pass_set_1_qlinear_attention_calls(
+        "run_layout_reshape_attention_recovery_prefix"
     )
+    assert len(owner_invocations) == 1
+    assert ast.unparse(owner_invocations[0].args[0]) == "context"
+    assert owner_invocations[0].keywords == []
 
 
 def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
@@ -1904,24 +1930,23 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
             boundaries.append(
                 (statement.body[index - 1], statement.body[index + 1])
             )
-    assert len(boundaries) == 2
+    assert len(boundaries) == 1
     assert targets == [
-        "_layout_pass_set_1_qlinear_mean_concat_results",
         "_layout_pass_set_2_qlinear_mean_concat_results",
     ]
-    assert ast.unparse(boundaries[0][0]) == (
-        "session.record_phase_result("
-        "'cleanup.layout_pass_set_1.dequant_mean_quantize', "
-        "_optimize_transpose_dequantize_mean_quantize_bridges(model_ir))"
-    )
-    assert isinstance(boundaries[1][0], ast.Expr)
-    assert isinstance(boundaries[1][0].value, ast.Call)
-    assert isinstance(boundaries[1][0].value.func, ast.Name)
-    assert boundaries[1][0].value.func.id == "_set_post_progress_desc"
+    assert isinstance(boundaries[0][0], ast.Expr)
+    assert isinstance(boundaries[0][0].value, ast.Call)
+    assert isinstance(boundaries[0][0].value.func, ast.Name)
+    assert boundaries[0][0].value.func.id == "_set_post_progress_desc"
     assert [boundary[1].value.func.id for boundary in boundaries] == [
-        "_run_layout_reshape_attention_recovery_prefix",
         "_run_layout_recovery_prefix_pass_sequence",
     ]
+    owner_invocations = _layout_pass_set_1_qlinear_attention_calls(
+        "run_qlinear_mean_concat_recovery"
+    )
+    assert len(owner_invocations) == 1
+    assert ast.unparse(owner_invocations[0].args[0]) == "context.pass_context"
+    assert owner_invocations[0].keywords == []
 
 
 def test_qlinear_silu_prefix_corrected_owner_contract_is_explicit() -> None:

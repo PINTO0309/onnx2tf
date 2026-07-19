@@ -128,7 +128,7 @@ def _assert_outer_boundaries(
         "_layout_pass_set_1_attention_quantized_safe_binary_results"
     )
     assert _single_target(layout_guard.body[dequant_mean_index + 1]) == (
-        "_layout_pass_set_1_qlinear_mean_concat_results"
+        "_layout_pass_set_1_qlinear_attention_recovery_results"
     )
 
 

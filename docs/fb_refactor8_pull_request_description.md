@@ -1688,3 +1688,18 @@ validation reports `1 passed, 1 xfailed`, where the strict expected failure is
 the deliberately absent future composite owner. Ruff, bytecode compilation,
 and whitespace checks pass. The unconsumed-result inventory remains 46 and the
 phase-result store remains exactly 128 IDs and 128 owners.
+
+The latest implementation adds one dedicated layout-pass-set-1
+QLinear/attention owner. It calls the existing QLinear/Mean/Concat recovery
+through the exact session pass context and then calls the existing final
+layout/reshape/attention recovery through the original callback-bearing layout
+context. The complete child results, their order, and their object identities
+are preserved.
+
+Only two observation-only lowerer assignments are replaced by one composite
+result. Recorded phase boundaries, compatibility wrappers, independent
+layout-pass-set-2 routes, graph behavior, public APIs, artifacts, dependencies,
+and TensorFlow isolation remain unchanged. Focused `3`, affected `394`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
+remains exactly 128 IDs and 128 owners, and the unconsumed-result inventory
+decreases from 46 to 45.

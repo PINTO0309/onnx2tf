@@ -205,6 +205,9 @@ from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
 from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
     run_qlinear_mean_concat_recovery,
 )
+from onnx2tf.tflite_builder.passes.layout_pass_set_1_qlinear_attention_recovery_orchestration import (
+    run_layout_pass_set_1_qlinear_attention_recovery,
+)
 from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
     LayoutAttentionQuantizedSuffixContext,
     run_layout_attention_quantized_suffix,
@@ -4380,11 +4383,10 @@ def lower_onnx_to_ir(
             "cleanup.layout_pass_set_1.dequant_mean_quantize",
             _optimize_transpose_dequantize_mean_quantize_bridges(model_ir),
         )
-        _layout_pass_set_1_qlinear_mean_concat_results = (
-            _run_qlinear_mean_concat_recovery_sequence()
-        )
-        _layout_pass_set_1_final_attention_recovery_results = (
-            _run_layout_reshape_attention_recovery_prefix()
+        _layout_pass_set_1_qlinear_attention_recovery_results = (
+            run_layout_pass_set_1_qlinear_attention_recovery(
+                layout_recovery_context
+            )
         )
         session.record_phase_result(
             "cleanup.layout_pass_set_1.instancenorm_prepost",
