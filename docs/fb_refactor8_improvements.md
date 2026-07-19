@@ -2035,6 +2035,36 @@ Commit and push this checkpoint. On resume, characterize the adjacent first
 terminal-affine recovery evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
 
+## Terminal-affine prune-aware summary characterization
+
+The terminal-affine/Concat/Split recovery sequence runs twice in the late
+pipeline. Each boundary currently repeats the same three-step evidence logic:
+snapshot tensor count, retain the raw eleven-pass result tuple, and normalize
+its declared counters plus cleanup-only tensor pruning. Both normalized
+mappings are unconsumed, while the raw lowerer wrapper remains a compatibility
+boundary.
+
+The focused characterization fixes both triples, their exact summary
+expressions, raw wrapper dispatch, source order, pre-terminal InstanceNorm and
+slice/pad predecessors, and the pre-add and terminal slice/pad successors. A
+strict expected failure requires both summary targets to call one reusable
+`run_terminal_affine_concat_split_recovery_summary` owner.
+
+The future owner must snapshot the tensor count before invoking the existing
+raw pass-module owner, reuse the existing strict summary function, preserve
+all eleven result schemas and prune accounting, and return only the normalized
+mapping. The raw lowerer wrapper must remain defined with its existing
+dispatch for compatibility. No production source changed in this checkpoint.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.13s`; the sole xfail is the intentionally absent
+summary owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
+Commit and push this characterization before production changes. Keep the
+store at 128/128 and continue with commits and pushes only; never create,
+update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

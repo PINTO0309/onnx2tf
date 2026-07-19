@@ -3016,3 +3016,26 @@ total production call counts. Commit and push this checkpoint. At resume,
 characterize the first terminal-affine recovery evidence boundary before
 production changes. Continue with commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Terminal-affine prune-aware summary characterization
+
+The late pipeline repeats two identical terminal-affine evidence triples:
+tensor-count snapshot, raw eleven-result recovery, and prune-aware normalized
+summary. The six intermediate locals are confined to those triples; the two
+summary mappings are unconsumed. The existing nested raw wrapper is retained
+as a compatibility boundary.
+
+`tests/test_flatbuffer_direct_terminal_affine_recovery_summary_orchestration.py`
+fixes both triples, raw wrapper dispatch, exact prune expression, source order,
+and all four neighboring boundaries. Its strict xfail requires one pass-module
+summary owner used at both sites while keeping the raw wrapper defined. No
+production source changed.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.13s`; targeted Ruff, bytecode compilation, and
+whitespace checks passed.
+
+Commit and push before implementation. Keep the store at 128/128. On resume,
+add the prune-aware owner, replace only the two evidence triples, update
+owner-aware terminal-affine contracts, validate sequentially, then document,
+commit, and push. Never create, update, or reopen a pull request.
