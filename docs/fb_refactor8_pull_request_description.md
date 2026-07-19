@@ -801,3 +801,10 @@ It removes two tensor snapshots and six consumed result locals from the two
 compatible production sites while preserving path-specific context, ordered
 mutations, all rewrite and prune-only reconciliation paths, compatibility
 wrappers, neighboring boundaries, and the full 128/128 store.
+
+The next characterization fixes both compatible three-stage precision-cleanup
+sequences. It preserves DIV-to-reciprocal → consecutive-MUL → sensitive-DIV
+restore ordering, path-specific layout policy, diagnostics forwarding only to
+the transactional middle stage, independent result schemas, neighboring
+fallback/final boundaries, and the full 128/128 store. Production remains
+unchanged until a shared pass-module sequence owner is implemented separately.

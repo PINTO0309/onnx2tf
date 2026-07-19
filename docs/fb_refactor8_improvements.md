@@ -4429,3 +4429,34 @@ proves ordered owner invocation, exact context forwarding, stable schema, all
 three rewrite-evidence paths, and prune-only reconciliation, while affected
 structural gates preserve both production boundaries and compatibility
 wrappers.
+
+## Shared precision-cleanup sequence characterization
+
+The next compatible repeated family is the fallback and primary-final
+precision cleanup sequence. Both paths rewrite eligible constant DIV operators
+to reciprocal MUL, transactionally fold consecutive constant MUL chains, and
+restore precision-sensitive reciprocal divisions in that exact order. The
+fallback path intentionally omits layout state; the primary-final path forwards
+the conversion layout state. Only the middle transactional stage receives
+conversion diagnostics.
+
+`tests/test_flatbuffer_direct_precision_cleanup_orchestration.py` fixes both
+three-call sequences, all six current result targets, exact ModelIR/layout/
+diagnostics arguments, the fallback topology predecessor and unbound-repair
+successor, the primary topological-progress successor, and the total raw owner
+occurrence counts. Its one strict expected failure describes a future
+`run_precision_cleanup_sequence(context)` owner that returns all three raw
+mappings in order rather than merging their independent schemas.
+
+No GraphIndex sharing is proposed: the middle cleanup is transactional and
+owns its own pass state, while mutations on either side require each indexed
+owner to construct state from the current graph. This checkpoint changes no
+production source, graph mutation, pass order, phase-result entry, public API,
+artifact, dependency, or TensorFlow boundary.
+
+Sequential characterization under core-only `uv` completed with
+`365 passed, 1 xfailed in 18.94s` across the dedicated contract and related
+precision, graph-cleanup, fallback, topology, terminal-layout, phase-store,
+and architecture contracts. The sole expected failure is the intentionally
+absent shared sequence owner. Targeted Ruff and whitespace checks passed. No
+real-model conversion was repeated for this characterization-only change.

@@ -3920,3 +3920,30 @@ Commit and push this implementation checkpoint. At resume, audit the next
 compatible repeated lowerer evidence family before production changes. Keep
 all validation sequential and continue with commits and pushes only; never
 create, update, or reopen a pull request.
+
+## Shared precision-cleanup sequence characterization
+
+The next selected family is the duplicated fallback and primary-final
+DIV-to-reciprocal → consecutive-MUL → precision-sensitive-DIV-restore
+sequence. The fallback path uses `fallback_ir`, no layout state, and diagnostics
+only for consecutive-MUL. The primary path uses `model_ir`, the conversion
+layout state for all three stages, and diagnostics only for consecutive-MUL.
+
+The focused contract fixes all six current result locals, raw call order and
+occurrence counts, exact argument policy, fallback topology/unbound-repair
+boundaries, and the primary topological-progress successor. One strict xfail
+requires a pass-module `run_precision_cleanup_sequence(context)` owner that
+returns the three independent raw mappings in order. GraphIndex sharing is
+explicitly excluded because the middle stage owns a transactional pass state.
+
+Sequential validation under core-only `uv` completed with
+`365 passed, 1 xfailed in 18.94s` across the new characterization and related
+precision, graph-cleanup, fallback, topology, terminal-layout, phase-store,
+and architecture contracts. The sole expected failure is the unimplemented
+shared sequence owner. Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the shared owner and these two compatible three-stage sites, retain the raw
+lowerer compatibility re-exports and the earlier core consecutive-MUL caller,
+update owner-aware contracts, and validate sequentially. Continue with commits
+and pushes only; never create, update, or reopen a pull request.
