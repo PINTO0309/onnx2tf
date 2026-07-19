@@ -22,8 +22,8 @@ OWNER = (
     "_optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains"
 )
 RESULT_TARGET = "_late_conv1d_instancenorm_unary_stats"
-COMPOSITE_TARGET = "_very_late_layout_tail_results"
-COMPOSITE_OWNER = "run_very_late_layout_tail_cleanup"
+COMPOSITE_TARGET = "_late_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_swish_layout_tail_cleanup"
 RESULT_SCHEMA = {
     "optimized_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains": 0,
 }

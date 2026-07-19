@@ -44,7 +44,8 @@ VERY_LATE_TAIL_OWNER_PATH = (
     / "very_late_layout_tail_orchestration.py"
 )
 VERY_LATE_TAIL_OWNER = "run_very_late_layout_tail_cleanup"
-VERY_LATE_TAIL_RESULT = "_very_late_layout_tail_results"
+LOWERER_TAIL_OWNER = "run_late_swish_layout_tail_cleanup"
+LOWERER_TAIL_RESULT = "_late_swish_layout_tail_results"
 SINGLETON_CONSECUTIVE = "_run_singleton_consecutive_reshape_pass_cluster"
 
 
@@ -143,9 +144,9 @@ def _very_late_tail_assignment(lowerer: ast.FunctionDef) -> ast.Assign:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_TAIL_RESULT
+        and statement.targets[0].id == LOWERER_TAIL_RESULT
     )
-    assert _statement_call_name(assignment) == VERY_LATE_TAIL_OWNER
+    assert _statement_call_name(assignment) == LOWERER_TAIL_OWNER
     return assignment
 
 
@@ -392,9 +393,7 @@ def test_singleton_consecutive_retains_very_late_main_results() -> None:
     assert isinstance(predecessor, ast.Assign)
     assert len(predecessor.targets) == 1
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_late_swish_transpose_passthrough_stats"
-    )
+    assert predecessor.targets[0].id == "_late_dequant_hardsigmoid_unary_results"
     successor = lowerer.body[first_index + 1]
     assert isinstance(successor, ast.Expr)
     assert ast.unparse(successor).startswith(
@@ -438,7 +437,7 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     assert len(first_preceding.targets) == 1
     assert isinstance(first_preceding.targets[0], ast.Name)
     assert first_preceding.targets[0].id == (
-        "_late_swish_transpose_passthrough_stats"
+        "_late_dequant_hardsigmoid_unary_results"
     )
     first_following = lowerer.body[first_index + 1]
     assert isinstance(first_following, ast.Expr)

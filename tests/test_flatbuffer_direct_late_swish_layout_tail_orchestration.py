@@ -8,11 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.activation_passthrough_layout import (
-    optimize_swish_transpose_passthrough_chains,
-)
-from onnx2tf.tflite_builder.passes.very_late_layout_tail_orchestration import (
-    run_very_late_layout_tail_cleanup,
+from onnx2tf.tflite_builder.passes import (
+    late_swish_layout_tail_orchestration,
 )
 
 
@@ -153,38 +150,24 @@ def test_late_swish_layout_tail_current_boundary_and_schema(
     include_layout_transpose: bool,
 ) -> None:
     lowerer = _lowerer()
-    statements = tuple(
-        next(
-            statement
-            for statement in lowerer.body
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    indices = tuple(lowerer.body.index(statement) for statement in statements)
-    assert indices == (indices[0], indices[0] + 1)
-    assert tuple(_call_name(statement) for statement in statements) == (
-        CURRENT_CHILD_OWNERS
-    )
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
-
-    swish_call = _call(statements[0])
-    assert swish_call is not None
-    assert [ast.unparse(argument) for argument in swish_call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in swish_call.keywords
-    } == {"layout_state": "session.layout_state"}
-    tail_call = _call(statements[1])
-    assert tail_call is not None
-    assert [ast.unparse(argument) for argument in tail_call.args] == [
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in tail_call.keywords
+        for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -199,24 +182,20 @@ def test_late_swish_layout_tail_current_boundary_and_schema(
         diagnostics=[],
     )
     assert (
-        optimize_swish_transpose_passthrough_chains(
-            model_ir,
-            layout_state=context.layout_state,
-        ),
-        run_very_late_layout_tail_cleanup(
+        late_swish_layout_tail_orchestration.run_late_swish_layout_tail_cleanup(
             context,
             include_layout_transpose=include_layout_transpose,
-        ),
-    ) == (
-        SWISH_SCHEMA,
-        (*TAIL_PREFIX_SCHEMA, BROADCAST_REPAIR_SCHEMA[include_layout_transpose]),
+        )
+        == (
+            SWISH_SCHEMA,
+            (
+                *TAIL_PREFIX_SCHEMA,
+                BROADCAST_REPAIR_SCHEMA[include_layout_transpose],
+            ),
+        )
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late swish/very-late layout tail has no shared-context owner",
-)
 def test_late_swish_layout_tail_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -268,3 +247,65 @@ def test_late_swish_layout_tail_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_late_swish_layout_tail_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    model_ir = ModelIR("late_swish_layout_tail_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        {"swish": 1},
+        tuple({f"tail_{index}": index} for index in range(4)),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def _swish(active_model_ir: ModelIR, **kwargs: object) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[0], active_model_ir, kwargs))
+        return expected_results[0]
+
+    def _tail(
+        active_context: ModelIRPassContext,
+        **kwargs: object,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[1], active_context, kwargs))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        late_swish_layout_tail_orchestration,
+        CHILD_OWNERS[0],
+        _swish,
+    )
+    monkeypatch.setattr(
+        late_swish_layout_tail_orchestration,
+        CHILD_OWNERS[1],
+        _tail,
+    )
+
+    actual = (
+        late_swish_layout_tail_orchestration.run_late_swish_layout_tail_cleanup(
+            context,
+            include_layout_transpose=include_layout_transpose,
+        )
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context.model_ir,
+            {"layout_state": context.layout_state},
+        ),
+        (
+            CHILD_OWNERS[1],
+            context,
+            {"include_layout_transpose": include_layout_transpose},
+        ),
+    ]

@@ -1377,3 +1377,23 @@ while the swish lowerer wrapper remains a compatibility route. Production is
 unchanged pending one straight-line owner. Focused and affected sequential
 validation report `2 passed, 1 xfailed` and `476 passed, 1 xfailed`; the sole
 expected failure is the intentionally absent owner.
+
+The latest checkpoint implements that late swish/very-late layout-tail owner.
+It passes the context model and shared LayoutState to the public swish cleanup,
+then forwards the exact shared context and unchanged layout-Transpose option
+to the existing four-stage tail. The swish mapping and complete nested tail
+tuple are returned unchanged, in fixed source order, with both raw identities
+preserved.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The late dequant hard-sigmoid/unary composite remains the immediate
+predecessor, and the phase-recorded very-late broadcast reconciliation remains
+the immediate successor. The swish compatibility wrapper, nested owner
+boundaries, independent routes, graph mutations, guards, public behavior,
+artifacts, dependencies, and TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 479 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 57 to 56.

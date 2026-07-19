@@ -36,8 +36,9 @@ COMPOSITE_OWNER_PATH = (
     / "very_late_layout_tail_orchestration.py"
 )
 COMPOSITE_OWNER = "run_very_late_layout_tail_cleanup"
-RESULT_TARGET = "_very_late_layout_tail_results"
-PREDECESSOR_TARGET = "_late_swish_transpose_passthrough_stats"
+LOWERER_OWNER = "run_late_swish_layout_tail_cleanup"
+RESULT_TARGET = "_late_swish_layout_tail_results"
+PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 OLD_RESULT_TARGETS = (
     "_very_late_layout_transpose_cleanup_stats",
@@ -110,7 +111,7 @@ def test_very_late_layout_broadcast_boundary_uses_composite_outside_store() -> (
         if _single_target(statement) == RESULT_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == COMPOSITE_OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
@@ -152,7 +153,7 @@ def test_very_late_layout_broadcast_boundary_uses_one_composite_owner() -> None:
         if _single_target(statement) == RESULT_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == COMPOSITE_OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(

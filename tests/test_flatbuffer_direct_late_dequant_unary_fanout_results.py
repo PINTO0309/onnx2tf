@@ -29,7 +29,7 @@ ORCHESTRATION_PATH = (
 OWNER = "_run_late_dequant_unary_fanout_pass_cluster"
 RESULT_TARGET = "_late_dequant_unary_fanout_results"
 PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_bridge_stats"
-SUCCESSOR = "_optimize_swish_transpose_passthrough_chains"
+SUCCESSOR = "run_late_swish_layout_tail_cleanup"
 COMPOSITE_PATH = (
     REPO_ROOT
     / "onnx2tf"

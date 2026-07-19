@@ -6090,6 +6090,41 @@ shared-context, terminal-validation, architecture, and phase-store contracts.
 Production, public behavior, dependencies, TensorFlow isolation, and the
 exactly 128-ID/128-owner store remain unchanged.
 
+## Late swish/very-late layout-tail composite implementation
+
+`passes/late_swish_layout_tail_orchestration.py` now owns the characterized
+two-stage boundary. It invokes the public swish transpose-passthrough owner
+with `context.model_ir` and `context.layout_state`, then forwards the exact
+same `ModelIRPassContext` and the unchanged `include_layout_transpose` option
+to the existing four-stage very-late layout-tail composite. The swish mapping
+and complete nested tail tuple are returned in source order without copying,
+flattening, schema inspection, or result-driven control flow.
+
+The lowerer replaces only `_late_swish_transpose_passthrough_stats` and
+`_very_late_layout_tail_results` with `_late_swish_layout_tail_results`. The
+late dequant hard-sigmoid/unary composite remains the immediate predecessor,
+and the phase-recorded
+`shape_reconciliation.primary.very_late_broadcast` reconciliation remains the
+immediate successor outside the owner. The lowerer swish wrapper remains
+available for its independent compatibility route.
+
+Owner-aware swish, Conv1D/decoder, Pad/InstanceNorm, singleton Reshape,
+broadcast, reconciliation, late-dequant, architecture, and phase-store tests
+now resolve production through the new outer owner while continuing to verify
+each nested owner independently. Runtime injection covers both layout-policy
+variants and proves exact child order, model/LayoutState/context identity,
+option forwarding, and raw result identity.
+
+Sequential core-only `uv` validation passed with 5 focused tests, 479 affected
+tests, 92 terminal-layout/efficiency tests, 55 core tests, 196 result-contract
+tests, 2 phase-store tests, and 11 TensorFlow import-blocking, default-direct,
+and `-cotof` tests. No graph rewrite, guard, phase record, public API, artifact,
+dependency, or TensorFlow boundary changed. The bounded phase store remains
+exactly 128 IDs and 128 owners, and the characterized unconsumed-result
+inventory decreases from 57 to 56. No real-model conversion was repeated for
+this ownership-only extraction because state, order, schemas, identities,
+routes, and both outer boundaries are directly covered.
+
 ## Terminal QKV/activation-bridge composite implementation
 
 `passes/terminal_qkv_activation_bridge_orchestration.py` now owns the

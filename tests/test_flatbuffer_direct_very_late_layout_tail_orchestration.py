@@ -24,7 +24,15 @@ OWNER_PATH = (
     / "passes"
     / "very_late_layout_tail_orchestration.py"
 )
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_swish_layout_tail_orchestration.py"
+)
 OWNER = "run_very_late_layout_tail_cleanup"
+OUTER_OWNER = "run_late_swish_layout_tail_cleanup"
 CHILD_OWNERS = (
     "run_late_conv1d_decoder_layout_cleanup",
     "run_very_late_pad_instancenorm_layout_cleanup",
@@ -44,8 +52,8 @@ RESULT_TARGETS = (
     "_very_late_singleton_consecutive_reshape_results",
     "_very_late_layout_broadcast_results",
 )
-COMPOSITE_TARGET = "_very_late_layout_tail_results"
-PREDECESSOR_TARGET = "_late_swish_transpose_passthrough_stats"
+COMPOSITE_TARGET = "_late_swish_layout_tail_results"
+PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
 SUCCESSOR_PHASE = "shape_reconciliation.primary.very_late_broadcast"
 
 
@@ -107,7 +115,7 @@ def test_very_late_layout_tail_current_boundary_and_schema(
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -197,6 +205,14 @@ def test_very_late_layout_tail_has_one_context_owner() -> None:
         for keyword in calls[3].keywords
     } == {"include_layout_transpose": "include_layout_transpose"}
 
+    outer_owner = _functions(OUTER_OWNER_PATH)[OUTER_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+        for node in ast.walk(outer_owner)
+    ) == 1
+
     lowerer = _lowerer()
     assignment = next(
         statement
@@ -204,7 +220,7 @@ def test_very_late_layout_tail_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [

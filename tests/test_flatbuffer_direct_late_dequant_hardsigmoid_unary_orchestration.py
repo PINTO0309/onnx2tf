@@ -39,8 +39,8 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_late_dequant_hardsigmoid_unary_results"
 PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
-SUCCESSOR_TARGET = "_late_swish_transpose_passthrough_stats"
-SUCCESSOR_OWNER = "_optimize_swish_transpose_passthrough_chains"
+SUCCESSOR_TARGET = "_late_swish_layout_tail_results"
+SUCCESSOR_OWNER = "run_late_swish_layout_tail_cleanup"
 EXPECTED_SCHEMAS = (
     {"removed_transpose_dequant_hardsigmoid_quantize_bridges": 0},
     (

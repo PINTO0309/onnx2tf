@@ -279,8 +279,8 @@ from onnx2tf.tflite_builder.passes.late_reshape_shuffle_attention_window_orchest
 from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration import (
     run_final_boundary_slice_concat_cleanup,
 )
-from onnx2tf.tflite_builder.passes.very_late_layout_tail_orchestration import (
-    run_very_late_layout_tail_cleanup,
+from onnx2tf.tflite_builder.passes.late_swish_layout_tail_orchestration import (
+    run_late_swish_layout_tail_cleanup,
 )
 from onnx2tf.tflite_builder.passes.pre_terminal_affine_slice_spp_orchestration import (
     run_pre_terminal_affine_slice_spp_cleanup,
@@ -5157,17 +5157,11 @@ def lower_onnx_to_ir(
     )
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
-    _late_swish_transpose_passthrough_stats = (
-        _optimize_swish_transpose_passthrough_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
     # Keep Conv1D/decoder, Pad/InstanceNorm, singleton Reshape, and broadcast
     # repairs in their fixed very-late order. Norm fallback can recreate
     # channelwise [1,C,1,1]->[1,1,1,C] adapters in no-layout mode.
-    _very_late_layout_tail_results = (
-        run_very_late_layout_tail_cleanup(
+    _late_swish_layout_tail_results = (
+        run_late_swish_layout_tail_cleanup(
             shared_model_ir_pass_context,
             include_layout_transpose=optimize_layout_transpose_chains,
         )

@@ -6409,14 +6409,11 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == (
-        "_late_swish_transpose_passthrough_stats"
-    )
+    assert next_boundary.targets[0].id == "_late_swish_layout_tail_results"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
-        next_boundary.value.func.id
-        == "_optimize_swish_transpose_passthrough_chains"
+        next_boundary.value.func.id == "run_late_swish_layout_tail_cleanup"
     )
     owner_path = (
         REPO_ROOT
@@ -17836,7 +17833,7 @@ def test_indexed_activation_passthrough_owner_is_bounded_and_transactional() -> 
     wrappers = {
         "_optimize_swish_transpose_passthrough_chains": (
             "_optimize_swish_transpose_passthrough_chains_pass",
-            2,
+            1,
         ),
         "_optimize_gelu_tanh_transpose_passthrough_chains": (
             "_optimize_gelu_tanh_transpose_passthrough_chains_pass",

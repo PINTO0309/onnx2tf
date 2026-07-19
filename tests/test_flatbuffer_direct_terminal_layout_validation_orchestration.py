@@ -34,6 +34,8 @@ VERY_LATE_LAYOUT_TAIL_OWNER_PATH = (
 )
 VERY_LATE_LAYOUT_TAIL_OWNER = "run_very_late_layout_tail_cleanup"
 VERY_LATE_LAYOUT_TAIL_RESULT = "_very_late_layout_tail_results"
+LOWERER_LAYOUT_TAIL_OWNER = "run_late_swish_layout_tail_cleanup"
+LOWERER_LAYOUT_TAIL_RESULT = "_late_swish_layout_tail_results"
 SHARED_LATE_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -322,11 +324,11 @@ def _very_late_assignment(body: list[ast.stmt]) -> ast.Assign:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_LAYOUT_TAIL_RESULT
+        and statement.targets[0].id == LOWERER_LAYOUT_TAIL_RESULT
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == VERY_LATE_LAYOUT_TAIL_OWNER
+    assert assignment.value.func.id == LOWERER_LAYOUT_TAIL_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -382,11 +384,11 @@ def _very_late_layout_broadcast_assignment(
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_LAYOUT_TAIL_RESULT
+        and statement.targets[0].id == LOWERER_LAYOUT_TAIL_RESULT
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == VERY_LATE_LAYOUT_TAIL_OWNER
+    assert assignment.value.func.id == LOWERER_LAYOUT_TAIL_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -1871,7 +1873,9 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
     predecessor = body[very_late_index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_late_swish_transpose_passthrough_stats"
+    assert predecessor.targets[0].id == (
+        "_late_dequant_hardsigmoid_unary_results"
+    )
 
     successor = body[very_late_index + 1]
     _assert_phase_result_record(
@@ -2004,7 +2008,7 @@ def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     predecessor = body[broadcast_index]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == VERY_LATE_LAYOUT_TAIL_RESULT
+    assert predecessor.targets[0].id == LOWERER_LAYOUT_TAIL_RESULT
 
     successor = body[broadcast_index + 2]
     assert isinstance(successor, ast.Assign)
@@ -2824,7 +2828,9 @@ def test_primary_path_retains_very_late_instancenorm_post_bias_result() -> None:
     )
     assert isinstance(body[index - 1], ast.Assign)
     assert isinstance(body[index - 1].targets[0], ast.Name)
-    assert body[index - 1].targets[0].id == "_late_swish_transpose_passthrough_stats"
+    assert body[index - 1].targets[0].id == (
+        "_late_dequant_hardsigmoid_unary_results"
+    )
     _assert_phase_result_record(
         body[index + 1],
         phase_id="shape_reconciliation.primary.very_late_broadcast",

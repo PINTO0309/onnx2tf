@@ -15,7 +15,7 @@ EXPECTED_PHASE_IDS = (
     "shape_reconciliation.primary.very_late_final",
 )
 EXPECTED_PREDECESSOR_TARGETS = (
-    "_very_late_layout_tail_results",
+    "_late_swish_layout_tail_results",
     "_final_input_dynamic_results",
 )
 EXPECTED_SUCCESSOR_TARGETS = (

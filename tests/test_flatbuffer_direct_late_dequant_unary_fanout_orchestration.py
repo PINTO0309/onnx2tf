@@ -219,17 +219,17 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_late_swish_transpose_passthrough_stats"
-    )
+    assert following.targets[0].id == "_late_swish_layout_tail_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_optimize_swish_transpose_passthrough_chains"
-    assert tuple(_expression_path(arg) for arg in following.value.args) == ("model_ir",)
+    assert following.value.func.id == "run_late_swish_layout_tail_cleanup"
+    assert tuple(_expression_path(arg) for arg in following.value.args) == (
+        "shared_model_ir_pass_context",
+    )
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in following.value.keywords
-    } == {"layout_state": "session.layout_state"}
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     assert len(_composite_calls()) == 1
 
 

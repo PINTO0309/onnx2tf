@@ -214,7 +214,7 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
     )
     assert _call_name(late_assignment) == LATE_OWNER
     assert _call_name(lowerer.body[late_index + 1]) == (
-        "_optimize_swish_transpose_passthrough_chains"
+        "run_late_swish_layout_tail_cleanup"
     )
     late_owner = _functions(LATE_OWNER_PATH)[LATE_OWNER]
     late_calls = [

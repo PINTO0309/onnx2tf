@@ -5480,3 +5480,37 @@ characterized locals, and preserve both outer boundaries and the swish
 wrapper. Add runtime order/state/context/option/result-identity injection, run
 affected and standard gates sequentially, then commit and push only. Never
 create, update, or reopen a pull request.
+
+## Late swish/very-late layout-tail implementation checkpoint
+
+`passes/late_swish_layout_tail_orchestration.py` now implements the fixed
+swish-then-layout-tail boundary. It passes `context.model_ir` and the shared
+LayoutState to the public swish owner, then passes the exact same shared
+context and unchanged layout-Transpose option to the existing very-late tail.
+Both complete raw results are returned unchanged and in their original order.
+
+The lowerer now retains one observation-only
+`_late_swish_layout_tail_results` value in place of the two characterized child
+locals. The preceding late dequant hard-sigmoid/unary composite and following
+phase-recorded very-late broadcast reconciliation remain immediate outer
+boundaries. The lowerer swish wrapper, nested child owners, independent routes,
+guards, graph behavior, public behavior, and TensorFlow isolation remain
+unchanged. The characterized unconsumed-result inventory is now 56, and the
+phase store remains exactly 128 IDs and 128 owners.
+
+Sequential validation passed: focused 5, complete affected 479,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. Ruff passed for all
+affected Python files. Runtime injection covers both layout-policy values and
+proves exact execution order, model/LayoutState/context identity, option
+forwarding, full nested schemas, and raw-result identity. No production test
+or known issue is failing, and no real-model conversion was repeated for this
+ownership-only extraction.
+
+At resume, rerun the read-only inventory of the 56 remaining characterized
+unconsumed lowerer results and select the next smallest source-adjacent,
+semantically closed cluster whose children already have pass-module owners.
+Characterize it before changing production, keep every test sequential under
+`uv`, and commit/push only at complete checkpoints. Do not create or modify a
+pull request unless the user explicitly requests that operation in the active
+turn.

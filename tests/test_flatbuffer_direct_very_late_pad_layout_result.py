@@ -23,9 +23,9 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 OWNER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "pad_layout.py"
 OWNER = "run_pad_layout_cleanup"
 RESULT_TARGET = "_very_late_pad_layout_stats"
-COMPOSITE_TARGET = "_very_late_layout_tail_results"
-COMPOSITE_OWNER = "run_very_late_layout_tail_cleanup"
-PREDECESSOR_TARGET = "_late_swish_transpose_passthrough_stats"
+COMPOSITE_TARGET = "_late_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_swish_layout_tail_cleanup"
+PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_unary_results"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 RESULT_SCHEMA = {
     "optimized_transpose_pad_prepost_nhwc_chains": 0,
