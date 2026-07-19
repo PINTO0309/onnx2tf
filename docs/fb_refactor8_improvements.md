@@ -6994,3 +6994,23 @@ Sequential validation passes: focused `4`, affected `418`, and standard
 `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
 pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 42 to 41.
+
+## Characterize the layout-pass-set-2 channel/pre-add boundary
+
+The refreshed 41-result inventory selects the adjacent full channel-shuffle/
+gather recovery and later pre-add/mean/attention recovery observations. The
+channel child uses the shared `ModelIRPassContext` with post-Gather cleanup
+enabled, while the pre-add child uses the callback-bearing
+`AttentionRecoveryContext` that embeds that exact same pass context.
+
+The new strict contract fixes source order, the full seven-slot schemas of
+both children, the channel option policy, embedded pass-context and callback
+identities, observation-only result policy, and both compatibility wrappers.
+The recorded slice/logistic/Concat-tail phase remains the predecessor and the
+recorded SA/PA MirrorPad phase remains the successor.
+
+Production remains unchanged pending one two-child attention-context owner.
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. The characterized inventory remains 41,
+and the phase-result store remains exactly 128 IDs and 128 owners.

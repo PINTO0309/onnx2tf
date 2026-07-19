@@ -1785,3 +1785,16 @@ artifacts, dependencies, and TensorFlow isolation remain unchanged. Focused
 `4`, affected `418`, and standard `92 / 55 / 196 / 2 / 11` sequential tests
 pass. The phase store remains exactly 128 IDs and 128 owners, and the
 unconsumed-result inventory decreases from 42 to 41.
+
+The next characterization fixes the adjacent full channel-shuffle/Gather and
+pre-add/mean/attention observations before any production edit. The channel
+child must receive the exact pass context embedded in the callback-bearing
+attention context and retain post-Gather cleanup, then the pre-add child must
+receive the original attention context. Both complete seven-slot results must
+remain unchanged.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 41-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
