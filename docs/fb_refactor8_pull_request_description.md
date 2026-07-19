@@ -1310,3 +1310,13 @@ phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. Public
 behavior, artifacts, dependencies, TensorFlow isolation, and the exactly
 128-ID/128-owner phase-result store are unchanged; the unconsumed lowerer
 assignment inventory decreases from 60 to 59.
+
+The next characterization selects the terminal QKV/activation composite
+followed by terminal layout/shape. Both receive the exact shared context and
+the same layout-Transpose option; their complete nested results have fixed
+schemas and order. Pre-terminal affine/Slice/SPP remains the predecessor,
+while the recorded terminal Expand/Squeeze reconciliation and progress update
+remain successors outside the proposed owner. Production is unchanged pending
+one straight-line two-child owner. Focused and affected sequential validation
+report `2 passed, 1 xfailed` and `507 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner.

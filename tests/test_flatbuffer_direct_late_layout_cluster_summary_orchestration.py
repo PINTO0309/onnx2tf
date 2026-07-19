@@ -42,7 +42,7 @@ COUNT_TARGET = "late_layout_cluster_tensor_count"
 RAW_TARGET = "late_layout_cluster_results"
 SUMMARY_TARGET = "_late_layout_cluster_stats"
 COMPOSITE_TARGET = "_terminal_layout_shape_results"
-PREDECESSOR_TARGET = "_terminal_activation_bridge_results"
+PREDECESSOR_TARGET = "_terminal_qkv_activation_bridge_results"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 
 

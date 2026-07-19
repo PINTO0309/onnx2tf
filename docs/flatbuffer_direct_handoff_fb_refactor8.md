@@ -5316,3 +5316,36 @@ closed cluster whose children already have pass-module owners before changing
 production. Keep all tests sequential and single-process under `uv`, and
 commit/push completed checkpoints only. Never create, update, or reopen a pull
 request.
+
+## Terminal QKV/activation/layout/shape characterization checkpoint
+
+The current inventory contains 59 unconsumed underscore assignment targets.
+The next characterized pair is the terminal QKV/activation composite followed
+by terminal layout/shape. Both receive the exact shared `ModelIRPassContext`
+and the same layout-Transpose option, with no intervening guard, phase record,
+progress update, callback, or result consumer.
+
+The contract requires one two-child owner, fixed order, unchanged option
+forwarding, and identity preservation for both complete nested child tuples.
+Pre-terminal affine/Slice/SPP is the fixed predecessor. The recorded terminal
+Expand/Squeeze static-shape reconciliation and its following progress update
+are fixed successors and must remain outside the owner.
+
+Focused characterization reports `2 passed, 1 xfailed`; complete affected
+characterization reports `507 passed, 1 xfailed`. The sole xfail is the
+intentionally absent
+`passes/terminal_qkv_activation_layout_shape_orchestration.py`. Three stale
+AST expectations in two late-layout test modules were corrected to resolve
+the already-moved activation route through its current QKV/activation owner.
+Production, graph mutations, independent routes, and the 128-ID/128-owner
+phase store are unchanged.
+
+At resume, implement
+`run_terminal_qkv_activation_layout_shape_cleanup(context, *,
+include_layout_transpose)` as a straight-line two-child owner. Return both raw
+nested tuples unchanged, replace only
+`_terminal_qkv_activation_bridge_results` and
+`_terminal_layout_shape_results`, preserve both outer boundaries, add runtime
+order/context/option/result-identity injection, and update child-family
+ownership tests. Run all affected and standard gates sequentially, then
+commit and push only. Never create, update, or reopen a pull request.

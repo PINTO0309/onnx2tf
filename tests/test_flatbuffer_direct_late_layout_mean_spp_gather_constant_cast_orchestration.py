@@ -446,12 +446,14 @@ def test_late_layout_preserves_outer_boundaries() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_activation_bridge_results"
+    assert previous.targets[0].id == (
+        "_terminal_qkv_activation_bridge_results"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
-        == "run_terminal_activation_bridge_cleanup"
+        == "run_terminal_qkv_activation_bridge_cleanup"
     )
     assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)

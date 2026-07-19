@@ -6127,3 +6127,40 @@ assignment inventory decreases from 60 to 59. No real-model conversion was
 repeated because this is a straight-line ownership extraction with exact
 state, option, order, schema, result-identity, route-count, and boundary
 coverage.
+
+## Terminal QKV/activation/layout/shape composite characterization
+
+The refreshed inventory contains 59 unconsumed underscore-prefixed lowerer
+assignments. The next selected pair is the terminal QKV/activation-bridge
+composite followed immediately by the terminal layout/shape composite. Both
+children already have pass-module owners, receive the exact same
+`shared_model_ir_pass_context`, and forward the same normalized
+`include_layout_transpose` option. There is no guard, phase record, progress
+update, callback, or consumed result between them.
+
+The proposed owner must preserve the complete nested QKV/activation result and
+the four-result layout/shape tuple unchanged and in source order. The preceding
+pre-terminal affine/Slice/SPP composite remains the fixed predecessor. The
+recorded `shape_reconciliation.terminal.expand_squeeze` result and following
+progress update remain fixed successors outside the owner.
+
+`tests/test_flatbuffer_direct_terminal_qkv_activation_layout_shape_orchestration.py`
+fixes both layout-option variants, exact shared-context arguments, complete
+empty-model nested schemas, adjacency, observation-only results, and both
+outer boundaries. Its sole strict expected failure requires one new
+shared-context owner replacing only the two current unconsumed lowerer locals.
+
+The affected inventory exposed three stale structural expectations in two
+late-layout test modules. They still named the activation child as the direct
+predecessor even though the previous checkpoint had already moved it behind
+the terminal QKV/activation owner. The tests now resolve that unchanged route
+through its current owner; production and route counts did not change.
+
+Sequential characterization under core-only `uv` completed with
+`2 passed, 1 xfailed in 0.59s` focused and
+`507 passed, 1 xfailed in 20.71s` across QKV, activation, layout/shape,
+Shape-extract, late layout, indexed Split/Conv/Concat, HardSwish-SE, hard
+activation, adjacent composites, shared-context, terminal-validation,
+architecture, result, and phase-store contracts. The sole xfail is the
+intentionally absent outer owner. Production, public behavior, dependencies,
+TensorFlow isolation, and the exactly 128-ID/128-owner store remain unchanged.
