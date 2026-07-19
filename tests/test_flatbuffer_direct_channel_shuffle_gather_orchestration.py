@@ -440,7 +440,7 @@ def test_channel_shuffle_gather_helper_propagates_and_retains_results() -> None:
     assert previous.targets[0].id == "_late_reshape_layout_results"
     assert _direct_call_name(previous) == "run_late_reshape_layout_cleanup"
     assert _direct_call_name(lowerer.body[late_index + 1]) == (
-        "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
+        "run_late_attention_layout_cleanup"
     )
 
 
@@ -527,7 +527,7 @@ def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> N
     assert isinstance(previous.targets[0], ast.Name)
     assert previous.targets[0].id == "_late_reshape_layout_results"
     assert _direct_call_name(lowerer.body[invocation_index + 1]) == (
-        "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
+        "run_late_attention_layout_cleanup"
     )
 
 

@@ -1244,6 +1244,40 @@ composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed. Commit and push this characterization before implementation. Keep the
 phase store fixed at 128/128 and never create, update, or reopen a pull request.
 
+## Late attention-layout composite implementation
+
+`run_late_attention_layout_cleanup(context)` now owns the characterized QKV
+reshape, attention-Gather cleanup, axis-0 Gather reshape, and pre-projection
+rank-lift passes. It preserves the layout/model/layout/model argument policy
+and returns all four independent counter mappings as an ordered tuple.
+
+The lowerer retains one `_late_attention_layout_results` value through
+`shared_model_ir_pass_context`. The four old unconsumed locals are absent, and
+the composite remains outside `ConversionSession.phase_results`; the store is
+still exactly 128/128. Existing lowerer wrappers remain compatibility exports.
+
+Focused runtime coverage proves exact callback order, ModelIR identity, layout
+identity at the first and third callbacks, model-only invocation at the second
+and fourth callbacks, and tuple ordering. Structural contracts now require the
+composite between late channel-shuffle and window partition and account for
+its four nested owners. No graph, numerical, diagnostics, or artifact failure
+occurred.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused attention owners and affected boundaries: `238 passed in 1.35s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 2.15s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- broader result and phase-result contracts: `196 passed in 9.42s`;
+- full lowerer architecture contracts: `258 passed in 17.67s`;
+- phase-result capacity contracts: `2 passed in 0.52s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was run because this is a characterized four-call
+owner extraction with focused runtime equivalence and unchanged serialization
+inputs.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

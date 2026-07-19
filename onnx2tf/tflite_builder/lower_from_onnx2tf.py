@@ -272,6 +272,9 @@ from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
     run_late_reshape_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.late_attention_layout_orchestration import (
+    run_late_attention_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5178,23 +5181,8 @@ def lower_onnx_to_ir(
             include_nhwc_shuffle=False,
         )
     )
-    _late_attention_qkv_reshape_stats = (
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _late_attention_gather_cleanup_stats = (
-        _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-    )
-    _late_gather_axis0_reshape_stats = (
-        _optimize_gather_axis0_singleton_to_reshape_input_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _late_attention_preproj_ranklift_stats = (
-        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
+    _late_attention_layout_results = run_late_attention_layout_cleanup(
+        shared_model_ir_pass_context,
     )
     _late_window_partition_stats = (
         _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(

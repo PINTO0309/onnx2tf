@@ -2310,3 +2310,31 @@ runtime order/context/argument/tuple coverage, update only source-
 representation contracts, run the sequential focused/core/result/architecture
 gates, document, commit, and push. Keep the store at 128/128 and never create,
 update, or reopen a pull request.
+
+## Late attention-layout composite implementation
+
+`run_late_attention_layout_cleanup` now invokes the four characterized owners
+in their original order with the exact layout/model/layout/model argument
+policy. It returns their mappings as an ordered tuple, retained by the lowerer
+as `_late_attention_layout_results` through the shared pass context and outside
+the full phase store.
+
+The four old result locals are gone, while compatibility wrappers remain.
+Focused runtime coverage proves call order, ModelIR/layout identity, model-only
+callbacks, and tuple order. The only broad-gate failures were stale source-
+representation boundaries; no graph or numerical behavior failed.
+
+Final sequential validation under core-only `uv`:
+
+- focused attention owners and affected boundaries: `238 passed in 1.35s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 2.15s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- result and phase-result contracts: `196 passed in 9.42s`;
+- full architecture contracts: `258 passed in 17.67s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+The store remains fixed at 128/128. Commit and push this implementation unit.
+Resume with the next non-store late orchestration audit; do not create, update,
+or reopen a pull request.
