@@ -944,6 +944,29 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and existing synthetic contracts exercise
 the indexed convergence owner.
 
+## Very-late residual cleanup characterization
+
+The next source-order family contains three consecutive unconditional mapping
+observations after very-late SiNet recovery: residual affine PReLU cleanup,
+residual affine Transpose fan-out cleanup, and indexed prune/reconcile cleanup.
+
+Existing focused contracts fix their integer schemas, unconditional tensor
+cleanup, orchestration routes, exact arguments, one-index prune/reconcile
+behavior, and absence of consumers. The existing prune/reconcile result module
+now strictly requires three `cleanup.very_late.*` records with exact owners,
+adjacency, the preceding very-late SiNet pre-Add/Resize composite, and the
+following post-cleanup SiNet composite. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- related residual/prune/SiNet baseline: `17 passed in 0.98s`;
+- characterization plus related contracts: `17 passed, 1 xfailed in 1.01s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented three-result
+destination migration.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

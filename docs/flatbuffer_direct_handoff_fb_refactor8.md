@@ -1855,3 +1855,25 @@ Validation completed sequentially under core-only `uv`:
 No root-model conversion was required because synthetic contracts exercise
 the owner. Commit and push this unit. Begin the next unit with a fresh
 characterize-first audit and never create, update, or reopen a pull request.
+
+## Very-late residual cleanup characterization
+
+The next unit contains three consecutive unconditional results between the
+very-late and post-cleanup SiNet pre-Add/Resize composites: residual affine
+PReLU, residual affine Transpose fan-out, and indexed prune/reconcile cleanup.
+Existing tests cover their integer schemas, cleanup, routing, arguments,
+one-index behavior, and absence of loads.
+
+The prune/reconcile result module now strictly expects three exact
+`cleanup.very_late.*` records with adjacency and both composite boundaries.
+No production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `17 passed in 0.98s`; characterization plus related contracts is
+`17 passed, 1 xfailed in 1.01s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only the three mapping
+destinations. Preserve both composites and source order, update structural
+contracts, run sequential gates, document, commit, and push. Never create,
+update, or reopen a pull request.

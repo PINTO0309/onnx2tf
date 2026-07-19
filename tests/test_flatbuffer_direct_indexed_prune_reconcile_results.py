@@ -5,6 +5,7 @@ import copy
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
@@ -40,6 +41,27 @@ RESULT_SCHEMA = {
     "removed_dead_operators": 0,
     "reconciled_static_tensor_shapes": 0,
 }
+VERY_LATE_RESULT_TARGETS = (
+    "_very_late_residual_affine_prelu_stats",
+    "_very_late_residual_affine_fanout_stats",
+    "_very_late_prune_reconcile_stats",
+)
+VERY_LATE_PHASE_IDS = (
+    "cleanup.very_late.residual_affine_prelu",
+    "cleanup.very_late.residual_affine_fanout",
+    "cleanup.very_late.prune_reconcile",
+)
+VERY_LATE_OWNER_EXPRESSIONS = (
+    "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)",
+    (
+        "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains("
+        "model_ir)"
+    ),
+    (
+        "run_indexed_prune_reconcile_cleanup("
+        "model_ir, layout_state=session.layout_state)"
+    ),
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -79,6 +101,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _pipeline_blocks(statements: list[ast.stmt]) -> list[list[ast.stmt]]:
@@ -336,5 +373,37 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
         isinstance(node, ast.Name)
         and node.id in RESULT_TARGETS
         and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="very-late residual cleanup results have not moved to phase records",
+)
+def test_very_late_residual_cleanup_uses_phase_result_store() -> None:
+    lowerer = _lowerer()
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in VERY_LATE_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == (
+        VERY_LATE_PHASE_IDS
+    )
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        VERY_LATE_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 3))
+    assert _single_target(lowerer.body[indices[0] - 1]) == (
+        "_very_late_sinet_preadd_resize_results"
+    )
+    assert _single_target(lowerer.body[indices[-1] + 1]) == (
+        "_post_cleanup_sinet_preadd_resize_results"
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id in VERY_LATE_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
