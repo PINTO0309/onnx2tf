@@ -26,7 +26,7 @@ OWNER_PATH = (
 OWNER = "run_late_attention_layout_cleanup"
 RESULT_TARGET = "_late_attention_layout_results"
 PREDECESSOR_TARGET = "_late_channel_shuffle_gather_results"
-SUCCESSOR_TARGET = "_late_window_partition_stats"
+SUCCESSOR_TARGET = "_late_window_layout_results"
 OLD_RESULT_TARGETS = (
     "_late_attention_qkv_reshape_stats",
     "_late_attention_gather_cleanup_stats",

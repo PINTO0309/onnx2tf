@@ -1297,6 +1297,39 @@ composite. Targeted Ruff, bytecode compilation, and whitespace checks passed.
 Commit and push characterization before implementation, keep the store fixed
 at 128/128, and never create, update, or reopen a pull request.
 
+## Late window-layout composite implementation
+
+`run_late_window_layout_cleanup(context)` now owns the characterized
+window-partition and window-reverse repairs. Both receive the shared ModelIR
+and conversion-local `LayoutState`; their independent counter mappings are
+returned as an ordered tuple.
+
+The lowerer retains one `_late_window_layout_results` composite through
+`shared_model_ir_pass_context`. The two old unconsumed locals are absent, and
+the composite remains outside `ConversionSession.phase_results`; the store is
+still exactly 128/128. Compatibility wrappers and optional `graph_index`
+behavior remain unchanged.
+
+Focused runtime coverage proves call order, ModelIR/layout identity, and tuple
+ordering. Structural contracts now require the composite between late
+attention and final shape/activation convergence and account for its two nested
+owners. No graph, numerical, diagnostics, or artifact failure occurred.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused window owners and affected boundaries: `110 passed in 3.11s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 2.06s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- broader result and phase-result contracts: `196 passed in 9.14s`;
+- full lowerer architecture contracts: `258 passed in 19.39s`;
+- phase-result capacity contracts: `2 passed in 0.51s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was run because this is a characterized two-call
+owner extraction with focused runtime equivalence and unchanged serialization
+inputs.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

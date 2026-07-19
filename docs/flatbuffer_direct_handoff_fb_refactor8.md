@@ -2358,3 +2358,30 @@ first. Implementation must add runtime order/context/layout/tuple coverage,
 update structural boundaries and ownership, run sequential gates, document,
 commit, and push. Keep the store at 128/128 and never create, update, or reopen
 a pull request.
+
+## Late window-layout composite implementation
+
+`run_late_window_layout_cleanup` now invokes the window-partition and
+window-reverse owners in their original order with the same ModelIR and layout
+state. It returns both mappings as an ordered tuple retained by the lowerer as
+`_late_window_layout_results`, outside the full phase store.
+
+The two old result locals are gone, while lowerer wrappers and optional
+`graph_index` behavior remain intact. Focused runtime coverage proves call
+order, ModelIR/layout identity, and tuple order. Broad failures were limited to
+stale source-boundary assertions; no graph or numerical behavior failed.
+
+Final sequential validation under core-only `uv`:
+
+- focused window owners and affected boundaries: `110 passed in 3.11s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 2.06s`;
+- synthetic core runtime contracts: `55 passed in 1.05s`;
+- result and phase-result contracts: `196 passed in 9.14s`;
+- full architecture contracts: `258 passed in 19.39s`;
+- phase-store capacity contracts: `2 passed in 0.51s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+The store remains fixed at 128/128. Commit and push this implementation unit.
+Resume by auditing the next non-store late boundary; do not create, update, or
+reopen a pull request.

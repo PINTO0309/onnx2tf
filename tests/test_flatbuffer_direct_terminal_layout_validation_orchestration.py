@@ -1876,14 +1876,13 @@ def test_primary_path_retains_late_attention_layout_composite() -> None:
 
     successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == (
-        "_optimize_window_partition_reshape_transpose_to_space_to_depth_chains"
+        "run_late_window_layout_cleanup"
     )
     assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in successor_call.keywords
-    } == {"layout_state": "session.layout_state"}
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert successor_call.keywords == []
 
 
 def test_primary_path_removes_late_attention_layout_result_locals() -> None:
@@ -1901,83 +1900,28 @@ def test_primary_path_removes_late_attention_layout_result_locals() -> None:
     )
 
 
-def test_primary_path_retains_late_window_partition_result() -> None:
+def test_primary_path_retains_late_window_layout_composite() -> None:
     body = _lowerer_body()
-    callback_name = (
-        "_optimize_window_partition_reshape_transpose_to_space_to_depth_chains"
-    )
     indices = [
         index
         for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == callback_name
+        if _call_name(_statement_call(statement))
+        == "run_late_window_layout_cleanup"
     ]
     assert len(indices) == 1
     index = indices[0]
-
     statement = body[index]
     assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
     assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_late_window_partition_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"layout_state": "session.layout_state"}
+    assert statement.targets[0].id == "_late_window_layout_results"
+    assert ast.unparse(statement.value) == (
+        "run_late_window_layout_cleanup(shared_model_ir_pass_context)"
+    )
 
     predecessor = body[index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == "_late_attention_layout_results"
-
-    successor_call = _statement_call(body[index + 1])
-    assert _call_name(successor_call) == (
-        "_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains"
-    )
-    assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in successor_call.keywords
-    } == {"layout_state": "session.layout_state"}
-
-
-def test_primary_path_retains_late_window_reverse_result() -> None:
-    body = _lowerer_body()
-    callback_name = (
-        "_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains"
-    )
-    indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == callback_name
-    ]
-    assert len(indices) == 1
-    index = indices[0]
-
-    statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_late_window_reverse_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"layout_state": "session.layout_state"}
-
-    predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_late_window_partition_stats"
 
     successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == (
@@ -1989,6 +1933,19 @@ def test_primary_path_retains_late_window_reverse_result() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in successor_call.keywords
     } == {"layout_state": "session.layout_state"}
+
+
+def test_primary_path_removes_late_window_layout_result_locals() -> None:
+    body = _lowerer_body()
+    old_targets = (
+        "_late_window_partition_stats",
+        "_late_window_reverse_stats",
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id in old_targets
+        for statement in body
+        for node in ast.walk(statement)
+    )
 
 
 def test_primary_path_retains_late_final_shape_activation_convergence_result() -> None:
@@ -2022,7 +1979,7 @@ def test_primary_path_retains_late_final_shape_activation_convergence_result() -
     predecessor = body[index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_late_window_reverse_stats"
+    assert predecessor.targets[0].id == "_late_window_layout_results"
 
     successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == "run_boundary_input_normalization_cleanup"

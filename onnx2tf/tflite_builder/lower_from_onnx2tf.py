@@ -275,6 +275,9 @@ from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_attention_layout_orchestration import (
     run_late_attention_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
+    run_late_window_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5184,17 +5187,8 @@ def lower_onnx_to_ir(
     _late_attention_layout_results = run_late_attention_layout_cleanup(
         shared_model_ir_pass_context,
     )
-    _late_window_partition_stats = (
-        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _late_window_reverse_stats = (
-        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
+    _late_window_layout_results = run_late_window_layout_cleanup(
+        shared_model_ir_pass_context,
     )
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.

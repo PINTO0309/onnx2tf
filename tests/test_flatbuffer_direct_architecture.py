@@ -101,6 +101,9 @@ from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_attention_layout_orchestration import (
     LATE_ATTENTION_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
+    LATE_WINDOW_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -183,6 +186,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_CONCAT_LAYOUT_PASS_IDS,
     *LATE_RESHAPE_LAYOUT_PASS_IDS,
     *LATE_ATTENTION_LAYOUT_PASS_IDS,
+    *LATE_WINDOW_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -3449,9 +3453,13 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert len(invocation.args) == 1
     assert isinstance(invocation.args[0], ast.Name)
     assert invocation.args[0].id == "model_ir"
-    assert lowerer.body[invocation_index - 1].value.func.id == (
-        "_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains"
-    )
+    previous_boundary = lowerer.body[invocation_index - 1]
+    assert isinstance(previous_boundary, ast.Assign)
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_late_window_layout_results"
+    assert isinstance(previous_boundary.value, ast.Call)
+    assert isinstance(previous_boundary.value.func, ast.Name)
+    assert previous_boundary.value.func.id == "run_late_window_layout_cleanup"
     assert lowerer.body[invocation_index + 1].value.func.id == (
         "run_boundary_input_normalization_cleanup"
     )
