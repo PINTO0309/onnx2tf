@@ -4127,3 +4127,28 @@ validation is `5 passed in 0.55s`; no production behavior or 128/128 store
 entry changed. Commit and push this repair separately before committing the
 absolute-final affine/InstanceNorm characterization. Continue with commits
 and pushes only; never create, update, or reopen a pull request.
+
+## Absolute-final affine/InstanceNorm pair characterization
+
+The next selected cluster is the adjacent absolute-final affine post-ADD and
+decomposed-InstanceNorm post-bias cleanup pair. Both raw owners receive the
+primary ModelIR and layout state, return independent one-counter mappings, and
+sit between boundary-signature cleanup and the normalization/attention owner.
+
+The focused contract fixes both current targets, exact arguments and order,
+the signature predecessor, normalization/attention successor, and both lowerer
+wrappers. One strict xfail requires
+`run_absolute_final_affine_instancenorm_cleanup(shared_model_ir_pass_context)`
+and one ordered result target.
+
+Sequential validation under core-only `uv` completed with
+`676 passed, 1 xfailed in 21.46s` across all affected owner, boundary,
+terminal, late-binary, store, and architecture contracts. The sole expected
+failure is the unimplemented context owner. Focused Ruff and whitespace checks
+passed.
+
+Commit and push this characterization separately. At resume, implement only
+the two-pass context owner and absolute-final site, retain both raw lowerer
+wrappers and every other caller, update owner-aware occurrence contracts, and
+validate sequentially. Keep the phase-result store at 128/128 and never
+create, update, or reopen a pull request.

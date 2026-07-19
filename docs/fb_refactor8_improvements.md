@@ -4659,3 +4659,30 @@ shared-context argument and empty keyword policy. The focused file passes
 (`5 passed in 0.55s`). No production source, graph behavior, pass order,
 public API, artifact, dependency, TensorFlow boundary, or 128/128 phase-result
 store changed.
+
+## Absolute-final affine/InstanceNorm pair characterization
+
+The next selected cluster is the adjacent absolute-final affine post-ADD
+cleanup and decomposed-InstanceNorm post-bias cleanup. Both calls receive the
+same primary ModelIR and `LayoutState`, return independent one-counter raw
+mappings, and run immediately after boundary-signature cleanup and before the
+existing normalization/attention owner.
+
+`tests/test_flatbuffer_direct_absolute_final_affine_instancenorm_orchestration.py`
+fixes both current result targets, affine-before-InstanceNorm order, exact
+ModelIR/layout arguments, signature predecessor, normalization/attention
+successor, and continued availability of both lowerer wrappers. Its one strict
+expected failure requires
+`run_absolute_final_affine_instancenorm_cleanup(shared_model_ir_pass_context)`
+to return both raw mappings unchanged in order.
+
+Sequential characterization under core-only `uv` completed with
+`676 passed, 1 xfailed in 21.46s` across the dedicated contract and affected
+boundary-signature, normalization/attention, affine, InstanceNorm, terminal,
+late-binary, phase-store, and architecture contracts. The sole expected
+failure is the intentionally absent context owner. Focused Ruff and whitespace
+checks passed.
+
+This checkpoint changes no production source, graph mutation, pass order,
+argument policy, store entry, public API, artifact, dependency, or TensorFlow
+boundary. No real-model conversion was repeated.

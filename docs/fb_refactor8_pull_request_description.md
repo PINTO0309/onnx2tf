@@ -867,3 +867,10 @@ An inherited late-binary structural test now follows the already-established
 pre-terminal InstanceNorm orchestration owner instead of the removed direct
 post-bias result target. This is a test-only contract repair with no production
 change.
+
+The next characterization fixes the adjacent absolute-final affine post-ADD
+and decomposed-InstanceNorm post-bias cleanup pair. It preserves shared
+ModelIR/LayoutState identity, affine-before-InstanceNorm order, both raw result
+schemas, the boundary-signature predecessor, normalization/attention
+successor, compatibility wrappers, and the full 128/128 store. Production
+remains unchanged until a shared context owner is implemented separately.
