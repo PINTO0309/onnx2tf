@@ -447,3 +447,47 @@ On resume, characterize these three primary-path checkpoints together only at
 the result-contract level, then decide separately whether each result should be
 retained. Do not change their guards or remove a sort. Continue with coherent
 commits and pushes only; never create, update, or reopen a pull request.
+
+## Primary topology checkpoint characterization
+
+The last three discarded sort results were classified as the primary
+post-lowering baseline, guarded no-layout cleanup, and guarded final
+placeholder-MatMul checkpoints. They share the sort result schema but not their
+execution conditions, so the characterization requires three separate
+contexts and does not propose a shared wrapper. It passed as
+`2 passed in 0.55s` and was committed and pushed as `806ccc50` before
+production changes.
+
+## Primary topology checkpoint implementation
+
+The existing results are now retained under three phase-specific names:
+
+- `_primary_post_lowering_topology_stats`;
+- `_no_layout_post_reduction_topology_stats`;
+- `_final_placeholder_topology_stats`.
+
+Their sort calls, guards, arguments, predecessors, and successors are
+unchanged. Together with the two fallback checkpoint assignments, no direct
+lowerer topological-sort result is now discarded. The results are small,
+unconsumed observation dictionaries; no scan was added or removed.
+
+Validation completed sequentially under core-only `uv`:
+
+- primary checkpoint and terminal orchestration contracts:
+  `65 passed in 1.89s`;
+- affected fallback, terminal, safe-reduction, shape, and topology contracts:
+  `124 passed in 2.92s`;
+- lowerer architecture contracts: `258 passed in 18.34s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+The first architecture run found one stale expression-only AST expectation and
+was `257 passed, 1 failed`; after requiring
+`_final_placeholder_topology_stats`, it passed completely. No real-model
+conversion was needed for observation-only assignments.
+
+On resume, do not consume these counters to skip sorts yet. First inventory all
+phase-local observation results introduced on `fb-refactor8` and determine a
+single bounded diagnostics sink that does not expose internal types or retain
+large maps. Any decision to skip a graph scan must be characterized separately
+and must preserve cycle behavior. Continue with coherent commits and pushes
+only; never create, update, or reopen a pull request.

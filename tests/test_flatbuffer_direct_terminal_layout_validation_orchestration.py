@@ -703,6 +703,16 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
         for keyword in second_reconciliation.value.keywords
     } == {"include_mutation_count": "True"}
 
+    topology_checkpoint = outer_guard.body[5]
+    assert isinstance(topology_checkpoint, ast.Assign)
+    assert isinstance(topology_checkpoint.targets[0], ast.Name)
+    assert topology_checkpoint.targets[0].id == (
+        "_final_placeholder_topology_stats"
+    )
+    assert ast.unparse(topology_checkpoint.value) == (
+        "_topologically_sort_operators(model_ir)"
+    )
+
     following = body[restore_index + 4]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
@@ -1142,10 +1152,21 @@ def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
             for keyword in call.keywords
         } == keywords
 
-    assert _call_name(_statement_call(guard.body[2])) == (
+    topology_checkpoint = guard.body[2]
+    assert isinstance(topology_checkpoint, ast.Assign)
+    assert isinstance(topology_checkpoint.targets[0], ast.Name)
+    assert topology_checkpoint.targets[0].id == (
+        "_no_layout_post_reduction_topology_stats"
+    )
+    assert _call_name(_statement_call(topology_checkpoint)) == (
         "_topologically_sort_operators"
     )
     previous = body[guard_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_primary_post_lowering_topology_stats"
+    )
     assert _call_name(_statement_call(previous)) == "_topologically_sort_operators"
     following = body[guard_index + 1]
     assert isinstance(following, ast.Assign)

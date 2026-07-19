@@ -6054,7 +6054,9 @@ def lower_onnx_to_ir(
         )
     )
     _set_post_progress_desc("topological sort")
-    _topologically_sort_operators(model_ir)
+    _primary_post_lowering_topology_stats = _topologically_sort_operators(
+        model_ir
+    )
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # In no-layout fallback path, some strict MUL/ADD affine bridges become
         # reducible only after final topological normalization.
@@ -6069,7 +6071,9 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        _topologically_sort_operators(model_ir)
+        _no_layout_post_reduction_topology_stats = (
+            _topologically_sort_operators(model_ir)
+        )
     # Final boundary-signature restore:
     # late static-shape reconciliations may overwrite graph-boundary dynamic
     # contracts (e.g. NMS selected_indices leading axis).
@@ -6227,7 +6231,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-        _topologically_sort_operators(model_ir)
+        _final_placeholder_topology_stats = _topologically_sort_operators(
+            model_ir
+        )
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.

@@ -424,3 +424,43 @@ Implementation validation completed sequentially under `uv`:
   passed.
 
 No real-model conversion was run for these observation-only assignments.
+
+## Primary topology checkpoint evidence
+
+The final three discarded topological-sort results belonged to distinct
+primary-path checkpoints: the unconditional post-lowering baseline sort, the
+sort inside the no-layout final cleanup guard, and the sort inside final
+placeholder-MatMul restoration. Their guards and locations remain separate;
+no wrapper or common condition was introduced.
+
+The characterization checkpoint fixed all three enclosing contexts,
+predecessors, `model_ir` arguments, and the stable two-key sort result schema.
+It passed as `2 passed in 0.55s` before production code changed.
+
+The lowerer now retains the existing results as:
+
+- `_primary_post_lowering_topology_stats`;
+- `_no_layout_post_reduction_topology_stats`;
+- `_final_placeholder_topology_stats`.
+
+Every direct lowerer call to `_topologically_sort_operators()` now has an
+explicit result owner. The calls still execute at the same locations and under
+the same guards. No graph traversal, mutation, repair, successor, public API,
+artifact, dependency, or TensorFlow boundary changed. These small results are
+observation-only and remain unconsumed.
+
+Implementation validation completed sequentially under `uv`:
+
+- primary checkpoint plus terminal orchestration contracts:
+  `65 passed in 1.89s`;
+- affected fallback, terminal, safe-reduction, shape, and topology contracts:
+  `124 passed in 2.92s`;
+- lowerer architecture contracts: `258 passed in 18.34s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The first architecture run was `257 passed, 1 failed`; the sole failure was an
+AST contract that still required the final placeholder sort to be a discarded
+expression. It now requires the phase-specific result target, and the same gate
+passes. No real-model conversion was run for these observation-only
+assignments.

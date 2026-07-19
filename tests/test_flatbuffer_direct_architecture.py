@@ -9604,7 +9604,11 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
     } == {"include_mutation_count": "True"}
 
     topology_sort = outer_guard.body[5]
-    assert isinstance(topology_sort, ast.Expr)
+    assert isinstance(topology_sort, ast.Assign)
+    assert isinstance(topology_sort.targets[0], ast.Name)
+    assert topology_sort.targets[0].id == (
+        "_final_placeholder_topology_stats"
+    )
     assert isinstance(topology_sort.value, ast.Call)
     assert isinstance(topology_sort.value.func, ast.Name)
     assert topology_sort.value.func.id == "_topologically_sort_operators"

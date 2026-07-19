@@ -23,6 +23,11 @@ EXPECTED_PREDECESSOR_TARGETS = (
     "_no_layout_final_affine_prepost_stats",
     None,
 )
+EXPECTED_RESULT_TARGETS = (
+    "_primary_post_lowering_topology_stats",
+    "_no_layout_post_reduction_topology_stats",
+    "_final_placeholder_topology_stats",
+)
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -104,13 +109,16 @@ def test_three_primary_topology_checkpoints_are_explicit() -> None:
             (block, index, guards)
             for block, guards in _pipeline_blocks(_lowerer().body)
             for index, statement in enumerate(block)
-            if isinstance(statement, ast.Expr)
-            and _call_name(statement) == SORT_OWNER
+            if _call_name(statement) == SORT_OWNER
+            and ast.unparse(_statement_call(statement).args[0]) == "model_ir"
         ],
         key=lambda item: item[0][item[1]].lineno,
     )
 
     assert len(locations) == 3
+    assert tuple(
+        _single_target(block[index]) for block, index, _ in locations
+    ) == EXPECTED_RESULT_TARGETS
     assert tuple(guards[-1] if guards else None for _, _, guards in locations) == (
         EXPECTED_INNER_GUARDS
     )
