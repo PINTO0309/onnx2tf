@@ -4435,3 +4435,34 @@ and choose the next small source-adjacent non-store cluster. Do not combine a
 guarded decision with an unconditional cleanup merely to reduce locals. Keep
 validation sequential, the store at 128/128, and never create, update, or
 reopen a pull request.
+
+## Very-late dynamic/adapter composite characterization
+
+The inventory skipped the preceding orphan/unbound/affine group because the
+unbound repair still depends on a lowerer-only mapping wrapper. The selected
+six-result boundary is fully pass-module-owned and runs:
+
+1. dynamic Reshape resolution with runtime-inferable ONNX raw shapes enabled;
+2. indexed Conv-input adapter summary;
+3. stale NCHW channel-shuffle repair with LayoutState and diagnostics;
+4. Concat/Transpose/Conv axis repair with LayoutState;
+5. Concat/global-pool/Conv axis repair with LayoutState;
+6. dynamic rank-one Unsqueeze/Reshape repair with LayoutState.
+
+The new contract also fixes the immediately following
+`shape_reconciliation.primary.very_late_final` record and split-fallback
+assignment. One strict xfail requires
+`passes/very_late_dynamic_adapter_orchestration.py` to return the six raw
+mappings as an ordered context-owned tuple.
+
+Sequential affected validation completed with
+`497 passed, 1 xfailed in 18.94s`; the only expected failure is the missing
+owner. Ruff and whitespace checks passed. Production and the full 128/128
+store are unchanged.
+
+Commit and push this characterization separately. At resume, implement the
+straight-line context owner using existing pass-module callbacks, alias the two
+private Concat-axis callbacks locally, retain all lowerer compatibility
+wrappers and independent callers, add runtime identity/order/tuple coverage,
+and run affected plus standard gates sequentially. Never create, update, or
+reopen a pull request.

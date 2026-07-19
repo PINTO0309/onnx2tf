@@ -977,3 +977,12 @@ three direct sub-owner calls and imports, and preserves context identity, pass
 order, guarded predecessor, topology/layout refresh successor, compatibility
 wrappers, and the full 128/128 store. Runtime injection proves the complete
 identity and nesting contract directly.
+
+The next characterization fixes the six-stage very-late dynamic/adapter
+sequence immediately before mandatory static-shape reconciliation: dynamic
+Reshape, indexed Conv-input, stale channel shuffle, two Concat-axis repairs,
+and dynamic rank-one repair. It preserves exact model/layout/diagnostics
+arguments, runtime-inferable flag, raw result schemas and order,
+reconciliation and split-fallback successors, and the full 128/128 store.
+Production remains unchanged until the context owner is implemented
+separately.

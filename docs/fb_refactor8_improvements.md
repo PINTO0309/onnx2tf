@@ -5011,3 +5011,34 @@ Final sequential validation under core-only `uv`:
 No real-model conversion was repeated because the production change only
 moves a straight-line sequence behind a context owner, and runtime injection
 proves the complete order, argument identity, and nested results.
+
+## Very-late dynamic/adapter composite characterization
+
+The fresh inventory intentionally skipped the preceding orphan/unbound-input
+group because one repair still exposes only a lowerer-local mapping wrapper.
+The selected boundary instead contains six adjacent pass-module owners:
+dynamic Reshape resolution, indexed Conv-input adapter summary, stale channel-
+shuffle repair, Concat/Transpose/Conv axis repair, Concat/global-pool/Conv axis
+repair, and dynamic rank-one Unsqueeze/Reshape repair. Mandatory static-shape
+reconciliation follows immediately, then split fallback.
+
+`tests/test_flatbuffer_direct_very_late_dynamic_adapter_orchestration.py`
+fixes all six raw result names, exact callback order, ModelIR/LayoutState/
+diagnostics argument policy, runtime-inferable dynamic-Reshape flag, mandatory
+reconciliation successor, and split-fallback successor. Its one strict
+expected failure requires
+`passes/very_late_dynamic_adapter_orchestration.py` to expose one context owner
+returning the six unchanged mappings as an ordered tuple, with one replacement
+lowerer result.
+
+Sequential characterization under core-only `uv` completed with
+`497 passed, 1 xfailed in 18.94s` across the dedicated contract and affected
+dynamic-Reshape, Conv-input, channel-shuffle, indexed Concat-axis, Conv-layout,
+reconciliation, safety-fallback, shared-context, phase-store, efficiency, and
+architecture contracts. The sole expected failure is the intentionally absent
+context owner. Focused Ruff and whitespace checks passed.
+
+This checkpoint changes no production source, callback, context identity,
+graph mutation, pass order, flag, result schema, reconciliation, split
+fallback, store entry, API, artifact, dependency, or TensorFlow boundary. No
+real-model conversion was repeated.
