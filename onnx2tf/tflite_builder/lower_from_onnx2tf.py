@@ -5051,15 +5051,20 @@ def lower_onnx_to_ir(
         _run_sinet_preadd_resize_recovery_sequence()
     )
     # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
-    _very_late_residual_affine_prelu_stats = (
-        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+    session.record_phase_result(
+        "cleanup.very_late.residual_affine_prelu",
+        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir),
     )
-    _very_late_residual_affine_fanout_stats = (
-        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
+    session.record_phase_result(
+        "cleanup.very_late.residual_affine_fanout",
+        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir),
     )
-    _very_late_prune_reconcile_stats = run_indexed_prune_reconcile_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
+    session.record_phase_result(
+        "cleanup.very_late.prune_reconcile",
+        run_indexed_prune_reconcile_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        ),
     )
     # Dead-op pruning can unblock strict locality guards in this recovery.
     # Its pre-Add/PRELU rewrites can recreate SiNet dual-resize adapters.

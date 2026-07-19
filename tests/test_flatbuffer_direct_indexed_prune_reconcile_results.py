@@ -5,7 +5,6 @@ import copy
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
@@ -285,8 +284,10 @@ def test_indexed_prune_reconcile_phase_boundaries_are_explicit() -> None:
                 "diagnostics=session.diagnostics))"
             )
         else:
-            assert _single_target(invocation) == target
-            assert _single_target(block[index - 1]) == predecessor_target
+            assert _phase_id(invocation) == "cleanup.very_late.prune_reconcile"
+            assert _phase_id(block[index - 1]) == (
+                "cleanup.very_late.residual_affine_fanout"
+            )
         call = _statement_call(invocation)
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == [
@@ -358,7 +359,7 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
     assert tuple(_single_target(statement) for statement in invocations) == (
         None,
         None,
-        RESULT_TARGETS[2],
+        None,
     )
     for invocation in invocations:
         call = _statement_call(invocation)
@@ -377,10 +378,6 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late residual cleanup results have not moved to phase records",
-)
 def test_very_late_residual_cleanup_uses_phase_result_store() -> None:
     lowerer = _lowerer()
     records = [

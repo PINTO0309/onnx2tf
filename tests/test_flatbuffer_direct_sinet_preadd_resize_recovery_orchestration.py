@@ -295,6 +295,12 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
     assert _phase_id(lowerer.body[invocation_indexes[0] - 1]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
+    assert _phase_id(lowerer.body[invocation_indexes[1] + 1]) == (
+        "cleanup.very_late.residual_affine_prelu"
+    )
+    assert _phase_id(lowerer.body[invocation_indexes[2] - 1]) == (
+        "cleanup.very_late.prune_reconcile"
+    )
 
     assert observed == [
         (
@@ -313,8 +319,6 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
     assert assigned_boundary_targets == [
         "_post_terminal_singleton_reshape_results",
         "_very_late_sinet_layout_recovery_results",
-        "_very_late_residual_affine_prelu_stats",
-        "_very_late_prune_reconcile_stats",
         "_post_cleanup_csp_attention_stats",
     ]
 

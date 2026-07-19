@@ -745,6 +745,38 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented three-result
 destination migration.
 
+## Very-late residual cleanup implementation
+
+The three characterized observations now record consecutively under:
+
+- `cleanup.very_late.residual_affine_prelu`;
+- `cleanup.very_late.residual_affine_fanout`;
+- `cleanup.very_late.prune_reconcile`.
+
+Only the unused local destinations changed. Owner calls, arguments,
+unconditional execution, source order, indexed prune/reconcile behavior, both
+SiNet composite boundaries, ModelIR mutations, public outputs, reports,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. The
+bounded store now covers 116/128 phase IDs, leaving 12 slots.
+
+Affected residual, prune/reconcile, SiNet boundary, and architecture contracts
+now unwrap phase records and verify exact phase IDs and nested owners while
+retaining composite target checks. The existing characterization expectation
+was converted to a passing contract.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused residual/prune/SiNet/store contracts: `20 passed in 1.10s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader result and phase-result contracts: `191 passed in 9.62s`;
+- lowerer architecture contracts: `258 passed in 18.50s`;
+- targeted Ruff, Python bytecode compilation, AST capacity audit, and
+  whitespace validation: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and existing synthetic runtime contracts
+exercise all three owners.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

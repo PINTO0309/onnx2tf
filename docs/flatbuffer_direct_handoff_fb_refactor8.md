@@ -1877,3 +1877,28 @@ Commit and push this characterization before replacing only the three mapping
 destinations. Preserve both composites and source order, update structural
 contracts, run sequential gates, document, commit, and push. Never create,
 update, or reopen a pull request.
+
+## Very-late residual cleanup implementation
+
+The three results now record under the characterized `cleanup.very_late.*`
+phase IDs in their original unconditional order. Owner calls, arguments,
+indexed prune/reconcile behavior, both SiNet composite boundaries, graph
+behavior, public contracts, dependencies, and TensorFlow isolation remain
+unchanged.
+
+The bounded store now contains 116/128 records, leaving 12 slots. Affected
+residual, prune/reconcile, SiNet, and architecture contracts now unwrap the
+records while preserving exact phase, owner, and composite checks.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused residual/prune/SiNet/store contracts: `20 passed in 1.10s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader result contracts: `191 passed in 9.62s`;
+- lowerer architecture contracts: `258 passed in 18.50s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because focused runtime contracts cover
+all three owners. Commit and push this unit. Begin the next unit with a fresh
+characterize-first audit and never create, update, or reopen a pull request.

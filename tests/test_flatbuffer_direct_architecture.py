@@ -2263,6 +2263,12 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert _phase_aware_call(lowerer.body[invocation_indexes[0] - 1])[1] == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
+    assert _phase_aware_call(lowerer.body[invocation_indexes[1] + 1])[1] == (
+        "cleanup.very_late.residual_affine_prelu"
+    )
+    assert _phase_aware_call(lowerer.body[invocation_indexes[2] - 1])[1] == (
+        "cleanup.very_late.prune_reconcile"
+    )
     assert previous_call_names == [
         "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
         "_run_sinet_terminal_layout_recovery_sequence",
@@ -2276,8 +2282,6 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert assigned_boundary_targets == [
         "_post_terminal_singleton_reshape_results",
         "_very_late_sinet_layout_recovery_results",
-        "_very_late_residual_affine_prelu_stats",
-        "_very_late_prune_reconcile_stats",
         "_post_cleanup_csp_attention_stats",
     ]
 

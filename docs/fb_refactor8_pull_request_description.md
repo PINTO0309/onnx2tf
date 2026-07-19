@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### 113 stable phase IDs
+### 116 stable phase IDs
 
-The lowerer now records 113 bounded observations covering:
+The lowerer now records 116 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -177,6 +177,8 @@ The lowerer now records 113 bounded observations covering:
   recovery composites;
 - post-terminal indexed shape/topology convergence between the singleton and
   very-late SiNet composites;
+- very-late residual affine PReLU, residual Transpose fan-out, and indexed
+  prune/reconcile cleanup between retained SiNet composites;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -231,15 +233,16 @@ contract that fixed the relevant schema, graph effects, cycle behavior,
 metadata behavior, phase position, arguments, and no-op behavior. Production
 changes were then limited to the characterized boundary.
 
-The latest sixteen records cover terminal boundary StridedSlice/QDQ/Concat,
+The latest nineteen records cover terminal boundary StridedSlice/QDQ/Concat,
 activation bridge, InstanceNorm, normalization, and guarded BatchMatMul
 and QKV bridge plus SiNet HardSwish/HardSigmoid and indexed convergence
-observations. They retain deterministic order and original boundaries.
+and very-late residual cleanup observations. They retain deterministic order
+and original boundaries.
 
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 113 phase IDs and owners appear in deterministic source order;
+- all 116 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -298,7 +301,9 @@ Final checkpoint results:
 - terminal HardSwish, HardSigmoid, SiNet, and phase-store contracts:
   **23 passed**;
 - indexed convergence, SiNet, and phase-store contracts: **12 passed**;
-- broader result and phase-result contracts: **190 passed**;
+- very-late residual, prune/reconcile, SiNet, and phase-store contracts:
+  **20 passed**;
+- broader result and phase-result contracts: **191 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;
