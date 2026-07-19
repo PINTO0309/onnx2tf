@@ -1568,3 +1568,16 @@ gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
 phase-result store remains exactly 128 IDs and 128 owners, while the
 characterized unconsumed lowerer-result inventory decreases from 52 to 51.
+
+The next characterization selects the adjacent late
+reshape/shuffle/attention/window composite, indexed final shape/activation
+convergence, and final boundary Slice/Concat composite. It fixes their exact
+order, the shared ModelIR/LayoutState identity, the callback-bearing terminal
+recovery context, every raw nested schema, the eleven-key convergence mapping,
+and the optional layout guards on both sides. Production remains unchanged
+pending a dedicated convergence pass owner and one straight-line three-stage
+composite owner. The existing convergence contract continues to require one
+differentially updated `ModelIRGraphIndex` across all internal cleanup stages.
+Focused and complete affected sequential characterization report
+`1 passed, 1 xfailed` and `402 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner.

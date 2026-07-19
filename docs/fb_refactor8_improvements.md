@@ -6659,3 +6659,22 @@ exactly 128 IDs and 128 owners, and the unconsumed lowerer-result inventory
 decreases from 52 to 51. No real-model conversion was repeated because this
 is a straight-line orchestration-only extraction with complete context,
 option, order, schema, identity, nested-route, and boundary coverage.
+
+## Late final shape/boundary composite characterization
+
+The current 51-result inventory exposes one closed terminal sequence: late
+reshape/shuffle/attention/window cleanup, indexed final shape/activation
+convergence, and final boundary Slice/Concat cleanup. New characterization
+fixes their exact order, shared ModelIR/LayoutState identity, the terminal
+callback-bearing recovery context, all nested result schemas, the eleven-key
+convergence mapping, and the optional layout guards on both sides.
+
+The convergence stage is also required to keep one differentially updated
+`ModelIRGraphIndex` across pruning, static-shape reconciliation, dynamic
+Reshape resolution, HardSwish metadata repair, and activation fusion. The
+planned extraction therefore moves that implementation to a dedicated pass
+module while retaining lowerer compatibility wrappers, then composes the
+three public owners without changing graph behavior. Production is unchanged
+at this checkpoint. Focused and complete affected sequential characterization
+report `1 passed, 1 xfailed` and `402 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner.

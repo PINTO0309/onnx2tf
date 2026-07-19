@@ -5796,3 +5796,33 @@ schemas, nested and independent routes, and outer phase/progress boundaries
 before production changes. Continue with core-only `uv`, sequential tests,
 and complete checkpoint commits/pushes only. Do not create, update, reopen, or
 otherwise modify a pull request.
+
+## Late final shape/boundary characterization checkpoint
+
+The refreshed AST inventory confirms 51 unconsumed lowerer-result assignments.
+The next selected boundary is the adjacent late reshape/shuffle/attention/window
+composite, indexed final shape/activation convergence, and final boundary
+Slice/Concat composite. The first stage receives the shared `ModelIRPassContext`,
+the middle stage receives its exact ModelIR and LayoutState while reusing one
+`ModelIRGraphIndex`, and the final stage receives the existing terminal
+Slice/Concat recovery context whose pass context is the same session context.
+
+The optional late Concat elementwise-fanout branch remains the immediate
+predecessor, and the optional terminal elementwise-fanout branch remains the
+immediate successor. The characterization fixes the three-stage order, both
+context identities, all raw nested result schemas, the eleven-key convergence
+mapping, the callback-bearing recovery context, and both outer guards.
+Production is unchanged pending extraction of the convergence logic to a
+dedicated pass owner and one straight-line three-stage composite owner.
+
+Focused characterization reports `1 passed, 1 xfailed`; the complete
+reference-based affected suite reports `402 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent convergence/composite
+owner modules.
+
+At resume, implement the dedicated convergence owner with lowerer compatibility
+wrappers, implement the composite context owner, replace only the three
+observation-only lowerer locals, and update stale structural entry assertions.
+Preserve exact GraphIndex sharing, result identities, callbacks, guards, and
+the 128-ID/128-owner phase-result store. Commit and push only; do not create,
+update, reopen, or otherwise modify a pull request.
