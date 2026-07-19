@@ -1015,3 +1015,11 @@ returned-GraphIndex forwarding, and the unchanged one-key result mapping.
 Runtime injection and owner-aware structural coverage prove exact order and
 identity. Sequential focused/affected/standard gates passed, no phase entry
 was added, and the bounded store remains exactly 128 IDs and 128 owners.
+
+The next characterization identifies the final owner-boundary prerequisite in
+the late orphan/unbound/affine/normalization region: recurrent-alias mutation
+is already indexed and pass-module-owned, while direct-TFLite result mapping
+still resides in the lowerer. The new strict contract preserves raw arguments,
+GraphIndex forwarding, exact mapping schema, the sole primary caller, the
+independent PyTorch path, and the full 128-ID/128-owner store. Production is
+unchanged pending the separate mapping-owner extraction.

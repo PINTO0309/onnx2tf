@@ -5143,3 +5143,31 @@ No public API, artifact, dependency, TensorFlow boundary, pass order, guard,
 or result schema changed. No real-model conversion was repeated because this
 mechanical owner move is covered by runtime identity/order checks and the full
 affected synthetic suite.
+
+## Recurrent-alias repair mapping-owner characterization
+
+The refreshed adjacent-result inventory found one remaining boundary mismatch
+before composing the late orphan/unbound/affine/normalization region. The raw
+indexed recurrent-alias repair already lives in `passes/recurrent_alias.py`,
+but the direct-TFLite lowerer still owns conversion of its integer return value
+to the public `repaired_orphan_recurrent_step_tensors` mapping. The lowerer has
+one primary production caller; PyTorch normalization continues to use the raw
+owner through its independent compatibility wrapper.
+
+`tests/test_flatbuffer_direct_recurrent_alias_repair_owner.py` locks the exact
+raw call, optional GraphIndex forwarding, one-key integer schema, sole lowerer
+caller, and compatibility-wrapper shape. Its strict expected failure requires
+`passes/recurrent_alias_repair_orchestration.py` to own the mapping and the
+lowerer wrapper to become one return dispatch.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.17s` focused and
+`307 passed, 1 xfailed in 17.91s` across recurrent alias, late input repair,
+unbound input, PyTorch recurrent normalization, direct lowering, very-late,
+architecture, and phase-store contracts. The sole expected failure is the
+intentionally absent mapping owner. Ruff and whitespace checks passed.
+
+This checkpoint changes no production source, mutation, result schema,
+GraphIndex policy, caller, PyTorch behavior, API, artifact, dependency,
+TensorFlow boundary, or pass order. No real-model conversion was run, and the
+phase-result store remains exactly 128 IDs and 128 owners.

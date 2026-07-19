@@ -4538,3 +4538,22 @@ adjacent orphan/unbound/affine/normalization region now that every constituent
 has a pass-module owner, but characterize only a small semantically closed
 straight-line unit before production changes. Keep every test sequential and
 do not create, update, or reopen a pull request.
+
+## Recurrent-alias repair mapping-owner characterization
+
+The refreshed inventory found that raw recurrent-alias mutation is already
+pass-module-owned, but its direct-TFLite integer-to-mapping normalization still
+lives in the lowerer. A focused strict contract now fixes raw call arguments,
+optional GraphIndex forwarding, exact one-key schema, the sole primary caller,
+and the required one-return compatibility adapter.
+
+Sequential focused validation is `1 passed, 1 xfailed`; affected validation is
+`307 passed, 1 xfailed`. Production, the independent PyTorch raw-owner path,
+public behavior, TensorFlow isolation, and the 128-ID/128-owner store remain
+unchanged. No model conversion was run.
+
+At resume, implement only
+`passes/recurrent_alias_repair_orchestration.py`, retain the lowerer wrapper
+and primary caller, and leave PyTorch's raw owner path unchanged. Run focused,
+affected, and standard gates sequentially, then reassess the now-fully-owned
+adjacent late-result cluster. Never create, update, or reopen a pull request.
