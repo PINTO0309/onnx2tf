@@ -761,3 +761,24 @@ assignments and removing their defaults. Update the terminal and architecture
 contracts that currently require the old locals, then repeat the bounded-store,
 focused, and architecture gates. Never create, update, or reopen a pull
 request.
+
+## Primary final cleanup reconciliation implementation
+
+The final PReLU and consecutive-Reshape results now use invoked-only
+`shape_reconciliation.primary.final_*` records. Their original guards remain
+complete, including PReLU cleanup-only tensor pruning and all three
+consecutive-Reshape mutation counters. The zero defaults and local targets are
+removed, and the bounded store now covers 36 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct pair, terminal, and store contracts: `67 passed in 1.96s`;
+- broader affected contracts: `142 passed in 3.62s`;
+- lowerer architecture contracts: `258 passed in 19.09s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required. After committing and pushing, select a
+separate generic final family for mixed-singleton Concat,
+placeholder/binary repair, and SE/FC/Gather before considering the six
+SiNet-specific final repairs. Preserve every mutation and pruning guard. Never
+create, update, or reopen a pull request.

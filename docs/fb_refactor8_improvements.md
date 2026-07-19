@@ -652,6 +652,33 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented bounded-store
 migration.
 
+## Primary final cleanup reconciliation implementation
+
+The final PReLU and consecutive-Reshape reconciliation results now record as:
+
+- `shape_reconciliation.primary.final_prelu`;
+- `shape_reconciliation.primary.final_consecutive_reshape`.
+
+Both records remain inside their original guards. The PReLU condition still
+accounts for either a rewrite or cleanup-only tensor pruning, and the
+consecutive-Reshape condition still sums all three declared mutation counters.
+The unconsumed zero defaults and local targets were removed.
+
+No owner argument, reconciliation, cleanup, graph scan, mutation, guard,
+successor, public result, report, artifact, dependency, or TensorFlow boundary
+changed. The bounded store now covers 36 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct pair, terminal, and phase-store contracts: `67 passed in 1.96s`;
+- broader affected contracts: `142 passed in 3.62s`;
+- lowerer architecture contracts: `258 passed in 19.09s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because only the destination of existing
+two-counter results changed.
+
 ## Fallback static-shape phase-result implementation
 
 The seven characterized fallback reconciliation results now record directly

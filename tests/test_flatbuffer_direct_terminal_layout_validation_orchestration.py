@@ -414,21 +414,7 @@ def test_primary_path_stages_final_prelu_reconciliation() -> None:
     assert tensor_count.targets[0].id == "final_prelu_tensor_count"
     assert ast.unparse(tensor_count.value) == "len(model_ir.tensors)"
 
-    default_stats = body[stats_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == "_final_prelu_static_shape_stats"
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[stats_index + 2]
+    guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
     get_calls = [
         node
@@ -447,21 +433,16 @@ def test_primary_path_stages_final_prelu_reconciliation() -> None:
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == "_final_prelu_static_shape_stats"
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.primary.final_prelu",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
+    )
 
-    following = body[stats_index + 3]
+    following = body[stats_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_consecutive_reshape_stats"
@@ -3650,23 +3631,7 @@ def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:
         and statement.targets[0].id == "final_consecutive_reshape_stats"
     )
 
-    default_stats = body[stats_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_final_consecutive_reshape_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[stats_index + 2]
+    guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
     get_calls = [
         node
@@ -3687,23 +3652,16 @@ def test_primary_path_stages_final_consecutive_reshape_reconciliation() -> None:
     assert len(get_calls) == 3
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_final_consecutive_reshape_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.primary.final_consecutive_reshape",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = body[stats_index + 3]
+    following = body[stats_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "final_sinet_late_residual_stats"
