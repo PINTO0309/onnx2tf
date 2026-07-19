@@ -70,7 +70,9 @@ from onnx2tf.tflite_builder.passes.recurrent_alias import (
 )
 from onnx2tf.tflite_builder.passes.unbound_input_layout import (
     find_unbound_nonconstant_operator_inputs,
-    repair_unbound_nonconstant_inputs_with_layout_transpose,
+)
+from onnx2tf.tflite_builder.passes.unbound_input_repair_orchestration import (
+    repair_unbound_nonconstant_operator_inputs_with_layout_transpose,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather as _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather_pass,
@@ -935,20 +937,11 @@ def _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
       renamed `_input_nhwc` output. Insert `TRANSPOSE(s, [0,3,1,2]) -> t`
       to reconnect dropped alias names.
     """
-    result = repair_unbound_nonconstant_inputs_with_layout_transpose(
+    return repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
         model_ir,
         graph_index=graph_index,
     )
-    if result.repaired > 0:
-        _reconcile_static_tensor_shapes(
-            model_ir,
-            graph_index=result.graph_index,
-        )
-    return {
-        "repaired_unbound_nonconstant_inputs_with_layout_transpose": int(
-            result.repaired
-        )
-    }
+
 
 def _count_ops_by_type(model_ir: ModelIR, op_type: str) -> int:
     target = str(op_type)

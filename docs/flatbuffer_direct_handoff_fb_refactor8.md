@@ -4519,3 +4519,22 @@ lowerer wrapper and both callers, keep the repair → conditional reconciliation
 order and graph-index identity exact, then run focused, affected, and standard
 gates sequentially before considering the larger adjacent result group. Do
 not create, update, or reopen a pull request.
+
+## Unbound-input repair owner implementation
+
+The mechanical prerequisite extraction is complete.
+`passes/unbound_input_repair_orchestration.py` owns raw indexed repair followed
+by mutation-positive static-shape reconciliation. It preserves the returned
+GraphIndex identity and exact one-key result mapping. The lowerer compatibility
+wrapper and both primary/fallback callers remain in place.
+
+Sequential gates passed: focused `3`, affected `394`, terminal/efficiency
+`92`, core runtime `55`, result contracts `196`, phase-store `2`, and
+TensorFlow-isolation/default-direct/`-cotof` `11`. The store remains exactly
+128 IDs and 128 owners. No real-model conversion was run.
+
+At resume, rerun the read-only unconsumed-result inventory. Re-evaluate the
+adjacent orphan/unbound/affine/normalization region now that every constituent
+has a pass-module owner, but characterize only a small semantically closed
+straight-line unit before production changes. Keep every test sequential and
+do not create, update, or reopen a pull request.

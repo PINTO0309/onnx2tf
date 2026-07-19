@@ -1007,3 +1007,11 @@ schema, and both primary/fallback callers. One strict expected failure requires
 a pass-module owner and one-return compatibility wrapper; production and the
 full 128-ID/128-owner store remain unchanged. Sequential affected validation
 completed with `392 passed, 1 xfailed`, and no model conversion was run.
+
+The latest checkpoint implements that unbound-input repair owner. The lowerer
+keeps a one-return compatibility adapter and both production callers, while
+the pass module now owns raw indexed repair, mutation-positive reconciliation,
+returned-GraphIndex forwarding, and the unchanged one-key result mapping.
+Runtime injection and owner-aware structural coverage prove exact order and
+identity. Sequential focused/affected/standard gates passed, no phase entry
+was added, and the bounded store remains exactly 128 IDs and 128 owners.

@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import unbound_input_repair_orchestration
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +25,6 @@ OWNER_PATH = (
 WRAPPER = "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
 OWNER = "repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
 RAW_OWNER = "repair_unbound_nonconstant_inputs_with_layout_transpose"
-LOWERER_RECONCILE_OWNER = "_reconcile_static_tensor_shapes"
 PASS_RECONCILE_OWNER = "reconcile_static_tensor_shapes"
 RESULT_KEY = "repaired_unbound_nonconstant_inputs_with_layout_transpose"
 
@@ -86,8 +90,8 @@ def _assert_owner_contract(
 def test_unbound_input_repair_lowerer_contract_is_fixed() -> None:
     functions = _functions(LOWERER_PATH)
     _assert_owner_contract(
-        functions[WRAPPER],
-        reconcile_owner=LOWERER_RECONCILE_OWNER,
+        _functions(OWNER_PATH)[OWNER],
+        reconcile_owner=PASS_RECONCILE_OWNER,
     )
 
     calls = _ordered_calls(functions["lower_onnx_to_ir"], (WRAPPER,))
@@ -99,10 +103,6 @@ def test_unbound_input_repair_lowerer_contract_is_fixed() -> None:
     assert all(call.keywords == [] for call in calls)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="unbound-input mapping/reconciliation still lives in the lowerer",
-)
 def test_unbound_input_repair_has_one_pass_module_owner() -> None:
     _assert_owner_contract(
         _functions(OWNER_PATH)[OWNER],
@@ -123,4 +123,42 @@ def test_unbound_input_repair_has_one_pass_module_owner() -> None:
     assert [ast.unparse(call.args[0]) for call in calls] == [
         "model_ir",
         "fallback_ir",
+    ]
+
+
+def test_unbound_input_repair_forwards_returned_index_to_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("unbound_input_repair_owner")
+    initial_index = ModelIRGraphIndex(model_ir)
+    repaired_index = ModelIRGraphIndex(model_ir)
+    calls: list[tuple[str, object, object]] = []
+
+    def repair(active_model_ir: object, *, graph_index: object) -> object:
+        calls.append(("repair", active_model_ir, graph_index))
+        return SimpleNamespace(repaired=2, graph_index=repaired_index)
+
+    def reconcile(active_model_ir: object, *, graph_index: object) -> None:
+        calls.append(("reconcile", active_model_ir, graph_index))
+
+    monkeypatch.setattr(
+        unbound_input_repair_orchestration,
+        RAW_OWNER,
+        repair,
+    )
+    monkeypatch.setattr(
+        unbound_input_repair_orchestration,
+        PASS_RECONCILE_OWNER,
+        reconcile,
+    )
+
+    result = unbound_input_repair_orchestration.repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
+        model_ir,
+        graph_index=initial_index,
+    )
+
+    assert result == {RESULT_KEY: 2}
+    assert calls == [
+        ("repair", model_ir, initial_index),
+        ("reconcile", model_ir, repaired_index),
     ]

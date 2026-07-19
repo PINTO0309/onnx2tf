@@ -5232,6 +5232,13 @@ def test_unbound_input_layout_repair_has_one_indexed_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "unbound_input_repair_orchestration.py"
+    )
     owner_source = owner_path.read_text(encoding="utf-8")
     owner_tree = ast.parse(owner_source)
     owner_name = "repair_unbound_nonconstant_inputs_with_layout_transpose"
@@ -5255,6 +5262,25 @@ def test_unbound_input_layout_repair_has_one_indexed_owner() -> None:
     assert "operator_index" in owner_call_names
     assert "consumer_indices" in owner_call_names
     assert "insert_operator" in owner_source
+
+    orchestration_source = orchestration_path.read_text(encoding="utf-8")
+    orchestration_tree = ast.parse(orchestration_source)
+    orchestration_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    )
+    raw_owner_calls = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert len(raw_owner_calls) == 1
+    assert "graph_index=result.graph_index" in orchestration_source
 
     lowerer_source = lowerer_path.read_text(encoding="utf-8")
     lowerer_tree = ast.parse(lowerer_source)
@@ -5285,8 +5311,10 @@ def test_unbound_input_layout_repair_has_one_indexed_owner() -> None:
     assert find_source is not None
     assert repair_source is not None
     assert "find_unbound_nonconstant_operator_inputs(" in find_source
-    assert owner_name in repair_source
-    assert "graph_index=result.graph_index" in repair_source
+    assert (
+        "repair_unbound_nonconstant_operator_inputs_with_layout_transpose("
+        in repair_source
+    )
     assert "_build_tensor_producer_map" not in repair_source
     assert "_build_tensor_consumer_map" not in repair_source
 

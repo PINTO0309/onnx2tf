@@ -5109,3 +5109,37 @@ This characterization changes no production callback, graph mutation,
 reconciliation guard, result schema, caller, pass order, API, artifact,
 dependency, or TensorFlow boundary. No real-model conversion was run. The
 phase-result store remains exactly 128 IDs and 128 owners.
+
+## Unbound-input repair owner implementation
+
+`passes/unbound_input_repair_orchestration.py` now owns the characterized
+repair and conditional reconciliation sequence. It forwards the optional
+GraphIndex to the raw repair, reconciles only after a positive repaired count,
+and forwards the exact GraphIndex returned by that repair. The existing
+one-key integer mapping is returned unchanged.
+
+The lowerer retains
+`_repair_unbound_nonconstant_operator_inputs_with_layout_transpose` as a
+one-return compatibility adapter, and its primary plus safety-fallback callers
+remain unchanged. The lowerer no longer imports the raw layout repair solely
+to implement this mapping. Runtime injection proves repair-before-reconcile
+order and returned-index identity; inherited indexed-layout and architecture
+contracts now inspect the pass-module owner at its actual boundary.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner structure and runtime contracts: `3 passed in 0.58s`;
+- affected unbound-input, QLinear, safety-fallback, very-late, terminal,
+  architecture, and store contracts: `394 passed in 19.20s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.71s`;
+- synthetic core runtime contracts: `55 passed in 0.91s`;
+- result contracts: `196 passed in 8.86s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.46s`.
+
+No phase result was added: the store remains exactly 128 IDs and 128 owners.
+No public API, artifact, dependency, TensorFlow boundary, pass order, guard,
+or result schema changed. No real-model conversion was repeated because this
+mechanical owner move is covered by runtime identity/order checks and the full
+affected synthetic suite.
