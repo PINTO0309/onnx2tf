@@ -1894,6 +1894,37 @@ characterize the following optional late-binary layout-recovery decision
 before changing production code. Continue with commits and pushes only; never
 create, update, or reopen a pull request.
 
+## Optional late-binary layout-recovery decision characterization
+
+The next adjacent boundary conditionally runs the existing aggregate
+late-binary layout-recovery owner when either full layout optimization or the
+safe no-layout reduction mode is enabled. A second guard reconciles static
+shapes only when the returned recovery summary contains a positive mutation
+count. The reconciliation record remains the direct lowerer-owned
+`shape_reconciliation.primary.late_binary_layout_recovery` boundary.
+
+The focused characterization fixes the normalized outer enablement predicate,
+aggregate-owner arguments, positive-summary predicate, direct reconciliation
+call, late-binary repair predecessor, and pre-terminal InstanceNorm successor.
+A strict expected failure requires one boolean
+`run_optional_late_binary_layout_recovery_cleanup` result that may absorb only
+the optional aggregate call and its mutation decision.
+
+The future owner must skip the aggregate call completely when disabled, pass
+the same ModelIR/LayoutState/diagnostics objects when enabled, preserve the
+independent `include_layout_transpose` flag, and return `False` for a stable
+summary. It must not perform reconciliation or record phase evidence. No
+production source changed in this checkpoint.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.16s`; the sole xfail is the intentionally absent
+boolean owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
+Commit and push this characterization before production changes. Keep the
+store exactly 128/128 and continue with commits and pushes only; never create,
+update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

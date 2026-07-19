@@ -2904,3 +2904,29 @@ integration branch. Commit and push this checkpoint. At resume, characterize
 the adjacent optional late-binary layout-recovery decision before production
 changes. Continue with coherent commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Optional late-binary layout-recovery decision characterization
+
+The next boundary has two control-flow layers: the normalized layout-option
+predicate controls whether aggregate late-binary recovery runs, and a
+positive-summary predicate controls the already-recorded static-shape
+reconciliation. The direct reconciliation call, phase ID, preceding
+late-binary repair decision, and following pre-terminal InstanceNorm cleanup
+must remain fixed.
+
+`tests/test_flatbuffer_direct_optional_late_binary_layout_recovery_orchestration.py`
+captures the current boundary and strictly xfails until one focused boolean
+owner replaces only the optional recovery call and its decision. The owner
+must preserve disabled-path skipping, ModelIR/LayoutState/diagnostics identity,
+the independent layout-Transpose flag, and all positive mutation values. It
+must not reconcile shapes or write to the bounded store.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.16s`; targeted Ruff, bytecode compilation, and
+whitespace checks passed. No production source changed.
+
+Commit and push this characterization before implementation. Keep the store
+at 128/128. On resume, add the owner, retain the direct conditional
+reconciliation in the lowerer, update owner-aware contracts, and run the
+affected gates sequentially. Continue with commits and pushes only; never
+create, update, or reopen a pull request.
