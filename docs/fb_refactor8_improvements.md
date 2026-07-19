@@ -1201,6 +1201,36 @@ Validation completed sequentially under core-only `uv`:
 No root-model corpus conversion was run because this is an observation-
 destination-only change and the runtime suite executes the guarded layout path.
 
+## Layout pass-set 1 quantized cleanup characterization
+
+The next family contains the three consecutive mapping-only quantized cleanup
+results in layout pass-set 1:
+
+- quantized PReLU cleanup;
+- Dequantize→TransposeConv→Quantize folding;
+- quantized Reshape cleanup.
+
+All three run under `optimize_layout_transpose_chains`, return bounded integer
+mappings with existing explicit schema tests, have no defaults or consumers,
+and are bounded by composite attention/QDQ results that remain outside this
+migration.
+
+The characterization fixes the common guard, owner expressions and keywords,
+three-statement adjacency, composite predecessor/successor targets, and absence
+of loads. A strict expected failure requires stable
+`cleanup.layout_pass_set_1.*` quantized phase records. No production source
+changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization plus quantized PReLU, Reshape, and TransposeConv
+  owner/schema contracts: `7 passed, 1 xfailed in 0.83s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented three-result
+destination migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

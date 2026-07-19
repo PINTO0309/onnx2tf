@@ -1255,3 +1255,25 @@ changed and the runtime suite executes the guarded path. After committing and
 pushing, keep composite return values outside the integer mapping store and
 select the next mapping family with the 128-phase cap in view. Never create,
 update, or reopen a pull request.
+
+## Layout pass-set 1 quantized cleanup characterization
+
+The next family is restricted to the three consecutive quantized mapping
+results in the first layout pass-set: quantized PReLU, Dequantize→TransposeConv
+→Quantize, and quantized Reshape cleanup. They share the existing layout guard,
+have explicit bounded integer schemas, and have no defaults or consumers.
+Composite attention/QDQ results on both sides are excluded.
+
+The contract fixes owner arguments and keywords, adjacency, composite
+boundaries, guard, and absence of loads. Its strict expected failure requires
+three `cleanup.layout_pass_set_1.*` quantized records.
+
+Validation completed sequentially under core-only `uv`: the characterization
+and existing owner/schema contracts are `7 passed, 1 xfailed in 0.83s`; Ruff,
+bytecode compilation, and whitespace checks pass. No production source changed.
+
+Commit and push this characterization before replacing only the three mapping
+destinations. Preserve the outer guard and composite boundaries. Update the
+three multi-occurrence owner contracts and bounded-store inventory, then
+validate, document, commit, and push. Never create, update, or reopen a pull
+request.
