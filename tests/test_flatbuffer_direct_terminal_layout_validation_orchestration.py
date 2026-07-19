@@ -25,6 +25,15 @@ VERY_LATE_LAYOUT_BROADCAST_OWNER = (
     "run_very_late_layout_broadcast_cleanup"
 )
 VERY_LATE_LAYOUT_BROADCAST_RESULT = "_very_late_layout_broadcast_results"
+SHARED_LATE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "shared_late_reconciliation_orchestration.py"
+)
+SHARED_LATE_OWNER = "run_shared_late_reconciliation_cleanup"
+SHARED_LATE_RESULT = "_shared_late_requires_reconciliation"
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -116,6 +125,41 @@ def _very_late_layout_broadcast_assignment(
     } == {
         "include_layout_transpose": "optimize_layout_transpose_chains",
     }
+    return assignment
+
+
+def _shared_late_owner_call_count(function_name: str) -> int:
+    tree = ast.parse(SHARED_LATE_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == SHARED_LATE_OWNER
+    )
+    owner_function_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_function_name
+        for node in ast.walk(owner)
+    )
+
+
+def _shared_late_assignment(body: list[ast.stmt]) -> ast.Assign:
+    assignment = next(
+        statement
+        for statement in body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == SHARED_LATE_RESULT
+    )
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == SHARED_LATE_OWNER
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert assignment.value.keywords == []
     return assignment
 
 
@@ -936,11 +980,11 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == sanitize_name
     ]
-    assert len(realign_indices) == 3
+    assert len(realign_indices) == 2
+    assert _shared_late_owner_call_count(realign_name) == 1
     assert len(sanitize_indices) == 2
 
     expected_realign_targets = [
-        "shared_boundary_signature_stats",
         "_absolute_final_boundary_signature_stats",
         "_final_dynamic_boundary_signature_stats",
     ]
@@ -970,7 +1014,7 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
         assert statement.targets[0].id == target_name
         assert ast.unparse(statement.value) == f"{sanitize_name}(model_ir)"
 
-    absolute_realign_index = realign_indices[1]
+    absolute_realign_index = realign_indices[0]
     absolute_sanitize_index = sanitize_indices[1]
     assert absolute_sanitize_index == absolute_realign_index + 1
     following = body[absolute_sanitize_index + 1]
@@ -1675,44 +1719,22 @@ def test_primary_path_retains_very_late_broadcast_shape_result() -> None:
     successor = body[broadcast_index + 2]
     assert isinstance(successor, ast.Assign)
     assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == "shared_late_tensor_count"
-    assert ast.unparse(successor.value) == "len(model_ir.tensors)"
+    assert successor.targets[0].id == SHARED_LATE_RESULT
+    assert ast.unparse(successor.value) == (
+        "run_shared_late_reconciliation_cleanup("
+        "shared_model_ir_pass_context)"
+    )
 
 
 def test_primary_path_retains_shared_late_shape_result() -> None:
     body = _lowerer_body()
-    tensor_count_index = next(
-        index
-        for index, statement in enumerate(body)
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "shared_late_tensor_count"
-    )
-    guard_index = next(
-        index
-        for index in range(tensor_count_index + 1, len(body))
-        if isinstance(body[index], ast.If)
-        and "shared_late_tensor_count" in ast.unparse(body[index].test)
-    )
+    decision = _shared_late_assignment(body)
+    decision_index = body.index(decision)
+    guard_index = decision_index + 1
     guard = body[guard_index]
     assert isinstance(guard, ast.If)
     assert len(guard.body) == 1
-    assert "_stats_have_positive_count(" in ast.unparse(guard.test)
-    for target_name in (
-        "shared_boundary_signature_stats",
-        "shared_hardswish_stats",
-        "shared_squeeze_stats",
-        "shared_conv_transpose_stats",
-        "shared_binary_adapter_stats",
-        "shared_singleton_adapter_stats",
-        "shared_singleton_channel_stats",
-        "shared_duplicate_fanout_stats",
-        "shared_consecutive_reshape_stats",
-    ):
-        assert target_name in ast.unparse(guard.test)
-    assert "len(model_ir.tensors) < shared_late_tensor_count" in ast.unparse(
-        guard.test
-    )
+    assert ast.unparse(guard.test) == SHARED_LATE_RESULT
 
     statement = guard.body[0]
     _assert_phase_result_record(

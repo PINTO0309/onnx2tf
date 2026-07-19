@@ -296,6 +296,9 @@ from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestrati
 from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration import (
     run_very_late_layout_broadcast_cleanup,
 )
+from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
+    run_shared_late_reconciliation_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5260,43 +5263,12 @@ def lower_onnx_to_ir(
             include_mutation_count=True,
         ),
     )
-    shared_late_tensor_count = len(model_ir.tensors)
-    shared_boundary_signature_stats = (
-        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    _shared_late_requires_reconciliation = (
+        run_shared_late_reconciliation_cleanup(
+            shared_model_ir_pass_context,
+        )
     )
-    # Keep final serialized metadata consistent for tools that render
-    # shape_signature (e.g. Netron): HARD_SWISH is shape-preserving.
-    shared_hardswish_stats = _sanitize_hardswish_tensor_shapes(model_ir)
-    # Final guardrail for runtime validity: ensure SQUEEZE axes target
-    # singleton dimensions after all late layout/shape rewrites.
-    shared_squeeze_stats = _sanitize_squeeze_axes_with_static_input_shapes(
-        model_ir
-    )
-    shared_conv_transpose_stats = (
-        _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
-    )
-    shared_binary_adapter_stats, shared_singleton_adapter_stats = (
-        run_indexed_binary_layout_adapter_cleanup(model_ir)
-    )
-    (
-        shared_singleton_channel_stats,
-        shared_duplicate_fanout_stats,
-        shared_consecutive_reshape_stats,
-    ) = _run_singleton_consecutive_reshape_pass_cluster(
-        model_ir,
-        session.layout_state,
-    )
-    if _stats_have_positive_count(
-        shared_boundary_signature_stats,
-        shared_hardswish_stats,
-        shared_squeeze_stats,
-        shared_conv_transpose_stats,
-        shared_binary_adapter_stats,
-        shared_singleton_adapter_stats,
-        shared_singleton_channel_stats,
-        shared_duplicate_fanout_stats,
-        shared_consecutive_reshape_stats,
-    ) or len(model_ir.tensors) < shared_late_tensor_count:
+    if _shared_late_requires_reconciliation:
         session.record_phase_result(
             "shape_reconciliation.primary.shared_late",
             _reconcile_static_tensor_shapes(

@@ -19,7 +19,7 @@ EXPECTED_PREDECESSOR_TARGETS = (
     "_very_late_dynamic_rank1_reshape_stats",
 )
 EXPECTED_SUCCESSOR_TARGETS = (
-    "shared_late_tensor_count",
+    "_shared_late_requires_reconciliation",
     "split_fallback_stats",
 )
 

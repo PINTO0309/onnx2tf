@@ -122,6 +122,9 @@ from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestrati
 from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration import (
     VERY_LATE_LAYOUT_BROADCAST_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
+    SHARED_LATE_RECONCILIATION_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -211,6 +214,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_CONV1D_DECODER_LAYOUT_PASS_IDS,
     *VERY_LATE_PAD_INSTANCENORM_LAYOUT_PASS_IDS,
     *VERY_LATE_LAYOUT_BROADCAST_PASS_IDS,
+    *SHARED_LATE_RECONCILIATION_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -3301,7 +3305,7 @@ def test_boundary_signature_realigner_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
     owner_path = (
         REPO_ROOT
@@ -4186,9 +4190,9 @@ def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(invocations) == 1
-    assert isinstance(invocations[0].args[0], ast.Name)
-    assert invocations[0].args[0].id == "model_ir"
+    assert len(invocations) + _orchestrated_pass_count(wrapper_name) == 1
+    assert invocations == []
+    assert _orchestrated_pass_count(wrapper_name) == 1
 
     swish_owner = next(
         node
@@ -8391,15 +8395,23 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == short_helper_name
     ]
-    assert len(short_invocations) == 3
-    assert sum(
-        len(call.args) == 2
-        and isinstance(call.args[0], ast.Name)
-        and call.args[0].id == "model_ir"
-        and isinstance(call.args[1], ast.Attribute)
-        and call.args[1].attr == "layout_state"
-        for call in short_invocations
-    ) == 2
+    assert (
+        len(short_invocations)
+        + _orchestrated_pass_count(short_helper_name)
+        == 3
+    )
+    assert (
+        sum(
+            len(call.args) == 2
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == "model_ir"
+            and isinstance(call.args[1], ast.Attribute)
+            and call.args[1].attr == "layout_state"
+            for call in short_invocations
+        )
+        + _orchestrated_pass_count(short_helper_name)
+        == 2
+    )
     assert sum(
         len(call.args) == 2
         and isinstance(call.args[0], ast.Name)
@@ -9801,6 +9813,63 @@ def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> No
 
 
 def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "shared_late_reconciliation_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_shared_late_reconciliation_cleanup"
+    )
+    assert SHARED_LATE_RECONCILIATION_PASS_IDS == (
+        "_realign_dynamic_boundary_shape_signature_map",
+        "_sanitize_hardswish_tensor_shapes",
+        "_sanitize_squeeze_axes_with_static_input_shapes",
+        "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
+        "run_indexed_binary_layout_adapter_cleanup",
+        "_run_singleton_consecutive_reshape_pass_cluster",
+    )
+    owner_call_names = (
+        "realign_dynamic_boundary_shape_signature_map",
+        "sanitize_hardswish_tensor_shapes",
+        "sanitize_squeeze_axes_with_static_input_shapes",
+        "sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
+        "run_indexed_binary_layout_adapter_cleanup",
+        "run_singleton_consecutive_reshape",
+    )
+    owner_calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in owner_call_names
+        ),
+        key=lambda node: node.lineno,
+    )
+    assert tuple(call.func.id for call in owner_calls) == owner_call_names
+    initial_count = next(
+        statement
+        for statement in owner.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "initial_tensor_count"
+    )
+    assert ast.unparse(initial_count.value) == "len(context.model_ir.tensors)"
+    owner_return = owner.body[-1]
+    assert isinstance(owner_return, ast.Return)
+    assert "_stats_have_positive_count(" in ast.unparse(owner_return.value)
+    assert (
+        "len(context.model_ir.tensors) < initial_tensor_count"
+        in ast.unparse(owner_return.value)
+    )
+
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -9810,116 +9879,33 @@ def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    direct_owner_names = (
-        "_realign_dynamic_boundary_shape_signature_map",
-        "_sanitize_hardswish_tensor_shapes",
-        "_sanitize_squeeze_axes_with_static_input_shapes",
-        "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
-    )
-    adapter_runner_name = "run_indexed_binary_layout_adapter_cleanup"
-    cluster_name = "_run_singleton_consecutive_reshape_pass_cluster"
-    first_owner_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
+    decision = next(
+        statement
+        for statement in lowerer.body
         if isinstance(statement, ast.Assign)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == direct_owner_names[0]
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_shared_late_requires_reconciliation"
     )
-
-    count_assignment = lowerer.body[first_owner_index - 1]
-    assert isinstance(count_assignment, ast.Assign)
-    assert len(count_assignment.targets) == 1
-    count_target = count_assignment.targets[0]
-    assert isinstance(count_target, ast.Name)
-    assert isinstance(count_assignment.value, ast.Call)
-    assert isinstance(count_assignment.value.func, ast.Name)
-    assert count_assignment.value.func.id == "len"
-
-    result_names: list[str] = []
-    for offset, owner_name in enumerate(direct_owner_names):
-        assignment = lowerer.body[first_owner_index + offset]
-        assert isinstance(assignment, ast.Assign)
-        assert isinstance(assignment.value, ast.Call)
-        assert isinstance(assignment.value.func, ast.Name)
-        assert assignment.value.func.id == owner_name
-        assert len(assignment.targets) == 1
-        assert isinstance(assignment.targets[0], ast.Name)
-        result_names.append(assignment.targets[0].id)
-
-    adapter_assignment = lowerer.body[
-        first_owner_index + len(direct_owner_names)
-    ]
-    assert isinstance(adapter_assignment, ast.Assign)
-    assert isinstance(adapter_assignment.value, ast.Call)
-    assert isinstance(adapter_assignment.value.func, ast.Name)
-    assert adapter_assignment.value.func.id == adapter_runner_name
-    assert len(adapter_assignment.targets) == 1
-    adapter_targets = adapter_assignment.targets[0]
-    assert isinstance(adapter_targets, ast.Tuple)
-    assert len(adapter_targets.elts) == 2
-    assert all(isinstance(target, ast.Name) for target in adapter_targets.elts)
-    result_names.extend(
-        target.id
-        for target in adapter_targets.elts
-        if isinstance(target, ast.Name)
+    decision_index = lowerer.body.index(decision)
+    assert ast.unparse(decision.value) == (
+        "run_shared_late_reconciliation_cleanup("
+        "shared_model_ir_pass_context)"
     )
-
-    cluster_assignment = lowerer.body[
-        first_owner_index + len(direct_owner_names) + 1
-    ]
-    assert isinstance(cluster_assignment, ast.Assign)
-    assert isinstance(cluster_assignment.value, ast.Call)
-    assert isinstance(cluster_assignment.value.func, ast.Name)
-    assert cluster_assignment.value.func.id == cluster_name
-    assert len(cluster_assignment.targets) == 1
-    cluster_targets = cluster_assignment.targets[0]
-    assert isinstance(cluster_targets, ast.Tuple)
-    assert len(cluster_targets.elts) == 3
-    assert all(isinstance(target, ast.Name) for target in cluster_targets.elts)
-    result_names.extend(
-        target.id
-        for target in cluster_targets.elts
-        if isinstance(target, ast.Name)
-    )
-
-    guard = lowerer.body[first_owner_index + len(direct_owner_names) + 2]
+    guard = lowerer.body[decision_index + 1]
     assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == "_shared_late_requires_reconciliation"
     assert guard.orelse == []
-    mutation_calls = [
-        node
-        for node in ast.walk(guard.test)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_stats_have_positive_count"
-    ]
-    assert len(mutation_calls) == 1
-    assert [
-        argument.id
-        for argument in mutation_calls[0].args
-        if isinstance(argument, ast.Name)
-    ] == result_names
-    guard_names = {
-        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
-    }
-    assert count_target.id in guard_names
-    tensor_len_calls = [
-        node
-        for node in ast.walk(guard.test)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "len"
-    ]
-    assert len(tensor_len_calls) == 1
     assert len(guard.body) == 1
-    reconcile = guard.body[0]
-    assert isinstance(reconcile, ast.Expr)
-    assert ast.unparse(reconcile) == (
+    assert ast.unparse(guard.body[0]) == (
         "session.record_phase_result("
         "'shape_reconciliation.primary.shared_late', "
         "_reconcile_static_tensor_shapes(model_ir, "
         "include_mutation_count=True))"
     )
+    successor = lowerer.body[decision_index + 2]
+    assert isinstance(successor, ast.Assign)
+    assert isinstance(successor.targets[0], ast.Name)
+    assert successor.targets[0].id == "late_binary_repair_tensor_count"
 
 
 def test_window_partition_rewrite_has_indexed_owner() -> None:

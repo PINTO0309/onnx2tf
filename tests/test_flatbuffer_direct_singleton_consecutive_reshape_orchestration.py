@@ -29,6 +29,13 @@ PHASE_PATH = (
     / "passes"
     / "singleton_consecutive_reshape_orchestration.py"
 )
+SHARED_LATE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "shared_late_reconciliation_orchestration.py"
+)
 SINGLETON_CONSECUTIVE = "_run_singleton_consecutive_reshape_pass_cluster"
 
 
@@ -83,6 +90,23 @@ def _main_invocation_indexes(lowerer: ast.FunctionDef) -> list[int]:
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_CONSECUTIVE
+    ]
+
+
+def _shared_late_singleton_calls() -> list[ast.Call]:
+    tree = ast.parse(SHARED_LATE_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_shared_late_reconciliation_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_consecutive_reshape"
     ]
 
 
@@ -307,15 +331,20 @@ def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
         for invocation in invocations
     ] == [
         ("model_ir", "session.layout_state"),
-        ("model_ir", "session.layout_state"),
         ("fallback_ir", None),
     ]
     assert all(invocation.keywords == [] for invocation in invocations)
+    shared_late_calls = _shared_late_singleton_calls()
+    assert len(shared_late_calls) == 1
+    assert [
+        _expression_path(argument) for argument in shared_late_calls[0].args
+    ] == ["context"]
+    assert shared_late_calls[0].keywords == []
 
 
 def test_singleton_consecutive_retains_very_late_main_results() -> None:
     lowerer, _ = _lowerer_and_helper()
-    first_index, second_index = _main_invocation_indexes(lowerer)
+    (first_index,) = _main_invocation_indexes(lowerer)
 
     first = lowerer.body[first_index]
     assert isinstance(first, ast.Assign)
@@ -349,21 +378,6 @@ def test_singleton_consecutive_retains_very_late_main_results() -> None:
         "run_very_late_layout_broadcast_cleanup"
     )
 
-    second = lowerer.body[second_index]
-    assert isinstance(second, ast.Assign)
-    assert len(second.targets) == 1
-    second_target = second.targets[0]
-    assert isinstance(second_target, ast.Tuple)
-    assert [
-        element.id
-        for element in second_target.elts
-        if isinstance(element, ast.Name)
-    ] == [
-        "shared_singleton_channel_stats",
-        "shared_duplicate_fanout_stats",
-        "shared_consecutive_reshape_stats",
-    ]
-
     fallback_calls = [
         node
         for node in ast.walk(lowerer)
@@ -390,8 +404,8 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = _main_invocation_indexes(lowerer)
 
-    assert len(invocation_indexes) == 2
-    first_index, second_index = invocation_indexes
+    assert len(invocation_indexes) == 1
+    (first_index,) = invocation_indexes
     first_preceding = lowerer.body[first_index - 1]
     assert isinstance(first_preceding, ast.Assign)
     assert len(first_preceding.targets) == 1
@@ -412,16 +426,10 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
         "run_very_late_layout_broadcast_cleanup"
     )
 
-    assert _statement_call_name(lowerer.body[second_index - 1]) == (
-        "run_indexed_binary_layout_adapter_cleanup"
-    )
-    second_following = lowerer.body[second_index + 1]
-    assert isinstance(second_following, ast.If)
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_stats_have_positive_count"
-        for node in ast.walk(second_following.test)
+    shared_late_calls = _shared_late_singleton_calls()
+    assert len(shared_late_calls) == 1
+    assert ast.unparse(shared_late_calls[0]) == (
+        "run_singleton_consecutive_reshape(context)"
     )
 
 

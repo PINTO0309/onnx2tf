@@ -1788,6 +1788,46 @@ Sequential characterization under core-only `uv` completed with
 boolean owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed.
 
+## Shared-late reconciliation decision implementation
+
+`run_shared_late_reconciliation_cleanup` now owns the six characterized
+cleanup calls and their decision. It preserves the four model-only sanitizer
+calls, model-only indexed binary adapter call, and shared-context
+singleton/consecutive-Reshape call in source order. The owner evaluates all
+nine integer mappings and the original tensor-count decrease, returning only
+a boolean reconciliation requirement.
+
+The lowerer retains `_shared_late_requires_reconciliation` and continues to
+own the conditional `shape_reconciliation.primary.shared_late` record. Its
+record still directly invokes `_reconcile_static_tensor_shapes(model_ir,
+include_mutation_count=True)`, so invoked-phase-only semantics, owner identity,
+and store representation remain unchanged. Nine evidence locals and the
+tensor-count local were removed from the lowerer without hiding the actual
+reconciliation behind the new owner.
+
+Final sequential validation under core-only `uv`:
+
+- focused stable, nine-evidence, prune-only, order, and boundary contracts:
+  `13 passed in 0.55s`;
+- affected shared-late, adapter, singleton, terminal, core, and store
+  contracts: `150 passed in 3.13s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.89s`;
+- synthetic core runtime contracts: `55 passed in 0.96s`;
+- result contracts: `196 passed in 9.19s`;
+- full architecture contracts: `258 passed in 18.45s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No cleanup or reconciliation execution count, graph traversal, guard result,
+ModelIR mutation, diagnostics, public API, artifact, dependency, or TensorFlow
+boundary changed. No real-model conversion was run because focused unit tests
+force every evidence path and an integration test proves the boolean still
+adds exactly one conditional reconciliation. Commit and push this checkpoint.
+On resume, audit the late-binary repair decision immediately following this
+boundary. Continue with commits and pushes only; never create, update, or
+reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

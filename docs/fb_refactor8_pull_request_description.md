@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Eleven late lowerer clusters now have focused orchestration owners. The first
+Twelve late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -160,10 +160,18 @@ broadcast-constant repair unconditionally. It returns `None` for the skipped
 optional result, retains the broadcast mapping on every path, and leaves the
 unconditional broadcast shape reconciliation immediately afterward.
 
+The twelfth runs four shared-late sanitizers, the indexed binary adapter pair,
+and singleton/consecutive-Reshape triple, then reduces all nine mutation
+mappings plus prune-only tensor-count change to one boolean. The lowerer keeps
+the conditional reconciliation record itself, preserving its direct owner
+call and invoked-phase-only store semantics.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty unconsumed locals and two
-lowerer scope locals. Focused runtime tests verify shared scope identity, exact
-argument policy, and ordered results.
+lowerer scope locals. They also replace nine consumed shared-late evidence
+locals and one tensor-count snapshot with one explicit boolean decision.
+Focused runtime tests verify shared scope identity, exact argument policy,
+ordered results, every positive-evidence path, and prune-only cleanup.
 
 ### Shared pre-Concat NHWC composite owner
 
@@ -418,6 +426,8 @@ Final checkpoint results:
   **424 passed**;
 - very-late layout/broadcast composite and affected boundary contracts:
   **97 passed**;
+- shared-late reconciliation decision and affected boundary contracts:
+  **150 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
 - indexed, quantized, and legacy NHWC Concat family contracts:
   **285 passed**;

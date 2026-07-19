@@ -5,6 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import (
+    shared_late_reconciliation_orchestration,
+)
+from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
+    SHARED_LATE_RECONCILIATION_PASS_IDS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -84,40 +94,22 @@ def _phase_id(statement: ast.stmt) -> str | None:
     return ast.literal_eval(call.args[0])
 
 
-def _shared_late_guard(lowerer: ast.FunctionDef) -> tuple[int, ast.If]:
-    index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.If)
-        and TENSOR_COUNT_TARGET in ast.unparse(statement.test)
-    )
-    guard = lowerer.body[index]
-    assert isinstance(guard, ast.If)
-    return index, guard
-
-
-def test_shared_late_cleanup_evidence_and_guard_are_fixed() -> None:
+def test_shared_late_cleanup_boolean_keeps_reconciliation_in_lowerer() -> None:
     lowerer = _lowerer()
-    guard_index, guard = _shared_late_guard(lowerer)
-    evidence_assignments = lowerer.body[guard_index - 6 : guard_index]
-    assert tuple(
-        node.id
-        for statement in evidence_assignments
-        for node in ast.walk(statement.targets[0])
-        if isinstance(node, ast.Name)
-    ) == EVIDENCE_TARGETS
-    tensor_count = lowerer.body[guard_index - 7]
-    assert _single_target(tensor_count) == TENSOR_COUNT_TARGET
-    assert ast.unparse(tensor_count.value) == "len(model_ir.tensors)"
-    assert ast.unparse(guard.test) == (
-        "_stats_have_positive_count("
-        "shared_boundary_signature_stats, shared_hardswish_stats, "
-        "shared_squeeze_stats, shared_conv_transpose_stats, "
-        "shared_binary_adapter_stats, shared_singleton_adapter_stats, "
-        "shared_singleton_channel_stats, shared_duplicate_fanout_stats, "
-        "shared_consecutive_reshape_stats) or "
-        "len(model_ir.tensors) < shared_late_tensor_count"
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == RESULT_TARGET
     )
+    index = lowerer.body.index(assignment)
+    assert ast.unparse(assignment.value) == (
+        "run_shared_late_reconciliation_cleanup("
+        "shared_model_ir_pass_context)"
+    )
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    guard = lowerer.body[index + 1]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == RESULT_TARGET
     assert guard.orelse == []
     assert len(guard.body) == 1
     assert ast.unparse(guard.body[0]) == (
@@ -126,13 +118,14 @@ def test_shared_late_cleanup_evidence_and_guard_are_fixed() -> None:
         "_reconcile_static_tensor_shapes(model_ir, "
         "include_mutation_count=True))"
     )
-    assert _single_target(lowerer.body[guard_index + 1]) == SUCCESSOR_TARGET
+    assert _single_target(lowerer.body[index + 2]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in (TENSOR_COUNT_TARGET, *EVIDENCE_TARGETS)
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="shared-late cleanup decision lacks a focused pass-module owner",
-)
 def test_shared_late_cleanup_uses_one_boolean_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -178,4 +171,88 @@ def test_shared_late_cleanup_uses_one_boolean_owner() -> None:
         isinstance(node, ast.Name)
         and node.id in (TENSOR_COUNT_TARGET, *EVIDENCE_TARGETS)
         for node in ast.walk(lowerer)
+    )
+
+
+@pytest.mark.parametrize("trigger_index", range(-1, 10))
+def test_shared_late_owner_preserves_all_nine_evidence_and_prune_triggers(
+    monkeypatch: pytest.MonkeyPatch,
+    trigger_index: int,
+) -> None:
+    model_ir = ModelIR("shared_late_reconciliation_owner")
+    model_ir.tensors["prune_probe"] = TensorIR(
+        name="prune_probe",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    observed: list[tuple[str, object]] = []
+
+    def _direct_callback(pass_id: str, evidence_index: int):
+        def _run(candidate: ModelIR) -> dict[str, int]:
+            observed.append((pass_id, candidate))
+            if evidence_index == 3 and trigger_index == 9:
+                assert candidate.tensors.pop("prune_probe", None) is not None
+            return {"changed": int(trigger_index == evidence_index)}
+
+        return _run
+
+    for evidence_index, pass_id in enumerate(PASS_IDS[:4]):
+        monkeypatch.setattr(
+            shared_late_reconciliation_orchestration,
+            pass_id,
+            _direct_callback(pass_id, evidence_index),
+        )
+
+    def _adapter_callback(
+        candidate: ModelIR,
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        observed.append((PASS_IDS[4], candidate))
+        return (
+            {"changed": int(trigger_index == 4)},
+            {"changed": int(trigger_index == 5)},
+        )
+
+    def _reshape_callback(
+        candidate: ModelIRPassContext,
+    ) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+        observed.append((PASS_IDS[5], candidate))
+        return (
+            {"changed": int(trigger_index == 6)},
+            {"changed": int(trigger_index == 7)},
+            {"changed": int(trigger_index == 8)},
+        )
+
+    monkeypatch.setattr(
+        shared_late_reconciliation_orchestration,
+        PASS_IDS[4],
+        _adapter_callback,
+    )
+    monkeypatch.setattr(
+        shared_late_reconciliation_orchestration,
+        PASS_IDS[5],
+        _reshape_callback,
+    )
+
+    assert (
+        shared_late_reconciliation_orchestration.run_shared_late_reconciliation_cleanup(
+            context
+        )
+        is (trigger_index >= 0)
+    )
+    assert [entry[0] for entry in observed] == list(PASS_IDS)
+    assert all(entry[1] is context.model_ir for entry in observed[:5])
+    assert observed[5][1] is context
+    assert SHARED_LATE_RECONCILIATION_PASS_IDS == (
+        "_realign_dynamic_boundary_shape_signature_map",
+        "_sanitize_hardswish_tensor_shapes",
+        "_sanitize_squeeze_axes_with_static_input_shapes",
+        "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
+        "run_indexed_binary_layout_adapter_cleanup",
+        "_run_singleton_consecutive_reshape_pass_cluster",
     )

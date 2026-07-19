@@ -2812,3 +2812,36 @@ owner. Targeted Ruff, bytecode compilation, and whitespace checks passed.
 
 Commit and push this characterization before production changes. Keep the
 store at 128/128 and never create, update, or reopen a pull request.
+
+## Shared-late reconciliation decision implementation
+
+The new pass-module owner runs the four direct sanitizers, indexed binary
+adapter pair, and singleton/consecutive-Reshape triple in their original
+order. It preserves every argument contract and returns one boolean derived
+from all nine positive-counter mappings plus the original prune-only tensor
+count decrease.
+
+The lowerer replaces nine evidence locals and one tensor-count snapshot with
+`_shared_late_requires_reconciliation`. The following guard and nested
+`_reconcile_static_tensor_shapes` phase record remain in the lowerer exactly
+to preserve invoked-phase-only store semantics. The store remains 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused stable, nine-evidence, prune-only, order, and boundary contracts:
+  `13 passed in 0.55s`;
+- affected shared-late, adapter, singleton, terminal, core, and store
+  contracts: `150 passed in 3.13s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.89s`;
+- synthetic core runtime contracts: `55 passed in 0.96s`;
+- result contracts: `196 passed in 9.19s`;
+- full architecture contracts: `258 passed in 18.45s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No real-model conversion was required because all ten decision triggers and
+the lowerer integration branch are covered directly. Commit and push this
+checkpoint. At resume, characterize the adjacent late-binary repair decision
+before changing production code. Continue with coherent commits and pushes
+only; never create, update, or reopen a pull request.
