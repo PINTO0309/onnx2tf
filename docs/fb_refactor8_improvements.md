@@ -1517,6 +1517,32 @@ TensorFlow boundary changed. No root-model conversion was repeated because
 the family-level runtime suite exercises all moved dispatch paths. The store
 remains exactly 128/128.
 
+## Final Slice/pre-ConCat composite characterization
+
+With the pre-ConCat implementation now behind a pass-module owner, the
+previously deferred final pair can be extracted without a lowerer import,
+callback injection, or circular dependency. The pair contains final
+Slice/pre-post passthrough cleanup followed by final pre-ConCat NHWC cleanup.
+The first call is model-only; the second receives the same conversion-local
+layout state and diagnostics as before. Both result mappings are unconsumed.
+
+The focused characterization fixes adjacency, exact argument policy, final
+slice/Concat recovery predecessor, terminal Concat-bridge successor, and
+absence of consumers. A strict expected failure requires one
+`run_final_slice_pre_concat_layout_cleanup(shared_model_ir_pass_context)`
+owner and an ordered `_final_slice_pre_concat_layout_results` tuple outside
+the full phase-result store. No production source changed.
+
+Implementation must import both existing pass owners directly, preserve their
+order and independent result mappings, retain both lowerer compatibility
+wrappers, and keep the store fixed at 128/128. Do not create, update, or reopen
+a pull request.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.14s`; the sole xfail is the intentionally absent
+composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

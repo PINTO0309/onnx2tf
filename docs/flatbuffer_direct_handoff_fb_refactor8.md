@@ -2553,3 +2553,29 @@ Commit and push this implementation checkpoint. On resume, characterize the
 now-safe final Slice/pre-Concat pair between final slice/Concat recovery and
 the terminal Concat-bridge composite. Continue with coherent commits and
 pushes only; never create, update, or reopen a pull request.
+
+## Final Slice/pre-ConCat composite characterization
+
+The pre-ConCat owner extraction removed the prior circular-dependency risk.
+The selected pair is now two adjacent pass-module calls: model-only final
+Slice/pre-post passthrough cleanup, then layout-and-diagnostics-aware final
+pre-ConCat NHWC cleanup. Both mappings are unconsumed.
+
+`tests/test_flatbuffer_direct_final_slice_pre_concat_layout_orchestration.py`
+fixes adjacency, arguments, the final slice/Concat recovery predecessor, the
+terminal Concat-bridge successor, and absence of consumers. Its strict
+expected failure requires one
+`run_final_slice_pre_concat_layout_cleanup(shared_model_ir_pass_context)`
+call and one ordered `_final_slice_pre_concat_layout_results` tuple outside
+the full store. No production source changed.
+
+Run the dedicated characterization, targeted Ruff, bytecode compilation, and
+whitespace checks, then commit and push before implementation. The production
+owner must import both existing pass owners directly, preserve compatibility
+wrappers and result order, keep the store at 128/128, and never create, update,
+or reopen a pull request.
+
+The characterization gate completed with `1 passed, 1 xfailed in 0.14s`;
+the sole xfail is the intentionally absent composite owner. Targeted Ruff,
+bytecode compilation, and whitespace checks passed. Commit and push this
+checkpoint before production changes.
