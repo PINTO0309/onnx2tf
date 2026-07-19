@@ -6031,3 +6031,38 @@ all guards, options, context/callback identities, raw schemas, independent
 routes, and outer phase/progress boundaries before changing production.
 Continue with sequential `uv` validation and complete checkpoint commits and
 pushes only. Do not create, update, reopen, or otherwise modify a pull request.
+
+## Next 47-result candidate audit (not yet characterized)
+
+The refreshed read-only inventory selects the first layout-pass-set-1
+post-binary pair: the 13-stage layout/attention/quantized suffix followed
+immediately by safe-binary recovery. Both observations are unconditional
+inside the existing `optimize_layout_transpose_chains` guard, are not consumed,
+and share the exact session `ModelIRPassContext`. There is no intervening
+phase, progress update, branch, or other mutation.
+
+The suffix receives the existing callback-bearing
+`LayoutAttentionQuantizedSuffixContext` and the normalized
+`enable_duplicate_transpose_fanout_optimizations` policy. Its embedded pass
+context is identical to `quantized_recovery_context`, which the current
+safe-binary wrapper uses. The recorded
+`cleanup.layout_pass_set_1.post_binary_affine_chain_fold` phase is the direct
+predecessor, and recorded
+`cleanup.layout_pass_set_1.dequant_mean_quantize` is the direct successor.
+
+A safe dedicated owner can therefore accept the existing suffix context and
+`include_duplicate_transpose` option, call
+`run_layout_attention_quantized_suffix(context,
+include_duplicate_transpose=include_duplicate_transpose)` first, call
+`run_safe_binary_recovery(context.pass_context)` second, and return both raw
+tuples unchanged. Retain both lowerer wrappers and all independent suffix and
+safe-binary routes. In particular, do not include the later final suffix and
+safe-binary calls: a transpose-unary/fan-out stage lies between them, so they
+are a different semantic boundary.
+
+Before production changes, add strict characterization for the guard, option,
+embedded pass-context and three callback identities, complete nested schemas,
+raw-result identity requirement, phase neighbors, observation-only status,
+and independent routes. The expected inventory reduction after a correct
+implementation is 47 to 46. No production or test change was made during this
+audit.
