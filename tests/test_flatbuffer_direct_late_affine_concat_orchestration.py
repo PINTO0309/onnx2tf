@@ -8,11 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.conv_mul_affine_fold_compat import (
-    optimize_fold_conv_mul_add_affine_chains,
-)
-from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
-    run_late_concat_layout_cleanup,
+from onnx2tf.tflite_builder.passes import (
+    late_affine_concat_orchestration,
 )
 
 
@@ -31,10 +28,6 @@ OWNER = "run_late_affine_concat_cleanup"
 CHILD_OWNERS = (
     "optimize_fold_conv_mul_add_affine_chains",
     "run_late_concat_layout_cleanup",
-)
-CURRENT_CHILD_OWNERS = (
-    "_optimize_fold_conv_mul_add_affine_chains",
-    CHILD_OWNERS[1],
 )
 RESULT_TARGETS = (
     "_late_cost_volume_conv_affine_stats",
@@ -119,45 +112,26 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_late_affine_concat_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    statements = tuple(
-        next(
-            statement
-            for statement in lowerer.body
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    indices = tuple(lowerer.body.index(statement) for statement in statements)
-    assert indices == (indices[0], indices[0] + 1)
-    assert _phase_id(lowerer.body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    successor = lowerer.body[indices[-1] + 1]
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert call.keywords == []
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
     assert len(successor.body) == 1
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
     assert _call_name(successor.body[0]) == SUCCESSOR_OWNER
-    assert tuple(_call_name(statement) for statement in statements) == (
-        CURRENT_CHILD_OWNERS
-    )
-
-    affine_call = _call(statements[0])
-    concat_call = _call(statements[1])
-    assert affine_call is not None
-    assert concat_call is not None
-    assert [ast.unparse(argument) for argument in affine_call.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in affine_call.keywords
-    } == {
-        "enable_conv_add_only_fold": "True",
-        "layout_state": "session.layout_state",
-    }
-    assert [ast.unparse(argument) for argument in concat_call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert concat_call.keywords == []
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -172,19 +146,13 @@ def test_late_affine_concat_current_boundary_and_schema() -> None:
         diagnostics=[],
     )
     assert (
-        optimize_fold_conv_mul_add_affine_chains(
-            context.model_ir,
-            enable_conv_add_only_fold=True,
-            layout_state=context.layout_state,
-        ),
-        run_late_concat_layout_cleanup(context),
-    ) == EXPECTED_SCHEMAS
+        late_affine_concat_orchestration.run_late_affine_concat_cleanup(
+            context
+        )
+        == EXPECTED_SCHEMAS
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late affine/Concat tail has no shared-context owner",
-)
 def test_late_affine_concat_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -236,3 +204,59 @@ def test_late_affine_concat_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_late_affine_concat_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("late_affine_concat_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    affine_result = {"affine": 1}
+    concat_result = tuple({f"concat_{index}": index} for index in range(4))
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def _affine(
+        active_model_ir: ModelIR,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[0], active_model_ir, kwargs))
+        return affine_result
+
+    def _concat(
+        active_context: ModelIRPassContext,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[1], active_context, {}))
+        return concat_result
+
+    monkeypatch.setattr(
+        late_affine_concat_orchestration,
+        CHILD_OWNERS[0],
+        _affine,
+    )
+    monkeypatch.setattr(
+        late_affine_concat_orchestration,
+        CHILD_OWNERS[1],
+        _concat,
+    )
+
+    actual = late_affine_concat_orchestration.run_late_affine_concat_cleanup(
+        context
+    )
+    assert actual == (affine_result, concat_result)
+    assert actual[0] is affine_result
+    assert actual[1] is concat_result
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context.model_ir,
+            {
+                "enable_conv_add_only_fold": True,
+                "layout_state": context.layout_state,
+            },
+        ),
+        (CHILD_OWNERS[1], context, {}),
+    ]

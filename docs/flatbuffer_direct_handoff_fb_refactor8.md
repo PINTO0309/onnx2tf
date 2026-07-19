@@ -5155,3 +5155,35 @@ mapping and raw four-result Concat tuple unchanged, replace only the two
 unconsumed lowerer locals, and preserve both outer boundaries. Run affected
 and standard gates sequentially, then commit and push only. Never create,
 update, or reopen a pull request.
+
+## Late affine/Concat composite implementation checkpoint
+
+The characterized two-stage owner is now implemented in
+`passes/late_affine_concat_orchestration.py`. It forwards the shared model and
+LayoutState to indexed Conv Mul/Add-affine folding with the original fixed
+`enable_conv_add_only_fold=True` policy, then forwards the exact shared
+`ModelIRPassContext` to the existing late Concat/layout composite. It returns
+the affine mapping and the complete nested Concat tuple unchanged and in the
+original order.
+
+The lowerer replaces only the two unconsumed observation locals with
+`_late_affine_concat_results`. The `cleanup.late.ndhwc_cost_volume` phase
+record remains the immediate predecessor; the optional elementwise-fanout
+guard remains the immediate successor. Independent affine routes,
+compatibility wrappers, child owners, graph mutation behavior, and the
+128-ID/128-owner phase store remain unchanged.
+
+Sequential core-only `uv` validation passed: focused 3, complete affected
+378, terminal-layout/efficiency 92, core 55, result contracts 196,
+phase-store 2, and TensorFlow import-blocking/default-direct/`-cotof` 11.
+Owner-aware structural coverage and runtime callback injection prove exact
+order, state identity, fixed policy, nested schema, outer boundaries, and raw
+result identity. No test is failing and no new production issue is known. No
+real-model conversion was repeated for this ownership-only move.
+
+At resume, rerun the read-only inventory of remaining unconsumed lowerer
+results. Characterize the next smallest source-adjacent, semantically closed
+cluster before changing production, and keep all validation sequential and
+single-process under `uv`. Commit and push each completed checkpoint. A pull
+request may be created only when the user explicitly requests it at that
+time.

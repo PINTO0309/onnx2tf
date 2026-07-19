@@ -267,8 +267,8 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     run_gate_layout,
     run_late_ndhwc_cost_volume_layout_cleanup,
 )
-from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
-    run_late_concat_layout_cleanup,
+from onnx2tf.tflite_builder.passes.late_affine_concat_orchestration import (
+    run_late_affine_concat_cleanup,
 )
 from onnx2tf.tflite_builder.passes.late_reshape_shuffle_attention_window_orchestration import (
     run_late_reshape_shuffle_attention_window_cleanup,
@@ -5097,14 +5097,7 @@ def lower_onnx_to_ir(
             shared_model_ir_pass_context,
         ),
     )
-    _late_cost_volume_conv_affine_stats = (
-        _optimize_fold_conv_mul_add_affine_chains(
-            model_ir,
-            enable_conv_add_only_fold=True,
-            layout_state=session.layout_state,
-        )
-    )
-    _late_concat_layout_results = run_late_concat_layout_cleanup(
+    _late_affine_concat_results = run_late_affine_concat_cleanup(
         shared_model_ir_pass_context,
     )
     if optimize_layout_transpose_chains:

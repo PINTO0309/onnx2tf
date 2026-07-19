@@ -5948,3 +5948,37 @@ architecture, and phase-store contracts. The sole expected failure requires a
 new shared-context owner returning both raw results unchanged. Production,
 public behavior, dependency boundaries, and the exactly 128-ID/128-owner
 store remain unchanged.
+
+## Late affine/Concat composite implementation
+
+`passes/late_affine_concat_orchestration.py` now owns the characterized
+two-stage sequence. It first invokes indexed Conv Mul/Add-affine folding with
+the shared `context.model_ir`, the exact shared `context.layout_state`, and
+the fixed `enable_conv_add_only_fold=True` policy. It then invokes the
+existing four-stage late Concat/layout owner with the exact same
+`ModelIRPassContext`.
+
+The lowerer replaces only `_late_cost_volume_conv_affine_stats` and
+`_late_concat_layout_results` with `_late_affine_concat_results`. The new
+owner returns the affine mapping and the complete nested Concat/layout tuple
+unchanged and in source order; it does not copy, flatten, normalize, or use
+either observation as control flow. The existing affine compatibility
+wrapper and every independent call route remain available.
+
+The phase-recorded `cleanup.late.ndhwc_cost_volume` boundary remains the
+immediate predecessor. The optional `optimize_layout_transpose_chains`
+elementwise-fanout guard remains the immediate successor and is not absorbed
+or reinterpreted. Owner-aware affine, Concat/layout, cost-volume,
+shared-context, terminal-boundary, architecture, and phase-store tests now
+follow both specialized operations through the outer owner. Runtime callback
+injection proves fixed child order, exact ModelIR/LayoutState/context
+identity, fixed affine policy, and both raw-result identities.
+
+Final sequential validation under core-only `uv` passed with 3 focused tests,
+378 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. No graph rewrite, guard, phase result,
+public API, artifact, dependency, or TensorFlow boundary changed. The bounded
+store remains exactly 128 IDs and 128 owners. No real-model conversion was
+repeated because this checkpoint is a straight-line ownership extraction
+with direct state, schema, order, boundary, and result-identity coverage.

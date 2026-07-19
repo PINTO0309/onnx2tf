@@ -145,6 +145,15 @@ FINAL_BOUNDARY_COMPOSITE_OWNER_PATH = (
 )
 FINAL_BOUNDARY_COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
 FINAL_BOUNDARY_COMPOSITE_RESULT = "_final_boundary_slice_concat_results"
+LATE_AFFINE_CONCAT_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_affine_concat_orchestration.py"
+)
+LATE_AFFINE_CONCAT_OWNER = "run_late_affine_concat_cleanup"
+LATE_AFFINE_CONCAT_RESULT = "_late_affine_concat_results"
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -230,6 +239,46 @@ def _final_boundary_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
     assert assignment.value.func.id == FINAL_BOUNDARY_COMPOSITE_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "terminal_slice_concat_recovery_context"
+    ]
+    assert assignment.value.keywords == []
+    return assignment
+
+
+def _late_affine_concat_owner_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LATE_AFFINE_CONCAT_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == LATE_AFFINE_CONCAT_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+    ]
+
+
+def _late_affine_concat_assignment(body: list[ast.stmt]) -> ast.Assign:
+    assignment = next(
+        statement
+        for statement in body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == LATE_AFFINE_CONCAT_RESULT
+    )
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == LATE_AFFINE_CONCAT_OWNER
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "shared_model_ir_pass_context"
     ]
     assert assignment.value.keywords == []
     return assignment
@@ -1589,9 +1638,11 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == activation_name
     ]
-    assert len(affine_indices) == 3
+    late_affine_calls = _late_affine_concat_owner_calls(affine_name)
+    assert len(affine_indices) == 2
+    assert len(affine_indices) + len(late_affine_calls) == 3
     assert len(activation_indices) == 2
-    assert activation_indices == [index + 1 for index in affine_indices[:2]]
+    assert activation_indices == [index + 1 for index in affine_indices]
 
     expected_phase_ids = (
         (
@@ -1606,7 +1657,7 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
         ),
     )
     for pair_index, (affine_index, activation_index) in enumerate(
-        zip(affine_indices[:2], activation_indices)
+        zip(affine_indices, activation_indices)
     ):
         affine = body[affine_index]
         _assert_phase_result_record(
@@ -1673,43 +1724,38 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
     assert _call_name(_statement_call(body[activation_indices[1] + 1])) == (
         "_optimize_transpose_pre_argmax_nhwc_terminal_chains"
     )
-    late_affine = body[affine_indices[2]]
-    assert isinstance(late_affine, ast.Assign)
-    assert isinstance(late_affine.targets[0], ast.Name)
-    assert late_affine.targets[0].id == "_late_cost_volume_conv_affine_stats"
+    late_affine = late_affine_calls[0]
+    assert [ast.unparse(argument) for argument in late_affine.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late_affine.keywords
+    } == {
+        "enable_conv_add_only_fold": "True",
+        "layout_state": "context.layout_state",
+    }
 
 
 def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
     body = _lowerer_body()
     affine_name = "_optimize_fold_conv_mul_add_affine_chains"
-    affine_indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == affine_name
-    ]
-    assert len(affine_indices) == 3
-    late_index = affine_indices[2]
-
-    late_affine = body[late_index]
-    assert isinstance(late_affine, ast.Assign)
-    assert len(late_affine.targets) == 1
-    assert isinstance(late_affine.targets[0], ast.Name)
-    assert late_affine.targets[0].id == "_late_cost_volume_conv_affine_stats"
-    late_call = late_affine.value
-    assert isinstance(late_call, ast.Call)
-    assert isinstance(late_call.func, ast.Name)
-    assert late_call.func.id == affine_name
+    late_calls = _late_affine_concat_owner_calls(affine_name)
+    assert len(late_calls) == 1
+    late_call = late_calls[0]
     assert [ast.unparse(argument) for argument in late_call.args] == [
-        "model_ir"
+        "context.model_ir"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in late_call.keywords
     } == {
         "enable_conv_add_only_fold": "True",
-        "layout_state": "session.layout_state",
+        "layout_state": "context.layout_state",
     }
 
+    composite = _late_affine_concat_assignment(body)
+    late_index = body.index(composite)
     _assert_phase_result_record(
         body[late_index - 1],
         phase_id="cleanup.late.ndhwc_cost_volume",
@@ -1719,39 +1765,45 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
         ),
     )
 
-    following_composite = body[late_index + 1]
-    assert isinstance(following_composite, ast.Assign)
-    assert isinstance(following_composite.targets[0], ast.Name)
-    assert following_composite.targets[0].id == "_late_concat_layout_results"
-    assert ast.unparse(following_composite.value) == (
-        "run_late_concat_layout_cleanup(shared_model_ir_pass_context)"
+    following = body[late_index + 1]
+    assert isinstance(following, ast.If)
+    assert ast.unparse(following.test) == "optimize_layout_transpose_chains"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_late_cost_volume_conv_affine_stats"
+        for statement in body
+        for node in ast.walk(statement)
     )
 
 
 def test_primary_path_retains_late_concat_composite_results() -> None:
     body = _lowerer_body()
-    result_index = next(
-        index
-        for index, statement in enumerate(body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_concat_layout_results"
-    )
+    result = _late_affine_concat_assignment(body)
+    result_index = body.index(result)
 
     previous = body[result_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_cost_volume_conv_affine_stats"
-    result = body[result_index]
-    assert isinstance(result, ast.Assign)
-    assert ast.unparse(result.value) == (
-        "run_late_concat_layout_cleanup(shared_model_ir_pass_context)"
+    _assert_phase_result_record(
+        previous,
+        phase_id="cleanup.late.ndhwc_cost_volume",
+        owner_expression=(
+            "run_late_ndhwc_cost_volume_layout_cleanup("
+            "shared_model_ir_pass_context)"
+        ),
     )
+    concat_calls = _late_affine_concat_owner_calls(
+        "run_late_concat_layout_cleanup"
+    )
+    assert len(concat_calls) == 1
+    assert [ast.unparse(argument) for argument in concat_calls[0].args] == [
+        "context"
+    ]
+    assert concat_calls[0].keywords == []
     assert not any(
         isinstance(node, ast.Name)
         and node.id
         in {
+            "_late_cost_volume_conv_affine_stats",
+            "_late_concat_layout_results",
             "late_concat_layout_state_scope",
             "_late_concat_axis3_const_layout_stats",
             "_late_concat_dequant_quantize_layout_stats",
@@ -2044,7 +2096,7 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
     expected = (
         (
             "_late_concat_elementwise_fanout_stats",
-            "_late_concat_layout_results",
+            LATE_AFFINE_CONCAT_RESULT,
             LATE_LAYOUT_COMPOSITE_OWNER,
         ),
         (

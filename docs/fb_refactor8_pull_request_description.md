@@ -1250,3 +1250,15 @@ phase-recorded NDHWC cost-volume predecessor, and optional elementwise-fanout
 successor. Production remains unchanged pending a two-stage owner. Focused and
 affected validation report `1 passed, 1 xfailed` and
 `376 passed, 1 xfailed`.
+
+The latest checkpoint implements that late affine/Concat owner. The indexed
+affine child receives the shared ModelIR and LayoutState with the original
+`enable_conv_add_only_fold=True` policy; the existing four-stage late
+Concat/layout child receives the exact same shared context. Both raw results,
+including the nested Concat tuple, are returned unchanged and in source
+order. The lowerer replaces only the two unconsumed locals. The phase-recorded
+NDHWC cost-volume predecessor and optional elementwise-fanout successor remain
+outside the owner, while compatibility wrappers and independent affine routes
+remain intact. Runtime identity coverage, 378 affected tests, and all standard
+sequential gates pass; public behavior, graph rewrites, TensorFlow isolation,
+and the exactly 128-ID/128-owner store are unchanged.

@@ -8487,7 +8487,13 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     successor = lowerer.body[record_index + 1]
     assert isinstance(successor, ast.Assign)
     assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == "_late_cost_volume_conv_affine_stats"
+    assert successor.targets[0].id == "_late_affine_concat_results"
+    successor_call = _statement_call(successor)
+    assert successor_call.func.id == "run_late_affine_concat_cleanup"
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert successor_call.keywords == []
     assert not any(
         isinstance(node, ast.Name)
         and node.id
@@ -8511,6 +8517,13 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
         / "passes"
         / "late_concat_layout_orchestration.py"
     )
+    outer_orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_affine_concat_orchestration.py"
+    )
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowerer = next(
         node
@@ -8525,6 +8538,15 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
         for node in orchestration_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "run_late_concat_layout_cleanup"
+    )
+    outer_tree = ast.parse(
+        outer_orchestration_path.read_text(encoding="utf-8")
+    )
+    outer_owner = next(
+        node
+        for node in outer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_affine_concat_cleanup"
     )
 
     def _statement_call(statement: ast.stmt) -> ast.Call:
@@ -8569,22 +8591,33 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_concat_layout_results"
+        and statement.targets[0].id == "_late_affine_concat_results"
     )
     assignment_index = lowerer.body.index(composite)
     composite_call = _statement_call(composite)
-    assert composite_call.func.id == "run_late_concat_layout_cleanup"
+    assert composite_call.func.id == "run_late_affine_concat_cleanup"
     assert [ast.unparse(argument) for argument in composite_call.args] == [
         "shared_model_ir_pass_context"
     ]
     assert composite_call.keywords == []
 
     previous_boundary = lowerer.body[assignment_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_late_cost_volume_conv_affine_stats"
+    assert isinstance(previous_boundary, ast.Expr)
+    assert ast.literal_eval(previous_boundary.value.args[0]) == (
+        "cleanup.late.ndhwc_cost_volume"
     )
+    outer_calls = [
+        node
+        for node in ast.walk(outer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_concat_layout_cleanup"
+    ]
+    assert len(outer_calls) == 1
+    assert [ast.unparse(argument) for argument in outer_calls[0].args] == [
+        "context"
+    ]
+    assert outer_calls[0].keywords == []
     next_boundary = lowerer.body[assignment_index + 1]
     assert isinstance(next_boundary, ast.If)
     next_raw_boundary = _statement_call(next_boundary.body[0])
@@ -19269,7 +19302,29 @@ def test_indexed_conv_mul_affine_owner_precedes_compat_fallback() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    late_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_affine_concat_orchestration.py"
+    )
+    late_owner_tree = ast.parse(late_owner_path.read_text(encoding="utf-8"))
+    late_owner = next(
+        node
+        for node in late_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_affine_concat_cleanup"
+    )
+    late_owner_calls = [
+        node
+        for node in ast.walk(late_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name.removeprefix("_")
+    ]
+    assert len(production_calls) == 2
+    assert len(production_calls) + len(late_owner_calls) == 3
     for call in production_calls:
         layout_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "layout_state"
@@ -19278,6 +19333,16 @@ def test_indexed_conv_mul_affine_owner_precedes_compat_fallback() -> None:
         assert isinstance(layout_keyword.value.value, ast.Name)
         assert layout_keyword.value.value.id == "session"
         assert layout_keyword.value.attr == "layout_state"
+    assert [
+        ast.unparse(argument) for argument in late_owner_calls[0].args
+    ] == ["context.model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late_owner_calls[0].keywords
+    } == {
+        "enable_conv_add_only_fold": "True",
+        "layout_state": "context.layout_state",
+    }
 
 
 def test_indexed_factorized_expanddims_owner_precedes_fallback() -> None:

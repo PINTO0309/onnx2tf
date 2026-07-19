@@ -23,8 +23,17 @@ OWNER_PATH = (
 )
 OWNER = "run_late_concat_layout_cleanup"
 RESULT_TARGET = "_late_concat_layout_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_affine_concat_orchestration.py"
+)
+OUTER_OWNER = "run_late_affine_concat_cleanup"
+OUTER_RESULT_TARGET = "_late_affine_concat_results"
 SCOPE_TARGET = "late_concat_layout_state_scope"
-PREDECESSOR_TARGET = "_late_cost_volume_conv_affine_stats"
+PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
 OLD_RESULT_TARGETS = (
     "_late_concat_axis3_const_layout_stats",
     "_late_concat_dequant_quantize_layout_stats",
@@ -58,21 +67,53 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(
+        statement.value, ast.Call
+    ):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
+def _outer_calls() -> list[ast.Call]:
+    owner = _functions(OUTER_OWNER_PATH)[OUTER_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+
+
 def test_late_concat_layout_cluster_uses_one_composite_result_outside_store() -> None:
     lowerer = _lowerer()
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGET
+        if _single_target(statement) == OUTER_RESULT_TARGET
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_concat_layout_cleanup(shared_model_ir_pass_context)"
+        "run_late_affine_concat_cleanup(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
+    assert len(_outer_calls()) == 1
+    assert [ast.unparse(argument) for argument in _outer_calls()[0].args] == [
+        "context"
+    ]
     assert not any(
         isinstance(node, ast.Name)
         and node.id in {SCOPE_TARGET, *OLD_RESULT_TARGETS}
@@ -105,16 +146,21 @@ def test_late_concat_layout_cluster_uses_one_composite_owner() -> None:
     assignments = [
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGET
+        if _single_target(statement) == OUTER_RESULT_TARGET
     ]
     assert len(assignments) == 1
     assignment = assignments[0]
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_concat_layout_cleanup(shared_model_ir_pass_context)"
+        "run_late_affine_concat_cleanup(shared_model_ir_pass_context)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     assert isinstance(lowerer.body[index + 1], ast.If)
+    assert len(_outer_calls()) == 1
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGET
+        for node in ast.walk(lowerer)
+    )
     assert not any(
         isinstance(node, ast.Name)
         and node.id in {SCOPE_TARGET, *OLD_RESULT_TARGETS}
