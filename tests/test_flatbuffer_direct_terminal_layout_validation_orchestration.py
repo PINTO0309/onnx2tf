@@ -27,9 +27,21 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
 
 
 def _call_name(call: ast.Call | None) -> str | None:
-    if call is None or not isinstance(call.func, ast.Name):
+    if call is None:
         return None
-    return call.func.id
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+        and isinstance(call.args[1].func, ast.Name)
+    ):
+        return call.args[1].func.id
+    return None
 
 
 def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
@@ -1021,22 +1033,15 @@ def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
 
     core_index, final_index = direct_indices
     core = body[core_index]
-    assert isinstance(core, ast.Assign)
-    assert len(core.targets) == 1
-    assert isinstance(core.targets[0], ast.Name)
-    assert core.targets[0].id == "_core_cleanup_consecutive_mul_stats"
-    call = core.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == owner_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
+    _assert_phase_result_record(
+        core,
+        phase_id="cleanup.core.consecutive_mul",
+        owner_expression=(
+            "run_consecutive_mul_constants_cleanup(model_ir, "
+            "layout_state=session.layout_state, "
+            "diagnostics=session.diagnostics)"
+        ),
+    )
 
     assert _call_name(_statement_call(body[core_index - 2])) == (
         "_optimize_fuse_pseudo_leakyrelu_chains"
@@ -1070,38 +1075,31 @@ def test_primary_path_retains_core_cleanup_fusion_results() -> None:
     assert consecutive_index == yolo_index + 1
 
     expected = (
-        (
-            pseudo_index,
-            "_core_cleanup_pseudo_leakyrelu_stats",
-            pseudo_name,
-        ),
-        (
-            yolo_index,
-            "_core_cleanup_yolo_decode_stats",
-            yolo_name,
-        ),
+        (pseudo_index, "cleanup.core.pseudo_leakyrelu", pseudo_name),
+        (yolo_index, "cleanup.core.yolo_decode", yolo_name),
     )
-    for index, target_name, function_name in expected:
+    for index, phase_id, function_name in expected:
         statement = body[index]
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == function_name
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert call.keywords == []
+        _assert_phase_result_record(
+            statement,
+            phase_id=phase_id,
+            owner_expression=f"{function_name}(model_ir)",
+        )
 
     progress = body[pseudo_index - 1]
     assert ast.unparse(progress) == (
         "_set_post_progress_desc('core cleanup passes')"
     )
     consecutive = body[consecutive_index]
-    assert isinstance(consecutive, ast.Assign)
-    assert isinstance(consecutive.targets[0], ast.Name)
-    assert consecutive.targets[0].id == "_core_cleanup_consecutive_mul_stats"
+    _assert_phase_result_record(
+        consecutive,
+        phase_id="cleanup.core.consecutive_mul",
+        owner_expression=(
+            "run_consecutive_mul_constants_cleanup(model_ir, "
+            "layout_state=session.layout_state, "
+            "diagnostics=session.diagnostics)"
+        ),
+    )
 
 
 def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
@@ -1123,10 +1121,7 @@ def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
     assert qdq_indices == [index + 1 for index in sanitizer_indices]
 
     expected_targets = (
-        (
-            "_core_cleanup_terminal_dequant_stats",
-            "_core_cleanup_terminal_qdq_stats",
-        ),
+        (None, None),
         (
             "_terminal_cleanup_terminal_dequant_stats",
             "_terminal_cleanup_terminal_qdq_stats",
@@ -1136,10 +1131,20 @@ def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
         zip(sanitizer_indices, qdq_indices)
     ):
         sanitizer = body[sanitizer_index]
-        assert isinstance(sanitizer, ast.Assign)
-        assert isinstance(sanitizer.targets[0], ast.Name)
-        assert sanitizer.targets[0].id == expected_targets[pair_index][0]
-        sanitizer_call = sanitizer.value
+        if pair_index == 0:
+            _assert_phase_result_record(
+                sanitizer,
+                phase_id="cleanup.core.terminal_dequant",
+                owner_expression=(
+                    "_sanitize_terminal_transpose_before_dequantize(model_ir)"
+                ),
+            )
+            sanitizer_call = _phase_result_owner(sanitizer)
+        else:
+            assert isinstance(sanitizer, ast.Assign)
+            assert isinstance(sanitizer.targets[0], ast.Name)
+            assert sanitizer.targets[0].id == expected_targets[pair_index][0]
+            sanitizer_call = sanitizer.value
         assert isinstance(sanitizer_call, ast.Call)
         assert isinstance(sanitizer_call.func, ast.Name)
         assert sanitizer_call.func.id == sanitizer_name
@@ -1149,10 +1154,22 @@ def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
         assert sanitizer_call.keywords == []
 
         qdq = body[qdq_index]
-        assert isinstance(qdq, ast.Assign)
-        assert isinstance(qdq.targets[0], ast.Name)
-        assert qdq.targets[0].id == expected_targets[pair_index][1]
-        qdq_call = qdq.value
+        if pair_index == 0:
+            _assert_phase_result_record(
+                qdq,
+                phase_id="cleanup.core.terminal_qdq",
+                owner_expression=(
+                    "run_terminal_quantize_dequantize_cleanup(model_ir, "
+                    "layout_state=session.layout_state, "
+                    "diagnostics=session.diagnostics)"
+                ),
+            )
+            qdq_call = _phase_result_owner(qdq)
+        else:
+            assert isinstance(qdq, ast.Assign)
+            assert isinstance(qdq.targets[0], ast.Name)
+            assert qdq.targets[0].id == expected_targets[pair_index][1]
+            qdq_call = qdq.value
         assert isinstance(qdq_call, ast.Call)
         assert isinstance(qdq_call.func, ast.Name)
         assert qdq_call.func.id == qdq_name
@@ -1171,9 +1188,15 @@ def test_primary_path_retains_terminal_quantization_cleanup_results() -> None:
         )
 
     first_previous = body[sanitizer_indices[0] - 1]
-    assert isinstance(first_previous, ast.Assign)
-    assert isinstance(first_previous.targets[0], ast.Name)
-    assert first_previous.targets[0].id == "_core_cleanup_consecutive_mul_stats"
+    _assert_phase_result_record(
+        first_previous,
+        phase_id="cleanup.core.consecutive_mul",
+        owner_expression=(
+            "run_consecutive_mul_constants_cleanup(model_ir, "
+            "layout_state=session.layout_state, "
+            "diagnostics=session.diagnostics)"
+        ),
+    )
     assert ast.unparse(body[sanitizer_indices[1] - 1]) == (
         "_set_post_progress_desc('terminal cleanup passes')"
     )
@@ -1198,11 +1221,7 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
     assert activation_indices == [index + 1 for index in affine_indices[:2]]
 
     expected_targets = (
-        (
-            "_core_cleanup_conv_affine_stats",
-            "_core_cleanup_conv_activation_stats",
-            "_core_cleanup_terminal_qdq_stats",
-        ),
+        (None, None, None),
         (
             "_terminal_cleanup_conv_affine_stats",
             "_terminal_cleanup_conv_activation_stats",
@@ -1213,10 +1232,22 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
         zip(affine_indices[:2], activation_indices)
     ):
         affine = body[affine_index]
-        assert isinstance(affine, ast.Assign)
-        assert isinstance(affine.targets[0], ast.Name)
-        assert affine.targets[0].id == expected_targets[pair_index][0]
-        affine_call = affine.value
+        if pair_index == 0:
+            _assert_phase_result_record(
+                affine,
+                phase_id="cleanup.core.conv_affine",
+                owner_expression=(
+                    "_optimize_fold_conv_mul_add_affine_chains(model_ir, "
+                    "enable_conv_add_only_fold=True, "
+                    "layout_state=session.layout_state)"
+                ),
+            )
+            affine_call = _phase_result_owner(affine)
+        else:
+            assert isinstance(affine, ast.Assign)
+            assert isinstance(affine.targets[0], ast.Name)
+            assert affine.targets[0].id == expected_targets[pair_index][0]
+            affine_call = affine.value
         assert isinstance(affine_call, ast.Call)
         assert isinstance(affine_call.func, ast.Name)
         assert affine_call.func.id == affine_name
@@ -1232,10 +1263,21 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
         }
 
         activation = body[activation_index]
-        assert isinstance(activation, ast.Assign)
-        assert isinstance(activation.targets[0], ast.Name)
-        assert activation.targets[0].id == expected_targets[pair_index][1]
-        activation_call = activation.value
+        if pair_index == 0:
+            _assert_phase_result_record(
+                activation,
+                phase_id="cleanup.core.conv_activation",
+                owner_expression=(
+                    "_optimize_fuse_conv_activation_chains(model_ir, "
+                    "layout_state=session.layout_state)"
+                ),
+            )
+            activation_call = _phase_result_owner(activation)
+        else:
+            assert isinstance(activation, ast.Assign)
+            assert isinstance(activation.targets[0], ast.Name)
+            assert activation.targets[0].id == expected_targets[pair_index][1]
+            activation_call = activation.value
         assert isinstance(activation_call, ast.Call)
         assert isinstance(activation_call.func, ast.Name)
         assert activation_call.func.id == activation_name
@@ -1248,9 +1290,20 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
         } == {"layout_state": "session.layout_state"}
 
         predecessor = body[affine_index - 1]
-        assert isinstance(predecessor, ast.Assign)
-        assert isinstance(predecessor.targets[0], ast.Name)
-        assert predecessor.targets[0].id == expected_targets[pair_index][2]
+        if pair_index == 0:
+            _assert_phase_result_record(
+                predecessor,
+                phase_id="cleanup.core.terminal_qdq",
+                owner_expression=(
+                    "run_terminal_quantize_dequantize_cleanup(model_ir, "
+                    "layout_state=session.layout_state, "
+                    "diagnostics=session.diagnostics)"
+                ),
+            )
+        else:
+            assert isinstance(predecessor, ast.Assign)
+            assert isinstance(predecessor.targets[0], ast.Name)
+            assert predecessor.targets[0].id == expected_targets[pair_index][2]
 
     _assert_phase_result_record(
         body[activation_indices[0] + 1],

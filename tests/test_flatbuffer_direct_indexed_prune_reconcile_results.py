@@ -53,7 +53,18 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -192,18 +203,38 @@ def test_indexed_prune_reconcile_phase_boundaries_are_explicit() -> None:
     lowerer = _lowerer()
     locations = _owner_locations(lowerer)
     assert len(locations) == 3
-    for (
-        block,
-        index,
-    ), target, predecessor_target, successor in zip(
-        locations,
-        RESULT_TARGETS,
-        PREDECESSOR_TARGETS,
-        SUCCESSORS,
+    for occurrence, (
+        (block, index),
+        target,
+        predecessor_target,
+        successor,
+    ) in enumerate(
+        zip(
+            locations,
+            RESULT_TARGETS,
+            PREDECESSOR_TARGETS,
+            SUCCESSORS,
+        )
     ):
         invocation = block[index]
-        assert _single_target(invocation) == target
-        assert _single_target(block[index - 1]) == predecessor_target
+        if occurrence == 0:
+            assert ast.unparse(invocation) == (
+                "session.record_phase_result("
+                "'cleanup.core.prune_reconcile', "
+                "run_indexed_prune_reconcile_cleanup(model_ir, "
+                "layout_state=session.layout_state))"
+            )
+            assert ast.unparse(block[index - 1]) == (
+                "session.record_phase_result("
+                "'cleanup.core.squeeze_reshape_identity', "
+                "run_squeeze_reshape_identity_cleanup(model_ir, "
+                "include_unary_passthrough=True, "
+                "layout_state=session.layout_state, "
+                "diagnostics=session.diagnostics))"
+            )
+        else:
+            assert _single_target(invocation) == target
+            assert _single_target(block[index - 1]) == predecessor_target
         call = _statement_call(invocation)
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == [
@@ -273,7 +304,9 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
         for block, index in _owner_locations(lowerer)
     ]
     assert tuple(_single_target(statement) for statement in invocations) == (
-        RESULT_TARGETS
+        None,
+        RESULT_TARGETS[1],
+        RESULT_TARGETS[2],
     )
     for invocation in invocations:
         call = _statement_call(invocation)

@@ -16,8 +16,8 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 OWNER = "_resolve_dynamic_reshape_shapes"
 RESULT_TARGET = "_core_cleanup_dynamic_reshape_stats"
 PHASE_ID = "shape_resolution.core.dynamic_reshape"
-PREDECESSOR_TARGET = "_core_cleanup_conv_activation_stats"
-SUCCESSOR_TARGET = "_core_cleanup_squeeze_reshape_identity_stats"
+PREDECESSOR_PHASE_ID = "cleanup.core.conv_activation"
+SUCCESSOR_PHASE_ID = "cleanup.core.squeeze_reshape_identity"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -35,13 +35,6 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
     return statement.value if isinstance(statement.value, ast.Call) else None
 
 
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
-
-
 def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     call = _statement_call(statement)
     if (
@@ -57,6 +50,13 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     return call.args[1]
 
 
+def _phase_result_id(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if _phase_result_owner(statement) is None or call is None:
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def _core_invocation() -> tuple[ast.FunctionDef, int]:
     lowerer = _lowerer()
     indices = [
@@ -67,7 +67,9 @@ def _core_invocation() -> tuple[ast.FunctionDef, int]:
         and _phase_result_owner(statement).func.id == OWNER
     ]
     assert len(indices) == 1
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
+    assert _phase_result_id(lowerer.body[indices[0] - 1]) == (
+        PREDECESSOR_PHASE_ID
+    )
     return lowerer, indices[0]
 
 
@@ -136,8 +138,8 @@ def test_core_dynamic_reshape_boundary_is_explicit() -> None:
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
     assert call.keywords == []
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_result_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_result_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
 
 
 def test_core_dynamic_reshape_result_is_retained_for_observation() -> None:
@@ -150,8 +152,8 @@ def test_core_dynamic_reshape_result_is_retained_for_observation() -> None:
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
     assert call.keywords == []
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_result_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_result_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET

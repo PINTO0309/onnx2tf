@@ -1101,3 +1101,25 @@ execution, progress boundaries, and the dynamic-Reshape record position. Then
 update all existing result-retention contracts and the bounded-store inventory,
 validate, document, commit, and push. Never create, update, or reopen a pull
 request.
+
+## Core cleanup phase-result implementation
+
+The nine unconditional core-cleanup mapping results now use stable
+`cleanup.core.*` records. Their owner expressions, order, progress stage, and
+the intervening dynamic-Reshape record are unchanged. No defaults existed in
+this family. The bounded store now covers 60 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected structural contracts: `76 passed in 2.65s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader affected contracts: `257 passed in 6.27s`;
+- lowerer architecture contracts: `258 passed in 16.75s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite exercised the stored schemas. After committing
+and pushing, inventory the next mapping-only family by execution guard and
+return schema. Keep composite cluster results separate, and account for the
+128-phase session limit before selecting further migrations. Never create,
+update, or reopen a pull request.

@@ -3353,24 +3353,43 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert "remove_operator" in fusion_call_names
     assert "_prune_unused_tensors" in fusion_call_names
 
-    direct_production_assignments = [
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "_optimize_fuse_conv_activation_chains"
-    ]
-    assert [
-        statement.targets[0].id
-        for statement in direct_production_assignments
-        if isinstance(statement.targets[0], ast.Name)
-    ] == [
-        "_core_cleanup_conv_activation_stats",
-        "_terminal_cleanup_conv_activation_stats",
-    ]
-    for statement in direct_production_assignments:
-        call = statement.value
+    direct_production_occurrences: list[tuple[ast.stmt, ast.Call]] = []
+    for statement in lowerer.body:
+        if not isinstance(statement, (ast.Assign, ast.Expr)):
+            continue
+        outer_call = statement.value
+        if not isinstance(outer_call, ast.Call):
+            continue
+        call = outer_call
+        if (
+            isinstance(outer_call.func, ast.Attribute)
+            and isinstance(outer_call.func.value, ast.Name)
+            and outer_call.func.value.id == "session"
+            and outer_call.func.attr == "record_phase_result"
+            and len(outer_call.args) == 2
+            and isinstance(outer_call.args[1], ast.Call)
+        ):
+            call = outer_call.args[1]
+        if (
+            isinstance(call.func, ast.Name)
+            and call.func.id == "_optimize_fuse_conv_activation_chains"
+        ):
+            direct_production_occurrences.append((statement, call))
+    assert len(direct_production_occurrences) == 2
+    core_statement, _ = direct_production_occurrences[0]
+    assert ast.unparse(core_statement) == (
+        "session.record_phase_result("
+        "'cleanup.core.conv_activation', "
+        "_optimize_fuse_conv_activation_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
+    terminal_statement, _ = direct_production_occurrences[1]
+    assert isinstance(terminal_statement, ast.Assign)
+    assert isinstance(terminal_statement.targets[0], ast.Name)
+    assert terminal_statement.targets[0].id == (
+        "_terminal_cleanup_conv_activation_stats"
+    )
+    for _, call in direct_production_occurrences:
         layout_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "layout_state"
         )

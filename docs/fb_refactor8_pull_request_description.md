@@ -141,10 +141,13 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Fifty-one stable phase IDs
+### Sixty stable phase IDs
 
-The lowerer now records 51 bounded observations covering:
+The lowerer now records 60 bounded observations covering:
 
+- nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
+  decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
+  Squeeze/Reshape, and indexed prune/reconcile cleanup;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -173,7 +176,7 @@ The guarded shape-reconciliation and shape/topology phases use
 invoked-phase-only semantics. A phase omitted by its guard is absent from the
 snapshot. An invoked phase is recorded even when all counters are zero. This
 preserves the distinction between "not invoked" and "invoked but stable" and
-allowed 29 unconsumed all-zero default dictionaries to be removed.
+allowed 30 unconsumed all-zero default dictionaries to be removed.
 
 ## Safety and compatibility
 
@@ -202,7 +205,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 51 phase IDs and owners appear in deterministic source order;
+- all 60 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -230,8 +233,12 @@ Final checkpoint results:
   contracts: **75 passed**;
 - focused post-split, very-late, Split fallback, terminal, and bounded-store
   contracts: **96 passed**;
+- direct core-cleanup, phase-store, dynamic-Reshape, Squeeze/Reshape, indexed
+  prune/reconcile, terminal, and architecture-boundary contracts:
+  **76 passed**;
+- synthetic core runtime contracts: **55 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
-  **196 passed**;
+  **257 passed**;
 - lowerer architecture suite: **258 passed**;
 - targeted Ruff checks: **passed**;
 - Python bytecode compilation: **passed**;

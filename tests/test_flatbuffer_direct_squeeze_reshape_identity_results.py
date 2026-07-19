@@ -42,7 +42,18 @@ def _functions() -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -126,7 +137,7 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
     assert len(locations) == 3
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == RESULT_TARGETS
+    ) == (RESULT_TARGETS[0], None, RESULT_TARGETS[2])
 
     first_body, first_index = locations[0]
     assert _single_target(first_body[first_index - 1]) == (
@@ -137,6 +148,14 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
     )
 
     core_body, core_index = locations[1]
+    assert ast.unparse(core_body[core_index]) == (
+        "session.record_phase_result("
+        "'cleanup.core.squeeze_reshape_identity', "
+        "run_squeeze_reshape_identity_cleanup(model_ir, "
+        "include_unary_passthrough=True, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
+    )
     assert ast.unparse(core_body[core_index - 1]) == (
         "session.record_phase_result("
         "'shape_resolution.core.dynamic_reshape', "

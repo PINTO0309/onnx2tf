@@ -4551,53 +4551,68 @@ def lower_onnx_to_ir(
         )
         _advance_post_progress()
     _set_post_progress_desc("core cleanup passes")
-    _core_cleanup_pseudo_leakyrelu_stats = (
-        _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
+    session.record_phase_result(
+        "cleanup.core.pseudo_leakyrelu",
+        _optimize_fuse_pseudo_leakyrelu_chains(model_ir),
     )
-    _core_cleanup_yolo_decode_stats = (
-        _optimize_yolo_decode_mul_square_anchor_chains(model_ir)
+    session.record_phase_result(
+        "cleanup.core.yolo_decode",
+        _optimize_yolo_decode_mul_square_anchor_chains(model_ir),
     )
-    _core_cleanup_consecutive_mul_stats = (
+    session.record_phase_result(
+        "cleanup.core.consecutive_mul",
         run_consecutive_mul_constants_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
-        )
+        ),
     )
-    _core_cleanup_terminal_dequant_stats = (
-        _sanitize_terminal_transpose_before_dequantize(model_ir)
+    session.record_phase_result(
+        "cleanup.core.terminal_dequant",
+        _sanitize_terminal_transpose_before_dequantize(model_ir),
     )
-    _core_cleanup_terminal_qdq_stats = (
+    session.record_phase_result(
+        "cleanup.core.terminal_qdq",
         run_terminal_quantize_dequantize_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
-        )
+        ),
     )
-    _core_cleanup_conv_affine_stats = _optimize_fold_conv_mul_add_affine_chains(
-        model_ir,
-        enable_conv_add_only_fold=True,
-        layout_state=session.layout_state,
+    session.record_phase_result(
+        "cleanup.core.conv_affine",
+        _optimize_fold_conv_mul_add_affine_chains(
+            model_ir,
+            enable_conv_add_only_fold=True,
+            layout_state=session.layout_state,
+        ),
     )
-    _core_cleanup_conv_activation_stats = _optimize_fuse_conv_activation_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    session.record_phase_result(
+        "cleanup.core.conv_activation",
+        _optimize_fuse_conv_activation_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        ),
     )
     session.record_phase_result(
         "shape_resolution.core.dynamic_reshape",
         _resolve_dynamic_reshape_shapes(model_ir),
     )
-    _core_cleanup_squeeze_reshape_identity_stats = (
+    session.record_phase_result(
+        "cleanup.core.squeeze_reshape_identity",
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             include_unary_passthrough=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
-        )
+        ),
     )
-    _core_cleanup_prune_reconcile_stats = run_indexed_prune_reconcile_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
+    session.record_phase_result(
+        "cleanup.core.prune_reconcile",
+        run_indexed_prune_reconcile_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        ),
     )
     _advance_post_progress()
     if optimize_layout_transpose_chains:

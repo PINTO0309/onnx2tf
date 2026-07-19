@@ -13,7 +13,16 @@ from onnx2tf.tflite_builder.ir import ModelIR
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
+    "_core_cleanup_pseudo_leakyrelu_stats",
+    "_core_cleanup_yolo_decode_stats",
+    "_core_cleanup_consecutive_mul_stats",
+    "_core_cleanup_terminal_dequant_stats",
+    "_core_cleanup_terminal_qdq_stats",
+    "_core_cleanup_conv_affine_stats",
+    "_core_cleanup_conv_activation_stats",
     "_core_cleanup_dynamic_reshape_stats",
+    "_core_cleanup_squeeze_reshape_identity_stats",
+    "_core_cleanup_prune_reconcile_stats",
     "_no_layout_safe_transpose_reduction_stats",
     "_very_late_broadcast_static_shape_stats",
     "_shared_late_static_shape_stats",
@@ -66,7 +75,16 @@ EXPECTED_RESULT_TARGETS = (
     "_terminal_topology_layout_validation_stats",
 )
 EXPECTED_OWNERS = (
+    "_optimize_fuse_pseudo_leakyrelu_chains",
+    "_optimize_yolo_decode_mul_square_anchor_chains",
+    "run_consecutive_mul_constants_cleanup",
+    "_sanitize_terminal_transpose_before_dequantize",
+    "run_terminal_quantize_dequantize_cleanup",
+    "_optimize_fold_conv_mul_add_affine_chains",
+    "_optimize_fuse_conv_activation_chains",
     "_resolve_dynamic_reshape_shapes",
+    "run_squeeze_reshape_identity_cleanup",
+    "run_indexed_prune_reconcile_cleanup",
     "_apply_safe_transpose_reduction_lite",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
@@ -119,12 +137,21 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 9,
+    *("model_ir",) * 18,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
 EXPECTED_PHASE_IDS = (
+    "cleanup.core.pseudo_leakyrelu",
+    "cleanup.core.yolo_decode",
+    "cleanup.core.consecutive_mul",
+    "cleanup.core.terminal_dequant",
+    "cleanup.core.terminal_qdq",
+    "cleanup.core.conv_affine",
+    "cleanup.core.conv_activation",
     "shape_resolution.core.dynamic_reshape",
+    "cleanup.core.squeeze_reshape_identity",
+    "cleanup.core.prune_reconcile",
     "layout.no_layout.safe_transpose_reduction",
     "shape_reconciliation.primary.very_late_broadcast",
     "shape_reconciliation.primary.shared_late",
@@ -215,7 +242,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_fifty_one_observations_use_the_bounded_session_store() -> None:
+def test_sixty_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -226,7 +253,7 @@ def test_fifty_one_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 51
+    assert len(records) == 60
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

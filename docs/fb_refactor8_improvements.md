@@ -1010,6 +1010,37 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented nine-result
 destination migration.
 
+## Core cleanup phase-result implementation
+
+The nine characterized results now record under stable `cleanup.core.*` phase
+IDs. All records remain top-level and unconditional inside the existing
+`core cleanup passes` progress stage. The established
+`shape_resolution.core.dynamic_reshape` record remains between Conv activation
+and Squeeze/Reshape identity cleanup.
+
+Only the nine unconsumed assignment destinations changed. Every owner call,
+argument, keyword, evaluation count, graph traversal, ModelIR mutation, source
+order, progress boundary, public result, report, artifact, dependency, and
+TensorFlow import boundary is unchanged. No all-zero default existed in this
+family. The bounded store now covers 60 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct core-cleanup, phase-store, dynamic-Reshape, Squeeze/Reshape, indexed
+  prune/reconcile, terminal, and architecture-boundary contracts:
+  `76 passed in 2.65s`;
+- synthetic core runtime contracts, including all nine stored mapping schemas:
+  `55 passed in 1.02s`;
+- broader phase-result, owner, cleanup, fallback, terminal, shape, and topology
+  contracts: `257 passed in 6.27s`;
+- lowerer architecture contracts: `258 passed in 16.75s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No root-model corpus conversion was run because owner execution and ModelIR
+effects are unchanged and the existing synthetic runtime suite exercises the
+new storage boundary.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
