@@ -641,3 +641,29 @@ lowerer observations before selecting another homogeneous family. Do not use
 stored counters to skip graph scans without a separate differential
 characterization. Continue with coherent commits and pushes only; never
 create, update, or reopen a pull request.
+
+## Fallback static-shape phase-result characterization
+
+The next homogeneous family has been selected: seven fallback-only guarded
+static-shape reconciliation observations for broadcast, SE/FC/Gather,
+placeholder-MatMul, Conv input, mixed Concat, Concat axis, and binary layout.
+Each uses the same complete two-counter owner call and stores an unconsumed
+all-zero default when its guard is skipped.
+
+The new contract fixes all seven target names, their source order, zero schema,
+owner arguments, `include_mutation_count=True`, and absence of consumers. Its
+strict expected failure requires seven stable
+`shape_reconciliation.fallback.*` records and removal of the old targets.
+Invoked-phase-only semantics remain selected: skipped guards create no phase
+entry.
+
+Validation completed sequentially under core-only `uv`: the dedicated test is
+`1 passed, 1 xfailed in 0.15s`, and targeted Ruff, bytecode compilation, and
+whitespace checks pass. No production code changed.
+
+Commit and push this characterization before implementation. Then replace only
+the seven guarded assignments with `session.record_phase_result(...)`, remove
+only their unconsumed zero defaults, update the already-existing fallback
+orchestration contracts, and repeat the focused and architecture gates. Do not
+change any guard, owner call, repair order, graph scan, or successor. Never
+create, update, or reopen a pull request.

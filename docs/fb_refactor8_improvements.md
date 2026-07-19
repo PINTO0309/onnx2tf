@@ -620,3 +620,34 @@ Validation completed sequentially under core-only `uv`:
 No real-model conversion was run because this checkpoint changes only the
 destination of already-computed bounded dictionaries. The bounded session
 contract now covers 24 phase IDs.
+
+## Fallback static-shape phase-result characterization
+
+The remaining unconsumed lowerer observations were inventoried after the
+24-phase checkpoint. The next selected family contains seven fallback-only
+static-shape reconciliation results for broadcast, SE/FC/Gather,
+placeholder-MatMul, Conv input, mixed Concat, Concat axis, and binary layout.
+
+All seven boundaries currently share the same contract:
+
+- an unconsumed all-zero default dictionary;
+- an existing mutation-positive guard;
+- one `_reconcile_static_tensor_shapes(fallback_ir,
+  include_mutation_count=True)` call;
+- the same bounded two-counter integer schema;
+- no load of the result elsewhere in the lowerer.
+
+The characterization fixes the exact source order, targets, default schema,
+owner arguments, keyword arguments, and absence of consumers. A strict
+expected failure specifies migration to seven stable
+`shape_reconciliation.fallback.*` phase IDs with invoked-phase-only semantics.
+No production source changed in this checkpoint.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated family contract: `1 passed, 1 xfailed in 0.15s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented bounded-store
+migration.
