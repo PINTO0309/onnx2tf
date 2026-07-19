@@ -682,6 +682,31 @@ Validation completed sequentially under core-only `uv`:
 No real-model conversion was run because this is a result-destination-only
 change with the consumed placeholder control-flow input explicitly preserved.
 
+## Primary final SiNet reconciliation characterization
+
+The six final SiNet-specific reconciliation boundaries form one contiguous
+semantic chain: late residual, pre-add fanout, dual resize, shared post,
+deep-skip tail, and concat-resize. Each repair has an unconsumed two-counter
+zero default and invokes
+`_reconcile_static_tensor_shapes(model_ir, include_mutation_count=True)` only
+when its dedicated mutation counter is positive.
+
+The characterization fixes all six repair targets, result targets, source
+order, zero schemas, owner arguments, keyword arguments, and absence of result
+consumers. A strict expected failure requires six stable
+`shape_reconciliation.primary.final_sinet_*` records. Earlier late/static
+shape boundaries are deliberately outside this family. No production source
+changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated ordered-chain contract: `1 passed, 1 xfailed in 0.16s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented bounded-store
+migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

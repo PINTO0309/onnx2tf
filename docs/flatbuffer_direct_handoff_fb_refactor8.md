@@ -830,3 +830,25 @@ required. After committing and pushing, treat the six final SiNet-specific
 reconciliations as their own semantic family. Characterize the complete chain
 and successor order before migration; do not mix it with earlier late/static
 shape observations. Never create, update, or reopen a pull request.
+
+## Primary final SiNet reconciliation characterization
+
+The six final SiNet repair/reconciliation pairs have been characterized as one
+ordered family: late residual, pre-add fanout, dual resize, shared post,
+deep-skip tail, and concat-resize. Each selected result has the same complete
+two-counter schema, a dedicated positive mutation guard, a `model_ir` owner
+argument, and no consumer.
+
+The new contract fixes repair order, result order, zero defaults,
+`include_mutation_count=True`, and absence of loads. Its strict expected
+failure requires six `shape_reconciliation.primary.final_sinet_*` records and
+does not include earlier late/static shape observations.
+
+Validation completed sequentially under core-only `uv`: the dedicated test is
+`1 passed, 1 xfailed in 0.16s`, and targeted Ruff, bytecode compilation, and
+whitespace checks pass. No production source changed.
+
+Commit and push before replacing only these six guarded assignments and
+removing their defaults. Update the parameterized SiNet terminal and
+architecture contracts plus the bounded-store inventory, then validate,
+document, commit, and push. Never create, update, or reopen a pull request.
