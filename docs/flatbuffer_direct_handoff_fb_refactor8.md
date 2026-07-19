@@ -1303,3 +1303,25 @@ changed and the runtime suite exercises the guarded path. After committing and
 pushing, keep composite results outside the mapping store and retain the
 71/128 capacity audit when choosing the next family. Never create, update, or
 reopen a pull request.
+
+## Layout pass-set 2 quantized cleanup characterization
+
+The sole remaining direct Dequantize→TransposeConv→Quantize mapping result is
+inside layout pass-set 2. It shares the existing layout guard, has no default or
+consumer, and remains between composite attention-gate/QDQ and quantized-
+activation recovery results.
+
+The contract fixes the owner expression and layout-state keyword, guard,
+composite boundaries, sole Store occurrence, and absence of loads. Its strict
+expected failure requires
+`cleanup.layout_pass_set_2.dequant_transposeconv_quantize`.
+
+Validation completed sequentially under core-only `uv`: the characterization,
+multi-occurrence owner, and adjacent architecture boundaries are
+`5 passed, 1 xfailed in 0.76s`; Ruff, bytecode compilation, and whitespace
+checks pass. No production source changed.
+
+Commit and push this characterization before replacing only the single mapping
+destination. Preserve the guard and both composite boundaries, then update the
+multi-occurrence owner and bounded-store contracts, validate, document, commit,
+and push. Never create, update, or reopen a pull request.

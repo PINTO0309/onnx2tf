@@ -1268,6 +1268,29 @@ No root-model corpus conversion was run because this is an observation-
 destination-only change and the runtime suite exercises the guarded layout
 path.
 
+## Layout pass-set 2 quantized cleanup characterization
+
+The remaining direct Dequantize→TransposeConv→Quantize mapping result belongs
+to layout pass-set 2. It runs under `optimize_layout_transpose_chains`, has no
+default or consumer, and is bounded by composite attention-gate/QDQ and
+quantized-activation recovery results.
+
+The characterization fixes the guard, exact owner expression and layout-state
+argument, composite predecessor/successor targets, sole Store occurrence, and
+absence of loads. A strict expected failure requires
+`cleanup.layout_pass_set_2.dequant_transposeconv_quantize`. No production source
+changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization, multi-occurrence owner, and adjacent architecture
+  boundaries: `5 passed, 1 xfailed in 0.76s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented result-destination
+migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
