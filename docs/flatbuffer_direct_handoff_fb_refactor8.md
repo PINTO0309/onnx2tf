@@ -6635,3 +6635,60 @@ callback identities, child schemas, and independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Terminal singleton/Clamp-SiNet characterization checkpoint
+
+The refreshed inventory contains 39 unconsumed lowerer results. The selected
+boundary starts with `_terminal_singleton_reshape_results`, the final statement
+inside the terminal `optimize_layout_transpose_chains` guard, and continues
+with the unconditional `_terminal_clamp_sinet_layout_results` immediately
+after that guard. The singleton lowerer wrapper delegates through
+`singleton_reshape_context`; the Clamp/SiNet owner receives
+`sinet_terminal_layout_recovery_context`. Both embed the exact Session
+`ModelIRPassContext`, while the latter also owns the unchanged pre-add/Resize
+callback.
+
+The characterization freezes enabled-path order, disabled-path non-execution
+of singleton work, and unconditional Clamp/SiNet execution. Singleton reshape
+retains exactly `include_layout_transpose=True` and
+`include_multi_branch_gate=True`, with duplicate-fanout disabled and spatial
+Concat post-Transpose left at its default. The complete nine-dictionary
+singleton schema, three-dictionary Clamp schema, and three-slot SiNet schema
+are fixed. The middle SiNet slot is the exact result returned by the existing
+pre-add/Resize callback.
+
+Recorded `cleanup.terminal.qkv_split_conv_concat_bridge` remains immediately
+before singleton work on the enabled path. Recorded
+`cleanup.terminal.sinet_hardswish_se` remains immediately after the
+unconditional Clamp/SiNet boundary. Both current results remain unconsumed,
+the singleton and SiNet compatibility wrappers remain available, and no
+public API, artifact, graph mutation, dependency, or TensorFlow boundary has
+changed.
+
+Production is unchanged pending
+`passes/terminal_singleton_clamp_sinet_orchestration.py` and
+`run_terminal_singleton_clamp_sinet_cleanup()`. The owner must conditionally
+call `run_singleton_reshape(context.pass_context,
+include_layout_transpose=True, include_multi_branch_gate=True)` only when
+`include_terminal_singleton=True`, then always call
+`run_terminal_clamp_sinet_layout_cleanup(context)`. It must return the raw
+singleton tuple or `None` followed by the raw Clamp/SiNet tuple, preserving
+result identities. The lowerer must replace only the two selected locals with
+`_terminal_singleton_clamp_sinet_results`, pass the original SiNet context and
+layout-optimization flag, and leave the guard's recorded QKV predecessor and
+the recorded HardSwish-SE successor outside the owner.
+
+Focused sequential validation reports `2 passed, 1 xfailed`; complete
+reference-based affected validation reports `633 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent owner. Production, both
+flag paths, the 39-result inventory, and the exactly 128-ID/128-owner phase
+store are unchanged. Ruff, bytecode compilation, and whitespace checks pass.
+No real-model conversion was repeated for this characterization.
+
+At resume, implement only this characterized optional owner and lowerer
+replacement, convert the strict xfail to runtime true/false order, context,
+option, non-call, callback, and result-identity coverage, and update only
+structural expectations made stale by the new outer route. Run affected and
+standard gates sequentially under `uv`, confirm the expected inventory
+reduction from 39 to 38, then commit and push the complete unit. Do not create,
+update, reopen, or otherwise modify a pull request.

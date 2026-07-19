@@ -7081,3 +7081,25 @@ Sequential validation passes: focused `4`, affected `419`, and standard
 `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
 pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 40 to 39.
+
+## Characterize terminal singleton/Clamp-SiNet recovery
+
+The refreshed 39-result inventory selects the terminal singleton-reshape
+cleanup at the end of the layout-optimization guard and the unconditional
+Clamp/SiNet cleanup immediately after that guard. Both ultimately use the
+same `ModelIRPassContext`; the SiNet context additionally retains the exact
+pre-add/Resize recovery callback.
+
+The strict contract fixes both flag paths, the singleton
+`include_layout_transpose=True` and `include_multi_branch_gate=True` policy,
+the complete nine-slot singleton schema, both three-slot Clamp/SiNet schemas,
+callback-result identity, and observation-only results. The recorded terminal
+QKV Split/Conv/Concat bridge remains the enabled-path predecessor, while the
+recorded terminal SiNet HardSwish-SE phase remains the unconditional
+successor. Existing singleton and SiNet compatibility wrappers remain fixed.
+
+Production remains unchanged pending one optional two-child owner. Focused and
+reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `633 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. The characterized inventory remains 39,
+and the phase-result store remains exactly 128 IDs and 128 owners.

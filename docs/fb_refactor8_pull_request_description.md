@@ -1839,3 +1839,16 @@ unchanged. Focused `4`, affected `419`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
 exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
 from 40 to 39.
+
+The next characterization freezes the cross-guard terminal singleton/
+Clamp-SiNet boundary before changing production. Singleton reshape executes
+only with layout optimization and retains both terminal options; Clamp/SiNet
+always executes next through the callback-bearing SiNet context. Both paths,
+all nested schemas, callback identity, phase neighbors, wrappers, and
+observation-only results are fixed.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `633 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 39-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
