@@ -4260,3 +4260,29 @@ checkpoint. On resume, inventory the next small semantically closed
 unconsumed-result cluster before production changes. Keep all validation
 sequential and continue with commits and pushes only; never create, update, or
 reopen a pull request.
+
+## Indexed binary-layout convergence owner characterization
+
+The next selected boundary is `_run_indexed_binary_layout_convergence`, whose
+full three-stage convergence loop still lives in the lowerer. It shares one
+graph index across broadcast-constant repair, stale binary-adapter repair, and
+static-shape reconciliation; repeats for at most three rounds; stops on the
+first stable round; and accumulates three counters. Fallback and primary
+terminal paths are its two callers.
+
+The focused contract fixes index lifetime, callback order and arguments, round
+cap, result-key order, and caller inputs. One strict xfail requires a new
+`passes/binary_layout_convergence.py` owner with the lowerer function retained
+as a compatibility wrapper.
+
+Sequential validation under core-only `uv` completed with
+`399 passed, 1 xfailed in 19.19s` across all affected convergence, fallback,
+terminal, adapter, store, and architecture contracts. The sole expected
+failure is the unimplemented pass-module owner. Focused Ruff and whitespace
+checks passed.
+
+Commit and push this characterization separately. At resume, move the loop
+mechanically into the pass module, import the three raw pass owners directly,
+retain the lowerer wrapper and both call sites, redirect runtime monkeypatch
+tests to the new owner module, then validate sequentially. Keep the store at
+128/128 and never create, update, or reopen a pull request.

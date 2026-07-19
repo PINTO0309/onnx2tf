@@ -4807,3 +4807,32 @@ No real-model conversion was repeated because runtime callback injection
 proves the exact nested schema, context identity, callback order, and argument
 policy, while owner-aware structural coverage accounts for every independent
 dynamic-rank-one caller and both neighboring boundaries.
+
+## Indexed binary-layout convergence owner characterization
+
+The next selected boundary is the lowerer-local indexed binary-layout
+convergence implementation. It creates one `ModelIRGraphIndex`, runs broadcast-
+constant repair, stale binary-adapter repair, and static-shape reconciliation
+in that order for at most three rounds, stops after a stable round, and returns
+three accumulated counters. Both the safety fallback and primary terminal path
+call the same implementation.
+
+`tests/test_flatbuffer_direct_binary_layout_convergence_owner.py` fixes the
+single-index construction, three-round cap, exact callback order and
+graph-index forwarding, result-key order, and the two existing caller
+arguments. Its one strict expected failure requires
+`passes/binary_layout_convergence.py` to own
+`run_indexed_binary_layout_convergence(model_ir)` while the private lowerer
+function becomes a one-return compatibility wrapper.
+
+Sequential characterization under core-only `uv` completed with
+`399 passed, 1 xfailed in 19.19s` across the dedicated contract and affected
+convergence runtime, terminal-layout, safety-fallback, binary-adapter,
+stale-repair, phase-store, and architecture contracts. The sole expected
+failure is the intentionally absent pass-module owner. Focused Ruff and
+whitespace checks passed.
+
+This checkpoint changes no production source, graph-index lifetime, callback,
+round count, stable-stop rule, result schema, caller, store entry, API,
+artifact, dependency, or TensorFlow boundary. No real-model conversion was
+repeated.

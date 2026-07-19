@@ -910,3 +910,10 @@ rank-one owner. It replaces two unconsumed locals with one nested result,
 removes a lowerer-only closure and context alias, and preserves the existing
 inner tuple, raw rank-one mapping, callback order, every independent caller,
 both neighboring boundaries, compatibility wrapper, and full 128/128 store.
+
+The next characterization fixes the lowerer-local indexed binary-layout
+convergence loop. It preserves one shared graph index, broadcast → stale-
+adapter → shape-reconciliation order, the three-round cap and stable-stop rule,
+three-counter schema, fallback and primary callers, and the full 128/128 store.
+Production remains unchanged until the pass-module owner is implemented
+separately.
