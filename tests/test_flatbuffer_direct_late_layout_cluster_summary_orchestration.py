@@ -54,6 +54,11 @@ OUTER_OWNER_PATH = (
 OUTER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 OUTER_TARGET = "_terminal_qkv_activation_layout_shape_results"
 OUTER_PREDECESSOR_TARGET = "_pre_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
+LOWERER_PREDECESSOR_GUARD = (
+    "_late_binary_layout_recovery_requires_reconciliation"
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -121,14 +126,14 @@ def test_late_layout_cluster_prune_aware_summary_boundary_is_fixed() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value).startswith(f"{OUTER_OWNER}(")
-    assert _single_target(lowerer.body[index - 1]) == (
-        OUTER_PREDECESSOR_TARGET
-    )
+    assert ast.unparse(summary.value).startswith(f"{LOWERER_OWNER}(")
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert len(_outer_calls()) == 1
     assert not any(
@@ -166,14 +171,14 @@ def test_late_layout_cluster_uses_one_prune_aware_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value).startswith(f"{OUTER_OWNER}(")
-    assert _single_target(lowerer.body[index - 1]) == (
-        OUTER_PREDECESSOR_TARGET
-    )
+    assert ast.unparse(summary.value).startswith(f"{LOWERER_OWNER}(")
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert len(_outer_calls()) == 1
     assert not any(

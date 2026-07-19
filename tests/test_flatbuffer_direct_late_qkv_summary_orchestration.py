@@ -39,8 +39,11 @@ COMPOSITE_PATH = (
 )
 COMPOSITE_OWNER = "run_terminal_qkv_shape_attention_cleanup"
 COMPOSITE_TARGET = "_terminal_qkv_shape_attention_results"
-LOWERER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
-LOWERER_TARGET = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
+LOWERER_PREDECESSOR_GUARD = (
+    "_late_binary_layout_recovery_requires_reconciliation"
+)
 SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 
 
@@ -101,9 +104,9 @@ def test_late_qkv_prune_aware_summary_boundary_is_fixed() -> None:
         f"{LOWERER_OWNER}(shared_model_ir_pass_context, "
         "include_layout_transpose=optimize_layout_transpose_chains)"
     )
-    assert _single_target(lowerer.body[index - 1]) == (
-        "_pre_terminal_affine_slice_spp_results"
-    )
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     calls = _composite_summary_calls()
     assert len(calls) == 1
@@ -146,9 +149,9 @@ def test_late_qkv_uses_one_prune_aware_summary_owner() -> None:
         f"{LOWERER_OWNER}(shared_model_ir_pass_context, "
         "include_layout_transpose=optimize_layout_transpose_chains)"
     )
-    assert _single_target(lowerer.body[index - 1]) == (
-        "_pre_terminal_affine_slice_spp_results"
-    )
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert len(_composite_summary_calls()) == 1
     assert not any(

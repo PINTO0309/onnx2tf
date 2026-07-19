@@ -35,6 +35,8 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 OUTER_TARGET = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _dynamic_squeeze_model() -> ModelIR:
@@ -174,13 +176,13 @@ def test_terminal_expand_squeeze_result_is_captured_before_reconciliation() -> N
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_TARGET
+        and statement.targets[0].id == LOWERER_TARGET
     )
     assignment = lowerer.body[assignment_index]
     assert isinstance(assignment, ast.Assign)
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == OUTER_OWNER
+    assert assignment.value.func.id == LOWERER_OWNER
     following = lowerer.body[assignment_index + 1]
     assert isinstance(following, ast.Expr)
     assert ast.unparse(following) == (

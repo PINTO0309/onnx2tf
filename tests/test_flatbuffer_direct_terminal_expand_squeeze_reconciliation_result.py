@@ -16,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPAND_RESULT_TARGET = "_terminal_expand_squeeze_stats"
 COMPOSITE_TARGET = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
 RECONCILE_RESULT_TARGET = "_terminal_expand_squeeze_static_shape_stats"
 RECONCILE_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 TERMINAL_OWNER_PATH = (
@@ -148,12 +150,12 @@ def test_terminal_expand_squeeze_reconciliation_contract_is_explicit() -> None:
     expand_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     expand_call = _statement_call(lowerer.body[expand_index])
     assert expand_call is not None
     assert isinstance(expand_call.func, ast.Name)
-    assert expand_call.func.id == OUTER_OWNER
+    assert expand_call.func.id == LOWERER_OWNER
     assert [ast.unparse(argument) for argument in expand_call.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -225,7 +227,7 @@ def test_terminal_reconciliation_retains_complete_observation_result() -> None:
     expand_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     reconciliation = lowerer.body[expand_index + 1]
     record_call = _statement_call(reconciliation)

@@ -1205,6 +1205,25 @@ tests. Public behavior, conversion policy, graph rewrites, artifacts,
 dependencies, TensorFlow isolation, and the exactly 128-ID/128-owner store are
 unchanged.
 
+The latest checkpoint implements the terminal affine/QKV/layout-shape owner.
+It passes the exact shared context to the pre-terminal affine/Slice/SPP and
+terminal QKV/activation/layout/shape composites, forwards the unchanged
+layout-Transpose option only to the second child, and returns both complete
+nested tuples unchanged and in source order.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The optional late-binary-layout reconciliation branch remains the
+immediate predecessor; the terminal Expand/Squeeze phase record and progress
+callback remain immediate successors. Nested owners, wrappers, independent
+routes, graph mutations, guards, public behavior, artifacts, dependencies, and
+TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 1143 expanded affected tests, and all standard
+sequential gates pass: 92 terminal-layout/efficiency, 55 core, 196 result
+contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests. The exactly 128-ID/128-owner store is unchanged, while the characterized
+unconsumed lowerer-result inventory decreases from 56 to 55.
+
 The next characterization selects the terminal layout/shape tail immediately
 after the activation bridge: absolute pre-ConCat cleanup, late Shape-extract,
 the prune-aware late layout/Mean/SPP/Gather/constant-fold/Cast summary, and

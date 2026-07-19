@@ -42,6 +42,8 @@ OUTER_PATH = (
 )
 OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
 OUTER_TARGET = "_pre_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
 SUMMARY_FUNCTION = "summarize_channel_slice_pad_mul_mutations"
 RAW_TARGET = "channel_slice_pad_mul_results"
 SUMMARY_TARGET = "_pre_terminal_channel_slice_pad_mul_stats"
@@ -95,16 +97,18 @@ def test_channel_slice_pad_mul_summary_boundary_is_fixed() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{OUTER_OWNER}(shared_model_ir_pass_context)"
+        f"{LOWERER_OWNER}(shared_model_ir_pass_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_qkv_activation_layout_shape_results"
+    assert ast.unparse(lowerer.body[index + 1]).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
     assert len(_outer_calls()) == 1
     assert len(_composite_calls()) == 1
@@ -145,16 +149,18 @@ def test_channel_slice_pad_mul_uses_one_direct_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{OUTER_OWNER}(shared_model_ir_pass_context)"
+        f"{LOWERER_OWNER}(shared_model_ir_pass_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert _single_target(lowerer.body[index + 1]) == (
-        "_terminal_qkv_activation_layout_shape_results"
+    assert ast.unparse(lowerer.body[index + 1]).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
     assert len(_outer_calls()) == 1
     assert len(_composite_calls()) == 1

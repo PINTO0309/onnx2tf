@@ -34,10 +34,12 @@ RESULT_TARGETS = (
     "_terminal_affine_slice_spp_results",
 )
 COMPOSITE_TARGET = "_pre_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
 PREDECESSOR_GUARD = (
     "_late_binary_layout_recovery_requires_reconciliation"
 )
-SUCCESSOR_TARGET = "_terminal_qkv_activation_layout_shape_results"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 EXPECTED_SCHEMAS = (
     (
         (
@@ -142,25 +144,40 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_pre_terminal_affine_slice_spp_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and node.id in RESULT_TARGETS
@@ -205,20 +222,23 @@ def test_pre_terminal_affine_slice_spp_has_one_context_owner() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

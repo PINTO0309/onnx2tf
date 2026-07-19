@@ -76,6 +76,8 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
 OUTER_RESULT = "_pre_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -395,23 +397,21 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
     )
     composite_index = lowerer.body.index(composite)
     assert ast.unparse(composite.value) == (
-        "run_pre_terminal_affine_slice_spp_cleanup("
-        "shared_model_ir_pass_context)"
+        f"{LOWERER_OWNER}(shared_model_ir_pass_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
     assert isinstance(lowerer.body[composite_index - 1], ast.If)
     assert len(_pre_terminal_cleanup_calls(TERMINAL_AFFINE_SUMMARY)) == 1
 
     assert len(_outer_calls(PRE_TERMINAL_CLEANUP)) == 1
     assert len(_outer_calls(TERMINAL_AFFINE_SLICE_SPP)) == 1
-    assert isinstance(lowerer.body[composite_index + 1], ast.Assign)
-    assert isinstance(lowerer.body[composite_index + 1].targets[0], ast.Name)
-    assert (
-        lowerer.body[composite_index + 1].targets[0].id
-        == "_terminal_qkv_activation_layout_shape_results"
+    assert ast.unparse(lowerer.body[composite_index + 1]).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
 
 
@@ -552,18 +552,17 @@ def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
     )
     index = lowerer.body.index(summary)
     assert ast.unparse(summary.value) == (
-        "run_pre_terminal_affine_slice_spp_cleanup("
-        "shared_model_ir_pass_context)"
+        f"{LOWERER_OWNER}(shared_model_ir_pass_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
     assert isinstance(lowerer.body[index - 1], ast.If)
-    assert isinstance(lowerer.body[index + 1], ast.Assign)
-    assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
-    assert lowerer.body[index + 1].targets[0].id == (
-        "_terminal_qkv_activation_layout_shape_results"
+    assert ast.unparse(lowerer.body[index + 1]).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
     terminal_calls = _terminal_affine_slice_spp_calls(
         TERMINAL_AFFINE_SUMMARY

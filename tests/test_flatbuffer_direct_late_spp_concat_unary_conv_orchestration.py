@@ -44,6 +44,8 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
 OUTER_RESULT = "_pre_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -233,26 +235,19 @@ def test_late_spp_concat_unary_conv_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == OUTER_OWNER
+        and statement.value.func.id == LOWERER_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
     assert isinstance(previous, ast.If)
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_terminal_qkv_activation_layout_shape_results"
-    )
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert (
-        following.value.func.id
-        == "run_terminal_qkv_activation_layout_shape_cleanup"
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
     assert len(_outer_calls()) == 1
 
@@ -363,26 +358,28 @@ def test_lowerer_captures_late_spp_mutation_evidence() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
     )
     first_index = lowerer.body.index(summary)
     summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == OUTER_OWNER
+    assert summary_call.func.id == LOWERER_OWNER
     assert [ast.unparse(arg) for arg in summary_call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert summary_call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in summary_call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
 
     previous = lowerer.body[first_index - 1]
     assert isinstance(previous, ast.If)
     following = lowerer.body[first_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_terminal_qkv_activation_layout_shape_results"
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
     assert len(_outer_calls()) == 1
     owner_calls = _terminal_affine_slice_spp_calls(

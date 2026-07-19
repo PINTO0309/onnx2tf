@@ -58,6 +58,11 @@ TOP_OWNER_PATH = (
 )
 TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 TOP_TARGET = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
+LOWERER_PREDECESSOR_GUARD = (
+    "_late_binary_layout_recovery_requires_reconciliation"
+)
 TOP_SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
     REPO_ROOT
@@ -159,10 +164,10 @@ def test_terminal_qkv_shape_attention_current_boundary_and_schema(
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == TOP_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == TOP_OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -172,7 +177,9 @@ def test_terminal_qkv_shape_attention_current_boundary_and_schema(
         keyword.arg: ast.unparse(keyword.value)
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == TOP_SUCCESSOR_PHASE_ID
     assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
     assert len(_top_calls()) == 1
@@ -286,10 +293,10 @@ def test_terminal_qkv_shape_attention_has_one_context_owner() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == TOP_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == TOP_OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -299,7 +306,9 @@ def test_terminal_qkv_shape_attention_has_one_context_owner() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == LOWERER_PREDECESSOR_GUARD
     assert _phase_id(lowerer.body[index + 1]) == TOP_SUCCESSOR_PHASE_ID
     assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
     assert len(_top_calls()) == 1

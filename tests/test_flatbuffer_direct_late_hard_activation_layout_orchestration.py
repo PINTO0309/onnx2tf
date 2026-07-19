@@ -48,6 +48,8 @@ TOP_OWNER_PATH = (
 )
 TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -438,28 +440,18 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TOP_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TOP_OWNER
+        and statement.value.func.id == LOWERER_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_pre_terminal_affine_slice_spp_results"
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "run_pre_terminal_affine_slice_spp_cleanup"
-    )
-    assert [ast.unparse(argument) for argument in previous.value.args] == [
-        "shared_model_ir_pass_context"
-    ]
     assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Attribute)

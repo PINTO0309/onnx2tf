@@ -282,11 +282,8 @@ from onnx2tf.tflite_builder.passes.final_boundary_slice_concat_orchestration imp
 from onnx2tf.tflite_builder.passes.late_swish_layout_tail_orchestration import (
     run_late_swish_layout_tail_cleanup,
 )
-from onnx2tf.tflite_builder.passes.pre_terminal_affine_slice_spp_orchestration import (
-    run_pre_terminal_affine_slice_spp_cleanup,
-)
-from onnx2tf.tflite_builder.passes.terminal_qkv_activation_layout_shape_orchestration import (
-    run_terminal_qkv_activation_layout_shape_cleanup,
+from onnx2tf.tflite_builder.passes.terminal_affine_qkv_layout_shape_orchestration import (
+    run_terminal_affine_qkv_layout_shape_cleanup,
 )
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     run_shared_late_reconciliation_cleanup,
@@ -5223,11 +5220,6 @@ def lower_onnx_to_ir(
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
     # Keep the affine/Slice/SPP child after pre_add/slice/pad strict rewrites:
     # those passes can recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
-    _pre_terminal_affine_slice_spp_results = (
-        run_pre_terminal_affine_slice_spp_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
     # Late affine/fusion cleanups can recreate
@@ -5235,8 +5227,8 @@ def lower_onnx_to_ir(
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.
-    _terminal_qkv_activation_layout_shape_results = (
-        run_terminal_qkv_activation_layout_shape_cleanup(
+    _terminal_affine_qkv_layout_shape_results = (
+        run_terminal_affine_qkv_layout_shape_cleanup(
             shared_model_ir_pass_context,
             include_layout_transpose=optimize_layout_transpose_chains,
         )

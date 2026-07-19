@@ -6158,6 +6158,41 @@ sole xfail is the intentionally absent composite owner. Production behavior,
 public APIs, artifacts, dependencies, TensorFlow isolation, and the exactly
 128-ID/128-owner phase store remain unchanged.
 
+## Terminal affine/QKV/layout-shape composite implementation
+
+`passes/terminal_affine_qkv_layout_shape_orchestration.py` now owns the fixed
+pre-terminal-affine-then-terminal-QKV/layout-shape sequence. It forwards the
+exact same `ModelIRPassContext` to both existing child composites and forwards
+the unchanged `include_layout_transpose` option only to the terminal child.
+Both complete nested tuples are returned in source order without copying,
+flattening, inspection, or result-driven control flow.
+
+The lowerer replaces only `_pre_terminal_affine_slice_spp_results` and
+`_terminal_qkv_activation_layout_shape_results` with
+`_terminal_affine_qkv_layout_shape_results`. The optional late-binary-layout
+reconciliation branch remains the immediate predecessor. The phase-recorded
+terminal Expand/Squeeze reconciliation and `_advance_post_progress()` remain
+separate immediate successors. All nested owners, wrappers, callbacks, guards,
+phase records, progress behavior, and graph mutations remain unchanged.
+
+The expanded owner-aware tests now resolve the production boundary through the
+new outer owner while independently verifying pre-terminal affine, Slice/Pad,
+SPP, QKV, activation, layout/shape, hard-activation, reconciliation, and raw
+compatibility routes. Runtime injection covers both layout-policy values and
+proves exact child order, context identity, option forwarding, and both raw
+result identities.
+
+Sequential core-only `uv` validation passed with 5 focused tests, 1143 expanded
+affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. Ruff, bytecode compilation, and whitespace
+checks pass. Public behavior, artifacts, dependencies, TensorFlow isolation,
+and the exactly 128-ID/128-owner phase store remain unchanged. The
+characterized unconsumed-result inventory decreases from 56 to 55. No
+real-model conversion was repeated because this is an ownership-only move with
+direct state, order, schema, identity, route, guard, phase, and progress
+coverage.
+
 ## Terminal QKV/activation-bridge composite implementation
 
 `passes/terminal_qkv_activation_bridge_orchestration.py` now owns the

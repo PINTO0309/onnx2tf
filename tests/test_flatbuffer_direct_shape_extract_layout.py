@@ -48,6 +48,8 @@ TOP_OWNER_PATH = (
 )
 TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -438,13 +440,13 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TOP_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == TOP_OWNER
+    assert invocation.value.func.id == LOWERER_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
@@ -454,21 +456,10 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_pre_terminal_affine_slice_spp_results"
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "run_pre_terminal_affine_slice_spp_cleanup"
-    )
-    assert [ast.unparse(argument) for argument in previous.value.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert previous.value.keywords == []
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)

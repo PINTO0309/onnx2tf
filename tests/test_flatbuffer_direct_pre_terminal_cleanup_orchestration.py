@@ -51,6 +51,8 @@ OUTER_OWNER_PATH = (
 OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
 OUTER_TARGET = "_pre_terminal_affine_slice_spp_results"
 OUTER_SUCCESSOR_TARGET = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -101,21 +103,27 @@ def test_pre_terminal_cleanup_current_boundary_and_schemas() -> None:
     index, invocation = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
-    assert _call_name(invocation) == OUTER_OWNER
+    assert _call_name(invocation) == LOWERER_OWNER
     call = _call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     assert isinstance(lowerer.body[index - 1], ast.If)
     assert (
         ast.unparse(lowerer.body[index - 1].test)
         == "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert _single_target(lowerer.body[index + 1]) == OUTER_SUCCESSOR_TARGET
+    assert ast.unparse(lowerer.body[index + 1]).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
+    )
     assert len(_outer_calls()) == 1
     assert [
         ast.unparse(argument) for argument in _outer_calls()[0].args
@@ -193,21 +201,27 @@ def test_pre_terminal_cleanup_has_one_context_owner() -> None:
     index, invocation = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == LOWERER_TARGET
     )
-    assert _call_name(invocation) == OUTER_OWNER
+    assert _call_name(invocation) == LOWERER_OWNER
     call = _call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     assert isinstance(lowerer.body[index - 1], ast.If)
     assert (
         ast.unparse(lowerer.body[index - 1].test)
         == "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert _single_target(lowerer.body[index + 1]) == OUTER_SUCCESSOR_TARGET
+    assert ast.unparse(lowerer.body[index + 1]).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
+    )
     assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS

@@ -2387,6 +2387,38 @@ The store remains fixed at 128/128. Commit and push this implementation unit.
 Resume with the next non-store late orchestration audit; do not create, update,
 or reopen a pull request.
 
+## Terminal affine/QKV/layout-shape implementation checkpoint
+
+`passes/terminal_affine_qkv_layout_shape_orchestration.py` now implements the
+characterized two-child boundary. The exact shared context is passed to both
+children, the unchanged layout-Transpose option is passed only to terminal
+QKV/activation/layout/shape, and both complete nested results are returned in
+fixed order with their raw identities preserved.
+
+The lowerer retains one observation-only
+`_terminal_affine_qkv_layout_shape_results` value in place of the two child
+locals. The optional late-binary-layout reconciliation branch remains the
+predecessor; terminal Expand/Squeeze reconciliation and the progress callback
+remain successors outside the owner. Child owners, wrappers, callbacks,
+guards, graph behavior, public behavior, and TensorFlow isolation remain
+unchanged. The characterized unconsumed-result inventory is now 55, and the
+phase store remains exactly 128 IDs and 128 owners.
+
+Sequential validation passed: focused 5, expanded affected 1143,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. Ruff, bytecode
+compilation, and whitespace checks pass. Runtime injection covers both layout
+policies and proves order, context identity, option forwarding, complete nested
+schemas, and raw-result identity. No production test or known issue is failing,
+and no real-model conversion was repeated for this ownership-only extraction.
+
+At resume, rerun the read-only inventory of the 55 remaining characterized
+unconsumed lowerer results and select the next smallest source-adjacent,
+semantically closed cluster whose children already have pass-module owners.
+Characterize it before production changes, keep all tests sequential under
+`uv`, and commit/push only at complete checkpoints. Do not create, update, or
+reopen a pull request.
+
 ## Late attention-layout composite characterization
 
 The next selected unit owns the adjacent late QKV reshape, attention-Gather

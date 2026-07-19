@@ -44,6 +44,8 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
 OUTER_RESULT = "_pre_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -248,10 +250,10 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == OUTER_OWNER
+        and statement.value.func.id == LOWERER_OWNER
     )
 
     predecessor = lowerer.body[invocation_index - 1]
@@ -263,12 +265,14 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
     assert [ast.unparse(arg) for arg in summary.value.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert summary.value.keywords == []
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_terminal_qkv_activation_layout_shape_results"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in summary.value.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
     assert len(_outer_calls()) == 1
     assert len(_pre_terminal_cleanup_calls(PRE_TERMINAL_PRE_ADD)) == 1
@@ -430,7 +434,7 @@ def test_pre_terminal_pre_add_uses_prune_aware_owner() -> None:
     assert any(
         isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-            and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == LOWERER_RESULT
         for statement in lowerer.body
     )
 

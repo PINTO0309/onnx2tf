@@ -51,6 +51,8 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 OUTER_RESULT = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 LATE_LAYOUT = "_run_late_layout_mean_spp_gather_constant_cast_pass_cluster"
 CONSTANT_FOLD_CAST = "_run_constant_fold_cast_cleanup_pass_cluster"
 
@@ -457,26 +459,20 @@ def test_late_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and any(
             isinstance(target, ast.Name)
-            and target.id == OUTER_RESULT
+            and target.id == LOWERER_RESULT
             for target in statement.targets
         )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == OUTER_OWNER
+        == LOWERER_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_affine_slice_spp_results"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "run_pre_terminal_affine_slice_spp_cleanup"
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
     assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
