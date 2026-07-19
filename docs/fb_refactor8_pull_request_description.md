@@ -459,6 +459,8 @@ Final checkpoint results:
   **151 passed**;
 - terminal-affine prune-aware summary and affected contracts:
   **182 passed**;
+- pre-terminal pre-add prune-evidence characterization:
+  **1 passed, 1 intentional strict xfail**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
 - indexed, quantized, and legacy NHWC Concat family contracts:
   **285 passed**;
@@ -493,3 +495,11 @@ and stable paths.
 The broader multi-phase `flatbuffer_direct` refactor remains ongoing. This
 checkpoint supplies more explicit ownership and bounded evidence for that
 work without changing current converter behavior.
+
+The latest checkpoint also fixes the exact pre-terminal pre-add
+prune-evidence boundary in a characterize-first test. It deliberately makes no
+production change: the existing pass call, tensor-count delta, source order,
+ModelIR/LayoutState identity, and unconsumed result remain intact. The strict
+xfail documents the next minimal owner extraction and prevents that future
+change from absorbing neighboring passes or altering the already-full 128/128
+phase-result store.

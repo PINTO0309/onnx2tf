@@ -3069,3 +3069,26 @@ result. Commit and push this checkpoint. At resume, characterize the adjacent
 pre-terminal pre-add prune-aware evidence boundary before production changes.
 Continue with commits and pushes only; never create, update, or reopen a pull
 request.
+
+## Pre-terminal pre-add prune-evidence characterization
+
+The adjacent boundary is now characterized without a production change. The
+lowerer still snapshots `len(model_ir.tensors)`, calls the existing pre-add
+NHWC-chain cleanup with `model_ir` and `session.layout_state`, and adds the
+exact non-negative tensor-count delta to its otherwise unchanged result
+mapping. The first terminal-affine summary remains the predecessor and the
+channel Slice/Pad/Mul cluster remains the successor.
+
+`tests/test_flatbuffer_direct_pre_terminal_pre_add_orchestration.py` contains
+one passing current-boundary contract and one strict expected failure for the
+future pass-module owner. Sequential core-only validation completed with
+`1 passed, 1 xfailed in 0.13s`; targeted Ruff, bytecode compilation, and
+whitespace checks also passed. The xfail is intentional and represents the
+next production unit rather than a regression.
+
+Commit and push this test-and-documentation checkpoint. At resume, implement
+only `run_pre_terminal_pre_add_cleanup(context)`, preserve the lowerer
+compatibility wrapper, update owner-aware neighboring contracts, and run the
+affected gates sequentially. Keep the phase-result store at exactly 128/128.
+Continue with commits and pushes only; never create, update, or reopen a pull
+request.

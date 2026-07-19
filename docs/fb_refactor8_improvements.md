@@ -3471,3 +3471,31 @@ Validation completed sequentially under core-only `uv`:
 
 The sole expected failure is the intentionally unimplemented bounded-store
 migration.
+
+## Pre-terminal pre-add prune-evidence characterization
+
+The next late-pipeline extraction candidate is the single pre-add NHWC-chain
+cleanup immediately after the first terminal-affine recovery summary and
+before the channel Slice/Pad/Mul cluster. Its current lowerer boundary takes a
+tensor-count snapshot, runs
+`_optimize_transpose_pre_add_nhwc_chains(...)`, and extends the returned
+mapping with an exact `pruned_unused_tensors` delta. The mapping is retained
+only as `_pre_terminal_pre_add_stats` and is not used for control flow.
+
+`tests/test_flatbuffer_direct_pre_terminal_pre_add_orchestration.py` fixes the
+current source order, exact tensor-count expression, owner arguments,
+prune-delta expression, neighboring boundaries, and absence of any additional
+count use. A strict expected failure describes the smallest safe follow-up: a
+pass-module owner must capture the tensor count, call the same existing pass
+once with the same ModelIR/LayoutState objects, return the same mapping, and
+replace only the local evidence construction. No production source, graph
+mutation, pass order, guard, store entry, public result, artifact, dependency,
+or TensorFlow boundary changed in this characterization checkpoint.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated boundary contract: `1 passed, 1 xfailed in 0.13s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally absent prune-aware owner.
