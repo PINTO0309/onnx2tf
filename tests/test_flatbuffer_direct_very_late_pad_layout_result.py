@@ -178,18 +178,18 @@ def test_very_late_pad_moves_to_composite_and_keeps_consumed_fallback() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == OWNER
     ]
-    assert len(owner_calls) == 1
+    assert owner_calls == []
+    summary_owner = "run_norm_subgraph_pad_layout_summary"
     fallback = next(
-        call
-        for call in owner_calls
-        if [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == summary_owner
     )
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in fallback.keywords
     } == {
-        "include_pad": "False",
-        "include_unary": "False",
-        "include_norm": "True",
         "diagnostics": "session.diagnostics",
     }
     fallback_parent = next(
@@ -198,7 +198,7 @@ def test_very_late_pad_moves_to_composite_and_keeps_consumed_fallback() -> None:
         if isinstance(node, ast.Assign)
         and _single_target(node) == "fallback_norm_stats"
     )
-    assert isinstance(fallback_parent.value, ast.Dict)
+    assert isinstance(fallback_parent.value, ast.Call)
     assert fallback in list(ast.walk(fallback_parent.value))
 
 

@@ -4262,3 +4262,40 @@ Sequential characterization under core-only `uv` completed with
 fallback, Pad result/orchestration, norm reconciliation, singleton-Reshape,
 phase-store, and architecture contracts. The sole expected failure is the
 intentionally absent summary owner. Targeted Ruff and whitespace checks passed.
+
+## Fallback norm-subgraph Pad summary implementation
+
+`run_norm_subgraph_pad_layout_summary(model_ir, diagnostics=...)` now owns the
+tensor-count snapshot, norm-only fixed flag policy, diagnostics forwarding, one
+raw Pad-family invocation, and the non-negative prune delta. The fallback stats
+target remains while its lowerer-local count and inline mapping extension are
+removed. The existing guard still consumes only the norm rewrite counter, so
+prune-only evidence remains observational exactly as before.
+
+The raw `run_pad_layout_cleanup` lowerer import remains an explicit
+compatibility re-export. Every other Pad-family orchestration route and result
+schema is unchanged. Architecture coverage counts the raw runner inside the
+summary, preserving the total 120 ordered runner invocations. The recursive
+fallback predecessor, conditional reconciliation phase, dynamic rank-one
+successor, public behavior, artifacts, dependencies, TensorFlow isolation, and
+the full 128/128 phase-result store are unchanged. The summary remains outside
+that store.
+
+Final sequential validation under core-only `uv`:
+
+- focused dedicated-summary contracts: `4 passed in 0.57s`;
+- affected fallback, Pad, norm, singleton-Reshape, store, and architecture
+  contracts: `303 passed in 19.72s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.82s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.17s`;
+- phase-store capacity contracts: `2 passed in 0.55s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.98s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact flag and diagnostics forwarding plus stable and prune-only schema
+preservation, while affected and architecture gates preserve all other Pad
+routes, runner count, reconciliation semantics, and neighboring boundaries.

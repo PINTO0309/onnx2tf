@@ -3776,3 +3776,34 @@ the dedicated norm-subgraph Pad summary owner and fallback site, leave all
 other Pad callers unchanged, update owner-aware structural contracts, and
 validate sequentially. Continue with commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Fallback norm-subgraph Pad summary implementation
+
+The Pad pass module now exposes
+`run_norm_subgraph_pad_layout_summary(model_ir, diagnostics=...)`. It captures
+tensor count, invokes the existing Pad owner once with Pad/unary disabled and
+norm enabled, forwards diagnostics, and returns the raw mapping plus prune
+evidence. The fallback stats target remains, while its count local and inline
+mapping extension are removed.
+
+The raw Pad runner remains a lowerer compatibility re-export, all other Pad
+routes remain unchanged, and owner-aware architecture coverage preserves the
+total ordered-runner count. The fallback guard, reconciliation phase ID,
+dynamic rank-one successor, and 128/128 store are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused dedicated-summary contracts: `4 passed in 0.57s`;
+- affected boundary, Pad, norm, store, and architecture contracts:
+  `303 passed in 19.72s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.82s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.17s`;
+- phase-store capacity contracts: `2 passed in 0.55s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.98s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next compatible repeated evidence family before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Twenty-nine late lowerer clusters now have focused orchestration owners. The first
+Thirty late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -258,11 +258,16 @@ PRELU passthrough cleanup. It preserves exact layout-state forwarding, the raw
 wrapper and both other raw PRELU paths, rewrite-or-prune reconciliation
 semantics, and both neighboring cleanup boundaries.
 
+The thirtieth provides a dedicated prune-aware summary for the safety-fallback
+norm-subgraph Pad cleanup. It preserves the norm-only fixed flags, diagnostics
+forwarding, raw Pad compatibility re-export, rewrite-only reconciliation guard,
+all other Pad-family routes, and neighboring fallback boundaries.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
 lowerer scope locals. They also replace twenty-one consumed mutation-evidence
-or aggregate-result locals and sixteen tensor-count snapshots with three
-explicit boolean decisions, fifteen reusable summary calls, and one prune-aware
+or aggregate-result locals and seventeen tensor-count snapshots with three
+explicit boolean decisions, sixteen reusable summary calls, and one prune-aware
 cleanup call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -586,6 +591,11 @@ Final checkpoint results:
 - final PRELU dedicated-summary contracts: **4 passed**;
 - affected terminal-layout, SE-FC/Gather, core runtime, store, and architecture
   contracts: **392 passed**;
+- fallback norm-subgraph Pad summary characterization and related contracts:
+  **300 passed, 1 intentional strict xfail**;
+- fallback norm-subgraph Pad dedicated-summary contracts: **4 passed**;
+- affected fallback, Pad, norm, singleton-Reshape, store, and architecture
+  contracts: **303 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -743,3 +753,9 @@ forwarding, conditional norm reconciliation, recursive fallback predecessor,
 dynamic rank-one successor, and every other Pad-family caller. Production
 remains unchanged until its dedicated prune-aware summary owner is implemented
 separately.
+
+The latest checkpoint implements that dedicated fallback norm-subgraph Pad
+summary owner. It removes the tensor snapshot and inline mapping extension
+while retaining the fixed flags, diagnostics, raw compatibility re-export,
+rewrite-only guard, every other Pad route, neighboring boundaries, and the full
+128/128 store.

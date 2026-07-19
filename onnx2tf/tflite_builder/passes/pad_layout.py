@@ -2263,6 +2263,30 @@ def run_pad_layout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
+def run_norm_subgraph_pad_layout_summary(
+    model_ir: ModelIR,
+    *,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run norm-only Pad layout cleanup and retain prune-only evidence."""
+
+    initial_tensor_count = len(model_ir.tensors)
+    result = run_pad_layout_cleanup(
+        model_ir,
+        include_pad=False,
+        include_unary=False,
+        include_norm=True,
+        diagnostics=diagnostics,
+    )
+    return {
+        **result,
+        "pruned_unused_tensors": max(
+            0,
+            int(initial_tensor_count - len(model_ir.tensors)),
+        ),
+    }
+
+
 def _optimize_transpose_instancenorm_pad_prepost_nhwc_chains(
     model_ir: ModelIR,
     *,

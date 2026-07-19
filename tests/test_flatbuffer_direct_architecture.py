@@ -13710,8 +13710,31 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         call.func.id for call in calls if isinstance(call.func, ast.Name)
     }
     assert direct_runner_names | orchestrated_runner_names == runner_names
+    pad_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pad_layout.py"
+    )
+    pad_owner_tree = ast.parse(pad_owner_path.read_text(encoding="utf-8"))
+    norm_summary = next(
+        node
+        for node in pad_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_norm_subgraph_pad_layout_summary"
+    )
+    summarized_runner_calls = [
+        node
+        for node in ast.walk(norm_summary)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_pad_layout_cleanup"
+    ]
+    assert len(summarized_runner_calls) == 1
     assert (
         len(calls)
+        + len(summarized_runner_calls)
         + sum(_orchestrated_pass_count(name) for name in runner_names)
         + sum(
             _late_binary_layout_recovery_call_count(name)
@@ -14440,7 +14463,7 @@ def test_pad_layout_rewrites_have_single_owner() -> None:
         for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Name)
     }
-    assert "run_pad_layout_cleanup" in lowerer_names
+    assert "run_norm_subgraph_pad_layout_summary" in lowerer_names
     assert "run_normalization_pad_layout_cleanup" in lowerer_names
     assert "run_pad_mul_layout_cleanup" not in lowerer_names
     assert _orchestrated_pass_count("run_pad_mul_layout_cleanup") == 1

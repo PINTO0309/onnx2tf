@@ -629,8 +629,9 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_pad_prepost_nhwc_chains as _optimize_transpose_pad_prepost_nhwc_chains_pass,
     _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains as _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains_pass,
     repair_channel_last_inputs_for_channel_first_pad,
+    run_norm_subgraph_pad_layout_summary,
     run_normalization_pad_layout_cleanup,
-    run_pad_layout_cleanup,
+    run_pad_layout_cleanup,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.quantized_layout import (
     repair_channel_last_convinteger_input_transposes,
@@ -5522,20 +5523,10 @@ def lower_onnx_to_ir(
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
             protected_boundary_tensor_names=protected_boundary_tensor_names,
         )
-        fallback_norm_tensor_count = len(fallback_ir.tensors)
-        fallback_norm_stats = {
-            **run_pad_layout_cleanup(
-                fallback_ir,
-                include_pad=False,
-                include_unary=False,
-                include_norm=True,
-                diagnostics=session.diagnostics,
-            ),
-            "pruned_unused_tensors": max(
-                0,
-                fallback_norm_tensor_count - len(fallback_ir.tensors),
-            ),
-        }
+        fallback_norm_stats = run_norm_subgraph_pad_layout_summary(
+            fallback_ir,
+            diagnostics=session.diagnostics,
+        )
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
             (
                 _fallback_binary_adapter_stats,

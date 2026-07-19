@@ -82,36 +82,11 @@ def test_safety_fallback_stages_complete_norm_mutation_evidence() -> None:
         and statement.targets[0].id == "fallback_norm_stats"
     )
 
-    tensor_count = body[stats_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert len(tensor_count.targets) == 1
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "fallback_norm_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(fallback_ir.tensors)"
-
     stats = body[stats_index]
     assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.value, ast.Dict)
-    assert stats.value.keys[0] is None
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == "run_pad_layout_cleanup"
-    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in owner.keywords
-    } == {
-        "include_pad": "False",
-        "include_unary": "False",
-        "include_norm": "True",
-        "diagnostics": "session.diagnostics",
-    }
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(stats.value.values[1]) == (
-        "max(0, fallback_norm_tensor_count - len(fallback_ir.tensors))"
+    assert ast.unparse(stats.value) == (
+        "run_norm_subgraph_pad_layout_summary("
+        "fallback_ir, diagnostics=session.diagnostics)"
     )
 
     guard = body[stats_index + 1]
