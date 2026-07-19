@@ -82,6 +82,26 @@ def _direct_call_name(statement: ast.stmt) -> str:
     return statement.value.func.id
 
 
+def _phase_result_owner_name(
+    statement: ast.stmt,
+    *,
+    phase_id: str,
+) -> str:
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Attribute)
+    assert ast.unparse(call.func.value) == "session"
+    assert call.func.attr == "record_phase_result"
+    assert len(call.args) == 2
+    assert isinstance(call.args[0], ast.Constant)
+    assert call.args[0].value == phase_id
+    owner = call.args[1]
+    assert isinstance(owner, ast.Call)
+    assert isinstance(owner.func, ast.Name)
+    return owner.func.id
+
+
 def _context(*, use_layout_state: bool = False) -> ChannelShuffleGatherContext:
     model_ir = ModelIR("channel_shuffle_gather_test")
     return ChannelShuffleGatherContext(
@@ -463,7 +483,10 @@ def test_channel_shuffle_gather_preserves_full_post_policy_and_boundaries() -> N
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in invocation.value.keywords
     } == {"include_post_gather_cleanup": True}
-    assert _direct_call_name(guard.body[invocation_index - 1]) == (
+    assert _phase_result_owner_name(
+        guard.body[invocation_index - 1],
+        phase_id="cleanup.layout_pass_set_2.slice_logistic_concat_tail",
+    ) == (
         "_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains"
     )
     assert _direct_call_name(guard.body[invocation_index + 1]) == (
