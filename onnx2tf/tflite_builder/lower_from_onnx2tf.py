@@ -5819,16 +5819,13 @@ def lower_onnx_to_ir(
         fallback_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             fallback_ir
         )
-        _fallback_broadcast_static_shape_stats = {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
         if int(fallback_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
-            _fallback_broadcast_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.fallback.broadcast",
                 _reconcile_static_tensor_shapes(
                     fallback_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
             session.record_phase_result(
                 "topology_layout.fallback.broadcast",
@@ -5847,10 +5844,6 @@ def lower_onnx_to_ir(
                 None,
             )
         )
-        _fallback_se_fc_gather_static_shape_stats = {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
         if (
             int(
                 fallback_sinet_shuffle_stats.get(
@@ -5873,30 +5866,28 @@ def lower_onnx_to_ir(
             > 0
             or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count
         ):
-            _fallback_se_fc_gather_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.fallback.se_fc_gather",
                 _reconcile_static_tensor_shapes(
                     fallback_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
         fallback_placeholder_matmul_stats = (
             _restore_placeholder_matmul_flattened_inputs(fallback_ir)
         )
-        _fallback_placeholder_matmul_static_shape_stats = {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
         if int(
             fallback_placeholder_matmul_stats.get(
                 "restored_placeholder_matmul_flattened_inputs",
                 0,
             )
         ) > 0:
-            _fallback_placeholder_matmul_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.fallback.placeholder_matmul",
                 _reconcile_static_tensor_shapes(
                     fallback_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
         session.record_phase_result(
             "topology.fallback.post_placeholder",
@@ -5927,59 +5918,50 @@ def lower_onnx_to_ir(
                 fallback_conv_input_tensor_count - len(fallback_ir.tensors),
             ),
         }
-        _fallback_conv_input_static_shape_stats = {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
         if int(
             fallback_conv_input_stats.get(
                 "repaired_stale_nchw_to_nhwc_conv_input_transposes",
                 0,
             )
         ) > 0:
-            _fallback_conv_input_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.fallback.conv_input",
                 _reconcile_static_tensor_shapes(
                     fallback_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
         fallback_concat_layout_stats = (
             _repair_mixed_nhwc_inputs_for_nchw_concat(fallback_ir)
         )
-        _fallback_mixed_concat_static_shape_stats = {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
         if int(
             fallback_concat_layout_stats.get(
                 "repaired_mixed_nhwc_inputs_for_nchw_concat",
                 0,
             )
         ) > 0:
-            _fallback_mixed_concat_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.fallback.mixed_concat",
                 _reconcile_static_tensor_shapes(
                     fallback_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
         fallback_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(
             fallback_ir
         )
-        _fallback_concat_axis_static_shape_stats = {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
         if int(
             fallback_concat_axis_stats.get(
                 "repaired_nchw_concat_transpose_conv_axes",
                 0,
             )
         ) > 0:
-            _fallback_concat_axis_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.fallback.concat_axis",
                 _reconcile_static_tensor_shapes(
                     fallback_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
         fallback_binary_layout_tensor_count = len(fallback_ir.tensors)
         fallback_binary_layout_stats = {
@@ -5991,21 +5973,18 @@ def lower_onnx_to_ir(
                 fallback_binary_layout_tensor_count - len(fallback_ir.tensors),
             ),
         }
-        _fallback_binary_layout_static_shape_stats = {
-            "reconciled_static_tensor_shapes": 0,
-            "reconciled_static_shape_mutations": 0,
-        }
         if int(
             fallback_binary_layout_stats.get(
                 "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
                 0,
             )
         ) > 0:
-            _fallback_binary_layout_static_shape_stats = (
+            session.record_phase_result(
+                "shape_reconciliation.fallback.binary_layout",
                 _reconcile_static_tensor_shapes(
                     fallback_ir,
                     include_mutation_count=True,
-                )
+                ),
             )
         session.record_phase_result(
             "topology.fallback.post_layout_repair",

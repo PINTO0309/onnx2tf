@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Twenty-four stable phase IDs
+### Thirty-one stable phase IDs
 
-The lowerer now records 24 bounded observations covering:
+The lowerer now records 31 bounded observations covering:
 
 - core shape resolution;
 - safe no-layout Transpose reduction;
@@ -151,15 +151,17 @@ The lowerer now records 24 bounded observations covering:
 - fallback and primary topology checkpoints;
 - fallback and primary topology/layout refresh;
 - fallback and primary terminal layout validation;
+- fallback broadcast, SE/FC/Gather, placeholder-MatMul, Conv-input,
+  mixed-Concat, Concat-axis, and binary-layout static-shape reconciliation;
 - fallback norm and high-rank BatchMatMul shape/topology reconciliation;
 - primary final high-rank BatchMatMul, Pad, Conv-input, mixed-Concat,
   Concat-axis, and binary-layout shape/topology reconciliation.
 
-The final eight guarded shape/topology phases use invoked-phase-only semantics.
-A phase omitted by its guard is absent from the snapshot. An invoked phase is
-recorded even when all four counters are zero. This preserves the distinction
-between "not invoked" and "invoked but stable" and allowed eight unconsumed
-all-zero default dictionaries to be removed.
+The guarded shape-reconciliation and shape/topology phases use
+invoked-phase-only semantics. A phase omitted by its guard is absent from the
+snapshot. An invoked phase is recorded even when all counters are zero. This
+preserves the distinction between "not invoked" and "invoked but stable" and
+allowed 15 unconsumed all-zero default dictionaries to be removed.
 
 ## Safety and compatibility
 
@@ -188,7 +190,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 24 phase IDs and owners appear in deterministic source order;
+- all 31 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -199,10 +201,11 @@ All validation was executed sequentially under `uv`.
 
 Final checkpoint results:
 
-- directly affected static-shape/topology and orchestration contracts:
-  **101 passed**;
+- fallback static-shape family and safety-fallback contracts:
+  **20 passed**;
+- SE/FC/Gather, topology/layout, and phase-store contracts: **18 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
-  **124 passed**;
+  **138 passed**;
 - lowerer architecture suite: **258 passed**;
 - targeted Ruff checks: **passed**;
 - Python bytecode compilation: **passed**;

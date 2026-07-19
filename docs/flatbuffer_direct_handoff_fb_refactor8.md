@@ -667,3 +667,28 @@ only their unconsumed zero defaults, update the already-existing fallback
 orchestration contracts, and repeat the focused and architecture gates. Do not
 change any guard, owner call, repair order, graph scan, or successor. Never
 create, update, or reopen a pull request.
+
+## Fallback static-shape phase-result implementation
+
+All seven characterized results now use stable
+`shape_reconciliation.fallback.*` phase IDs. The old zero-default dictionaries
+and lowerer-local targets are gone. Guard-skipped phases remain absent, while
+invoked owners record the complete two-counter result. Arguments, guards,
+owner evaluation count, repair order, broadcast topology/layout refresh, and
+all successors remain unchanged.
+
+Validation completed sequentially under core-only `uv`:
+
+- family and safety-fallback contracts: `20 passed in 0.93s`;
+- SE/FC/Gather, topology/layout, and phase-store contracts:
+  `18 passed in 0.82s`;
+- broader affected contracts: `138 passed in 3.45s`;
+- lowerer architecture contracts: `258 passed in 17.69s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+The bounded store now covers 31 phase IDs. No real-model conversion was needed
+for this result-destination-only change. After committing and pushing, audit
+the remaining primary-path static-shape-only result locals. Split them into
+bounded semantic families rather than migrating all model-specific final
+repairs at once, and preserve invoked-only semantics. Never create, update, or
+reopen a pull request.

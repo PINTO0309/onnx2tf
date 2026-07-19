@@ -651,3 +651,41 @@ Validation completed sequentially under core-only `uv`:
 
 The sole expected failure is the intentionally unimplemented bounded-store
 migration.
+
+## Fallback static-shape phase-result implementation
+
+The seven characterized fallback reconciliation results now record directly
+to the bounded session store under:
+
+- `shape_reconciliation.fallback.broadcast`;
+- `shape_reconciliation.fallback.se_fc_gather`;
+- `shape_reconciliation.fallback.placeholder_matmul`;
+- `shape_reconciliation.fallback.conv_input`;
+- `shape_reconciliation.fallback.mixed_concat`;
+- `shape_reconciliation.fallback.concat_axis`;
+- `shape_reconciliation.fallback.binary_layout`.
+
+Their unconsumed zero-default dictionaries and lowerer-local targets were
+removed. Existing mutation-positive guards still decide whether the owner is
+invoked, so skipped phases are absent from the snapshot. Every owner call
+still receives `fallback_ir` and `include_mutation_count=True` at the same
+location. The broadcast boundary still performs topology/layout refresh
+immediately after reconciliation, and the remaining successors are unchanged.
+
+No graph scan, mutation, repair, guard, layout refresh, topology sort,
+dependency, public result, report, metadata field, or artifact changed. The
+bounded store now covers 31 stable phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- new family plus safety-fallback contracts: `20 passed in 0.93s`;
+- SE/FC/Gather, topology/layout predecessor, and phase-store contracts:
+  `18 passed in 0.82s`;
+- broader affected owner and orchestration contracts:
+  `138 passed in 3.45s`;
+- lowerer architecture contracts: `258 passed in 17.69s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because this implementation only changes the
+destination of already-computed two-counter dictionaries.

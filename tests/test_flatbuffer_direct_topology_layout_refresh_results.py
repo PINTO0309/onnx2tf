@@ -41,9 +41,9 @@ EXPECTED_MODEL_ARGUMENTS = (
     "model_ir",
     "model_ir",
 )
-EXPECTED_PREDECESSOR_TARGETS = (
+EXPECTED_PREDECESSOR_IDS = (
     "_fallback_dynamic_rank1_stats",
-    "_fallback_broadcast_static_shape_stats",
+    "shape_reconciliation.fallback.broadcast",
     "_absolute_final_dynamic_rank1_stats",
     "_final_convinteger_static_shape_stats",
     "_final_instancenorm_static_shape_stats",
@@ -114,6 +114,25 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     ):
         return None
     return call.args[1]
+
+
+def _predecessor_id(statement: ast.stmt) -> str | None:
+    target = _single_target(statement)
+    if target is not None:
+        return target
+    call = _statement_call(statement)
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    ):
+        return call.args[0].value
+    return None
 
 
 def _raw_pair_locations(
@@ -215,8 +234,8 @@ def test_six_topology_layout_refresh_boundaries_are_explicit() -> None:
         for block, index in locations
     ) == EXPECTED_PHASE_IDS
     assert tuple(
-        _single_target(block[index - 1]) for block, index in locations
-    ) == EXPECTED_PREDECESSOR_TARGETS
+        _predecessor_id(block[index - 1]) for block, index in locations
+    ) == EXPECTED_PREDECESSOR_IDS
     assert tuple(
         ast.unparse(_phase_result_owner(block[index]).args[0])
         for block, index in locations
@@ -251,8 +270,8 @@ def test_topology_layout_runner_preserves_effects_and_small_results() -> None:
         for block, index in locations
     ) == EXPECTED_PHASE_IDS
     assert tuple(
-        _single_target(block[index - 1]) for block, index in locations
-    ) == EXPECTED_PREDECESSOR_TARGETS
+        _predecessor_id(block[index - 1]) for block, index in locations
+    ) == EXPECTED_PREDECESSOR_IDS
     assert tuple(
         ast.unparse(_phase_result_owner(block[index]).args[0])
         for block, index in locations

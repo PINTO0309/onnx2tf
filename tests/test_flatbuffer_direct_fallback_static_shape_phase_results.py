@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER = "_reconcile_static_tensor_shapes"
@@ -27,12 +24,6 @@ EXPECTED_PHASE_IDS = (
     "shape_reconciliation.fallback.concat_axis",
     "shape_reconciliation.fallback.binary_layout",
 )
-ZERO_RESULT = {
-    "reconciled_static_tensor_shapes": 0,
-    "reconciled_static_shape_mutations": 0,
-}
-
-
 def _lowerer() -> ast.FunctionDef:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     return next(
@@ -70,57 +61,10 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     return call.args[1]
 
 
-def test_seven_fallback_static_shape_observations_are_homogeneous() -> None:
-    lowerer = _lowerer()
-    assignments = sorted(
-        (
-            node
-            for node in ast.walk(lowerer)
-            if isinstance(node, ast.Assign)
-            and _single_target(node) in EXPECTED_RESULT_TARGETS
-        ),
-        key=lambda node: node.lineno,
-    )
-
-    assert len(assignments) == 14
-    defaults = assignments[::2]
-    observations = assignments[1::2]
-    assert tuple(_single_target(node) for node in defaults) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert tuple(_single_target(node) for node in observations) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert all(
-        isinstance(node.value, ast.Dict)
-        and ast.literal_eval(node.value) == ZERO_RESULT
-        for node in defaults
-    )
-    for observation in observations:
-        call = _statement_call(observation)
-        assert call is not None
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == OWNER
-        assert [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {"include_mutation_count": "True"}
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id in EXPECTED_RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback static-shape observations have not moved to the session store",
-)
-def test_seven_fallback_static_shape_observations_use_phase_results() -> None:
-    lowerer = _lowerer()
-    records = sorted(
+def _fallback_static_shape_records(
+    lowerer: ast.FunctionDef,
+) -> list[ast.Expr]:
+    return sorted(
         (
             node
             for node in ast.walk(lowerer)
@@ -134,10 +78,29 @@ def test_seven_fallback_static_shape_observations_use_phase_results() -> None:
         key=lambda node: node.lineno,
     )
 
+
+def test_seven_fallback_static_shape_phase_records_are_homogeneous() -> None:
+    records = _fallback_static_shape_records(_lowerer())
+
+    assert len(records) == 7
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
+    for record in records:
+        owner = _phase_result_owner(record)
+        assert owner is not None
+        assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in owner.keywords
+        } == {"include_mutation_count": "True"}
+
+
+def test_seven_fallback_static_shape_locals_and_defaults_are_removed() -> None:
+    lowerer = _lowerer()
+
     assert not any(
-        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        isinstance(node, ast.Name)
+        and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )

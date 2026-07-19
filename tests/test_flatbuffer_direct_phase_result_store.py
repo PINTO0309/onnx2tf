@@ -18,8 +18,15 @@ EXPECTED_RESULT_TARGETS = (
     "_terminal_expand_squeeze_static_shape_stats",
     "_fallback_norm_static_shape_stats",
     "_fallback_dynamic_rank1_topology_layout_stats",
+    "_fallback_broadcast_static_shape_stats",
     "_fallback_broadcast_topology_layout_stats",
+    "_fallback_se_fc_gather_static_shape_stats",
+    "_fallback_placeholder_matmul_static_shape_stats",
     "_fallback_post_placeholder_topology_stats",
+    "_fallback_conv_input_static_shape_stats",
+    "_fallback_mixed_concat_static_shape_stats",
+    "_fallback_concat_axis_static_shape_stats",
+    "_fallback_binary_layout_static_shape_stats",
     "_fallback_post_layout_repair_topology_stats",
     "_fallback_high_rank_bmm_static_shape_stats",
     "_fallback_topology_layout_validation_stats",
@@ -44,8 +51,15 @@ EXPECTED_OWNERS = (
     "_reconcile_static_tensor_shapes",
     "run_static_shape_topology_reconciliation",
     "run_topology_layout_refresh",
+    "_reconcile_static_tensor_shapes",
     "run_topology_layout_refresh",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
     "_topologically_sort_operators",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
     "_topologically_sort_operators",
     "run_static_shape_topology_reconciliation",
     "run_topology_layout_validation",
@@ -75,6 +89,13 @@ EXPECTED_MODEL_ARGUMENTS = (
     "fallback_ir",
     "fallback_ir",
     "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
     "model_ir",
     "model_ir",
     "model_ir",
@@ -96,8 +117,15 @@ EXPECTED_PHASE_IDS = (
     "shape_reconciliation.terminal.expand_squeeze",
     "shape_topology.fallback.norm",
     "topology_layout.fallback.post_dynamic_rank1",
+    "shape_reconciliation.fallback.broadcast",
     "topology_layout.fallback.broadcast",
+    "shape_reconciliation.fallback.se_fc_gather",
+    "shape_reconciliation.fallback.placeholder_matmul",
     "topology.fallback.post_placeholder",
+    "shape_reconciliation.fallback.conv_input",
+    "shape_reconciliation.fallback.mixed_concat",
+    "shape_reconciliation.fallback.concat_axis",
+    "shape_reconciliation.fallback.binary_layout",
     "topology.fallback.post_layout_repair",
     "shape_topology.fallback.high_rank_batch_matmul",
     "layout_validation.fallback.terminal",
@@ -155,7 +183,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_twenty_four_observations_use_the_bounded_session_store() -> None:
+def test_thirty_one_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -166,7 +194,7 @@ def test_twenty_four_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 24
+    assert len(records) == 31
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
