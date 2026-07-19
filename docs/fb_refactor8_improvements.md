@@ -3541,3 +3541,24 @@ No real-model conversion was repeated because this is a one-call orchestration
 extraction whose focused runtime matrix proves both stable and prune-only
 paths, while the broader structural gates preserve the exact call count and
 neighboring boundaries.
+
+## Channel Slice/Pad/Mul direct-summary characterization
+
+The next adjacent evidence pair stores the raw ordered results from the
+channel Slice/Pad/Mul cluster and immediately normalizes them into
+`_pre_terminal_channel_slice_pad_mul_stats`. The raw tuple is consumed only by
+that summary call, while the normalized mapping is not read by later control
+flow. The lowerer-local raw wrapper must remain because terminal Slice/Concat
+recovery still receives it as a callback.
+
+`tests/test_flatbuffer_direct_channel_slice_pad_mul_summary_orchestration.py`
+fixes the two-statement boundary, exact wrapper and summarizer calls, result
+use counts, predecessor, successor, and the retained raw-wrapper dispatch. Its
+strict expected failure describes one pass-module summary owner used only at
+the direct site. No production source, pass, graph, result, callback, store,
+public API, artifact, dependency, or TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.14s`; targeted Ruff, bytecode compilation, and
+whitespace checks passed. The sole expected failure is the intentionally
+absent direct-summary owner.

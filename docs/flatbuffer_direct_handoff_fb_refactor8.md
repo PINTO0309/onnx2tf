@@ -3126,3 +3126,23 @@ Commit and push this implementation checkpoint. On resume, inspect the next
 adjacent non-store evidence boundary and characterize it before production
 changes. Continue with coherent commits and pushes only; never create, update,
 or reopen a pull request.
+
+## Channel Slice/Pad/Mul direct-summary characterization
+
+The direct late site currently assigns the raw two-result cluster tuple and
+immediately feeds it to `summarize_channel_slice_pad_mul_mutations`. The tuple
+has no other consumer, and the normalized summary is unconsumed. The nested
+raw wrapper remains a required callback for terminal Slice/Concat recovery and
+must not be removed.
+
+The new characterization fixes that exact boundary and adds a strict xfail
+requiring a pass-module `run_channel_slice_pad_mul_summary(context)` owner at
+the direct site while preserving the raw wrapper. Sequential core-only
+validation completed with `1 passed, 1 xfailed in 0.14s`; targeted Ruff,
+bytecode compilation, and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, add the direct
+summary owner, replace only the two direct evidence statements, update
+owner-aware neighboring contracts, and retain the raw callback wrapper.
+Continue with commits and pushes only; never create, update, or reopen a pull
+request.
