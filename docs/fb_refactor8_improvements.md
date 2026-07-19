@@ -679,6 +679,34 @@ Validation completed sequentially under core-only `uv`:
 No real-model conversion was run because only the destination of existing
 two-counter results changed.
 
+## Primary generic final reconciliation characterization
+
+The next primary family contains mixed-singleton Concat,
+placeholder/binary-adapter, and SE/FC/Gather reconciliation. Each selected
+result is an unconsumed two-counter zero default followed by a guarded
+`_reconcile_static_tensor_shapes(model_ir, include_mutation_count=True)` call.
+
+The placeholder boundary also has a separate
+`_final_placeholder_matmul_static_shape_stats` result that is consumed to
+decide whether binary adapters require a second reconciliation. That consumed
+result is explicitly excluded from migration and protected by the new
+contract.
+
+The characterization fixes the three selected targets, source order, zero
+schema, owner arguments, keyword arguments, absence of consumers, and continued
+load of the placeholder-MatMul result. A strict expected failure requires
+three stable `shape_reconciliation.primary.final_*` records without changing
+the consumed value or any guard. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated family contract: `1 passed, 1 xfailed in 0.17s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented bounded-store
+migration.
+
 ## Fallback static-shape phase-result implementation
 
 The seven characterized fallback reconciliation results now record directly

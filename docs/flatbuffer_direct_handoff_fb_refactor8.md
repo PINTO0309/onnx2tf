@@ -782,3 +782,29 @@ separate generic final family for mixed-singleton Concat,
 placeholder/binary repair, and SE/FC/Gather before considering the six
 SiNet-specific final repairs. Preserve every mutation and pruning guard. Never
 create, update, or reopen a pull request.
+
+## Primary generic final reconciliation characterization
+
+The next selected family is mixed-singleton Concat,
+placeholder/binary-adapter, and SE/FC/Gather reconciliation. All three selected
+results are unconsumed complete two-counter dictionaries behind existing
+mutation/pruning guards.
+
+The placeholder path also retains
+`_final_placeholder_matmul_static_shape_stats`, which is consumed to construct
+`final_placeholder_reconcile_stats` and decide whether the nested binary
+reconciliation runs. The new contract explicitly proves that this consumed
+result remains loaded and must not be migrated with the selected three.
+
+Characterization fixes target order, zero schema, owner arguments,
+`include_mutation_count=True`, absence of selected-result consumers, and the
+consumed placeholder result. Its strict expected failure requires three stable
+`shape_reconciliation.primary.final_*` records. The dedicated test is
+`1 passed, 1 xfailed in 0.17s`; Ruff, bytecode compilation, and whitespace
+checks pass. No production source changed.
+
+Commit and push before implementation. Replace only the three selected guarded
+assignments and remove only their defaults. Preserve the consumed
+placeholder-MatMul assignment and all nested guard logic. Then update terminal,
+SE/FC/Gather, architecture, and bounded-store contracts, validate, document,
+commit, and push. Never create, update, or reopen a pull request.
