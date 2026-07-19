@@ -3947,3 +3947,37 @@ the shared owner and these two compatible three-stage sites, retain the raw
 lowerer compatibility re-exports and the earlier core consecutive-MUL caller,
 update owner-aware contracts, and validate sequentially. Continue with commits
 and pushes only; never create, update, or reopen a pull request.
+
+## Shared precision-cleanup sequence implementation
+
+The new precision-cleanup pass module exposes
+`run_precision_cleanup_sequence(context)`. It invokes DIV-to-reciprocal,
+transactional consecutive-MUL, and sensitive-DIV restore once each in source
+order and returns their three raw mappings unchanged. Fallback omits the layout
+keyword exactly as before; primary-final forwards the conversion layout state;
+only consecutive-MUL receives diagnostics.
+
+The two production sites now retain one ordered-result tuple each instead of
+six individual mapping locals. The fallback topology/unbound-repair boundaries,
+primary progress/sort boundary, independent core consecutive-MUL call, private
+precision compatibility re-exports, and 128/128 phase-result store are
+unchanged. GraphIndex sharing remains intentionally excluded across the
+transactional middle stage.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-sequence contracts: `4 passed in 0.55s`;
+- affected precision, cleanup, fallback, topology, terminal, store, and
+  architecture contracts: `368 passed in 20.89s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.89s`;
+- synthetic core runtime contracts: `55 passed in 0.96s`;
+- result contracts: `196 passed in 9.39s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.88s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, audit the next
+compatible adjacent unconsumed-result cluster before production changes. Keep
+all validation sequential and continue with commits and pushes only; never
+create, update, or reopen a pull request.

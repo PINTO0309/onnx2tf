@@ -56,8 +56,11 @@ from onnx2tf.tflite_builder.ir import (
 )
 from onnx2tf.tflite_builder.op_families.constant import lower_constant_node
 from onnx2tf.tflite_builder.passes.precision import (
-    _restore_precision_sensitive_reciprocal_divisions,
-    _rewrite_constant_divisors_to_multiplicative_reciprocals,
+    _restore_precision_sensitive_reciprocal_divisions,  # noqa: F401 - compatibility re-export
+    _rewrite_constant_divisors_to_multiplicative_reciprocals,  # noqa: F401 - compatibility re-export
+)
+from onnx2tf.tflite_builder.passes.precision_cleanup_orchestration import (
+    run_precision_cleanup_sequence,
 )
 from onnx2tf.tflite_builder.passes.recurrent_alias import (
     repair_orphan_recurrent_step_tensors,
@@ -4114,6 +4117,18 @@ def lower_onnx_to_ir(
             )
         )
 
+    def _run_precision_cleanup_sequence(
+        target_model_ir: ModelIR,
+        target_layout_state: LayoutState | None,
+    ) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int]]:
+        return run_precision_cleanup_sequence(
+            ModelIRPassContext(
+                model_ir=target_model_ir,
+                layout_state=target_layout_state,
+                diagnostics=session.diagnostics,
+            )
+        )
+
     def _run_terminal_boundary_layout_pass_cluster() -> Tuple[Dict[str, int], ...]:
         return run_terminal_boundary_layout(terminal_boundary_layout_context)
 
@@ -5610,17 +5625,11 @@ def lower_onnx_to_ir(
             "topology.fallback.post_placeholder",
             _topologically_sort_operators(fallback_ir),
         )
-        _fallback_precision_div_rewrite_stats = (
-            _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
-        )
-        _fallback_precision_consecutive_mul_stats = (
-            run_consecutive_mul_constants_cleanup(
+        _fallback_precision_cleanup_results = (
+            _run_precision_cleanup_sequence(
                 fallback_ir,
-                diagnostics=session.diagnostics,
+                None,
             )
-        )
-        _fallback_precision_div_restore_stats = (
-            _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
         )
         _fallback_unbound_repair_stats = (
             _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
@@ -5722,24 +5731,9 @@ def lower_onnx_to_ir(
         )
         return _finalize_model_ir(fallback_ir)
 
-    _final_precision_div_rewrite_stats = (
-        _rewrite_constant_divisors_to_multiplicative_reciprocals(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _final_precision_consecutive_mul_stats = (
-        run_consecutive_mul_constants_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
-    _final_precision_div_restore_stats = (
-        _restore_precision_sensitive_reciprocal_divisions(
-            model_ir,
-            layout_state=session.layout_state,
-        )
+    _final_precision_cleanup_results = _run_precision_cleanup_sequence(
+        model_ir,
+        session.layout_state,
     )
     _set_post_progress_desc("topological sort")
     session.record_phase_result(

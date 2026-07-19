@@ -130,63 +130,31 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
 
 def test_safety_fallback_retains_precision_cleanup_results() -> None:
     body = _safety_fallback_body(_lowerer())
-    rewrite_name = "_rewrite_constant_divisors_to_multiplicative_reciprocals"
-    consecutive_name = "run_consecutive_mul_constants_cleanup"
-    restore_name = "_restore_precision_sensitive_reciprocal_divisions"
-    rewrite_index = next(
+    sequence_index = next(
         index
         for index, statement in enumerate(body)
-        if isinstance(statement, (ast.Assign, ast.Expr))
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_fallback_precision_cleanup_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == rewrite_name
+        and statement.value.func.id == "_run_precision_cleanup_sequence"
     )
-    assert rewrite_index + 2 < len(body)
-
-    expected = (
-        (
-            "_fallback_precision_div_rewrite_stats",
-            rewrite_name,
-            {},
-        ),
-        (
-            "_fallback_precision_consecutive_mul_stats",
-            consecutive_name,
-            {"diagnostics": "session.diagnostics"},
-        ),
-        (
-            "_fallback_precision_div_restore_stats",
-            restore_name,
-            {},
-        ),
+    sequence = body[sequence_index]
+    assert isinstance(sequence, ast.Assign)
+    assert ast.unparse(sequence.value) == (
+        "_run_precision_cleanup_sequence(fallback_ir, None)"
     )
-    for statement, (target_name, function_name, keywords) in zip(
-        body[rewrite_index : rewrite_index + 3],
-        expected,
-    ):
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == function_name
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "fallback_ir"
-        ]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == keywords
 
-    previous = body[rewrite_index - 1]
+    previous = body[sequence_index - 1]
     _assert_phase_result_record(
         previous,
         phase_id="topology.fallback.post_placeholder",
         owner_expression="_topologically_sort_operators(fallback_ir)",
     )
-    following = body[rewrite_index + 3]
+    following = body[sequence_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "_fallback_unbound_repair_stats"

@@ -13757,9 +13757,42 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and node.func.id == "run_pad_layout_cleanup"
     ]
     assert len(summarized_runner_calls) == 1
+    precision_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "precision_cleanup_orchestration.py"
+    )
+    precision_owner_tree = ast.parse(
+        precision_owner_path.read_text(encoding="utf-8")
+    )
+    precision_sequence = next(
+        node
+        for node in precision_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_precision_cleanup_sequence"
+    )
+    precision_runner_calls = [
+        node
+        for node in ast.walk(precision_sequence)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_consecutive_mul_constants_cleanup"
+    ]
+    assert len(precision_runner_calls) == 1
+    precision_sequence_invocations = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_precision_cleanup_sequence"
+    ]
+    assert len(precision_sequence_invocations) == 2
     assert (
         len(calls)
         + len(summarized_runner_calls)
+        + len(precision_runner_calls) * len(precision_sequence_invocations)
         + sum(_orchestrated_pass_count(name) for name in runner_names)
         + sum(
             _late_binary_layout_recovery_call_count(name)

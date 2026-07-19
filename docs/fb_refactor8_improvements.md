@@ -4460,3 +4460,46 @@ precision, graph-cleanup, fallback, topology, terminal-layout, phase-store,
 and architecture contracts. The sole expected failure is the intentionally
 absent shared sequence owner. Targeted Ruff and whitespace checks passed. No
 real-model conversion was repeated for this characterization-only change.
+
+## Shared precision-cleanup sequence implementation
+
+`run_precision_cleanup_sequence(context)` now owns the ordered
+DIV-to-reciprocal, transactional consecutive-MUL, and precision-sensitive DIV
+restore calls. It returns the three raw mappings unchanged as a tuple, so their
+independent schemas and source order remain explicit. A conditional layout
+keyword mapping preserves the prior callback contract exactly: no layout
+keyword is sent for fallback, while the conversion `LayoutState` is sent to all
+three primary-final stages. Diagnostics continue to reach only the middle
+transactional stage.
+
+The fallback and primary-final sites each replace three individual unconsumed
+mapping locals with one ordered-result local. The preceding fallback topology
+checkpoint, following fallback unbound-input repair, following primary progress
+description and sort, graph mutations, pruning, layout synchronization, and
+diagnostics are unchanged. The earlier core consecutive-MUL phase-result call
+remains independent and direct.
+
+The lowerer retains both private precision imports as explicit compatibility
+re-exports. No GraphIndex is shared across the transaction boundary, no result
+is added to the already-full 128/128 phase-result store, and no new guard,
+scan, dependency, TensorFlow import, public API, or artifact behavior is
+introduced.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-sequence contracts: `4 passed in 0.55s`;
+- affected precision, graph-cleanup, fallback, topology, terminal-layout,
+  store, and architecture contracts: `368 passed in 20.89s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.89s`;
+- synthetic core runtime contracts: `55 passed in 0.96s`;
+- result contracts: `196 passed in 9.39s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.88s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because runtime coverage proves
+exact raw schema/order, both layout policies, and diagnostics forwarding,
+while affected structural gates preserve all neighboring boundaries and the
+independent core caller.

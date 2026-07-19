@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import precision_cleanup_orchestration
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -77,55 +82,32 @@ def _containing_body(root: ast.AST, target: ast.stmt) -> list[ast.stmt]:
     raise AssertionError("statement is not contained by an AST body")
 
 
-def _call_contract(statement: ast.stmt) -> tuple[str, list[str], dict[str, str]]:
-    assert isinstance(statement, ast.Assign)
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    return (
-        call.func.id,
-        [ast.unparse(argument) for argument in call.args],
-        {
-            str(keyword.arg): ast.unparse(keyword.value)
-            for keyword in call.keywords
-        },
-    )
-
-
 def test_precision_cleanup_duplicate_raw_sequences_are_fixed() -> None:
     lowerer = _lowerer()
-    expected_owners = (REWRITE_OWNER, CONSECUTIVE_OWNER, RESTORE_OWNER)
+    old_targets = {
+        target
+        for site_targets, _, _, _, _, _ in SITE_CONTRACTS
+        for target in site_targets
+    }
     for (
-        old_targets,
         _,
+        sequence_target,
         model_name,
         layout_expression,
         predecessor_phase,
         successor_target,
     ) in SITE_CONTRACTS:
-        first = next(
+        sequence = next(
             statement
             for statement in ast.walk(lowerer)
-            if _single_target(statement) == old_targets[0]
+            if _single_target(statement) == sequence_target
         )
-        body = _containing_body(lowerer, first)
-        index = body.index(first)
-        statements = body[index : index + 3]
-        assert tuple(_single_target(statement) for statement in statements) == (
-            old_targets
+        body = _containing_body(lowerer, sequence)
+        index = body.index(sequence)
+        assert isinstance(sequence, ast.Assign)
+        assert ast.unparse(sequence.value) == (
+            f"{SEQUENCE_HELPER}({model_name}, {layout_expression})"
         )
-        for offset, (statement, owner_name) in enumerate(
-            zip(statements, expected_owners, strict=True)
-        ):
-            owner, arguments, keywords = _call_contract(statement)
-            assert owner == owner_name
-            assert arguments == [model_name]
-            expected_keywords: dict[str, str] = {}
-            if layout_expression != "None":
-                expected_keywords["layout_state"] = layout_expression
-            if offset == 1:
-                expected_keywords["diagnostics"] = "session.diagnostics"
-            assert keywords == expected_keywords
 
         if predecessor_phase is not None:
             assert ast.unparse(body[index - 1]) == (
@@ -134,12 +116,16 @@ def test_precision_cleanup_duplicate_raw_sequences_are_fixed() -> None:
                 f"{model_name}))"
             )
         if successor_target is not None:
-            assert _single_target(body[index + 3]) == successor_target
+            assert _single_target(body[index + 1]) == successor_target
         else:
-            assert ast.unparse(body[index + 3]) == (
+            assert ast.unparse(body[index + 1]) == (
                 "_set_post_progress_desc('topological sort')"
             )
 
+    assert not any(
+        isinstance(node, ast.Name) and node.id in old_targets
+        for node in ast.walk(lowerer)
+    )
     raw_calls = [
         node.func.id
         for node in ast.walk(lowerer)
@@ -148,15 +134,11 @@ def test_precision_cleanup_duplicate_raw_sequences_are_fixed() -> None:
         and node.func.id
         in {REWRITE_OWNER, CONSECUTIVE_OWNER, RESTORE_OWNER}
     ]
-    assert raw_calls.count(REWRITE_OWNER) == 2
-    assert raw_calls.count(CONSECUTIVE_OWNER) == 3
-    assert raw_calls.count(RESTORE_OWNER) == 2
+    assert raw_calls.count(REWRITE_OWNER) == 0
+    assert raw_calls.count(CONSECUTIVE_OWNER) == 1
+    assert raw_calls.count(RESTORE_OWNER) == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback/final precision cleanup lacks one shared sequence owner",
-)
 def test_precision_cleanup_uses_one_shared_ordered_sequence_owner() -> None:
     owner = _functions(OWNER_PATH)[SEQUENCE_OWNER]
     raw_calls = [
@@ -222,3 +204,60 @@ def test_precision_cleanup_uses_one_shared_ordered_sequence_owner() -> None:
             assert ast.unparse(body[index + 1]) == (
                 "_set_post_progress_desc('topological sort')"
             )
+
+
+@pytest.mark.parametrize("use_layout_state", (False, True))
+def test_precision_cleanup_sequence_preserves_order_context_and_raw_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+    use_layout_state: bool,
+) -> None:
+    model_ir = ModelIR("precision_cleanup_sequence")
+    layout_state = (
+        LayoutState.from_model_ir(model_ir) if use_layout_state else None
+    )
+    diagnostics: list[dict[str, object]] = []
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+    results = (
+        {"rewritten_constant_div_to_mul": 2},
+        {"optimized_fold_consecutive_mul_constants_chains": 3},
+        {"restored_precision_sensitive_reciprocal_divisions": 4},
+    )
+    events: list[tuple[str, ModelIR, dict[str, object]]] = []
+
+    def _recorder(name: str, result: dict[str, int]):
+        def _run(candidate: ModelIR, **kwargs: object) -> dict[str, int]:
+            events.append((name, candidate, dict(kwargs)))
+            return dict(result)
+
+        return _run
+
+    for name, result in zip(
+        (REWRITE_OWNER, CONSECUTIVE_OWNER, RESTORE_OWNER),
+        results,
+        strict=True,
+    ):
+        monkeypatch.setattr(
+            precision_cleanup_orchestration,
+            name,
+            _recorder(name, result),
+        )
+
+    assert precision_cleanup_orchestration.run_precision_cleanup_sequence(
+        context
+    ) == results
+    layout_keywords: dict[str, object] = (
+        {} if layout_state is None else {"layout_state": layout_state}
+    )
+    assert events == [
+        (REWRITE_OWNER, model_ir, layout_keywords),
+        (
+            CONSECUTIVE_OWNER,
+            model_ir,
+            {**layout_keywords, "diagnostics": diagnostics},
+        ),
+        (RESTORE_OWNER, model_ir, layout_keywords),
+    ]

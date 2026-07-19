@@ -1108,82 +1108,22 @@ def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
 
 def test_primary_path_retains_final_precision_cleanup_results() -> None:
     body = _lowerer_body()
-    rewrite_name = "_rewrite_constant_divisors_to_multiplicative_reciprocals"
-    consecutive_name = "run_consecutive_mul_constants_cleanup"
-    restore_name = "_restore_precision_sensitive_reciprocal_divisions"
-    rewrite_index = _call_index(body, rewrite_name)
-    consecutive_index = _call_index(
-        body,
-        consecutive_name,
-        start=rewrite_index + 1,
+    sequence_index = next(
+        index
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_final_precision_cleanup_results"
     )
-    restore_index = _call_index(
-        body,
-        restore_name,
-        start=consecutive_index + 1,
+    sequence = body[sequence_index]
+    assert isinstance(sequence, ast.Assign)
+    assert ast.unparse(sequence.value) == (
+        "_run_precision_cleanup_sequence(model_ir, session.layout_state)"
     )
-    assert consecutive_index == rewrite_index + 1
-    assert restore_index == consecutive_index + 1
-
-    expected = (
-        (
-            rewrite_index,
-            "_final_precision_div_rewrite_stats",
-            rewrite_name,
-            {"layout_state": "session.layout_state"},
-        ),
-        (
-            consecutive_index,
-            "_final_precision_consecutive_mul_stats",
-            consecutive_name,
-            {
-                "layout_state": "session.layout_state",
-                "diagnostics": "session.diagnostics",
-            },
-        ),
-        (
-            restore_index,
-            "_final_precision_div_restore_stats",
-            restore_name,
-            {"layout_state": "session.layout_state"},
-        ),
-    )
-    for index, target_name, function_name, keywords in expected:
-        statement = body[index]
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == function_name
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == keywords
-
-    assert _call_name(_statement_call(body[restore_index + 1])) == (
+    assert _call_name(_statement_call(body[sequence_index + 1])) == (
         "_set_post_progress_desc"
     )
-    all_calls = [
-        node.func.id
-        for node in ast.walk(next(
-            function
-            for function in ast.parse(
-                LOWERER_PATH.read_text(encoding="utf-8")
-            ).body
-            if isinstance(function, ast.FunctionDef)
-            and function.name == "lower_onnx_to_ir"
-        ))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in {rewrite_name, consecutive_name, restore_name}
-    ]
-    assert all_calls.count(rewrite_name) == 2
-    assert all_calls.count(consecutive_name) == 3
-    assert all_calls.count(restore_name) == 2
 
 
 def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
@@ -1194,9 +1134,9 @@ def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == owner_name
     ]
-    assert len(direct_indices) == 2
+    assert len(direct_indices) == 1
 
-    core_index, final_index = direct_indices
+    core_index = direct_indices[0]
     core = body[core_index]
     _assert_phase_result_record(
         core,
@@ -1218,10 +1158,6 @@ def test_primary_path_retains_core_cleanup_consecutive_mul_result() -> None:
         "_sanitize_terminal_transpose_before_dequantize"
     )
 
-    final = body[final_index]
-    assert isinstance(final, ast.Assign)
-    assert isinstance(final.targets[0], ast.Name)
-    assert final.targets[0].id == "_final_precision_consecutive_mul_stats"
 
 
 def test_primary_path_retains_core_cleanup_fusion_results() -> None:

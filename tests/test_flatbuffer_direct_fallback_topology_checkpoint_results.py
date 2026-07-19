@@ -102,8 +102,8 @@ def test_two_fallback_topology_checkpoints_are_explicit() -> None:
         if isinstance(body[index - 1], ast.If)
     ) == EXPECTED_PREDECESSOR_GUARDS
     assert ast.unparse(body[locations[0] + 1]) == (
-        "_fallback_precision_div_rewrite_stats = "
-        "_rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)"
+        "_fallback_precision_cleanup_results = "
+        "_run_precision_cleanup_sequence(fallback_ir, None)"
     )
     assert ast.unparse(body[locations[1] + 1].targets[0]) == (
         "fallback_ir.metadata['layout_optimize_fallback']"
