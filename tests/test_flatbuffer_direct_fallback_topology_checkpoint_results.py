@@ -18,9 +18,9 @@ EXPECTED_PREDECESSOR_GUARDS = (
     "int(fallback_binary_layout_stats.get("
     "'repaired_stale_nchw_to_nhwc_channelwise_binary_transposes', 0)) > 0",
 )
-EXPECTED_RESULT_TARGETS = (
-    "_fallback_post_placeholder_topology_stats",
-    "_fallback_post_layout_repair_topology_stats",
+EXPECTED_PHASE_IDS = (
+    "topology.fallback.post_placeholder",
+    "topology.fallback.post_layout_repair",
 )
 
 
@@ -50,18 +50,19 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
     return statement.value if isinstance(statement.value, ast.Call) else None
 
 
-def _call_name(statement: ast.stmt) -> str | None:
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     call = _statement_call(statement)
-    if call is None or not isinstance(call.func, ast.Name):
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
         return None
-    return call.func.id
-
-
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
+    return call.args[1]
 
 
 def _reversed_model_ir() -> ModelIR:
@@ -84,13 +85,17 @@ def test_two_fallback_topology_checkpoints_are_explicit() -> None:
     locations = [
         index
         for index, statement in enumerate(body)
-        if _call_name(statement) == SORT_OWNER
+        if isinstance(_phase_result_owner(statement), ast.Call)
+        and isinstance(_phase_result_owner(statement).func, ast.Name)
+        and _phase_result_owner(statement).func.id == SORT_OWNER
+        and ast.unparse(_phase_result_owner(statement).args[0]) == "fallback_ir"
     ]
 
     assert len(locations) == 2
-    assert tuple(_single_target(body[index]) for index in locations) == (
-        EXPECTED_RESULT_TARGETS
-    )
+    assert tuple(
+        ast.literal_eval(_statement_call(body[index]).args[0])
+        for index in locations
+    ) == EXPECTED_PHASE_IDS
     assert tuple(
         ast.unparse(body[index - 1].test)
         for index in locations
@@ -104,12 +109,12 @@ def test_two_fallback_topology_checkpoints_are_explicit() -> None:
         "fallback_ir.metadata['layout_optimize_fallback']"
     )
     for index in locations:
-        call = _statement_call(body[index])
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == [
+        owner = _phase_result_owner(body[index])
+        assert owner is not None
+        assert [ast.unparse(argument) for argument in owner.args] == [
             "fallback_ir"
         ]
-        assert call.keywords == []
+        assert owner.keywords == []
 
 
 def test_fallback_topology_checkpoint_result_schema_is_explicit() -> None:

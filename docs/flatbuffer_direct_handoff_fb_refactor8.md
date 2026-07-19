@@ -491,3 +491,57 @@ single bounded diagnostics sink that does not expose internal types or retain
 large maps. Any decision to skip a graph scan must be characterized separately
 and must preserve cycle behavior. Continue with coherent commits and pushes
 only; never create, update, or reopen a pull request.
+
+## Bounded phase-result store characterization
+
+The result inventory confirmed that the five direct topology checkpoint
+results and two topology/layout validation results were all unconsumed locals.
+The existing `ConversionSession.diagnostics` list is not a compatible sink:
+the private metrics path exports it and requires every event to have
+`stage=model_ir_pass`. Therefore the selected contract uses a separate session
+store and leaves diagnostics numbering and summaries untouched.
+
+The strict contract requires no more than 128 phases, no more than 32 counters
+per phase, integer-only values, copied inputs, and isolated snapshots. It also
+fixes the seven old local targets and owners before migration. Characterization
+passed as `1 passed, 1 xfailed in 0.56s` and was committed and pushed as
+`8a3245e3` before implementation.
+
+## Bounded phase-result store implementation
+
+`ConversionSession.record_phase_result()` now validates and stores compact
+integer counter mappings, while `phase_results_snapshot()` returns an isolated
+copy. The store is conversion-local and is not copied into ModelIR metadata,
+the existing pass-diagnostics sink, public conversion results, or generated
+reports.
+
+Seven observations migrated from unconsumed locals to stable phase IDs:
+
+- `topology.fallback.post_placeholder`;
+- `topology.fallback.post_layout_repair`;
+- `layout_validation.fallback.terminal`;
+- `topology.primary.post_lowering`;
+- `topology.primary.no_layout_post_reduction`;
+- `topology.primary.final_placeholder`;
+- `layout_validation.primary.terminal`.
+
+The owner expression remains the second argument of each record call, so it is
+evaluated once at the original position. No graph scan, sort, validation,
+metadata mutation, guard, or successor changed. Only small integer dictionaries
+are retained.
+
+Validation completed sequentially under core-only `uv`:
+
+- phase store, seven migrations, fallback/terminal orchestration, and core
+  diagnostics compatibility: `145 passed in 2.97s`;
+- lowerer architecture contracts: `258 passed in 18.98s`;
+- additional affected shape/topology contracts: `36 passed in 1.04s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was needed for this observation-storage change. On
+resume, inventory the remaining unconsumed `fb-refactor8` observation locals
+and migrate only one homogeneous result family at a time. The six
+topology/layout refresh results are the next suitable family because they all
+share the same two-counter schema; do not migrate shape-reconciliation results
+in the same checkpoint. Continue with coherent commits and pushes only; never
+create, update, or reopen a pull request.

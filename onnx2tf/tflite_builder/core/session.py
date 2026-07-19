@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from numbers import Integral
+from typing import Any, Dict, List, Mapping
 
 import numpy as np
 
@@ -26,6 +27,11 @@ class ConversionSession:
     model_ir_pass_context: ModelIRPassContext = field(init=False)
     diagnostics: List[Dict[str, Any]] = field(
         default_factory=ModelIRPassDiagnostics
+    )
+    _phase_results: Dict[str, Dict[str, int]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
     )
 
     def __post_init__(self) -> None:
@@ -52,3 +58,36 @@ class ConversionSession:
         self.diagnostics.append(
             {"stage": str(stage), "code": str(code), "message": str(message)}
         )
+
+    def record_phase_result(
+        self,
+        phase_id: str,
+        counters: Mapping[str, Any],
+    ) -> None:
+        """Retain one bounded, integer-only internal phase result."""
+
+        normalized_phase_id = str(phase_id).strip()
+        if not normalized_phase_id:
+            raise ValueError("phase_id must not be empty")
+        if len(counters) > 32:
+            raise ValueError("phase result must contain at most 32 counters")
+        if (
+            normalized_phase_id not in self._phase_results
+            and len(self._phase_results) >= 128
+        ):
+            raise ValueError("phase result store must contain at most 128 phases")
+
+        normalized_counters: Dict[str, int] = {}
+        for name, value in counters.items():
+            if not isinstance(value, Integral):
+                raise TypeError("phase result counters must be integers")
+            normalized_counters[str(name)] = int(value)
+        self._phase_results[normalized_phase_id] = normalized_counters
+
+    def phase_results_snapshot(self) -> Dict[str, Dict[str, int]]:
+        """Return an isolated snapshot of bounded internal phase results."""
+
+        return {
+            str(phase_id): dict(counters)
+            for phase_id, counters in self._phase_results.items()
+        }

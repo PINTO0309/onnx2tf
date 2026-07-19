@@ -32,6 +32,33 @@ def _call_name(call: ast.Call | None) -> str | None:
     return call.func.id
 
 
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
+        return None
+    return call.args[1]
+
+
+def _assert_phase_result_record(
+    statement: ast.stmt,
+    *,
+    phase_id: str,
+    owner_expression: str,
+) -> None:
+    assert isinstance(statement, ast.Expr)
+    assert ast.unparse(statement) == (
+        f"session.record_phase_result('{phase_id}', {owner_expression})"
+    )
+
+
 def _call_index(
     body: list[ast.stmt],
     function_name: str,
@@ -64,19 +91,16 @@ def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> Non
     validation_index = next(
         index
         for index in range(realign_index + 1, len(body))
-        if _call_name(_statement_call(body[index]))
+        if _call_name(_phase_result_owner(body[index]))
         == "run_topology_layout_validation"
     )
 
     assert convergence_index < coalesce_index < realign_index < validation_index
     validation = body[validation_index]
-    assert isinstance(validation, ast.Assign)
-    assert isinstance(validation.targets[0], ast.Name)
-    assert validation.targets[0].id == (
-        "_terminal_topology_layout_validation_stats"
-    )
-    assert ast.unparse(validation.value) == (
-        "run_topology_layout_validation(model_ir)"
+    _assert_phase_result_record(
+        validation,
+        phase_id="layout_validation.primary.terminal",
+        owner_expression="run_topology_layout_validation(model_ir)",
     )
 
     terminal = body[validation_index + 1]
@@ -704,13 +728,10 @@ def test_primary_path_stages_complete_final_placeholder_reconciliations() -> Non
     } == {"include_mutation_count": "True"}
 
     topology_checkpoint = outer_guard.body[5]
-    assert isinstance(topology_checkpoint, ast.Assign)
-    assert isinstance(topology_checkpoint.targets[0], ast.Name)
-    assert topology_checkpoint.targets[0].id == (
-        "_final_placeholder_topology_stats"
-    )
-    assert ast.unparse(topology_checkpoint.value) == (
-        "_topologically_sort_operators(model_ir)"
+    _assert_phase_result_record(
+        topology_checkpoint,
+        phase_id="topology.primary.final_placeholder",
+        owner_expression="_topologically_sort_operators(model_ir)",
     )
 
     following = body[restore_index + 4]
@@ -1153,21 +1174,17 @@ def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
         } == keywords
 
     topology_checkpoint = guard.body[2]
-    assert isinstance(topology_checkpoint, ast.Assign)
-    assert isinstance(topology_checkpoint.targets[0], ast.Name)
-    assert topology_checkpoint.targets[0].id == (
-        "_no_layout_post_reduction_topology_stats"
-    )
-    assert _call_name(_statement_call(topology_checkpoint)) == (
-        "_topologically_sort_operators"
+    _assert_phase_result_record(
+        topology_checkpoint,
+        phase_id="topology.primary.no_layout_post_reduction",
+        owner_expression="_topologically_sort_operators(model_ir)",
     )
     previous = body[guard_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_primary_post_lowering_topology_stats"
+    _assert_phase_result_record(
+        previous,
+        phase_id="topology.primary.post_lowering",
+        owner_expression="_topologically_sort_operators(model_ir)",
     )
-    assert _call_name(_statement_call(previous)) == "_topologically_sort_operators"
     following = body[guard_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)

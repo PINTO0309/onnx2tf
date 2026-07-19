@@ -39,6 +39,15 @@ EXPECTED_MODEL_ARGUMENTS = (
     "model_ir",
     "model_ir",
 )
+EXPECTED_PHASE_IDS = (
+    "topology.fallback.post_placeholder",
+    "topology.fallback.post_layout_repair",
+    "layout_validation.fallback.terminal",
+    "topology.primary.post_lowering",
+    "topology.primary.no_layout_post_reduction",
+    "topology.primary.final_placeholder",
+    "layout_validation.primary.terminal",
+)
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -50,24 +59,21 @@ def _lowerer() -> ast.FunctionDef:
     )
 
 
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
-
-
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     return statement.value if isinstance(statement.value, ast.Call) else None
 
 
-def _call_name(statement: ast.stmt) -> str | None:
+def _is_phase_result_record(statement: ast.stmt) -> bool:
     call = _statement_call(statement)
-    if call is None or not isinstance(call.func, ast.Name):
-        return None
-    return call.func.id
+    return bool(
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+    )
 
 
 def _session() -> ConversionSession:
@@ -81,40 +87,39 @@ def _session() -> ConversionSession:
     )
 
 
-def test_seven_topology_observation_locals_are_explicit_and_unconsumed() -> None:
+def test_seven_topology_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
-    assignments = sorted(
+    records = sorted(
         [
             node
             for node in ast.walk(lowerer)
-            if isinstance(node, ast.Assign)
-            and _single_target(node) in EXPECTED_RESULT_TARGETS
+            if isinstance(node, ast.Expr) and _is_phase_result_record(node)
         ],
         key=lambda node: node.lineno,
     )
 
-    assert len(assignments) == 7
-    assert tuple(_single_target(node) for node in assignments) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert tuple(_call_name(node) for node in assignments) == EXPECTED_OWNERS
+    assert len(records) == 7
     assert tuple(
-        ast.unparse(_statement_call(node).args[0]) for node in assignments
+        ast.literal_eval(_statement_call(node).args[0]) for node in records
+    ) == EXPECTED_PHASE_IDS
+    nested_calls = tuple(_statement_call(node).args[1] for node in records)
+    assert all(isinstance(call, ast.Call) for call in nested_calls)
+    assert tuple(
+        call.func.id
+        for call in nested_calls
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+    ) == EXPECTED_OWNERS
+    assert tuple(
+        ast.unparse(call.args[0])
+        for call in nested_calls
+        if isinstance(call, ast.Call)
     ) == EXPECTED_MODEL_ARGUMENTS
-    for target in EXPECTED_RESULT_TARGETS:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
-        )
+    assert not any(
+        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AttributeError,
-    reason="bounded ConversionSession phase-result store is not implemented",
-)
 def test_phase_result_store_is_bounded_integer_only_and_snapshot_isolated() -> None:
     session = _session()
     source = {"changed": 1, "cycle_detected": 0}

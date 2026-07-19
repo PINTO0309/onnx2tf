@@ -464,3 +464,47 @@ AST contract that still required the final placeholder sort to be a discarded
 expression. It now requires the phase-specific result target, and the same gate
 passes. No real-model conversion was run for these observation-only
 assignments.
+
+## Bounded ConversionSession phase-result storage
+
+The observation audit found that all seven topology/validation result locals
+introduced by the preceding checkpoints were intentionally unconsumed. The
+existing `session.diagnostics` list was not reused: its private metrics export
+has an established contract that every exported entry is a `model_ir_pass`
+event. Mixing phase counters into that list would change internal metrics and
+existing tests.
+
+`ConversionSession` now provides a separate bounded store through
+`record_phase_result()` and `phase_results_snapshot()`. The store:
+
+- accepts at most 128 phase IDs;
+- accepts at most 32 counters per phase;
+- accepts integer counters only and normalizes them to built-in `int`;
+- copies caller mappings on record and returns isolated snapshots;
+- remains internal to one conversion session and is not placed in ModelIR
+  metadata, public results, reports, or artifacts.
+
+The five direct topology checkpoints and two terminal topology/layout
+validation results now record seven stable phase IDs instead of creating seven
+unconsumed lowerer locals. Their owner calls remain nested directly in the
+record operation, so evaluation and graph mutation order are unchanged. The
+store contains only the already-small counter dictionaries; no tensor layout
+map, graph object, tensor data, or diagnostic string list is retained.
+
+Characterization passed as `1 passed, 1 xfailed in 0.56s`. The strict expected
+failure covered the absent bounded store while the existing seven locals and
+their schemas were still fixed. Implementation validation completed
+sequentially under `uv`:
+
+- bounded store, migrated topology/validation contracts, fallback/terminal
+  orchestration, and core diagnostics compatibility:
+  `145 passed in 2.97s`;
+- lowerer architecture contracts: `258 passed in 18.98s`;
+- additional static-shape, safe-reduction, topology/layout refresh, and shape
+  resolution contracts: `36 passed in 1.04s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The existing private pass-diagnostics sink remains unchanged and its
+`model_ir_pass`-only contract still passes. No real-model conversion was run
+because pass owners and ModelIR mutations are unchanged.

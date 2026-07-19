@@ -23,10 +23,10 @@ EXPECTED_PREDECESSOR_TARGETS = (
     "_no_layout_final_affine_prepost_stats",
     None,
 )
-EXPECTED_RESULT_TARGETS = (
-    "_primary_post_lowering_topology_stats",
-    "_no_layout_post_reduction_topology_stats",
-    "_final_placeholder_topology_stats",
+EXPECTED_PHASE_IDS = (
+    "topology.primary.post_lowering",
+    "topology.primary.no_layout_post_reduction",
+    "topology.primary.final_placeholder",
 )
 
 
@@ -74,11 +74,19 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
     return statement.value if isinstance(statement.value, ast.Call) else None
 
 
-def _call_name(statement: ast.stmt) -> str | None:
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     call = _statement_call(statement)
-    if call is None or not isinstance(call.func, ast.Name):
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
         return None
-    return call.func.id
+    return call.args[1]
 
 
 def _single_target(statement: ast.stmt) -> str | None:
@@ -109,16 +117,19 @@ def test_three_primary_topology_checkpoints_are_explicit() -> None:
             (block, index, guards)
             for block, guards in _pipeline_blocks(_lowerer().body)
             for index, statement in enumerate(block)
-            if _call_name(statement) == SORT_OWNER
-            and ast.unparse(_statement_call(statement).args[0]) == "model_ir"
+            if isinstance(_phase_result_owner(statement), ast.Call)
+            and isinstance(_phase_result_owner(statement).func, ast.Name)
+            and _phase_result_owner(statement).func.id == SORT_OWNER
+            and ast.unparse(_phase_result_owner(statement).args[0]) == "model_ir"
         ],
         key=lambda item: item[0][item[1]].lineno,
     )
 
     assert len(locations) == 3
     assert tuple(
-        _single_target(block[index]) for block, index, _ in locations
-    ) == EXPECTED_RESULT_TARGETS
+        ast.literal_eval(_statement_call(block[index]).args[0])
+        for block, index, _ in locations
+    ) == EXPECTED_PHASE_IDS
     assert tuple(guards[-1] if guards else None for _, _, guards in locations) == (
         EXPECTED_INNER_GUARDS
     )
@@ -130,10 +141,10 @@ def test_three_primary_topology_checkpoints_are_explicit() -> None:
     )
     assert isinstance(locations[2][0][locations[2][1] - 1], ast.If)
     for block, index, _ in locations:
-        call = _statement_call(block[index])
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert call.keywords == []
+        owner = _phase_result_owner(block[index])
+        assert owner is not None
+        assert [ast.unparse(argument) for argument in owner.args] == ["model_ir"]
+        assert owner.keywords == []
 
 
 def test_primary_topology_checkpoint_result_schema_is_explicit() -> None:

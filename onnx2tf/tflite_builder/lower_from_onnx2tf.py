@@ -5892,8 +5892,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-        _fallback_post_placeholder_topology_stats = (
-            _topologically_sort_operators(fallback_ir)
+        session.record_phase_result(
+            "topology.fallback.post_placeholder",
+            _topologically_sort_operators(fallback_ir),
         )
         _fallback_precision_div_rewrite_stats = (
             _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
@@ -6000,8 +6001,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-        _fallback_post_layout_repair_topology_stats = (
-            _topologically_sort_operators(fallback_ir)
+        session.record_phase_result(
+            "topology.fallback.post_layout_repair",
+            _topologically_sort_operators(fallback_ir),
         )
         fallback_ir.metadata["layout_optimize_fallback"] = {
             "reason": "dangling_dynamic_inputs_detected",
@@ -6029,8 +6031,9 @@ def lower_onnx_to_ir(
         _fallback_binary_layout_convergence_stats = (
             _run_indexed_binary_layout_convergence(fallback_ir)
         )
-        _fallback_topology_layout_validation_stats = (
-            run_topology_layout_validation(fallback_ir)
+        session.record_phase_result(
+            "layout_validation.fallback.terminal",
+            run_topology_layout_validation(fallback_ir),
         )
         return _finalize_model_ir(fallback_ir)
 
@@ -6054,8 +6057,9 @@ def lower_onnx_to_ir(
         )
     )
     _set_post_progress_desc("topological sort")
-    _primary_post_lowering_topology_stats = _topologically_sort_operators(
-        model_ir
+    session.record_phase_result(
+        "topology.primary.post_lowering",
+        _topologically_sort_operators(model_ir),
     )
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # In no-layout fallback path, some strict MUL/ADD affine bridges become
@@ -6071,8 +6075,9 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             )
         )
-        _no_layout_post_reduction_topology_stats = (
-            _topologically_sort_operators(model_ir)
+        session.record_phase_result(
+            "topology.primary.no_layout_post_reduction",
+            _topologically_sort_operators(model_ir),
         )
     # Final boundary-signature restore:
     # late static-shape reconciliations may overwrite graph-boundary dynamic
@@ -6231,8 +6236,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 )
             )
-        _final_placeholder_topology_stats = _topologically_sort_operators(
-            model_ir
+        session.record_phase_result(
+            "topology.primary.final_placeholder",
+            _topologically_sort_operators(model_ir),
         )
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
@@ -6618,7 +6624,8 @@ def lower_onnx_to_ir(
     _final_dynamic_boundary_signature_stats = (
         _realign_dynamic_boundary_shape_signature_map(model_ir)
     )
-    _terminal_topology_layout_validation_stats = (
-        run_topology_layout_validation(model_ir)
+    session.record_phase_result(
+        "layout_validation.primary.terminal",
+        run_topology_layout_validation(model_ir),
     )
     return _finalize_model_ir(model_ir)

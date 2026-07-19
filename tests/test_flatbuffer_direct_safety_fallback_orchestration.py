@@ -39,6 +39,18 @@ def _safety_fallback_body(lowerer: ast.FunctionDef) -> list[ast.stmt]:
     return guard.body
 
 
+def _assert_phase_result_record(
+    statement: ast.stmt,
+    *,
+    phase_id: str,
+    owner_expression: str,
+) -> None:
+    assert isinstance(statement, ast.Expr)
+    assert ast.unparse(statement) == (
+        f"session.record_phase_result('{phase_id}', {owner_expression})"
+    )
+
+
 def test_fallback_norm_owner_can_prune_without_a_rewrite() -> None:
     model_ir = ModelIR("fallback_norm_zero_rewrite_prune")
     model_ir.tensors["unused"] = TensorIR(
@@ -198,13 +210,10 @@ def test_safety_fallback_retains_precision_cleanup_results() -> None:
         } == keywords
 
     previous = body[rewrite_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_fallback_post_placeholder_topology_stats"
-    )
-    assert ast.unparse(previous.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    _assert_phase_result_record(
+        previous,
+        phase_id="topology.fallback.post_placeholder",
+        owner_expression="_topologically_sort_operators(fallback_ir)",
     )
     following = body[rewrite_index + 3]
     assert isinstance(following, ast.Assign)
@@ -418,13 +427,10 @@ def test_safety_fallback_stages_placeholder_matmul_reconciliation_evidence() -> 
     } == {"include_mutation_count": "True"}
 
     following = body[owner_index + 3]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_fallback_post_placeholder_topology_stats"
-    )
-    assert ast.unparse(following.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    _assert_phase_result_record(
+        following,
+        phase_id="topology.fallback.post_placeholder",
+        owner_expression="_topologically_sort_operators(fallback_ir)",
     )
 
 
@@ -757,13 +763,10 @@ def test_safety_fallback_stages_complete_binary_layout_evidence() -> None:
     } == {"include_mutation_count": "True"}
 
     following = body[stats_index + 3]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_fallback_post_layout_repair_topology_stats"
-    )
-    assert ast.unparse(following.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    _assert_phase_result_record(
+        following,
+        phase_id="topology.fallback.post_layout_repair",
+        owner_expression="_topologically_sort_operators(fallback_ir)",
     )
 
 
@@ -825,13 +828,10 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
     )
 
     validation = body[stats_index + 4]
-    assert isinstance(validation, ast.Assign)
-    assert isinstance(validation.targets[0], ast.Name)
-    assert validation.targets[0].id == (
-        "_fallback_topology_layout_validation_stats"
-    )
-    assert ast.unparse(validation.value) == (
-        "run_topology_layout_validation(fallback_ir)"
+    _assert_phase_result_record(
+        validation,
+        phase_id="layout_validation.fallback.terminal",
+        owner_expression="run_topology_layout_validation(fallback_ir)",
     )
 
     terminal = body[stats_index + 5]
@@ -953,11 +953,8 @@ def test_safety_fallback_retains_indexed_binary_convergence_result() -> None:
     assert owner.value.keywords == []
 
     following = body[owner_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_fallback_topology_layout_validation_stats"
-    )
-    assert ast.unparse(following.value) == (
-        "run_topology_layout_validation(fallback_ir)"
+    _assert_phase_result_record(
+        following,
+        phase_id="layout_validation.fallback.terminal",
+        owner_expression="run_topology_layout_validation(fallback_ir)",
     )

@@ -24,9 +24,9 @@ SORT_OWNER = "_topologically_sort_operators"
 VALIDATION_OWNER = "validate_model_ir_layout_annotations"
 RUNNER = "run_topology_layout_validation"
 VALIDATION_METADATA_KEY = "logical_layout_validation_errors"
-EXPECTED_RESULT_TARGETS = (
-    "_fallback_topology_layout_validation_stats",
-    "_terminal_topology_layout_validation_stats",
+EXPECTED_PHASE_IDS = (
+    "layout_validation.fallback.terminal",
+    "layout_validation.primary.terminal",
 )
 EXPECTED_MODEL_ARGUMENTS = (
     "fallback_ir",
@@ -71,11 +71,19 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
         return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
+    return call.args[1]
 
 
 def _raw_validation_boundaries(
@@ -103,7 +111,9 @@ def _runner_locations(
             (block, index)
             for block in _pipeline_blocks(lowerer.body)
             for index, statement in enumerate(block)
-            if _call_name(statement) == RUNNER
+            if isinstance(_phase_result_owner(statement), ast.Call)
+            and isinstance(_phase_result_owner(statement).func, ast.Name)
+            and _phase_result_owner(statement).func.id == RUNNER
         ],
         key=lambda item: item[0][item[1]].lineno,
     )
@@ -162,15 +172,12 @@ def test_two_terminal_topology_layout_validation_boundaries_are_explicit() -> No
 
     assert len(locations) == 2
     assert tuple(
-        _single_target(block[index]) for block, index in locations
-    ) == EXPECTED_RESULT_TARGETS
-    assert tuple(
-        ast.unparse(_statement_call(block[index]).args[0])
+        ast.literal_eval(_statement_call(block[index]).args[0])
         for block, index in locations
-    ) == EXPECTED_MODEL_ARGUMENTS
+    ) == EXPECTED_PHASE_IDS
     for boundary_index, (block, index) in enumerate(locations):
         model_argument = EXPECTED_MODEL_ARGUMENTS[boundary_index]
-        runner_call = _statement_call(block[index])
+        runner_call = _phase_result_owner(block[index])
         assert runner_call is not None
         assert [ast.unparse(argument) for argument in runner_call.args] == [
             model_argument
