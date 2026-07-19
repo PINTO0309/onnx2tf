@@ -190,6 +190,13 @@ LAYOUT_PASS_SET_1_QLINEAR_ATTENTION_OWNER_PATH = (
     / "passes"
     / "layout_pass_set_1_qlinear_attention_recovery_orchestration.py"
 )
+LAYOUT_PASS_SET_1_FINAL_QUANTIZED_UNARY_SAFE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_final_quantized_unary_safe_orchestration.py"
+)
 
 
 def _layout_pass_set_1_mean_attention_gate_calls(
@@ -252,6 +259,30 @@ def _layout_pass_set_1_qlinear_attention_calls(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "run_layout_pass_set_1_qlinear_attention_recovery"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _layout_pass_set_1_final_quantized_unary_safe_calls(
+    child_owner: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_FINAL_QUANTIZED_UNARY_SAFE_OWNER_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_layout_pass_set_1_final_quantized_unary_safe_cleanup"
     )
     return [
         node
@@ -1842,17 +1873,7 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
                     statement.body[index + 1],
                 )
             )
-    assert len(direct_boundaries) == 1
-    assert [boundary[0] for boundary in direct_boundaries] == [
-        "_layout_pass_set_1_final_safe_binary_results",
-    ]
-    assert [boundary[1].value.func.id for boundary in direct_boundaries] == [
-        "_run_transpose_unary_fanout_layout_pass_cluster",
-    ]
-    assert isinstance(direct_boundaries[0][2], ast.Expr)
-    assert isinstance(direct_boundaries[0][2].value, ast.Call)
-    assert isinstance(direct_boundaries[0][2].value.func, ast.Name)
-    assert direct_boundaries[0][2].value.func.id == "_advance_post_progress"
+    assert direct_boundaries == []
     all_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -1863,15 +1884,26 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
     owner_invocations = _layout_pass_set_1_attention_quantized_safe_calls(
         "run_safe_binary_recovery"
     )
+    final_owner_invocations = (
+        _layout_pass_set_1_final_quantized_unary_safe_calls(
+            "run_safe_binary_recovery"
+        )
+    )
     assert (
         len(all_invocations)
         + _orchestrated_pass_count(helper_name)
         + len(owner_invocations)
+        + len(final_owner_invocations)
         == 3
     )
     assert len(owner_invocations) == 1
     assert ast.unparse(owner_invocations[0].args[0]) == "context.pass_context"
     assert owner_invocations[0].keywords == []
+    assert len(final_owner_invocations) == 1
+    assert ast.unparse(final_owner_invocations[0].args[0]) == (
+        "context.pass_context"
+    )
+    assert final_owner_invocations[0].keywords == []
 
 
 def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
@@ -2289,18 +2321,7 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 1
-    for invocation in helper_invocations:
-        keyword = next(
-            keyword
-            for keyword in invocation.keywords
-            if keyword.arg == "include_duplicate_transpose"
-        )
-        assert isinstance(keyword.value, ast.Name)
-        assert (
-            keyword.value.id
-            == "enable_duplicate_transpose_fanout_optimizations"
-        )
+    assert helper_invocations == []
     owner_invocations = _layout_pass_set_1_attention_quantized_safe_calls(
         "run_layout_attention_quantized_suffix"
     )
@@ -2309,6 +2330,17 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in owner_invocations[0].keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
+    final_owner_invocations = (
+        _layout_pass_set_1_final_quantized_unary_safe_calls(
+            "run_layout_attention_quantized_suffix"
+        )
+    )
+    assert len(final_owner_invocations) == 1
+    assert ast.unparse(final_owner_invocations[0].args[0]) == "context"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in final_owner_invocations[0].keywords
     } == {"include_duplicate_transpose": "include_duplicate_transpose"}
 
     layernorm_variant_calls = [
@@ -9036,17 +9068,17 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == unary_helper_name
     ]
-    assert len(unary_invocations) + _orchestrated_pass_count(unary_helper_name) == 2
-    post_qdq_invocations = [
-        call
-        for call in unary_invocations
-        if any(
-            keyword.arg == "include_layout_transpose"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is True
-            for keyword in call.keywords
+    post_qdq_invocations = (
+        _layout_pass_set_1_final_quantized_unary_safe_calls(
+            "run_transpose_unary_fanout"
         )
-    ]
+    )
+    assert (
+        len(unary_invocations)
+        + _orchestrated_pass_count(unary_helper_name)
+        + len(post_qdq_invocations)
+        == 2
+    )
     assert len(post_qdq_invocations) == 1
     assert any(
         keyword.arg == "include_unary_passthrough"
@@ -9107,7 +9139,6 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    helper_name = "_run_transpose_unary_fanout_layout_pass_cluster"
     layout_recovery = next(
         statement
         for statement in lowerer.body
@@ -9115,16 +9146,12 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
         and isinstance(statement.test, ast.Name)
         and statement.test.id == "optimize_layout_transpose_chains"
         and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == helper_name
-            and any(
-                keyword.arg == "include_layout_transpose"
-                and isinstance(keyword.value, ast.Constant)
-                and keyword.value.value is True
-                for keyword in node.keywords
-            )
-            for node in ast.walk(statement)
+            isinstance(candidate, ast.Assign)
+            and len(candidate.targets) == 1
+            and isinstance(candidate.targets[0], ast.Name)
+            and candidate.targets[0].id
+            == "_layout_pass_set_1_final_quantized_unary_safe_results"
+            for candidate in statement.body
         )
     )
     invocation_index = next(
@@ -9134,43 +9161,34 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_layout_pass_set_1_transpose_unary_fanout_results"
+        == "_layout_pass_set_1_final_quantized_unary_safe_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
-        and any(
-            keyword.arg == "include_layout_transpose"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is True
-            for keyword in statement.value.keywords
-        )
+        and statement.value.func.id
+        == "run_layout_pass_set_1_final_quantized_unary_safe_cleanup"
     )
     previous_boundary = layout_recovery.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_layout_pass_set_1_final_attention_quantized_suffix_results"
-    )
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "_run_layout_attention_quantized_recovery_suffix"
+    assert ast.unparse(previous_boundary) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.squeeze_reshape_identity', "
+        "run_squeeze_reshape_identity_cleanup(model_ir, "
+        "include_unary_passthrough=True, layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
     )
     next_boundary = layout_recovery.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert len(next_boundary.targets) == 1
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == (
-        "_layout_pass_set_1_final_safe_binary_results"
+    assert ast.unparse(next_boundary) == "_advance_post_progress()"
+    owner_invocations = _layout_pass_set_1_final_quantized_unary_safe_calls(
+        "run_transpose_unary_fanout"
     )
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert (
-        next_boundary.value.func.id
-        == "_run_safe_binary_bridge_recovery_sequence"
-    )
+    assert len(owner_invocations) == 1
+    assert ast.unparse(owner_invocations[0].args[0]) == "context.pass_context"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_invocations[0].keywords
+    } == {
+        "include_layout_transpose": "True",
+        "include_unary_passthrough": "False",
+    }
 
 
 def test_lowerer_boundary_batchmatmul_unary_pair_reuses_pass_state_scope() -> None:

@@ -215,6 +215,9 @@ from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestrati
 from onnx2tf.tflite_builder.passes.layout_pass_set_1_attention_quantized_safe_binary_orchestration import (
     run_layout_pass_set_1_attention_quantized_safe_binary_cleanup,
 )
+from onnx2tf.tflite_builder.passes.layout_pass_set_1_final_quantized_unary_safe_orchestration import (
+    run_layout_pass_set_1_final_quantized_unary_safe_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
     TerminalSliceConcatRecoveryContext,
     run_terminal_slice_concat_recovery,
@@ -4404,19 +4407,11 @@ def lower_onnx_to_ir(
                 diagnostics=session.diagnostics,
             ),
         )
-        _layout_pass_set_1_final_attention_quantized_suffix_results = (
-            _run_layout_attention_quantized_recovery_suffix(
+        _layout_pass_set_1_final_quantized_unary_safe_results = (
+            run_layout_pass_set_1_final_quantized_unary_safe_cleanup(
+                layout_attention_quantized_suffix_context,
                 include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
             )
-        )
-        _layout_pass_set_1_transpose_unary_fanout_results = (
-            _run_transpose_unary_fanout_layout_pass_cluster(
-                include_layout_transpose=True,
-                include_unary_passthrough=False,
-            )
-        )
-        _layout_pass_set_1_final_safe_binary_results = (
-            _run_safe_binary_bridge_recovery_sequence()
         )
         _advance_post_progress()
     _set_post_progress_desc("core cleanup passes")

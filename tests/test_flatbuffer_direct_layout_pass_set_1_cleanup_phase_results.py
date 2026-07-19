@@ -25,7 +25,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
     ),
 )
 PREDECESSOR_TARGET = "_layout_pass_set_1_qlinear_attention_recovery_results"
-SUCCESSOR_TARGET = "_layout_pass_set_1_final_attention_quantized_suffix_results"
+SUCCESSOR_TARGET = "_layout_pass_set_1_final_quantized_unary_safe_results"
 
 
 def _lowerer() -> ast.FunctionDef:

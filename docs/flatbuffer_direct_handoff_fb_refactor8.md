@@ -6286,3 +6286,42 @@ coverage, update only stale structural entry assertions, and run affected plus
 standard gates sequentially under `uv`. Confirm the expected inventory
 reduction from 45 to 43, then commit and push the complete unit only. Do not
 create, update, reopen, or otherwise modify a pull request.
+
+## Final quantized/unary/safe implementation checkpoint
+
+`passes/layout_pass_set_1_final_quantized_unary_safe_orchestration.py` now
+provides `run_layout_pass_set_1_final_quantized_unary_safe_cleanup()`. It runs
+public layout/attention/quantized suffix recovery first with the original
+context and duplicate-Transpose policy, public transpose/unary fan-out recovery
+second with `context.pass_context`, `include_layout_transpose=True`, and
+`include_unary_passthrough=False`, and public safe-binary recovery third with
+that exact same pass context. Runtime injection proves source order, context
+identity, option forwarding, and all three raw result identities.
+
+The lowerer replaces only
+`_layout_pass_set_1_final_attention_quantized_suffix_results`,
+`_layout_pass_set_1_transpose_unary_fanout_results`, and
+`_layout_pass_set_1_final_safe_binary_results` with
+`_layout_pass_set_1_final_quantized_unary_safe_results`. Recorded
+`cleanup.layout_pass_set_1.squeeze_reshape_identity` remains the direct
+predecessor and `_advance_post_progress()` remains the direct successor. The
+three lowerer wrappers and every independent callback, quantized-activation,
+and recovery path remain intact.
+
+Fourteen stale direct-call or neighbor assertions now follow the specialized
+public children through the final owner and continue to verify route totals and
+fixed policies. Sequential validation passes: focused `10`, complete affected
+`482`, terminal-layout/efficiency `92`, core `55`, result contracts `196`,
+phase store `2`, and TensorFlow import-blocking/default-direct/`-cotof` `11`.
+Ruff, bytecode compilation, and whitespace checks pass. The phase-result store
+remains exactly 128 IDs and 128 owners, and the read-only unconsumed-result
+inventory decreases from 45 to 43. No real-model conversion was repeated for
+this straight-line ownership-only extraction.
+
+At resume, refresh the 43-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+its guard, phase or progress boundaries, option policies, exact context and
+callback identities, child schemas, and all independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.

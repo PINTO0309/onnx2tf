@@ -6884,3 +6884,26 @@ and reference-based affected sequential validation report
 the intentionally absent owner module. Ruff, bytecode compilation, and
 whitespace validation pass. The inventory remains 45 and the phase-result
 store remains unchanged.
+
+## Extract the final quantized suffix/unary/safe-binary boundary
+
+`passes/layout_pass_set_1_final_quantized_unary_safe_orchestration.py` now
+owns the remaining layout-pass-set-1 tail. It forwards the original suffix
+context and duplicate-Transpose policy to public quantized suffix recovery,
+passes the exact embedded `ModelIRPassContext` to public transpose/unary
+recovery with the fixed layout-enabled and unary-passthrough-disabled policy,
+then passes the same context to public safe-binary recovery. All three complete
+results are returned unchanged and by identity.
+
+The lowerer replaces only the three observation-only locals with
+`_layout_pass_set_1_final_quantized_unary_safe_results`. Recorded
+squeeze/reshape cleanup and the existing progress advance remain the immediate
+boundaries. All three lowerer compatibility wrappers and every independent
+callback, quantized-activation, and recovery route remain available.
+
+Fourteen stale structural assertions now follow the public children through
+the outer owner while retaining total route counts and fixed-option coverage.
+Sequential validation passes: focused `10`, affected `482`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
+pass. The phase store remains exactly 128 IDs and 128 owners, while the
+unconsumed lowerer-result inventory decreases from 45 to 43.

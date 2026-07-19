@@ -43,6 +43,13 @@ LAYOUT_PASS_SET_1_OWNER_PATH = (
     / "passes"
     / "layout_pass_set_1_attention_quantized_safe_binary_orchestration.py"
 )
+LAYOUT_PASS_SET_1_FINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_final_quantized_unary_safe_orchestration.py"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -70,6 +77,26 @@ def _layout_pass_set_1_owner_calls(child_owner: str) -> list[ast.Call]:
         if isinstance(node, ast.FunctionDef)
         and node.name
         == "run_layout_pass_set_1_attention_quantized_safe_binary_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _layout_pass_set_1_final_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_FINAL_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_layout_pass_set_1_final_quantized_unary_safe_cleanup"
     )
     return [
         node
@@ -289,14 +316,7 @@ def test_layout_attention_quantized_suffix_invocations_preserve_option() -> None
         and node.func.id == SUFFIX
     ]
 
-    assert len(invocations) == 1
-    assert all(call.args == [] for call in invocations)
-    for invocation in invocations:
-        assert len(invocation.keywords) == 1
-        keyword = invocation.keywords[0]
-        assert keyword.arg == "include_duplicate_transpose"
-        assert isinstance(keyword.value, ast.Name)
-        assert keyword.value.id == "enable_duplicate_transpose_fanout_optimizations"
+    assert invocations == []
     owner_invocations = _layout_pass_set_1_owner_calls(
         "run_layout_attention_quantized_suffix"
     )
@@ -307,6 +327,18 @@ def test_layout_attention_quantized_suffix_invocations_preserve_option() -> None
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in owner_invocations[0].keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
+    final_owner_invocations = _layout_pass_set_1_final_owner_calls(
+        "run_layout_attention_quantized_suffix"
+    )
+    assert len(final_owner_invocations) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in final_owner_invocations[0].args
+    ] == ["context"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in final_owner_invocations[0].keywords
     } == {"include_duplicate_transpose": "include_duplicate_transpose"}
 
 
@@ -348,16 +380,9 @@ def test_layout_attention_quantized_suffix_preserves_outer_boundaries() -> None:
                 else None
             )
 
-    assert boundaries == [
-        (
-            "run_squeeze_reshape_identity_cleanup",
-            "_run_transpose_unary_fanout_layout_pass_cluster",
-        ),
-    ]
-    assert result_targets == list(RESULT_TARGETS)
-    assert following_targets == [
-        "_layout_pass_set_1_transpose_unary_fanout_results",
-    ]
+    assert boundaries == []
+    assert result_targets == []
+    assert following_targets == []
 
 
 def test_layout_attention_quantized_suffix_context_and_wrapper_are_explicit() -> None:
@@ -540,31 +565,7 @@ def test_layout_attention_quantized_suffix_propagates_all_routes(
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == SUFFIX:
                 production_results.append((statement.body, index))
-    assert len(production_results) == 1
-    assert tuple(
-        _single_target(body[index]) for body, index in production_results
-    ) == RESULT_TARGETS
-    for body, index in production_results:
-        call = body[index].value
-        assert isinstance(call, ast.Call)
-        assert call.args == []
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {
-            "include_duplicate_transpose": (
-                "enable_duplicate_transpose_fanout_optimizations"
-            )
-        }
-    assert tuple(
-        _direct_call_name(body[index - 1])
-        for body, index in production_results
-    ) == (
-        "run_squeeze_reshape_identity_cleanup",
-    )
-    assert _direct_call_name(
-        production_results[0][0][production_results[0][1] + 1]
-    ) == "_run_transpose_unary_fanout_layout_pass_cluster"
+    assert production_results == []
     for target in (*RESULT_TARGETS, REMOVED_LAYOUT_PASS_SET_1_RESULT_TARGET):
         assert not any(
             isinstance(node, ast.Name)
@@ -583,6 +584,18 @@ def test_layout_attention_quantized_suffix_propagates_all_routes(
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in owner_invocations[0].keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
+    final_owner_invocations = _layout_pass_set_1_final_owner_calls(
+        "run_layout_attention_quantized_suffix"
+    )
+    assert len(final_owner_invocations) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in final_owner_invocations[0].args
+    ] == ["context"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in final_owner_invocations[0].keywords
     } == {"include_duplicate_transpose": "include_duplicate_transpose"}
 
 

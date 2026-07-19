@@ -1717,3 +1717,18 @@ report `7 passed, 1 xfailed` and `479 passed, 1 xfailed`; the sole expected
 failure is the deliberately absent future composite owner. Production,
 dependencies, TensorFlow isolation, the 45-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation extracts the remaining layout-pass-set-1 recovery
+tail into one three-stage owner. The original quantized-suffix context and
+duplicate-Transpose policy are preserved, transpose/unary recovery retains its
+fixed layout-enabled and unary-passthrough-disabled policy, and safe-binary
+recovery receives the exact same embedded pass context. Source order and all
+three raw result identities are unchanged.
+
+Only the three observation-only lowerer assignments are replaced. The
+recorded squeeze/reshape phase, progress boundary, compatibility wrappers,
+independent callback routes, graph behavior, APIs, artifacts, dependencies,
+and TensorFlow isolation remain unchanged. Focused `10`, affected `482`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
+remains exactly 128 IDs and 128 owners, and the unconsumed-result inventory
+decreases from 45 to 43.

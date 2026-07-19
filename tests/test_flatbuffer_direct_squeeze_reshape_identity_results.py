@@ -155,7 +155,7 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
         "diagnostics=session.diagnostics))"
     )
     assert _single_target(first_body[first_index + 1]) == (
-        "_layout_pass_set_1_final_attention_quantized_suffix_results"
+        "_layout_pass_set_1_final_quantized_unary_safe_results"
     )
 
     core_body, core_index = locations[1]
