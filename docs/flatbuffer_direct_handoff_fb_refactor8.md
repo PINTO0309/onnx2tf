@@ -4849,3 +4849,35 @@ closed cluster whose children are already pass-module-owned, add a strict
 characterization checkpoint before production changes, and keep all tests
 sequential and single-process under `uv`. Continue with scoped commits and
 pushes only. Never create, update, reopen, or otherwise modify a pull request.
+
+## Terminal affine/Slice-SPP composite characterization checkpoint
+
+The refreshed AST inventory selected three adjacent unconditional and
+unconsumed results immediately after `_pre_terminal_cleanup_results`:
+terminal affine/Concat/Split summary, strict StridedSlice/Pad/Concat cleanup,
+and late SPP/Concat/Unary summary. The next statement is the QKV shape-extract
+cleanup. Both existing summary context aliases are the exact shared pass
+context, and the middle bridge operates on its `model_ir`.
+
+The new strict characterization records child order, exact current arguments,
+context-alias identity, both outer boundaries, absence of result consumers,
+and complete empty-model mapping schemas of lengths `(13, 1, 2)`. Focused
+validation reports `2 passed, 1 xfailed`; affected sequential validation
+reports `518 passed, 1 xfailed`. The sole expected failure requires
+`passes/terminal_affine_slice_spp_orchestration.py` and one replacement
+lowerer result.
+
+Two inherited StridedSlice AST tests were corrected during inventory. They
+referenced pre-terminal child locals removed by an earlier committed composite
+and a direct post-Add invocation now owned by existing orchestration modules.
+The owner-aware replacements preserve the original mutation-evidence totals
+and pass on the unchanged production baseline.
+
+At resume, implement
+`passes/terminal_affine_slice_spp_orchestration.py` as a straight-line
+three-stage owner accepting `ModelIRPassContext`. Pass `context` unchanged to
+the two summary owners, pass `context.model_ir` to the bridge owner, return the
+three raw mapping objects unchanged, replace only the three unconsumed lowerer
+locals, and preserve both outer boundaries. Run all affected and standard
+gates sequentially. Commit and push only; never create or modify a pull
+request.

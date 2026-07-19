@@ -1140,3 +1140,13 @@ terminal-layout/efficiency, 55 core, 196 result-contract, 2 phase-store, and 11
 TensorFlow-isolation/default-direct/`-cotof` tests. Public APIs, artifacts,
 dependency boundaries, graph-rewrite behavior, and the exactly 128-ID/
 128-owner phase-result store remain unchanged.
+
+The next characterization selects three adjacent terminal observations after
+pre-terminal cleanup: the terminal affine/Concat/Split summary, strict
+StridedSlice/Pad/Concat bridge, and late SPP/Concat/Unary summary. It fixes the
+shared context and model argument policy, complete raw mapping schemas and
+order, pre-terminal and QKV shape-extract boundaries, and the full
+128-ID/128-owner store. Production remains unchanged pending a separate
+three-stage context-owner implementation. Focused and affected sequential
+validation report `2 passed, 1 xfailed` and `518 passed, 1 xfailed`; the sole
+expected failure is the intentionally absent owner.

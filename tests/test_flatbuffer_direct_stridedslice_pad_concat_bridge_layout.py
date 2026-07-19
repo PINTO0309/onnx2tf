@@ -44,6 +44,14 @@ ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
 ABSOLUTE_FINAL_AFFINE_INSTANCENORM = (
     "run_absolute_final_affine_instancenorm_cleanup"
 )
+PRE_TERMINAL_CLEANUP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_cleanup_orchestration.py"
+)
+PRE_TERMINAL_CLEANUP = "run_pre_terminal_cleanup"
 _STATS = {
     "optimized_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains": 1,
 }
@@ -70,6 +78,23 @@ def _absolute_final_affine_instancenorm_call_count(
         and node.func.id == function_name.removeprefix("_")
         for node in ast.walk(owner)
     )
+
+
+def _pre_terminal_cleanup_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(PRE_TERMINAL_CLEANUP_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == PRE_TERMINAL_CLEANUP
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
 
 
 def _normalize(value: Any) -> Any:
@@ -1337,33 +1362,32 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_pre_terminal_affine_tail_results"
+        and statement.targets[0].id == "_pre_terminal_cleanup_results"
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "run_pre_terminal_affine_tail_cleanup"
+    assert invocation.value.func.id == PRE_TERMINAL_CLEANUP
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
     assert invocation.value.keywords == []
 
-    previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_pre_terminal_channel_slice_pad_mul_stats"
-    )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "run_channel_slice_pad_mul_summary"
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "_terminal_affine_stats"
+
+    owner_calls = _pre_terminal_cleanup_calls(
+        "run_pre_terminal_affine_tail_cleanup"
+    )
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
     direct_statements = [
         statement
@@ -1403,53 +1427,33 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_pre_terminal_affine_tail_results"
+        and statement.targets[0].id == "_pre_terminal_cleanup_results"
     )
     invocation = lowerer.body[slice_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_pre_terminal_affine_tail_results"
+    assert invocation.targets[0].id == "_pre_terminal_cleanup_results"
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "run_pre_terminal_affine_tail_cleanup"
+    assert invocation.value.func.id == PRE_TERMINAL_CLEANUP
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
     assert invocation.value.keywords == []
 
-    channel_slice_summary = lowerer.body[slice_index - 1]
-    assert isinstance(channel_slice_summary, ast.Assign)
-    assert len(channel_slice_summary.targets) == 1
-    assert isinstance(channel_slice_summary.targets[0], ast.Name)
-    assert channel_slice_summary.targets[0].id == (
-        "_pre_terminal_channel_slice_pad_mul_stats"
-    )
-    assert isinstance(channel_slice_summary.value, ast.Call)
-    assert isinstance(channel_slice_summary.value.func, ast.Name)
-    assert channel_slice_summary.value.func.id == (
-        "run_channel_slice_pad_mul_summary"
-    )
-    assert [
-        ast.unparse(argument) for argument in channel_slice_summary.value.args
-    ] == ["channel_slice_pad_mul_context"]
-    assert channel_slice_summary.value.keywords == []
-    previous = lowerer.body[slice_index - 2]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_pre_add_stats"
-    pre_add_owner = previous.value
-    assert isinstance(pre_add_owner, ast.Call)
-    assert isinstance(pre_add_owner.func, ast.Name)
-    assert pre_add_owner.func.id == "run_pre_terminal_pre_add_cleanup"
-    assert [ast.unparse(argument) for argument in pre_add_owner.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert pre_add_owner.keywords == []
     following = lowerer.body[slice_index + 1]
     assert isinstance(following, ast.Assign)
     assert following.targets[0].id == "_terminal_affine_stats"
+
+    owner_calls = _pre_terminal_cleanup_calls(
+        "run_pre_terminal_affine_tail_cleanup"
+    )
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
     direct_statements = [
         statement
@@ -1463,14 +1467,13 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 1
-    assert isinstance(direct_statements[0], ast.Assign)
-    second_target = direct_statements[0].targets[0]
-    assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_very_late_affine_post_add_stats"
+    assert direct_statements == []
     assert (
         len(direct_statements)
         + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        + TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS.count(
             "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
         )
         + _absolute_final_affine_instancenorm_call_count(

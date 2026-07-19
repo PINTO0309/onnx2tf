@@ -5605,3 +5605,41 @@ tests all passing. The phase-result store remains exactly 128 IDs and 128
 owners. No real-model conversion was repeated because the change is a
 straight-line ownership extraction with explicit state, boundary, schema,
 fallback, and result-identity coverage.
+
+## Terminal affine/Slice-SPP composite characterization
+
+The post-removal inventory selected the next three adjacent unconditional
+observation results after pre-terminal cleanup: the prune-aware terminal
+affine/Concat/Split summary, strict StridedSlice/Pad/Concat bridge cleanup, and
+late SPP/Concat/Unary summary. Both summary contexts are identity aliases of
+`shared_model_ir_pass_context`; the bridge receives that context's `model_ir`.
+The existing pre-terminal composite and the following QKV shape-extract
+cleanup define the fixed outer boundaries.
+
+`tests/test_flatbuffer_direct_terminal_affine_slice_spp_orchestration.py`
+fixes exact source adjacency, child order, current raw arguments, shared
+context aliases, absence of consumers, and the complete empty-model mapping
+schemas with lengths `(13, 1, 2)`. Its strict expected failure requires one
+shared-context owner that invokes the two summary owners with `context`, the
+bridge owner with `context.model_ir`, returns all three raw mappings in order,
+and replaces the three lowerer locals with one composite result.
+
+The affected inventory also exposed two stale structural expectations in the
+StridedSlice mutation-evidence suite. They still searched for child locals
+removed by the already-committed pre-terminal composite and for a direct
+post-Add call already owned by three orchestration modules. The corrected
+tests resolve the existing pre-terminal and terminal Slice/Concat owners while
+preserving the same total mutation-route counts; no production behavior was
+changed.
+
+Sequential characterization under core-only `uv` completed with
+`2 passed, 1 xfailed in 0.57s` focused and
+`518 passed, 1 xfailed in 19.98s` across terminal affine, StridedSlice bridge,
+late SPP, pre-terminal ownership, QKV boundary, shared-context, architecture,
+terminal validation, and phase-store contracts. The sole expected failure is
+the intentionally absent composite. Ruff and whitespace checks passed.
+
+No production callback, graph mutation, result schema, context identity, pass
+order, public API, artifact, dependency, TensorFlow boundary, or phase-store
+entry changed. No real-model conversion was run; the store remains exactly
+128 IDs and 128 owners.
