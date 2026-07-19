@@ -720,6 +720,31 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and the synthetic runtime suite exercises
 the terminal path.
 
+## Guarded terminal BatchMatMul characterization
+
+The next bounded family contains the three consecutive BatchMatMul mapping
+observations inside the existing `optimize_layout_transpose_chains` guard:
+affine Transpose input cleanup, Reshape/SE NHWC cleanup, and Transpose-input
+adjoint-flag folding.
+
+Existing owner tests fix each single-counter integer schema and no-op graph
+behavior. None of the three locals has a default or consumer. The
+characterization fixes the shared guard, owner expressions, three-statement
+adjacency, the preceding Mean-attention composite, the following QKV-attention
+composite, and absence of loads. A strict expected failure requires three
+stable `cleanup.terminal.*` records inside the same guard. Composite results
+are intentionally excluded and no production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- related BatchMatMul/QKV baseline: `23 passed in 0.94s`;
+- characterization plus related contracts: `24 passed, 1 xfailed in 1.14s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented three-result
+destination migration.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

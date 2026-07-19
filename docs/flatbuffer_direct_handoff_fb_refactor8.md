@@ -1659,3 +1659,26 @@ No root-model conversion was required for this observation-only destination
 migration. Commit and push this implementation as a self-contained unit. The
 next unit must begin with a fresh characterize-first audit and must never
 create, update, or reopen a pull request.
+
+## Guarded terminal BatchMatMul characterization
+
+The next unit is restricted to three consecutive mapping results inside the
+existing `optimize_layout_transpose_chains` guard: BatchMatMul affine-input,
+Reshape/SE, and adjoint-flag cleanup. Their bounded single-integer schemas and
+no-op behavior are already covered; the local results have no defaults or
+loads.
+
+The strict contract fixes the shared guard, exact owner expressions,
+adjacency, the Mean-attention and QKV-attention composite boundaries, and the
+three proposed `cleanup.terminal.*` phase IDs. Both composites remain outside
+the bounded mapping store. No production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `23 passed in 0.94s`; characterization plus related contracts is
+`24 passed, 1 xfailed in 1.14s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only these three
+guarded mapping destinations. Preserve the guard, both composites, and source
+order; update representation-dependent contracts; run the sequential gates;
+document, commit, and push. Never create, update, or reopen a pull request.
