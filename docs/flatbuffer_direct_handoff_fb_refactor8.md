@@ -874,3 +874,25 @@ the unconsumed static-shape inventory. The remaining earlier late boundaries
 have different unconditional, split-fallback, shared-mutation, and binary
 recovery semantics; classify them before selecting another family. Never
 create, update, or reopen a pull request.
+
+## Unconditional very-late reconciliation characterization
+
+The remaining six unconsumed static-shape observations were classified by
+execution semantics. The selected family contains only the two unconditional
+calls after very-late broadcast repair and after the final very-late
+dynamic-rank-one rewrite.
+
+The new contract fixes their exact predecessors, successors, order,
+`model_ir` argument, `include_mutation_count=True`, absence of consumers, and
+unconditional execution. Its strict expected failure requires stable
+`shape_reconciliation.primary.very_late_*` records.
+
+Validation completed sequentially under core-only `uv`: the dedicated test is
+`1 passed, 1 xfailed in 0.14s`, and targeted Ruff, bytecode compilation, and
+whitespace checks pass. No production source changed.
+
+Commit and push before replacing only the two assignment targets with phase
+records. Do not add guards or combine them with shared, binary-recovery, or
+split-fallback results. Update their existing surrounding contracts and the
+bounded-store inventory, validate, document, commit, and push. Never create,
+update, or reopen a pull request.

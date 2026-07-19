@@ -683,6 +683,30 @@ Validation completed sequentially under core-only `uv`:
 No real-model conversion was run because only six already-computed
 two-counter result destinations changed.
 
+## Unconditional very-late reconciliation characterization
+
+The remaining unconsumed static-shape inventory contains six results with
+different execution semantics. The next family is limited to the two
+unconditional reconciliations: one immediately after very-late broadcast
+repair and one after the final very-late dynamic-rank-one rewrite.
+
+The characterization fixes each predecessor, successor, source order,
+`model_ir` argument, `include_mutation_count=True`, and absence of consumers.
+It explicitly requires both owner calls to remain unconditional. A strict
+expected failure requires stable
+`shape_reconciliation.primary.very_late_broadcast` and
+`shape_reconciliation.primary.very_late_final` records. No production source
+changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated boundary contract: `1 passed, 1 xfailed in 0.14s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented result-destination
+migration.
+
 ## Primary generic final reconciliation implementation
 
 The three selected results now record as:
