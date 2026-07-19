@@ -34,12 +34,42 @@ from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_affine_instancenorm_orchestration.py"
+)
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM = (
+    "run_absolute_final_affine_instancenorm_cleanup"
+)
 _STATS = {
     "optimized_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains": 1,
 }
 _ZERO_STATS = {
     "optimized_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains": 0,
 }
+
+
+def _absolute_final_affine_instancenorm_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
 
 
 def _normalize(value: Any) -> Any:
@@ -1433,18 +1463,17 @@ def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> N
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 2
+    assert len(direct_statements) == 1
     assert isinstance(direct_statements[0], ast.Assign)
     second_target = direct_statements[0].targets[0]
     assert isinstance(second_target, ast.Name)
     assert second_target.id == "_very_late_affine_post_add_stats"
-    assert isinstance(direct_statements[1], ast.Assign)
-    third_target = direct_statements[1].targets[0]
-    assert isinstance(third_target, ast.Name)
-    assert third_target.id == "_absolute_final_affine_post_add_stats"
     assert (
         len(direct_statements)
         + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        + _absolute_final_affine_instancenorm_call_count(
             "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
         )
         == 3

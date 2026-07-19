@@ -317,6 +317,31 @@ def _no_layout_final_cleanup_call_count(function_name: str) -> int:
     )
 
 
+def _absolute_final_affine_instancenorm_call_count(
+    function_name: str,
+) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "absolute_final_affine_instancenorm_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_absolute_final_affine_instancenorm_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def test_constant_lowering_has_one_typed_op_family_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -6458,24 +6483,30 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
     assert previous_boundary.targets[0].id == (
-        "_absolute_final_instancenorm_post_bias_stats"
+        "_absolute_final_affine_instancenorm_results"
     )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
-        == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+        == "run_absolute_final_affine_instancenorm_cleanup"
     )
+    assert [
+        ast.unparse(argument) for argument in previous_boundary.value.args
+    ] == ["shared_model_ir_pass_context"]
+    assert previous_boundary.value.keywords == []
     affine_boundary = lowerer.body[invocation_index - 2]
     assert isinstance(affine_boundary, ast.Assign)
     assert len(affine_boundary.targets) == 1
     assert isinstance(affine_boundary.targets[0], ast.Name)
-    assert affine_boundary.targets[0].id == "_absolute_final_affine_post_add_stats"
+    assert affine_boundary.targets[0].id == (
+        "_absolute_final_boundary_signature_results"
+    )
     assert isinstance(affine_boundary.value, ast.Call)
     assert isinstance(affine_boundary.value.func, ast.Name)
     assert (
         affine_boundary.value.func.id
-        == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        == "run_boundary_shape_signature_cleanup"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
@@ -6663,7 +6694,11 @@ def test_indexed_instance_norm_residual_mul_concat_owner_is_transactional() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 4
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        == 4
+    )
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -6938,7 +6973,12 @@ def test_indexed_affine_post_add_layout_owner_is_bounded_and_separate_from_pad()
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 4
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _absolute_final_affine_instancenorm_call_count(wrapper_name)
+        == 4
+    )
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls

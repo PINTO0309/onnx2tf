@@ -41,6 +41,16 @@ PRE_TERMINAL_INSTANCENORM = (
 PRE_TERMINAL_INSTANCENORM_RESULT = (
     "_pre_terminal_instancenorm_layout_results"
 )
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_affine_instancenorm_orchestration.py"
+)
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM = (
+    "run_absolute_final_affine_instancenorm_cleanup"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -77,6 +87,28 @@ def _pre_terminal_instancenorm_calls(function_name: str) -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == PRE_TERMINAL_INSTANCENORM
+    )
+    owner_name = function_name.removeprefix("_")
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+
+
+def _absolute_final_affine_instancenorm_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM
     )
     owner_name = function_name.removeprefix("_")
     return [
@@ -529,6 +561,7 @@ def _assert_pre_terminal_instancenorm_owner_call(
         len(direct_statements)
         + _very_late_pad_instancenorm_call_count(lowerer)
         + len(owner_calls)
+        + len(_absolute_final_affine_instancenorm_calls(function_name))
         == expected_total_calls
     )
     assert not any(

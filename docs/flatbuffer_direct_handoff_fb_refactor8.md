@@ -4152,3 +4152,36 @@ the two-pass context owner and absolute-final site, retain both raw lowerer
 wrappers and every other caller, update owner-aware occurrence contracts, and
 validate sequentially. Keep the phase-result store at 128/128 and never
 create, update, or reopen a pull request.
+
+## Absolute-final affine/InstanceNorm pair implementation
+
+`passes/absolute_final_affine_instancenorm_orchestration.py` now owns the
+adjacent affine post-ADD and decomposed-InstanceNorm post-bias cleanups through
+`run_absolute_final_affine_instancenorm_cleanup(shared_model_ir_pass_context)`.
+It forwards the same ModelIR/LayoutState to both callbacks and returns their
+unchanged one-counter mappings in the original order.
+
+The lowerer uses one ordered tuple in place of two unconsumed locals. The
+boundary-signature predecessor, normalization/attention successor, both raw
+lowerer wrappers, every other caller, and exact mutation order remain intact.
+The new owner stays outside the already-full 128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused context-owner contracts: `3 passed in 0.58s`;
+- affected owner-aware contracts: `678 passed in 23.97s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.81s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.18s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.61s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model conversion was repeated; runtime callback injection and the
+owner-aware structural suite cover the complete unchanged contract. Commit
+and push this checkpoint. On resume, inventory the next small semantically
+closed unconsumed-result cluster before changing production. Keep all
+validation sequential and continue with commits and pushes only; never create,
+update, or reopen a pull request.

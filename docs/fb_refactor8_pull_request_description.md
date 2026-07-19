@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Thirty-five late lowerer clusters now have focused orchestration owners. The first
+Thirty-six late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -291,8 +291,14 @@ diagnostics, raw mapping schemas and order, the option guard, both topology
 boundaries, every other raw caller, compatibility symbols, and the following
 boundary-signature cleanup.
 
+The thirty-sixth owns the adjacent absolute-final affine post-ADD and
+decomposed-InstanceNorm post-bias cleanups. It preserves shared
+ModelIR/LayoutState identity, affine-before-InstanceNorm order, both raw
+schemas, all independent callers, compatibility wrappers, and both neighboring
+orchestration boundaries.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing fifty-five former unconsumed locals and two
+and result schemas while removing fifty-seven former unconsumed locals and two
 lowerer scope locals. They also replace twenty-nine consumed mutation-evidence
 or aggregate-result locals and twenty tensor-count snapshots with three
 explicit boolean decisions, nineteen reusable summary calls, and one prune-aware
@@ -874,3 +880,9 @@ ModelIR/LayoutState identity, affine-before-InstanceNorm order, both raw result
 schemas, the boundary-signature predecessor, normalization/attention
 successor, compatibility wrappers, and the full 128/128 store. Production
 remains unchanged until a shared context owner is implemented separately.
+
+The latest checkpoint implements that shared absolute-final
+affine/InstanceNorm owner. It replaces two unconsumed result locals with one
+ordered tuple while preserving shared context identity, raw schemas and order,
+both neighboring owners, every independent raw caller, compatibility wrappers,
+and the full 128/128 store.

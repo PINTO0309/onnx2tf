@@ -58,6 +58,16 @@ PRE_TERMINAL_INSTANCENORM_OWNER_PATH = (
 PRE_TERMINAL_INSTANCENORM_OWNER = (
     "run_pre_terminal_instancenorm_layout_cleanup"
 )
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_affine_instancenorm_orchestration.py"
+)
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM_OWNER = (
+    "run_absolute_final_affine_instancenorm_cleanup"
+)
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -238,6 +248,29 @@ def _pre_terminal_instancenorm_owner_call_count(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == PRE_TERMINAL_INSTANCENORM_OWNER
+    )
+    owner_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+        for node in ast.walk(owner)
+    )
+
+
+def _absolute_final_affine_instancenorm_owner_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM_OWNER_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM_OWNER
     )
     owner_name = function_name.removeprefix("_")
     return sum(
@@ -1024,7 +1057,9 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
     following = body[summary_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_affine_post_add_stats"
+    assert following.targets[0].id == (
+        "_absolute_final_affine_instancenorm_results"
+    )
 
 
 def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
@@ -2390,11 +2425,14 @@ def test_primary_path_retains_terminal_instancenorm_post_bias_result() -> None:
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == callback_name
     ]
-    assert len(indices) == 2
-    terminal_index, absolute_final_index = indices
-    assert terminal_index < absolute_final_index
+    assert len(indices) == 1
+    terminal_index = indices[0]
     assert _very_late_owner_call_count(callback_name) == 1
     assert _pre_terminal_instancenorm_owner_call_count(callback_name) == 1
+    assert (
+        _absolute_final_affine_instancenorm_owner_call_count(callback_name)
+        == 1
+    )
 
     statement = body[terminal_index]
     _assert_phase_result_record(
@@ -2427,12 +2465,18 @@ def test_primary_path_retains_terminal_instancenorm_post_bias_result() -> None:
         "diagnostics": "session.diagnostics",
     }
 
-    absolute_final = body[absolute_final_index]
-    assert isinstance(absolute_final, ast.Assign)
-    assert len(absolute_final.targets) == 1
-    assert isinstance(absolute_final.targets[0], ast.Name)
-    assert absolute_final.targets[0].id == (
-        "_absolute_final_instancenorm_post_bias_stats"
+    absolute_final = next(
+        statement
+        for statement in body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_affine_instancenorm_results"
+    )
+    assert ast.unparse(absolute_final.value) == (
+        "run_absolute_final_affine_instancenorm_cleanup("
+        "shared_model_ir_pass_context)"
     )
 
 

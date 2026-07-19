@@ -4686,3 +4686,40 @@ checks passed.
 This checkpoint changes no production source, graph mutation, pass order,
 argument policy, store entry, public API, artifact, dependency, or TensorFlow
 boundary. No real-model conversion was repeated.
+
+## Absolute-final affine/InstanceNorm pair implementation
+
+`passes/absolute_final_affine_instancenorm_orchestration.py` now provides
+`run_absolute_final_affine_instancenorm_cleanup(shared_model_ir_pass_context)`.
+It runs indexed affine post-ADD cleanup before decomposed-InstanceNorm
+post-bias cleanup, forwards the same primary ModelIR and `LayoutState` to both,
+and returns both one-counter raw mappings unchanged as an ordered tuple.
+
+The absolute-final lowerer site now retains one tuple instead of the two former
+unconsumed locals. Boundary-signature cleanup remains the immediate
+predecessor and the existing normalization/attention owner remains the
+immediate successor. Both private lowerer wrappers and every other direct or
+orchestrated raw caller remain available. The extraction adds no graph scan,
+normalization, diagnostics forwarding, control-flow decision, phase-store
+entry, dependency, TensorFlow import, public API, or artifact behavior; the
+store remains exactly 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused context-owner contracts: `3 passed in 0.58s`;
+- affected signature, normalization/attention, affine, InstanceNorm,
+  terminal, late-binary, store, and architecture contracts:
+  `678 passed in 23.97s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.81s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.18s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.61s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because injected runtime tests
+prove exact context identity, callback order, arguments, and raw schemas,
+while the owner-aware affected suite preserves all independent occurrences and
+neighboring boundaries.

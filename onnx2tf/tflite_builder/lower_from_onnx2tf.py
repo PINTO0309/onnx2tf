@@ -238,6 +238,9 @@ from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration imp
     run_late_hard_activation_layout,
     run_late_hard_activation_layout_summary,
 )
+from onnx2tf.tflite_builder.passes.absolute_final_affine_instancenorm_orchestration import (
+    run_absolute_final_affine_instancenorm_cleanup,
+)
 from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
     run_absolute_final_normalization_attention,
 )
@@ -5762,16 +5765,9 @@ def lower_onnx_to_ir(
     )
     # Absolute-final guard: topological sort + signature sanitize can expose
     # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.
-    _absolute_final_affine_post_add_stats = (
-        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _absolute_final_instancenorm_post_bias_stats = (
-        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+    _absolute_final_affine_instancenorm_results = (
+        run_absolute_final_affine_instancenorm_cleanup(
+            shared_model_ir_pass_context
         )
     )
     _absolute_final_normalization_attention_results = (

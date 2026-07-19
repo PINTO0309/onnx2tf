@@ -30,7 +30,7 @@ OLD_TARGETS = (
     "_absolute_final_static_signature_stats",
 )
 SUMMARY_TARGET = "_absolute_final_boundary_signature_results"
-SUCCESSOR_TARGET = "_absolute_final_affine_post_add_stats"
+SUCCESSOR_TARGET = "_absolute_final_affine_instancenorm_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

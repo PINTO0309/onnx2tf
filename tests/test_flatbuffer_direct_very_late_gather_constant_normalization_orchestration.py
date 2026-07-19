@@ -31,6 +31,36 @@ from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 VERY_LATE = "_run_very_late_gather_constant_normalization_pass_cluster"
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_affine_instancenorm_orchestration.py"
+)
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM = (
+    "run_absolute_final_affine_instancenorm_cleanup"
+)
+
+
+def _absolute_final_affine_instancenorm_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -932,6 +962,9 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
         + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
             "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
         )
+        + _absolute_final_affine_instancenorm_call_count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
         == 3
     )
     assert isinstance(direct_statements[0], ast.Assign)
@@ -939,10 +972,6 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
     assert isinstance(first_target, ast.Name)
     assert first_target.id == "_very_late_affine_post_add_stats"
     assert direct_statements[0] is invocation
-    assert isinstance(direct_statements[1], ast.Assign)
-    second_target = direct_statements[1].targets[0]
-    assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_absolute_final_affine_post_add_stats"
 
 
 def test_very_late_context_is_explicit() -> None:

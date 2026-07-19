@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    absolute_final_affine_instancenorm_orchestration,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -63,32 +70,25 @@ def _target_index(lowerer: ast.FunctionDef, target_name: str) -> int:
     )
 
 
-def test_absolute_final_affine_instancenorm_raw_pair_and_boundaries_are_fixed() -> (
+def test_absolute_final_affine_instancenorm_summary_and_boundaries_are_fixed() -> (
     None
 ):
     lowerer = _lowerer()
-    affine_index = _target_index(lowerer, OLD_TARGETS[0])
-    assert _target_index(lowerer, OLD_TARGETS[1]) == affine_index + 1
-    assert _single_target(lowerer.body[affine_index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[affine_index + 2]) == SUCCESSOR_TARGET
+    summary_index = _target_index(lowerer, SUMMARY_TARGET)
+    assert _single_target(lowerer.body[summary_index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[summary_index + 1]) == SUCCESSOR_TARGET
 
-    affine = lowerer.body[affine_index]
-    instancenorm = lowerer.body[affine_index + 1]
-    assert isinstance(affine, ast.Assign)
-    assert ast.unparse(affine.value) == (
-        f"{AFFINE_WRAPPER}(model_ir, layout_state=session.layout_state)"
+    summary = lowerer.body[summary_index]
+    assert isinstance(summary, ast.Assign)
+    assert ast.unparse(summary.value) == (
+        f"{SUMMARY_OWNER}(shared_model_ir_pass_context)"
     )
-    assert isinstance(instancenorm, ast.Assign)
-    assert ast.unparse(instancenorm.value) == (
-        f"{INSTANCENORM_WRAPPER}(model_ir, "
-        "layout_state=session.layout_state)"
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_TARGETS
+        for node in ast.walk(lowerer)
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="absolute-final affine/InstanceNorm pair lacks one context owner",
-)
 def test_absolute_final_affine_instancenorm_uses_one_ordered_context_owner() -> (
     None
 ):
@@ -131,3 +131,61 @@ def test_absolute_final_affine_instancenorm_uses_one_ordered_context_owner() -> 
     lowerer_functions = _functions(LOWERER_PATH)
     assert AFFINE_WRAPPER in lowerer_functions
     assert INSTANCENORM_WRAPPER in lowerer_functions
+
+
+def test_absolute_final_affine_instancenorm_preserves_context_order_and_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("absolute_final_affine_instancenorm")
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict[str, object]] = []
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+    results = (
+        {"optimized_transpose_mul_posttranspose_add_nhwc_chains": 2},
+        {
+            "optimized_transpose_instancenorm_posttranspose_bias_add_nhwc_chains": 3
+        },
+    )
+    events: list[tuple[str, ModelIR, dict[str, object]]] = []
+
+    def _run_affine(candidate: ModelIR, **kwargs: object) -> dict[str, int]:
+        events.append((AFFINE_OWNER, candidate, dict(kwargs)))
+        return dict(results[0])
+
+    def _run_instancenorm(
+        candidate: ModelIR,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        events.append((INSTANCENORM_OWNER, candidate, dict(kwargs)))
+        return dict(results[1])
+
+    monkeypatch.setattr(
+        absolute_final_affine_instancenorm_orchestration,
+        AFFINE_OWNER,
+        _run_affine,
+    )
+    monkeypatch.setattr(
+        absolute_final_affine_instancenorm_orchestration,
+        INSTANCENORM_OWNER,
+        _run_instancenorm,
+    )
+
+    owner_module = absolute_final_affine_instancenorm_orchestration
+    runner = owner_module.run_absolute_final_affine_instancenorm_cleanup
+    assert runner(context) == results
+    assert events == [
+        (
+            AFFINE_OWNER,
+            model_ir,
+            {"layout_state": layout_state},
+        ),
+        (
+            INSTANCENORM_OWNER,
+            model_ir,
+            {"layout_state": layout_state},
+        ),
+    ]
