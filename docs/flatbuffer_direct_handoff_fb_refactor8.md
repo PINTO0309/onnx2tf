@@ -2114,3 +2114,30 @@ one-counter result destinations changed and focused runtime tests cover all
 owners. Commit and push this unit. With only one store slot remaining, audit
 the next candidate independently before using it; never create, update, or
 reopen a pull request.
+
+## Late NDHWC/cost-volume pair characterization
+
+The final available store slot must not be used for only half of the adjacent
+NDHWC gate and cost-volume ScatterND pair. Both currently share one
+`ModelIRPassStateScope`; their mappings contain two and one distinct integer
+counters respectively.
+
+The chosen contract is one orchestration owner,
+`run_late_ndhwc_cost_volume_layout_cleanup`, which creates the shared scope,
+calls the same two owners in order with unchanged model/layout/diagnostics
+inputs, and returns the merged three-counter mapping. The lowerer will retain
+that result as `cleanup.late.ndhwc_cost_volume` between the post-SiNet
+HardSigmoid phase and late Conv-affine result. The old scope and two result
+locals must disappear.
+
+The existing result module now contains a strict expected-failure contract
+for this owner, phase, nested expression, boundaries, and old-local removal.
+Production source is unchanged. The related baseline is
+`16 passed in 0.86s`. Re-run it with one expected xfail and run targeted Ruff,
+bytecode compilation, and whitespace validation before committing and
+pushing characterization.
+
+Implementation must add a focused runtime test proving callback order, shared
+scope identity, arguments, and merged schema; then move the store from 127 to
+128 records, run all sequential gates, document, commit, and push. Never
+create, update, or reopen a pull request.

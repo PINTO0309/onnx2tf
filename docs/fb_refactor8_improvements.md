@@ -1020,6 +1020,34 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and focused runtime contracts exercise
 all three owners.
 
+## Late NDHWC/cost-volume pair characterization
+
+The phase-result store has one remaining slot. The next two lowerer results
+are a semantic pair: NDHWC gate cleanup and cost-volume ScatterND cleanup run
+consecutively with the same `ModelIRPassStateScope`. Recording only one would
+make the observation contract asymmetric, while recording both separately
+would exceed the 128-phase bound.
+
+The selected contract therefore requires one small orchestration owner that
+creates the shared state scope internally, invokes the existing two owners in
+the same order with the same model/layout/diagnostics inputs, combines their
+three distinct integer counters, and returns one bounded mapping. The lowerer
+must record that mapping as `cleanup.late.ndhwc_cost_volume` between the
+post-SiNet HardSigmoid phase and late Conv-affine result, with all three old
+locals absent.
+
+The existing late NDHWC/cost-volume result module now carries this as a strict
+expected failure. No production source changed. Validation completed
+sequentially under core-only `uv`: the related baseline is
+`16 passed in 0.86s`. Characterization must preserve those passes plus one
+intentional strict xfail, and targeted Ruff, bytecode compilation, and
+whitespace validation must pass before commit and push.
+
+Implementation must preserve owner order and diagnostics, prove that both
+callbacks receive the same internally scoped state object, update the store
+from 127 to its fixed 128-record capacity, run sequential gates, document,
+commit, and push. Never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

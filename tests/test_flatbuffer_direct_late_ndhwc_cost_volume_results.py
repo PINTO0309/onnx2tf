@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -36,6 +38,13 @@ COST_VOLUME_OWNER_PATH = (
     / "passes"
     / "cost_volume_scatter_layout.py"
 )
+GATE_ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "gate_layout_orchestration.py"
+)
 NDHWC_OWNER = "run_ndhwc_gate_layout_cleanup"
 COST_VOLUME_OWNER = "run_cost_volume_scatter_layout_cleanup"
 NDHWC_TARGET = "_late_ndhwc_gate_layout_stats"
@@ -43,6 +52,13 @@ COST_VOLUME_TARGET = "_late_cost_volume_scatter_layout_stats"
 SCOPE_TARGET = "late_ndhwc_cost_volume_state_scope"
 PREDECESSOR_PHASE_ID = "cleanup.post_sinet.dequant_hardsigmoid_bridge"
 SUCCESSOR_TARGET = "_late_cost_volume_conv_affine_stats"
+PAIR_OWNER = "run_late_ndhwc_cost_volume_layout_cleanup"
+PAIR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
+OLD_PAIR_TARGETS = (
+    "late_ndhwc_cost_volume_state_scope",
+    NDHWC_TARGET,
+    COST_VOLUME_TARGET,
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -270,3 +286,48 @@ def test_late_ndhwc_cost_volume_direct_results_are_retained_for_observation() ->
             and isinstance(node.ctx, ast.Load)
             for node in ast.walk(lowerer)
         )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="late NDHWC/cost-volume pair has not moved to one phase owner",
+)
+def test_late_ndhwc_cost_volume_pair_uses_one_bounded_phase_owner() -> None:
+    owner = _functions(GATE_ORCHESTRATION_PATH)[PAIR_OWNER]
+    owner_calls = [
+        node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {
+            "ModelIRPassStateScope",
+            NDHWC_OWNER,
+            COST_VOLUME_OWNER,
+        }
+    ]
+    assert owner_calls == [
+        "ModelIRPassStateScope",
+        NDHWC_OWNER,
+        COST_VOLUME_OWNER,
+    ]
+
+    lowerer = _lowerer()
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) == PAIR_PHASE_ID
+    ]
+    assert len(records) == 1
+    record = records[0]
+    index = lowerer.body.index(record)
+    assert ast.unparse(record.value.args[1]) == (
+        "run_late_ndhwc_cost_volume_layout_cleanup("
+        "shared_model_ir_pass_context)"
+    )
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_PAIR_TARGETS
+        for node in ast.walk(lowerer)
+    )
