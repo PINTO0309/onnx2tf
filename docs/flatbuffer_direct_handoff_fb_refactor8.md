@@ -3394,3 +3394,34 @@ Commit and push this characterization separately. At resume, implement only
 the prune-aware owner and direct late site, retain the raw lowerer wrapper,
 update owner-aware structural contracts, and validate sequentially. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Late hard-activation prune-aware summary implementation
+
+The pass module now exposes
+`run_late_hard_activation_layout_summary(context, flags...)`. It captures
+tensor count, invokes the existing raw ordered owner, and applies the strict
+normalizer with the same runtime layout-Transpose policy. The lowerer keeps
+`_late_hard_activation_stats` but removes its consumed count and raw-result
+locals.
+
+The raw lowerer wrapper remains intact. Shared context and pass-state identity,
+hard-activation option policy, pruning, summary schema, terminal HardSwish/SE
+predecessor, absolute-final pre-ConCat successor, and 128/128 store are
+unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `5 passed in 0.56s`;
+- affected owner, boundary, store, and architecture contracts:
+  `294 passed in 19.48s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.92s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.40s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.80s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next adjacent non-store evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

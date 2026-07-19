@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import (
+    late_hard_activation_layout_orchestration,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -49,39 +56,23 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_late_hard_activation_prune_aware_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    count = next(
+    summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COUNT_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    index = lowerer.body.index(count)
-    raw = lowerer.body[index + 1]
-    summary = lowerer.body[index + 2]
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
-    assert _single_target(raw) == RAW_TARGET
-    assert isinstance(raw, ast.Assign)
-    assert ast.unparse(raw.value) == (
-        f"{RAW_WRAPPER}(include_layout_transpose="
-        "optimize_layout_transpose_chains)"
-    )
-    assert _single_target(summary) == SUMMARY_TARGET
+    index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_FUNCTION}({RAW_TARGET}, include_layout_transpose="
-        "optimize_layout_transpose_chains, pruned_unused_tensors=max(0, "
-        "int(late_hard_activation_tensor_count - len(model_ir.tensors))))"
+        f"{SUMMARY_OWNER}(late_hard_activation_layout_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 3]) == SUCCESSOR_TARGET
-    assert sum(
-        isinstance(node, ast.Name) and node.id == COUNT_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)
-    ) == 2
-    assert sum(
-        isinstance(node, ast.Name) and node.id == RAW_TARGET
-        for node in ast.walk(lowerer)
-    ) == 2
+    )
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -90,10 +81,6 @@ def test_late_hard_activation_prune_aware_summary_boundary_is_fixed() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late hard-activation lacks one prune-aware summary owner",
-)
 def test_late_hard_activation_uses_one_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     owner_calls = [
@@ -143,3 +130,73 @@ def test_late_hard_activation_uses_one_prune_aware_summary_owner() -> None:
         and node.func.id == RAW_OWNER
         for node in ast.walk(wrapper)
     )
+
+
+@pytest.mark.parametrize(
+    ("include_layout_transpose", "prune"),
+    ((False, False), (True, False), (True, True)),
+)
+def test_late_hard_activation_summary_preserves_flags_schema_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("late_hard_activation_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    raw_results = (
+        ({"rewritten_hardsigmoid_transpose_passthrough_chains": 3},)
+        if not include_layout_transpose
+        else (
+            {"rewritten_hardsigmoid_transpose_passthrough_chains": 3},
+            {
+                "removed_identity_transpose": 4,
+                "removed_inverse_transpose_pairs": 5,
+                "removed_inverse_transpose_fanout_branches": 6,
+                "composed_consecutive_transpose_pairs": 7,
+            },
+        )
+    )
+    expected = (
+        late_hard_activation_layout_orchestration
+        .summarize_late_hard_activation_layout_mutations(
+            raw_results,
+            include_layout_transpose=include_layout_transpose,
+            pruned_unused_tensors=int(prune),
+        )
+    )
+    observed: list[tuple[ModelIRPassContext, bool]] = []
+
+    def _run(
+        candidate: ModelIRPassContext,
+        *,
+        include_layout_transpose: bool,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((candidate, include_layout_transpose))
+        if prune:
+            del candidate.model_ir.tensors["probe"]
+        return raw_results
+
+    monkeypatch.setattr(
+        late_hard_activation_layout_orchestration,
+        RAW_OWNER,
+        _run,
+    )
+
+    assert (
+        late_hard_activation_layout_orchestration
+        .run_late_hard_activation_layout_summary(
+            context,
+            include_layout_transpose=include_layout_transpose,
+        )
+        == expected
+    )
+    assert observed == [(context, include_layout_transpose)]

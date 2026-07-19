@@ -199,7 +199,7 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "run_ndhwc_concat_layout_cleanup",
         ),
         (
-            "summarize_late_hard_activation_layout_mutations",
+            "run_late_hard_activation_layout_summary",
             "_late_hard_activation_stats",
             "_optimize_transpose_shape_extract_nhwc_to_nchw_chains",
         ),

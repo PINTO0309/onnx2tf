@@ -3855,3 +3855,39 @@ Sequential characterization under core-only `uv` completed with
 `22 passed, 1 xfailed in 1.15s` across the dedicated contract and related late
 hard-activation, HardSwish/SE, pre-ConCat result, and phase-store contracts.
 The sole expected failure is the intentionally absent summary owner.
+
+## Late hard-activation prune-aware summary implementation
+
+`run_late_hard_activation_layout_summary(context, *,
+include_layout_transpose)` now owns the characterized tensor snapshot, raw
+ordered invocation, and strict prune-aware normalization. The lowerer retains
+`_late_hard_activation_stats` at the same boundary and passes the same shared
+context and runtime layout-Transpose flag, while the consumed
+`late_hard_activation_tensor_count` and `late_hard_activation_results` locals
+are removed.
+
+The nested `_run_late_hard_activation_layout_pass_pair` wrapper remains
+defined and still dispatches to the raw owner. Active pass selection, shared
+pass-state scope, hard-activation options, result schema, graph pruning,
+terminal HardSwish/SE predecessor, absolute-final pre-ConCat successor, public
+behavior, artifacts, dependencies, and TensorFlow isolation are unchanged.
+The normalized summary remains outside the full 128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `5 passed in 0.56s`;
+- affected owner, boundary, store, and architecture contracts:
+  `294 passed in 19.48s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.92s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.40s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.80s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact context/flag forwarding plus stable and prune-only behavior, while
+the affected and architecture gates preserve raw ownership and both neighboring
+boundaries.

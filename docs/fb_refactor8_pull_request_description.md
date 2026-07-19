@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Twenty-two late lowerer clusters now have focused orchestration owners. The first
+Twenty-three late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -220,11 +220,16 @@ tensor count inside the pass module, invokes the existing raw layout owner, and
 extends the unchanged one-key mapping with a non-negative prune delta. The raw
 lowerer wrapper and its earlier phase-store call remain unchanged.
 
+The twenty-third composes late hard-activation/layout cleanup with its strict
+prune-aware summary. It preserves the runtime layout-Transpose policy, shared
+ModelIR/LayoutState/diagnostics context, raw wrapper, and normalized schema
+while removing the consumed raw tuple from lowerer scope.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
-lowerer scope locals. They also replace eighteen consumed mutation-evidence or
-aggregate-result locals and seven tensor-count snapshots with three explicit
-boolean decisions, six reusable summary calls, and one prune-aware cleanup
+lowerer scope locals. They also replace nineteen consumed mutation-evidence or
+aggregate-result locals and eight tensor-count snapshots with three explicit
+boolean decisions, seven reusable summary calls, and one prune-aware cleanup
 call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -515,6 +520,9 @@ Final checkpoint results:
   and architecture contracts: **337 passed**;
 - late hard-activation prune-aware summary characterization and related
   contracts: **22 passed, 1 intentional strict xfail**;
+- late hard-activation prune-aware summary owner contracts: **5 passed**;
+- affected late hard-activation, HardSwish/SE, pre-ConCat, store, and
+  architecture contracts: **294 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -593,3 +601,8 @@ The next characterization fixes the late hard-activation tensor snapshot,
 flagged raw ordered result, strict prune-aware summary, and neighboring pass
 boundaries. Production remains unchanged until the direct summary owner is
 implemented separately.
+
+The latest checkpoint implements the late hard-activation prune-aware summary
+owner. It removes the lowerer-local tensor snapshot and consumed raw tuple
+while retaining runtime option forwarding, raw wrapper dispatch, strict schema,
+neighboring boundaries, and the full 128/128 phase-result store.

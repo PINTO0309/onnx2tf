@@ -320,41 +320,33 @@ def test_late_hard_activation_returns_and_summarizes_mutations(
 
 def test_lowerer_captures_late_hard_activation_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = (
-        "late_hard_activation_tensor_count",
-        "late_hard_activation_results",
-        "_late_hard_activation_stats",
+    summary = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_late_hard_activation_stats"
     )
-    assignment_indices = {}
-    assignments = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-        target_names[2]: first_index + 2,
-    }
-    result_call = assignments[target_names[1]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == LATE_HARD_ACTIVATION_LAYOUT
-    summary_call = assignments[target_names[2]]
+    summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == (
-        "summarize_late_hard_activation_layout_mutations"
-    )
-    assert {keyword.arg for keyword in summary_call.keywords} == {
-        "include_layout_transpose",
-        "pruned_unused_tensors",
+    assert summary_call.func.id == "run_late_hard_activation_layout_summary"
+    assert [_expression_path(argument) for argument in summary_call.args] == [
+        "late_hard_activation_layout_context"
+    ]
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in summary_call.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
     }
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {"late_hard_activation_tensor_count", "late_hard_activation_results"}
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_late_hard_activation_layout_preserves_required_invocation_option() -> None:
@@ -364,11 +356,13 @@ def test_late_hard_activation_layout_preserves_required_invocation_option() -> N
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == LATE_HARD_ACTIVATION_LAYOUT
+        and node.func.id == "run_late_hard_activation_layout_summary"
     ]
 
     assert len(invocations) == 1
-    assert invocations[0].args == []
+    assert [_expression_path(argument) for argument in invocations[0].args] == [
+        "late_hard_activation_layout_context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in invocations[0].keywords
@@ -383,14 +377,14 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_hard_activation_results"
+        and statement.targets[0].id == "_late_hard_activation_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == LATE_HARD_ACTIVATION_LAYOUT
+        and statement.value.func.id == "run_late_hard_activation_layout_summary"
     )
 
-    previous = lowerer.body[invocation_index - 2]
-    following = lowerer.body[invocation_index + 2]
+    previous = lowerer.body[invocation_index - 1]
+    following = lowerer.body[invocation_index + 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)

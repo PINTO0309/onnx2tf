@@ -32,7 +32,7 @@ SUMMARY_OWNER = "run_hardswish_se_layout_summary"
 COUNT_TARGET = "terminal_hardswish_se_tensor_count"
 SUMMARY_TARGET = "_terminal_hardswish_se_stats"
 PREDECESSOR_TARGET = "_terminal_split_conv_concat_bridge_stats"
-SUCCESSOR_TARGET = "late_hard_activation_tensor_count"
+SUCCESSOR_TARGET = "_late_hard_activation_stats"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

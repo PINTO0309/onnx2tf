@@ -6195,12 +6195,15 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_hard_activation_results"
+        and statement.targets[0].id == "_late_hard_activation_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id == "run_late_hard_activation_layout_summary"
     )
     invocation = lowerer.body[invocation_index].value
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "late_hard_activation_layout_context"
+    ]
     include_layout = next(
         keyword
         for keyword in invocation.keywords
@@ -6209,7 +6212,7 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert isinstance(include_layout.value, ast.Name)
     assert include_layout.value.id == "optimize_layout_transpose_chains"
 
-    previous_boundary = lowerer.body[invocation_index - 2]
+    previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
@@ -6220,7 +6223,7 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert [
         ast.unparse(argument) for argument in previous_boundary.value.args
     ] == ["model_ir"]
-    next_boundary = lowerer.body[invocation_index + 2]
+    next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
@@ -6231,6 +6234,29 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
         next_boundary.value.func.id
         == "_optimize_transpose_pre_concat_nhwc_chains"
     )
+
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_hard_activation_layout_orchestration.py"
+    )
+    orchestration_tree = ast.parse(orchestration_path.read_text(encoding="utf-8"))
+    summary_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_hard_activation_layout_summary"
+    )
+    summary_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_hard_activation_layout"
+    ]
+    assert len(summary_owner_calls) == 1
 
 
 def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> None:
