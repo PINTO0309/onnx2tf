@@ -4318,3 +4318,33 @@ coalescing, and dynamic boundary-signature realignment immediately before
 primary terminal topology/layout validation. Preserve the three independent
 raw mappings and both compatibility wrappers, keep the store at 128/128, and
 never create, update, or reopen a pull request.
+
+## Terminal stabilization composite characterization
+
+The next contract is now fixed in
+`tests/test_flatbuffer_direct_terminal_stabilization_orchestration.py`. It
+preserves the exact final-primary sequence:
+
+1. indexed binary-layout convergence with `model_ir`;
+2. static high-rank binary coalescing with `model_ir` and
+   `session.layout_state`;
+3. dynamic boundary-signature realignment with `model_ir`;
+4. terminal topology/layout validation;
+5. ModelIR finalization.
+
+The contract also fixes all three raw result names and mapping identities. One
+strict xfail requires a new
+`passes/terminal_stabilization_orchestration.py` context owner that returns the
+three mappings as an ordered tuple and one lowerer composite result using
+`shared_model_ir_pass_context`.
+
+Sequential affected validation completed with
+`388 passed, 1 xfailed in 18.72s`; the sole expected failure is the absent
+owner. Ruff and whitespace checks passed. Production and the full 128/128
+phase-result store are unchanged.
+
+Commit and push this characterization separately. At resume, implement the
+straight-line context owner using the three existing pass-module owners,
+replace the three terminal locals with one ordered composite result, update
+owner-aware structural/runtime coverage, and run all affected and standard
+gates sequentially. Never create, update, or reopen a pull request.

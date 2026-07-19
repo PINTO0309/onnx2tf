@@ -932,3 +932,11 @@ and both production call sites remain unchanged. Runtime and structural tests
 fix single-index identity, callback order and forwarding, the stable-stop rule,
 three-round cap, ordered result schema, and fallback/primary arguments. The
 already-full phase-result store remains exactly 128 IDs and 128 owners.
+
+The next characterization fixes the final-primary stabilization triple before
+terminal topology/layout validation: indexed binary-layout convergence,
+static high-rank binary coalescing, and dynamic boundary-signature realignment.
+It preserves raw mapping identities and order, model/layout argument policy,
+the validation and finalizer successors, shared context identity, and the full
+128/128 store. Production remains unchanged until the composite context owner
+is implemented separately.

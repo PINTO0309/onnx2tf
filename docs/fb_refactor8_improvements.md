@@ -4872,3 +4872,32 @@ No real-model conversion was repeated for this mechanical ownership move.
 Dedicated runtime tests exercise the exact convergence behavior and shared
 graph-index identity, and the affected structural/runtime suite covers both
 production call paths.
+
+## Terminal stabilization composite characterization
+
+The next selected boundary is the final primary stabilization triple
+immediately before terminal topology/layout validation. The lowerer currently
+retains three independent results while it runs indexed binary-layout
+convergence, static high-rank binary coalescing, and dynamic boundary-signature
+realignment in that exact order.
+
+`tests/test_flatbuffer_direct_terminal_stabilization_orchestration.py` fixes
+the three raw result names and schemas, model/layout argument policy, adjacency,
+terminal validation successor, and finalizer successor. Its one strict
+expected failure requires
+`passes/terminal_stabilization_orchestration.py` to expose a single context
+owner returning the three unchanged mappings as an ordered tuple, with the
+lowerer retaining one composite result through the existing shared
+`ModelIRPassContext`.
+
+Sequential characterization under core-only `uv` completed with
+`388 passed, 1 xfailed in 18.72s` across the dedicated contract and affected
+binary-convergence, high-rank-binary, boundary-signature, terminal-validation,
+shared-context, phase-store, and architecture contracts. The sole expected
+failure is the intentionally absent composite owner. Focused Ruff and
+whitespace checks passed.
+
+This checkpoint changes no production source, callback, context lifetime,
+graph mutation, pass order, argument policy, result schema, validation
+boundary, store entry, API, artifact, dependency, or TensorFlow boundary. No
+real-model conversion was repeated.
