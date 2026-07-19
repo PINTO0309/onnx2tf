@@ -3642,3 +3642,27 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next compatible repeated evidence family before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Final stale Conv-input summary characterization
+
+The next selected boundary is the final-primary one-repair stale Conv-input
+count-plus-mapping site that was deliberately excluded from the indexed
+two-repair family. Its raw one-key schema and optional graph-index wrapper are
+distinct and remain independently owned.
+
+The focused contract fixes the current representation, model argument, prune
+expression, preceding final-Pad guard, following conditional reconciliation,
+mixed-Concat successor, and raw wrapper retention. One strict xfail requires
+`run_stale_conv_input_adapter_repair_summary(model_ir)`.
+
+Sequential validation under core-only `uv` completed with
+`336 passed, 1 xfailed in 18.50s` across the new characterization and related
+indexed Conv-input, terminal-layout, phase-store, and architecture contracts.
+The sole expected failure is the unimplemented dedicated summary owner.
+Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the dedicated one-repair summary owner and final-primary site, retain the raw
+lowerer wrapper, leave both indexed sites unchanged, update owner-aware
+structural contracts, and validate sequentially. Continue with commits and
+pushes only; never create, update, or reopen a pull request.

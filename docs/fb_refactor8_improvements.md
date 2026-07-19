@@ -4121,3 +4121,27 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves stable and prune-only schema preservation, while the affected and
 architecture gates preserve raw-wrapper forwarding, iterative indexed
 convergence, both conditional reconciliations, and neighboring boundaries.
+
+## Final stale Conv-input summary characterization
+
+The final-primary stale Conv-input site is now characterized as a dedicated
+one-repair family. It snapshots tensor count, invokes only the stale
+NCHW-to-NHWC Conv-input Transpose repair, and extends that exact one-key mapping
+with `pruned_unused_tensors`. This keeps it separate from the already-extracted
+indexed owner, which also runs singleton-Reshape repair and returns a two-key
+raw schema.
+
+`tests/test_flatbuffer_direct_final_conv_input_summary_orchestration.py` fixes
+the current two-statement representation, exact model argument and prune
+expression, preceding final-Pad reconciliation guard, following
+mutation-positive reconciliation guard, subsequent mixed-Concat repair, and
+retained raw lowerer wrapper with optional graph-index forwarding. Its strict
+expected failure requires a dedicated pass-module summary owner. No production
+source, graph mutation, guard, store entry, public API, artifact, dependency,
+or TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`336 passed, 1 xfailed in 18.50s` across the dedicated contract and related
+indexed Conv-input, terminal-layout, phase-store, and architecture contracts.
+The sole expected failure is the intentionally absent dedicated summary owner.
+Targeted Ruff and whitespace checks passed.

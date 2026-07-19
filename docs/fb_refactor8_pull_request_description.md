@@ -692,3 +692,10 @@ owner. It removes both compatible tensor snapshots and inline mapping
 extensions while retaining the raw wrapper, optional graph-index forwarding,
 indexed convergence loop, both reconciliation guards, neighboring boundaries,
 and the full 128/128 phase-result store.
+
+The next characterization fixes the dedicated final-primary stale Conv-input
+count-plus-mapping boundary. It preserves its one-repair schema, final-Pad
+predecessor, mutation-positive reconciliation guard, mixed-Concat successor,
+and raw wrapper with optional graph-index forwarding. It remains separate from
+the indexed two-repair family, and production is unchanged until its dedicated
+summary owner is implemented separately.
