@@ -824,3 +824,10 @@ re-exports, neighboring boundaries, and the full 128/128 store.
 An inherited shared-late structural test now follows the already-established
 late-binary boolean successor instead of the removed tensor-count snapshot.
 This is a test-only contract repair with no production change.
+
+The next characterization fixes the adjacent absolute-final dynamic-boundary
+realignment and static-signature sanitizer pair. It preserves independent raw
+schemas, realign-before-sanitize order, the following affine boundary, all
+other signature-owner callers, compatibility wrappers, and the full 128/128
+store. Production remains unchanged until an ordered pair owner is implemented
+separately.

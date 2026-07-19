@@ -3995,3 +3995,28 @@ The constant now follows the existing production boundary. The focused file is
 Commit and push this repair separately, then resume the boundary-signature
 characterization. Continue with commits and pushes only; never create, update,
 or reopen a pull request.
+
+## Absolute-final boundary-signature pair characterization
+
+The next selected cluster is the adjacent absolute-final dynamic-boundary
+realignment and static-signature consistency sanitizer. Both existing owners
+take only `model_ir`, return independent bounded mappings, and precede the
+absolute-final affine post-Add cleanup. Later terminal realignment and
+late-binary sanitizer callers remain separate.
+
+The focused contract fixes both current targets, raw call order and counts,
+the following affine boundary, and both raw lowerer wrappers. One strict xfail
+requires `run_boundary_shape_signature_cleanup(model_ir)` in the existing
+signature module and one ordered-result target in the lowerer.
+
+Sequential validation under core-only `uv` completed with
+`361 passed, 1 xfailed in 18.70s` across the new characterization and related
+signature, terminal-layout, late-binary, shared-late, phase-store, and
+architecture contracts. The sole expected failure is the unimplemented
+ordered pair owner. Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the pair owner and absolute-final site, retain both raw wrappers and every
+other caller, update owner-aware contracts, and validate sequentially.
+Continue with commits and pushes only; never create, update, or reopen a pull
+request.

@@ -4516,3 +4516,30 @@ The single test constant now names the current boolean successor. Both affected
 assertions pass (`13 passed in 0.56s`). No production source, graph behavior,
 public API, artifact, dependency, TensorFlow boundary, or phase-result store
 changed.
+
+## Absolute-final boundary-signature pair characterization
+
+The next selected cluster is the adjacent absolute-final dynamic-boundary
+signature realignment and static-signature consistency sanitization. Both raw
+owners are already independently characterized, return bounded mappings, and
+require only the current ModelIR. The pair sits immediately before the
+absolute-final affine post-Add cleanup.
+
+`tests/test_flatbuffer_direct_boundary_signature_cleanup_orchestration.py`
+fixes the two current result targets, realign-before-sanitize order, exact
+ModelIR argument, other lowerer occurrence counts, following affine boundary,
+and continued availability of both lowerer wrappers. Its one strict expected
+failure requires `run_boundary_shape_signature_cleanup(model_ir)` in the
+existing signature-sanitization module, returning both raw mappings in order.
+The later terminal realignment and the late-binary sanitizer caller remain
+independent.
+
+Sequential characterization under core-only `uv` completed with
+`361 passed, 1 xfailed in 18.70s` across the dedicated contract and related
+signature, terminal-layout, late-binary, shared-late, phase-store, and
+architecture contracts. The sole expected failure is the intentionally absent
+ordered pair owner. Targeted Ruff and whitespace checks passed.
+
+This checkpoint changes no production source, metadata/tensor mutation, pass
+order, store entry, public API, artifact, dependency, or TensorFlow boundary.
+No real-model conversion was repeated for this characterization-only change.
