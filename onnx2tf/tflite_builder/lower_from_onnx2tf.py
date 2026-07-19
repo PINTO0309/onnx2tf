@@ -219,6 +219,9 @@ from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration impor
 from onnx2tf.tflite_builder.passes.terminal_clamp_sinet_layout_orchestration import (
     run_terminal_clamp_sinet_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.very_late_sinet_recovery_tail_orchestration import (
+    run_very_late_sinet_recovery_tail_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
     run_terminal_singleton_maxpool_reshape,
 )
@@ -4987,11 +4990,10 @@ def lower_onnx_to_ir(
     )
     # Very late shape reconciliation can expose strict shuffle-residual patterns.
     # Re-run terminal transpose reducers once at absolute end.
-    _very_late_sinet_layout_recovery_results = (
-        _run_sinet_terminal_layout_recovery_sequence()
-    )
-    _very_late_sinet_preadd_resize_results = (
-        _run_sinet_preadd_resize_recovery_sequence()
+    _very_late_sinet_recovery_tail_results = (
+        run_very_late_sinet_recovery_tail_cleanup(
+            sinet_terminal_layout_recovery_context,
+        )
     )
     # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
     session.record_phase_result(

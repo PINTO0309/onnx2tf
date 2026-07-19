@@ -32,7 +32,7 @@ OWNER_PATH = (
 DIRECT_OWNER = "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
 PUBLIC_OWNER = "optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
 RESULT_TARGET = "_very_late_residual_affine_prelu_stats"
-PREDECESSOR_TARGET = "_very_late_sinet_preadd_resize_results"
+PREDECESSOR_TARGET = "_very_late_sinet_recovery_tail_results"
 SUCCESSOR = "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains"
 RESULT_KEY = "optimized_transpose_pre_add_mul_add_prelu_nhwc_chains"
 

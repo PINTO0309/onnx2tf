@@ -142,7 +142,7 @@ def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
         "_post_terminal_singleton_reshape_results"
     )
     assert _single_target(lowerer.body[index + 1]) == (
-        "_very_late_sinet_layout_recovery_results"
+        "_very_late_sinet_recovery_tail_results"
     )
     assert not any(
         isinstance(node, ast.Name)

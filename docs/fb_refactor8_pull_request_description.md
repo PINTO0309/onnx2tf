@@ -1482,3 +1482,22 @@ Focused and affected sequential characterization report
 `1 passed, 1 xfailed` and `456 passed, 1 xfailed`; the sole expected failure is
 the intentionally absent owner. Production behavior, dependencies, TensorFlow
 isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest checkpoint implements the very-late SiNet recovery-tail owner. It
+passes the exact `SINetTerminalLayoutRecoveryContext` to terminal-layout
+recovery and then invokes that context's unchanged pre-add/resize callback.
+Both complete results are returned unchanged and in source order, preserving
+their object identities and the frozen context's callback identity.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. Recorded terminal indexed-shape convergence and very-late residual
+affine/PRELU cleanup remain the immediate phase boundaries. Both lowerer
+wrappers, all independent recovery routes, nested owners, graph mutations,
+public behavior, artifacts, dependencies, and TensorFlow isolation remain
+unchanged.
+
+Runtime identity coverage, 458 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 54 to 53.

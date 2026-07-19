@@ -13,7 +13,9 @@ from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration im
 )
 from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
     SINetTerminalLayoutRecoveryContext,
-    run_sinet_terminal_layout_recovery,
+)
+from onnx2tf.tflite_builder.passes import (
+    very_late_sinet_recovery_tail_orchestration,
 )
 
 
@@ -32,10 +34,6 @@ OWNER = "run_very_late_sinet_recovery_tail_cleanup"
 CHILD_OWNERS = (
     "run_sinet_terminal_layout_recovery",
     "preadd_resize_recovery",
-)
-CURRENT_CHILD_OWNERS = (
-    "_run_sinet_terminal_layout_recovery_sequence",
-    "_run_sinet_preadd_resize_recovery_sequence",
 )
 RESULT_TARGETS = (
     "_very_late_sinet_layout_recovery_results",
@@ -92,23 +90,21 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_very_late_sinet_recovery_tail_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    assignments = [
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "sinet_terminal_layout_recovery_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indices = [lowerer.body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-    assert all(_call(statement).args == [] for statement in assignments)
-    assert all(_call(statement).keywords == [] for statement in assignments)
-    assert _phase_id(lowerer.body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(lowerer.body[indices[1] + 1]) == SUCCESSOR_PHASE_ID
+    assert call.keywords == []
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -146,8 +142,9 @@ def test_very_late_sinet_recovery_tail_current_boundary_and_schema() -> None:
         preadd_resize_recovery=preadd_resize_recovery,
     )
     results = (
-        run_sinet_terminal_layout_recovery(context),
-        context.preadd_resize_recovery(),
+        very_late_sinet_recovery_tail_orchestration.run_very_late_sinet_recovery_tail_cleanup(
+            context
+        )
     )
     assert tuple(type(result) for result in results) == (tuple, tuple)
     assert tuple(len(result) for result in results) == (3, 6)
@@ -156,10 +153,6 @@ def test_very_late_sinet_recovery_tail_current_boundary_and_schema() -> None:
     assert tuple(type(result) for result in results[1]) == (dict,) * 6
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late SiNet recovery-tail composite owner is not implemented",
-)
 def test_very_late_sinet_recovery_tail_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -209,3 +202,54 @@ def test_very_late_sinet_recovery_tail_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_very_late_sinet_recovery_tail_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("very_late_sinet_recovery_tail_runtime")
+    pass_context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        tuple({f"terminal_{index}": index} for index in range(3)),
+        tuple({f"preadd_{index}": index} for index in range(6)),
+    )
+    observed: list[tuple[str, object]] = []
+
+    def preadd_resize_recovery() -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[1], pass_context))
+        return expected_results[1]
+
+    context = SINetTerminalLayoutRecoveryContext(
+        pass_context=pass_context,
+        preadd_resize_recovery=preadd_resize_recovery,
+    )
+
+    def terminal_layout_recovery(
+        active_context: SINetTerminalLayoutRecoveryContext,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return expected_results[0]
+
+    monkeypatch.setattr(
+        very_late_sinet_recovery_tail_orchestration,
+        CHILD_OWNERS[0],
+        terminal_layout_recovery,
+    )
+
+    actual = (
+        very_late_sinet_recovery_tail_orchestration.run_very_late_sinet_recovery_tail_cleanup(
+            context
+        )
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (CHILD_OWNERS[0], context),
+        (CHILD_OWNERS[1], pass_context),
+    ]
+    assert context.preadd_resize_recovery is preadd_resize_recovery

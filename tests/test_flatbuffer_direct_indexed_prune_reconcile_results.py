@@ -395,7 +395,7 @@ def test_very_late_residual_cleanup_uses_phase_result_store() -> None:
     )
     assert indices == list(range(indices[0], indices[0] + 3))
     assert _single_target(lowerer.body[indices[0] - 1]) == (
-        "_very_late_sinet_preadd_resize_results"
+        "_very_late_sinet_recovery_tail_results"
     )
     assert _single_target(lowerer.body[indices[-1] + 1]) == (
         "_post_cleanup_sinet_preadd_resize_results"

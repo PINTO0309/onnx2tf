@@ -5667,3 +5667,29 @@ wrappers and all independent routes, update only stale direct-boundary tests,
 and run all affected and standard gates sequentially. Commit and push the
 completed unit only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Very-late SiNet recovery-tail implementation checkpoint
+
+`run_very_late_sinet_recovery_tail_cleanup(context)` is implemented in
+`passes/very_late_sinet_recovery_tail_orchestration.py`. It runs the existing
+terminal-layout owner with the exact context and then invokes the exact
+context-owned pre-add/resize callback. Both raw results, their order, and their
+identities are preserved. The lowerer now has one
+`_very_late_sinet_recovery_tail_results` observation in place of the two
+characterized locals; both lowerer wrappers and all independent recovery
+routes remain available.
+
+Focused, owner-aware, affected, and standard sequential gates pass with
+`3`, `277`, `458`, and `92 / 55 / 196 / 2 / 11` tests respectively. The
+result gate initially exposed three additional stale neighbor-target
+assertions; they now identify the composite without changing production. The
+phase store remains exactly 128 IDs and 128 owners, and the characterized
+unconsumed lowerer-result inventory is now 53. No real-model conversion was
+repeated for this exact orchestration-only extraction.
+
+At resume, refresh the 53-result inventory and select the next smallest
+straight-line observation-only boundary. Characterize its state, guards,
+schemas, independent routes, and outer phase/progress boundaries before any
+production change. Continue to use core-only `uv`, run tests sequentially,
+commit and push only at complete checkpoints, and do not create, update,
+reopen, or otherwise modify a pull request.

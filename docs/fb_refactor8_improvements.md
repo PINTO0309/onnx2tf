@@ -6503,3 +6503,34 @@ Reshape, CSP-attention, shared-context, callback-composition, architecture,
 efficiency, phase-store, and terminal-validation contracts. The sole xfail is
 the intentionally absent owner. Production, dependencies, TensorFlow
 isolation, and the exactly 128-ID/128-owner store remain unchanged.
+
+## Very-late SiNet recovery-tail composite implementation
+
+`passes/very_late_sinet_recovery_tail_orchestration.py` now owns the
+characterized absolute-end pair. It forwards the exact
+`SINetTerminalLayoutRecoveryContext` to
+`run_sinet_terminal_layout_recovery`, then invokes the unchanged
+`context.preadd_resize_recovery` callback. The terminal-layout tuple and
+pre-add/resize tuple are returned unchanged and in source order, preserving
+both object identities and the callback stored in the frozen context.
+
+The lowerer replaces only `_very_late_sinet_layout_recovery_results` and
+`_very_late_sinet_preadd_resize_results` with
+`_very_late_sinet_recovery_tail_results`. The recorded terminal indexed-shape
+convergence and recorded very-late residual affine/PRELU cleanup remain the
+immediate outer boundaries. Both zero-argument lowerer wrappers, the terminal
+Clamp/SiNet composite, the terminal and post-cleanup direct pre-add/resize
+routes, and every nested recovery owner remain intact.
+
+Twelve stale direct-boundary assertions were updated to resolve the new owner
+while continuing to verify independent routes, callback construction, phase
+adjacency, and result-store ownership. Runtime injection proves exact context,
+callback, order, and raw-result identity. Sequential validation reports
+`3 passed` focused, `277 passed` across the owner-aware SiNet and architecture
+contracts, `458 passed` affected, and all standard gates passing: 92 terminal
+layout/efficiency, 55 core, 196 result contracts, 2 phase-store, and 11
+TensorFlow-isolation/default-direct/`-cotof` tests. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed lowerer-result inventory
+decreases from 54 to 53. No real-model conversion was repeated because this
+is an exact straight-line ownership extraction with complete state, callback,
+order, schema, identity, wrapper, route, and phase-boundary coverage.
