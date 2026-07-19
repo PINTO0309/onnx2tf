@@ -834,6 +834,29 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and the indexed synthetic runtime suite
 exercises the bridge implementation.
 
+## Terminal HardSwish/HardSigmoid characterization
+
+The next source-order pair contains the unconditional SiNet HardSwish-SE and
+Dequantize/HardSigmoid/Quantize bridge observations between retained SiNet
+terminal-layout and pre-Add/Resize recovery composites.
+
+Existing focused contracts already fix both integer schemas, owner cleanup,
+all production forms, call arguments, adjacency, and absence of consumers. To
+avoid adding another large structural file, the strict phase-record contract
+extends the existing HardSwish-SE result module. It requires two consecutive
+stable `cleanup.terminal.*` records with exact owners and both composite
+boundaries. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- related HardSwish/HardSigmoid/SiNet baseline: `21 passed in 1.00s`;
+- characterization plus related contracts: `21 passed, 1 xfailed in 1.10s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented two-result
+destination migration.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

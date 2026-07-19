@@ -1757,3 +1757,25 @@ No root-model conversion was required because the indexed synthetic suite
 executes this bridge. Commit and push this unit. Begin the next unit with a
 fresh characterize-first audit and never create, update, or reopen a pull
 request.
+
+## Terminal HardSwish/HardSigmoid characterization
+
+The next unit contains the consecutive unconditional SiNet HardSwish-SE and
+Dequantize/HardSigmoid/Quantize bridge mappings between the retained SiNet
+terminal and pre-Add/Resize composites. Existing result and owner contracts
+already cover their schemas, cleanup, production forms, arguments, boundaries,
+and lack of consumers.
+
+The existing HardSwish-SE result module now includes a strict expected failure
+for two exact `cleanup.terminal.*` records. This avoids introducing a redundant
+large structural module. No production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `21 passed in 1.00s`; characterization plus related contracts is
+`21 passed, 1 xfailed in 1.10s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push the characterization before replacing only the two mapping
+destinations. Preserve both SiNet composites and source order, update stale
+structural contracts, run sequential gates, document, commit, and push. Never
+create, update, or reopen a pull request.
