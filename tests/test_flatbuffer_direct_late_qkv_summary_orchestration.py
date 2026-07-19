@@ -30,6 +30,15 @@ RAW_TARGET = "late_qkv_results"
 SUMMARY_TARGET = "_late_qkv_stats"
 PREDECESSOR_TARGET = "_late_pre_qkv_shape_extract_stats"
 SUCCESSOR_TARGET = "_terminal_split_conv_concat_bridge_stats"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_shape_attention_orchestration.py"
+)
+COMPOSITE_OWNER = "run_terminal_qkv_shape_attention_cleanup"
+COMPOSITE_TARGET = "_terminal_qkv_shape_attention_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -51,21 +60,37 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _composite_summary_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+
+
 def test_late_qkv_prune_aware_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(qkv_attention_context, include_layout_transpose="
-        "optimize_layout_transpose_chains, include_prefix=False)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index - 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    calls = _composite_summary_calls()
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
     assert not any(
         isinstance(node, ast.Name)
         and node.id in {COUNT_TARGET, RAW_TARGET}
@@ -96,16 +121,19 @@ def test_late_qkv_uses_one_prune_aware_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(qkv_attention_context, include_layout_transpose="
-        "optimize_layout_transpose_chains, include_prefix=False)"
+        f"{COMPOSITE_OWNER}(shared_model_ir_pass_context, "
+        "include_layout_transpose=optimize_layout_transpose_chains)"
     )
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index - 1]) == (
+        "_terminal_affine_slice_spp_results"
+    )
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert len(_composite_summary_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)

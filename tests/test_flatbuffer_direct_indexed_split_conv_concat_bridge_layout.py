@@ -771,19 +771,18 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_qkv_stats"
+    assert previous.targets[0].id == "_terminal_qkv_shape_attention_results"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "run_qkv_attention_summary"
+    assert previous.value.func.id == "run_terminal_qkv_shape_attention_cleanup"
     assert [ast.unparse(argument) for argument in previous.value.args] == [
-        "qkv_attention_context"
+        "shared_model_ir_pass_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in previous.value.keywords
     } == {
         "include_layout_transpose": "optimize_layout_transpose_chains",
-        "include_prefix": "False",
     }
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)

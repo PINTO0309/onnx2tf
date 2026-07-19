@@ -15,6 +15,14 @@ OWNER_PATH = (
 SHAPE_EXTRACT = "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
 OWNER_NAME = "optimize_transpose_shape_extract_nhwc_to_nchw_chains"
 PRE_CONCAT = "_optimize_transpose_pre_concat_nhwc_chains"
+TERMINAL_QKV_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_shape_attention_orchestration.py"
+)
+TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -95,11 +103,8 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
         for statement in lowerer.body
         if _call_name(statement) == SHAPE_EXTRACT
     ]
-    assert len(direct_results) == 2
-    expected_targets = [
-        "_late_pre_qkv_shape_extract_stats",
-        "_late_pre_layout_cluster_shape_extract_stats",
-    ]
+    assert len(direct_results) == 1
+    expected_targets = ["_late_pre_layout_cluster_shape_extract_stats"]
     assert [_single_target(statement) for statement in direct_results] == (
         expected_targets
     )
@@ -116,15 +121,20 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
             for node in ast.walk(lowerer)
         )
 
-    pre_qkv_index = lowerer.body.index(direct_results[0])
-    assert _single_target(lowerer.body[pre_qkv_index - 1]) == (
-        "_terminal_affine_slice_spp_results"
-    )
-    assert _single_target(lowerer.body[pre_qkv_index + 1]) == (
-        "_late_qkv_stats"
-    )
+    terminal_owner = _functions(TERMINAL_QKV_OWNER_PATH)[TERMINAL_QKV_OWNER]
+    terminal_shape_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER_NAME
+    ]
+    assert len(terminal_shape_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in terminal_shape_calls[0].args
+    ] == ["context.model_ir"]
 
-    late_layout_index = lowerer.body.index(direct_results[1])
+    late_layout_index = lowerer.body.index(direct_results[0])
     assert _call_name(lowerer.body[late_layout_index - 1]) == PRE_CONCAT
     assert _single_target(lowerer.body[late_layout_index - 1]) == (
         "_absolute_final_pre_concat_stats"

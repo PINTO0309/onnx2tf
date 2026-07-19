@@ -365,6 +365,29 @@ def _very_late_layout_tail_call_count(function_name: str) -> int:
     )
 
 
+def _terminal_qkv_shape_attention_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_qkv_shape_attention_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_qkv_shape_attention_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -2182,25 +2205,13 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "run_qkv_attention_summary"
     ]
-    assert len(summary_invocations) == 1
-    late_bridge_invocations = [
-        call
-        for call in summary_invocations
-        if any(
-            keyword.arg == "include_prefix"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is False
-            for keyword in call.keywords
+    assert summary_invocations == []
+    assert (
+        _terminal_qkv_shape_attention_call_count(
+            "run_qkv_attention_summary"
         )
-    ]
-    assert len(late_bridge_invocations) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in late_bridge_invocations[0].keywords
-        if keyword.arg == "include_layout_transpose"
+        == 1
     )
-    assert isinstance(layout_keyword.value, ast.Name)
-    assert layout_keyword.value.id == "optimize_layout_transpose_chains"
 
     orchestration_path = (
         REPO_ROOT
@@ -2512,7 +2523,7 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     assert isinstance(lowerer.body[index + 1], ast.Assign)
     assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
     assert lowerer.body[index + 1].targets[0].id == (
-        "_late_pre_qkv_shape_extract_stats"
+        "_terminal_qkv_shape_attention_results"
     )
 
 
@@ -5291,7 +5302,12 @@ def test_shape_extract_layout_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _terminal_qkv_shape_attention_call_count(wrapper_name)
+        == 3
+    )
 
 
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
@@ -5775,14 +5791,13 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_qkv_stats"
+        and statement.targets[0].id == "_terminal_qkv_shape_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "run_qkv_attention_summary"
+        and statement.value.func.id
+        == "run_terminal_qkv_shape_attention_cleanup"
         and any(
-            keyword.arg == "include_prefix"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is False
+            keyword.arg == "include_layout_transpose"
             for keyword in statement.value.keywords
         )
     )
@@ -5790,12 +5805,8 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_late_pre_qkv_shape_extract_stats"
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+    assert previous_boundary.targets[0].id == (
+        "_terminal_affine_slice_spp_results"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
@@ -5809,6 +5820,12 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
     assert (
         next_boundary.value.func.id
         == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+    )
+    assert (
+        _terminal_qkv_shape_attention_call_count(
+            "run_qkv_attention_summary"
+        )
+        == 1
     )
 
 
@@ -6572,12 +6589,14 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+    assert next_boundary.targets[0].id == (
+        "_terminal_qkv_shape_attention_results"
+    )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
         next_boundary.value.func.id
-        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+        == "run_terminal_qkv_shape_attention_cleanup"
     )
     owner_path = (
         REPO_ROOT

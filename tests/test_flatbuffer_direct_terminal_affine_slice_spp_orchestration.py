@@ -37,7 +37,7 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_terminal_affine_slice_spp_results"
 PREDECESSOR_TARGET = "_pre_terminal_cleanup_results"
-SUCCESSOR_TARGET = "_late_pre_qkv_shape_extract_stats"
+SUCCESSOR_TARGET = "_terminal_qkv_shape_attention_results"
 EXPECTED_SCHEMAS = (
     {
         "optimized_fold_mul_add_mul_affine_chains": 0,

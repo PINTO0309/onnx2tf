@@ -246,7 +246,6 @@ from onnx2tf.tflite_builder.passes.absolute_final_cleanup_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     run_qkv_attention,
-    run_qkv_attention_summary,
 )
 from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
     run_duplicate_quantized_prelu,
@@ -287,6 +286,9 @@ from onnx2tf.tflite_builder.passes.very_late_layout_tail_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_slice_spp_orchestration import (
     run_terminal_affine_slice_spp_cleanup,
+)
+from onnx2tf.tflite_builder.passes.terminal_qkv_shape_attention_orchestration import (
+    run_terminal_qkv_shape_attention_cleanup,
 )
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     run_shared_late_reconciliation_cleanup,
@@ -5251,15 +5253,13 @@ def lower_onnx_to_ir(
             shared_model_ir_pass_context,
         )
     )
-    _late_pre_qkv_shape_extract_stats = (
-        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
-    )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
-    _late_qkv_stats = run_qkv_attention_summary(
-        qkv_attention_context,
-        include_layout_transpose=optimize_layout_transpose_chains,
-        include_prefix=False,
+    _terminal_qkv_shape_attention_results = (
+        run_terminal_qkv_shape_attention_cleanup(
+            shared_model_ir_pass_context,
+            include_layout_transpose=optimize_layout_transpose_chains,
+        )
     )
     _terminal_split_conv_concat_bridge_stats = (
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(

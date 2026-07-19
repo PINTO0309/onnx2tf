@@ -1169,3 +1169,11 @@ affine predecessor, indexed Split/Conv/Concat successor, and the full
 128-ID/128-owner store. Production remains unchanged pending a separate
 two-stage owner implementation. Focused and affected validation report
 `3 passed, 1 xfailed` and `443 passed, 1 xfailed`.
+
+The latest checkpoint implements that terminal QKV pair. One owner now
+forwards the shared model to shape extraction and the shared context to the
+QKV summary, preserving the layout option, fixed prefix policy, raw mapping
+identity, and outer boundaries. The later shape-extract call and raw QKV
+wrappers remain independent. Runtime identity coverage, 445 affected tests,
+and all standard sequential gates pass; public behavior, dependency isolation,
+and the 128-ID/128-owner store remain unchanged.

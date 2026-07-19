@@ -21,6 +21,32 @@ from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration i
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SHAPE_EXTRACT_OWNER = "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+TERMINAL_QKV_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_shape_attention_orchestration.py"
+)
+TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
+TERMINAL_QKV_RESULT = "_terminal_qkv_shape_attention_results"
+
+
+def _terminal_qkv_shape_calls() -> list[ast.Call]:
+    tree = ast.parse(TERMINAL_QKV_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_QKV_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SHAPE_EXTRACT_OWNER.removeprefix("_")
+    ]
 
 
 def _tensor(
@@ -335,17 +361,20 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+        and statement.targets[0].id == TERMINAL_QKV_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == SHAPE_EXTRACT_OWNER
+    assert invocation.value.func.id == TERMINAL_QKV_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert invocation.value.keywords == []
+    assert invocation.value.args[0].id == "shared_model_ir_pass_context"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in invocation.value.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
 
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.Assign)
@@ -363,10 +392,12 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_late_qkv_stats"
+    assert following.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_qkv_attention_summary"
+    assert following.value.func.id == (
+        "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+    )
 
     all_calls = [
         node
@@ -377,6 +408,12 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     ]
     assert (
         len(all_calls)
+        + len(_terminal_qkv_shape_calls())
         + TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS.count(SHAPE_EXTRACT_OWNER)
         == 3
     )
+    assert len(_terminal_qkv_shape_calls()) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in _terminal_qkv_shape_calls()[0].args
+    ] == ["context.model_ir"]

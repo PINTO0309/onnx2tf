@@ -766,6 +766,31 @@ only the two unconsumed locals. Keep the later shape call and raw QKV wrappers
 independent. Run affected and standard gates sequentially, then commit and
 push only. Never create or modify a pull request.
 
+## Terminal QKV shape/attention composite implementation checkpoint
+
+The characterized two-stage owner is implemented in
+`passes/terminal_qkv_shape_attention_orchestration.py`. It forwards the shared
+model to terminal shape-extract cleanup and the exact shared context to the
+QKV summary, retaining the layout option and `include_prefix=False`. The
+lowerer stores one ordered tuple instead of two unconsumed locals.
+
+The later independent shape-extract invocation and all raw QKV wrapper routes
+remain intact. The terminal affine/Slice-SPP predecessor and indexed
+Split/Conv/Concat successor are unchanged. Runtime identity tests and
+owner-aware structural coverage verify all state, policy, result, route, and
+boundary contracts.
+
+Sequential validation passed: focused 5, affected 445,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase-store 2,
+and TensorFlow isolation/default-direct/`-cotof` 11. No test is failing, no
+phase result changed, and the store remains exactly 128 IDs and 128 owners.
+
+At resume, rerun the unconsumed-result inventory after removal of this pair.
+Select the next smallest adjacent terminal cluster with uniform guard and
+context policy, characterize it before implementation, and keep every `uv`
+test sequential and single-process. Commit and push only; never create,
+update, reopen, or otherwise modify a pull request.
+
 ## Primary final layout-refresh reconciliation implementation
 
 The final ConvInteger, InstanceNorm, and broadcast reconciliations now use

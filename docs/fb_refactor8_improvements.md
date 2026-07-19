@@ -5404,6 +5404,37 @@ mutation, pass order, API, artifact, dependency, TensorFlow boundary, or store
 entry changed. No real-model conversion was run; the phase-result store
 remains exactly 128 IDs and 128 owners.
 
+## Terminal QKV shape/attention composite implementation
+
+`passes/terminal_qkv_shape_attention_orchestration.py` now owns the fixed
+two-stage terminal QKV pair. It passes `context.model_ir` to shape-extract
+cleanup and the exact shared `ModelIRPassContext` to the QKV summary. The
+existing layout-Transpose option is forwarded unchanged and the terminal
+policy remains `include_prefix=False`. Both raw mapping objects are returned
+unchanged and in source order.
+
+The lowerer replaces `_late_pre_qkv_shape_extract_stats` and `_late_qkv_stats`
+with `_terminal_qkv_shape_attention_results`, and removes only the now-unused
+QKV summary import. The generic shape-extract compatibility wrapper remains
+because the later pre-layout-cluster call is independent. Raw QKV wrappers and
+their two default-policy callers also remain. The terminal affine/Slice-SPP
+composite and indexed Split/Conv/Concat bridge remain the exact outer
+boundaries.
+
+Owner-aware QKV, shape-extract, indexed bridge, architecture, and boundary
+tests now resolve the pair through the new owner while continuing to count the
+independent routes. Runtime injection proves exact order, shared context/model
+identity, option forwarding, fixed prefix policy, and raw-result identity.
+Graph rewrites, pass IDs, result schemas, public APIs, artifacts, dependency
+boundaries, and TensorFlow-free direct/`-cotof` behavior are unchanged.
+
+Final sequential validation passed with 5 focused tests, 445 affected tests,
+92 terminal-layout/efficiency tests, 55 core tests, 196 result-contract tests,
+2 phase-store tests, and 11 TensorFlow isolation/default-direct/`-cotof`
+tests. Ruff, bytecode compilation, and whitespace checks passed. The store
+remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
+for this straight-line ownership extraction.
+
 ## Pre-terminal cleanup composite implementation
 
 `passes/pre_terminal_cleanup_orchestration.py` now owns the characterized
