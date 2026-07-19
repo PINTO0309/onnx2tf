@@ -469,7 +469,7 @@ def test_pre_terminal_pre_add_captures_zero_rewrite_pruning_evidence() -> None:
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
-        "summarize_terminal_affine_concat_split_mutations"
+        "run_terminal_affine_concat_split_recovery_summary"
     )
     following = lowerer.body[first_index + 2]
     assert isinstance(following, ast.Assign)

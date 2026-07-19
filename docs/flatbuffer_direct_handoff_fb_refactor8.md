@@ -3039,3 +3039,33 @@ Commit and push before implementation. Keep the store at 128/128. On resume,
 add the prune-aware owner, replace only the two evidence triples, update
 owner-aware terminal-affine contracts, validate sequentially, then document,
 commit, and push. Never create, update, or reopen a pull request.
+
+## Terminal-affine prune-aware summary implementation
+
+The pass-module summary owner now owns tensor-count capture, raw eleven-pass
+recovery, and the existing strict prune-aware normalization. The two lowerer
+sites retain their original summary targets but no longer retain four consumed
+intermediate locals or duplicate the prune expression.
+
+The raw lowerer wrapper remains defined and dispatches exactly as before. Both
+predecessors, both successors, all raw result schemas, and the 128/128 store
+remain unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `4 passed in 0.59s`;
+- affected boundary contracts: `182 passed in 2.14s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 2.02s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.17s`;
+- architecture contracts: `258 passed in 18.81s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No real-model conversion was required because focused tests cover stable and
+prune-only summary paths while the existing raw-owner matrix covers every pass
+result. Commit and push this checkpoint. At resume, characterize the adjacent
+pre-terminal pre-add prune-aware evidence boundary before production changes.
+Continue with commits and pushes only; never create, update, or reopen a pull
+request.

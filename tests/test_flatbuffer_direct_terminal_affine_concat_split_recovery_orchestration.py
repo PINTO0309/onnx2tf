@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 TERMINAL_AFFINE_CONCAT_SPLIT = "_run_terminal_affine_concat_split_recovery_sequence"
+TERMINAL_AFFINE_SUMMARY = (
+    "run_terminal_affine_concat_split_recovery_summary"
+)
 VERY_LATE_PAD_INSTANCENORM = (
     "run_very_late_pad_instancenorm_layout_cleanup"
 )
@@ -220,108 +223,67 @@ def test_terminal_affine_concat_split_preserves_all_call_contracts() -> None:
 
 
 def test_terminal_affine_concat_split_invocations_remain_zero_argument() -> None:
-    lowerer, _ = _lowerer_and_helper()
+    lowerer, helper = _lowerer_and_helper()
+    assert helper.args.args == []
+    assert helper.args.posonlyargs == []
+    assert helper.args.kwonlyargs == []
+    assert helper.args.vararg is None
+    assert helper.args.kwarg is None
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+        for node in ast.walk(lowerer)
+    )
     invocations = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+        and node.func.id == TERMINAL_AFFINE_SUMMARY
     ]
-
     assert len(invocations) == 2
-    assert all(call.args == [] for call in invocations)
+    assert all(
+        [ast.unparse(argument) for argument in call.args]
+        == ["terminal_affine_concat_split_recovery_context"]
+        for call in invocations
+    )
     assert all(call.keywords == [] for call in invocations)
 
 
 def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_indexes = [
-        index
-        for index, statement in enumerate(lowerer.body)
-        if any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
-            for node in ast.walk(statement)
+    expected_boundaries = (
+        (
+            "_pre_terminal_affine_stats",
+            PRE_TERMINAL_INSTANCENORM_RESULT,
+            "pre_terminal_pre_add_tensor_count",
+        ),
+        (
+            "_terminal_affine_stats",
+            "_pre_terminal_affine_slice_pad_concat_stats",
+            "_terminal_slice_pad_concat_stats",
+        ),
+    )
+    for target, predecessor, successor in expected_boundaries:
+        statement = next(
+            candidate
+            for candidate in lowerer.body
+            if isinstance(candidate, ast.Assign)
+            and isinstance(candidate.targets[0], ast.Name)
+            and candidate.targets[0].id == target
         )
-    ]
-
-    assert len(invocation_indexes) == 2
-    observed: list[tuple[str, str]] = []
-    for position, index in enumerate(invocation_indexes):
-        if position == 0:
-            invocation = lowerer.body[index]
-            assert isinstance(invocation, ast.Assign)
-            assert len(invocation.targets) == 1
-            assert isinstance(invocation.targets[0], ast.Name)
-            assert invocation.targets[0].id == "pre_terminal_affine_results"
-            recovery_count = lowerer.body[index - 1]
-            assert isinstance(recovery_count, ast.Assign)
-            assert len(recovery_count.targets) == 1
-            assert isinstance(recovery_count.targets[0], ast.Name)
-            assert recovery_count.targets[0].id == "pre_terminal_affine_tensor_count"
-            previous = lowerer.body[index - 2]
-            recovery_summary = lowerer.body[index + 1]
-            assert isinstance(recovery_summary, ast.Assign)
-            assert len(recovery_summary.targets) == 1
-            assert isinstance(recovery_summary.targets[0], ast.Name)
-            assert recovery_summary.targets[0].id == "_pre_terminal_affine_stats"
-            assert isinstance(recovery_summary.value, ast.Call)
-            assert isinstance(recovery_summary.value.func, ast.Name)
-            assert recovery_summary.value.func.id == (
-                "summarize_terminal_affine_concat_split_mutations"
-            )
-            pre_add_count = lowerer.body[index + 2]
-            assert isinstance(pre_add_count, ast.Assign)
-            assert len(pre_add_count.targets) == 1
-            assert isinstance(pre_add_count.targets[0], ast.Name)
-            assert pre_add_count.targets[0].id == (
-                "pre_terminal_pre_add_tensor_count"
-            )
-            following = lowerer.body[index + 3]
-        else:
-            invocation = lowerer.body[index]
-            assert isinstance(invocation, ast.Assign)
-            assert len(invocation.targets) == 1
-            assert isinstance(invocation.targets[0], ast.Name)
-            assert invocation.targets[0].id == "terminal_affine_results"
-            previous = lowerer.body[index - 2]
-            following = lowerer.body[index + 2]
-        assert isinstance(previous, (ast.Expr, ast.Assign))
-        if position == 1:
-            assert isinstance(previous, ast.Assign)
-            assert len(previous.targets) == 1
-            assert isinstance(previous.targets[0], ast.Name)
-            assert previous.targets[0].id == (
-                "_pre_terminal_affine_slice_pad_concat_stats"
-            )
-        assert isinstance(previous.value, ast.Call)
-        assert isinstance(previous.value.func, ast.Name)
-        assert isinstance(following, (ast.Expr, ast.Assign))
-        if position == 0:
-            assert isinstance(following, ast.Assign)
-            assert len(following.targets) == 1
-            assert isinstance(following.targets[0], ast.Name)
-            assert following.targets[0].id == "_pre_terminal_pre_add_stats"
-            assert isinstance(following.value, ast.Dict)
-            following_call = following.value.values[0]
-        else:
-            following_call = following.value
-        assert isinstance(following_call, ast.Call)
-        assert isinstance(following_call.func, ast.Name)
-        observed.append((previous.value.func.id, following_call.func.id))
-
-    assert observed == [
-        (
-            "run_pre_terminal_instancenorm_layout_cleanup",
-            "_optimize_transpose_pre_add_nhwc_chains",
-        ),
-        (
-            "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
-            "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
-        ),
-    ]
+        index = lowerer.body.index(statement)
+        assert ast.unparse(statement.value) == (
+            "run_terminal_affine_concat_split_recovery_summary("
+            "terminal_affine_concat_split_recovery_context)"
+        )
+        assert isinstance(lowerer.body[index - 1], ast.Assign)
+        assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
+        assert lowerer.body[index - 1].targets[0].id == predecessor
+        assert isinstance(lowerer.body[index + 1], ast.Assign)
+        assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
+        assert lowerer.body[index + 1].targets[0].id == successor
 
 
 def test_terminal_affine_concat_split_context_and_wrapper_are_explicit() -> None:
@@ -456,155 +418,54 @@ def test_terminal_affine_returns_and_summarizes_mutations(
 
 def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = (
-        "terminal_affine_tensor_count",
-        "terminal_affine_results",
-        "_terminal_affine_stats",
-    )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-        target_names[2]: first_index + 2,
-    }
-    result_call = assignments[target_names[1]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
-    summary_call = assignments[target_names[2]]
-    assert isinstance(summary_call, ast.Call)
-    assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == (
-        "summarize_terminal_affine_concat_split_mutations"
-    )
-    assert {keyword.arg for keyword in summary_call.keywords} == {
-        "pruned_unused_tensors"
-    }
-
-    previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_pre_terminal_affine_slice_pad_concat_stats"
-    )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
-    )
-    following = lowerer.body[first_index + 3]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_slice_pad_concat_stats"
-
-    recovery_statements = [
+    summary = next(
         statement
         for statement in lowerer.body
-        if any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
-            for node in ast.walk(statement)
-        )
-    ]
-    assert len(recovery_statements) == 2
-    assert isinstance(recovery_statements[0], ast.Assign)
-    assert len(recovery_statements[0].targets) == 1
-    assert isinstance(recovery_statements[0].targets[0], ast.Name)
-    assert recovery_statements[0].targets[0].id == "pre_terminal_affine_results"
-    assert recovery_statements[1] is lowerer.body[first_index + 1]
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_affine_stats"
+    )
+    index = lowerer.body.index(summary)
+    assert ast.unparse(summary.value) == (
+        "run_terminal_affine_concat_split_recovery_summary("
+        "terminal_affine_concat_split_recovery_context)"
+    )
+    assert isinstance(lowerer.body[index - 1], ast.Assign)
+    assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
+    assert lowerer.body[index - 1].targets[0].id == (
+        "_pre_terminal_affine_slice_pad_concat_stats"
+    )
+    assert isinstance(lowerer.body[index + 1], ast.Assign)
+    assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
+    assert lowerer.body[index + 1].targets[0].id == (
+        "_terminal_slice_pad_concat_stats"
+    )
 
 
 def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = (
-        "pre_terminal_affine_tensor_count",
-        "pre_terminal_affine_results",
-        "_pre_terminal_affine_stats",
-    )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-        target_names[2]: first_index + 2,
-    }
-    tensor_count = assignments[target_names[0]]
-    assert isinstance(tensor_count, ast.Call)
-    assert isinstance(tensor_count.func, ast.Name)
-    assert tensor_count.func.id == "len"
-    result_call = assignments[target_names[1]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
-    assert result_call.args == []
-    assert result_call.keywords == []
-    summary_call = assignments[target_names[2]]
-    assert isinstance(summary_call, ast.Call)
-    assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == (
-        "summarize_terminal_affine_concat_split_mutations"
-    )
-    assert len(summary_call.args) == 1
-    assert isinstance(summary_call.args[0], ast.Name)
-    assert summary_call.args[0].id == "pre_terminal_affine_results"
-    assert {keyword.arg for keyword in summary_call.keywords} == {
-        "pruned_unused_tensors"
-    }
-
-    previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == PRE_TERMINAL_INSTANCENORM_RESULT
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        PRE_TERMINAL_INSTANCENORM
-    )
-    following = lowerer.body[first_index + 3]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "pre_terminal_pre_add_tensor_count"
-
-    recovery_statements = [
+    summary = next(
         statement
         for statement in lowerer.body
-        if any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
-            for node in ast.walk(statement)
-        )
-    ]
-    assert len(recovery_statements) == 2
-    assert recovery_statements[0] is lowerer.body[first_index + 1]
-    assert isinstance(recovery_statements[1], ast.Assign)
-    assert len(recovery_statements[1].targets) == 1
-    assert isinstance(recovery_statements[1].targets[0], ast.Name)
-    assert recovery_statements[1].targets[0].id == "terminal_affine_results"
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_pre_terminal_affine_stats"
+    )
+    index = lowerer.body.index(summary)
+    assert ast.unparse(summary.value) == (
+        "run_terminal_affine_concat_split_recovery_summary("
+        "terminal_affine_concat_split_recovery_context)"
+    )
+    assert isinstance(lowerer.body[index - 1], ast.Assign)
+    assert isinstance(lowerer.body[index - 1].targets[0], ast.Name)
+    assert lowerer.body[index - 1].targets[0].id == (
+        PRE_TERMINAL_INSTANCENORM_RESULT
+    )
+    assert isinstance(lowerer.body[index + 1], ast.Assign)
+    assert isinstance(lowerer.body[index + 1].targets[0], ast.Name)
+    assert lowerer.body[index + 1].targets[0].id == (
+        "pre_terminal_pre_add_tensor_count"
+    )
 
 
 def _assert_pre_terminal_instancenorm_owner_call(
@@ -613,15 +474,15 @@ def _assert_pre_terminal_instancenorm_owner_call(
     expected_total_calls: int,
 ) -> None:
     lowerer, _ = _lowerer_and_helper()
-    affine_count_index = next(
+    affine_summary_index = next(
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "pre_terminal_affine_tensor_count"
+        and statement.targets[0].id == "_pre_terminal_affine_stats"
     )
-    invocation = lowerer.body[affine_count_index - 1]
+    invocation = lowerer.body[affine_summary_index - 1]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
@@ -633,11 +494,15 @@ def _assert_pre_terminal_instancenorm_owner_call(
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
     assert invocation.value.keywords == []
-    following = lowerer.body[affine_count_index]
+    following = lowerer.body[affine_summary_index]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "pre_terminal_affine_tensor_count"
+    assert following.targets[0].id == "_pre_terminal_affine_stats"
+    assert ast.unparse(following.value) == (
+        "run_terminal_affine_concat_split_recovery_summary("
+        "terminal_affine_concat_split_recovery_context)"
+    )
 
     direct_statements = [
         statement

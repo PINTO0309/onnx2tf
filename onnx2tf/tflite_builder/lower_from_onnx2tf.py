@@ -195,7 +195,7 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
     run_terminal_affine_concat_split_recovery,
-    summarize_terminal_affine_concat_split_mutations,
+    run_terminal_affine_concat_split_recovery_summary,
 )
 from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
     run_sinet_preadd_resize_recovery,
@@ -5320,16 +5320,10 @@ def lower_onnx_to_ir(
     )
     # Late bridge rewrites above can recreate strict
     # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
-    pre_terminal_affine_tensor_count = len(model_ir.tensors)
-    pre_terminal_affine_results = (
-        _run_terminal_affine_concat_split_recovery_sequence()
-    )
-    _pre_terminal_affine_stats = summarize_terminal_affine_concat_split_mutations(
-        pre_terminal_affine_results,
-        pruned_unused_tensors=max(
-            0,
-            int(pre_terminal_affine_tensor_count - len(model_ir.tensors)),
-        ),
+    _pre_terminal_affine_stats = (
+        run_terminal_affine_concat_split_recovery_summary(
+            terminal_affine_concat_split_recovery_context,
+        )
     )
     pre_terminal_pre_add_tensor_count = len(model_ir.tensors)
     _pre_terminal_pre_add_stats = {
@@ -5361,14 +5355,10 @@ def lower_onnx_to_ir(
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
     # Keep this after pre_add/slice/pad strict rewrites: those passes can
     # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
-    terminal_affine_tensor_count = len(model_ir.tensors)
-    terminal_affine_results = _run_terminal_affine_concat_split_recovery_sequence()
-    _terminal_affine_stats = summarize_terminal_affine_concat_split_mutations(
-        terminal_affine_results,
-        pruned_unused_tensors=max(
-            0,
-            int(terminal_affine_tensor_count - len(model_ir.tensors)),
-        ),
+    _terminal_affine_stats = (
+        run_terminal_affine_concat_split_recovery_summary(
+            terminal_affine_concat_split_recovery_context,
+        )
     )
     _terminal_slice_pad_concat_stats = (
         _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(

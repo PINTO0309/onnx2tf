@@ -5,6 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import (
+    terminal_affine_concat_split_recovery_orchestration as recovery,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -61,7 +67,7 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
-def test_terminal_affine_recovery_evidence_triples_are_fixed() -> None:
+def test_terminal_affine_recovery_summary_boundaries_are_fixed() -> None:
     lowerer = _lowerer()
     wrapper = next(
         node
@@ -80,33 +86,24 @@ def test_terminal_affine_recovery_evidence_triples_are_fixed() -> None:
             if _single_target(statement) == summary_target
         )
         index = lowerer.body.index(summary)
-        count = lowerer.body[index - 2]
-        raw_result = lowerer.body[index - 1]
-        assert _single_target(count) == COUNT_TARGETS[position]
-        assert isinstance(count, ast.Assign)
-        assert ast.unparse(count.value) == "len(model_ir.tensors)"
-        assert _single_target(raw_result) == RAW_RESULT_TARGETS[position]
-        assert isinstance(raw_result, ast.Assign)
-        assert ast.unparse(raw_result.value) == f"{RAW_WRAPPER}()"
         assert isinstance(summary, ast.Assign)
         assert ast.unparse(summary.value) == (
-            "summarize_terminal_affine_concat_split_mutations("
-            f"{RAW_RESULT_TARGETS[position]}, "
-            "pruned_unused_tensors=max(0, "
-            f"int({COUNT_TARGETS[position]} - len(model_ir.tensors))))"
+            "run_terminal_affine_concat_split_recovery_summary("
+            "terminal_affine_concat_split_recovery_context)"
         )
-        assert _single_target(lowerer.body[index - 3]) == (
+        assert _single_target(lowerer.body[index - 1]) == (
             PREDECESSOR_TARGETS[position]
         )
         assert _single_target(lowerer.body[index + 1]) == (
             SUCCESSOR_TARGETS[position]
         )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in (*COUNT_TARGETS, *RAW_RESULT_TARGETS)
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal-affine recovery lacks one prune-aware summary owner",
-)
 def test_terminal_affine_recovery_uses_one_summary_owner_twice() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     owner_calls = [
@@ -155,3 +152,69 @@ def test_terminal_affine_recovery_uses_one_summary_owner_twice() -> None:
         "return run_terminal_affine_concat_split_recovery("
         "terminal_affine_concat_split_recovery_context)"
     )
+
+
+@pytest.mark.parametrize("pruned", [False, True])
+def test_terminal_affine_recovery_summary_owner_preserves_prune_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    pruned: bool,
+) -> None:
+    model_ir = ModelIR("terminal_affine_recovery_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    raw_results = ({"raw": 1},)
+    summary_result = {"summary": 2}
+    observed: list[tuple[str, object, object]] = []
+
+    def _raw_owner(candidate: ModelIRPassContext):
+        observed.append((RAW_OWNER, candidate, candidate.model_ir))
+        if pruned:
+            assert candidate.model_ir.tensors.pop("probe", None) is not None
+        return raw_results
+
+    def _summary_owner(
+        candidate_results: tuple[dict[str, int], ...],
+        *,
+        pruned_unused_tensors: int,
+    ) -> dict[str, int]:
+        observed.append(
+            (
+                "summarize_terminal_affine_concat_split_mutations",
+                candidate_results,
+                pruned_unused_tensors,
+            )
+        )
+        return summary_result
+
+    monkeypatch.setattr(
+        recovery,
+        RAW_OWNER,
+        _raw_owner,
+    )
+    monkeypatch.setattr(
+        recovery,
+        "summarize_terminal_affine_concat_split_mutations",
+        _summary_owner,
+    )
+
+    assert (
+        recovery.run_terminal_affine_concat_split_recovery_summary(context)
+        == summary_result
+    )
+    assert observed == [
+        (RAW_OWNER, context, context.model_ir),
+        (
+            "summarize_terminal_affine_concat_split_mutations",
+            raw_results,
+            int(pruned),
+        ),
+    ]

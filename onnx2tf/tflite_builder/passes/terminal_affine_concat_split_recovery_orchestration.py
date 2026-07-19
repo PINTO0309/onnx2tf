@@ -186,3 +186,19 @@ def run_terminal_affine_concat_split_recovery(
         expected_pass_ids=TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS,
         phase_name="terminal affine/concat/split recovery",
     )
+
+
+def run_terminal_affine_concat_split_recovery_summary(
+    context: TerminalAffineConcatSplitRecoveryContext,
+) -> Dict[str, int]:
+    """Run terminal affine recovery and return its prune-aware summary."""
+
+    initial_tensor_count = len(context.model_ir.tensors)
+    pass_results = run_terminal_affine_concat_split_recovery(context)
+    return summarize_terminal_affine_concat_split_mutations(
+        pass_results,
+        pruned_unused_tensors=max(
+            0,
+            int(initial_tensor_count - len(context.model_ir.tensors)),
+        ),
+    )

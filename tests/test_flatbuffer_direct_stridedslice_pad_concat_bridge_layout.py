@@ -1251,7 +1251,7 @@ def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() 
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == (
-        "summarize_terminal_affine_concat_split_mutations"
+        "run_terminal_affine_concat_split_recovery_summary"
     )
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.Assign)
@@ -1327,7 +1327,7 @@ def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "terminal_affine_tensor_count"
+    assert following.targets[0].id == "_terminal_affine_stats"
 
     direct_statements = [
         statement

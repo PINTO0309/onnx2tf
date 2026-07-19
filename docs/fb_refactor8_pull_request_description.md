@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Fifteen late lowerer clusters now have focused orchestration owners. The first
+Sixteen late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -183,11 +183,16 @@ dual-stat InstanceNorm layout repairs with one shared ModelIR/LayoutState
 context. It returns all three independent mappings in source order outside the
 full store and leaves both neighboring decision boundaries untouched.
 
+The sixteenth owns the prune-aware summary around terminal-affine recovery at
+both late call sites. It snapshots tensor count, invokes the existing raw
+eleven-pass owner, and reuses the strict summary schema. The raw lowerer wrapper
+remains available as a compatibility boundary.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-three unconsumed locals and two
-lowerer scope locals. They also replace thirteen consumed mutation-evidence or
-aggregate-result locals and two tensor-count snapshots with three explicit
-boolean decisions.
+lowerer scope locals. They also replace fifteen consumed mutation-evidence or
+aggregate-result locals and four tensor-count snapshots with three explicit
+boolean decisions and two reusable summary calls.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
 
@@ -452,6 +457,8 @@ Final checkpoint results:
   **138 passed**;
 - pre-terminal InstanceNorm composite and affected contracts:
   **151 passed**;
+- terminal-affine prune-aware summary and affected contracts:
+  **182 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
 - indexed, quantized, and legacy NHWC Concat family contracts:
   **285 passed**;

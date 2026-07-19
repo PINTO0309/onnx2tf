@@ -31,7 +31,7 @@ RESULT_TARGET = "_pre_terminal_instancenorm_layout_results"
 PREDECESSOR_GUARD = (
     "_late_binary_layout_recovery_requires_reconciliation"
 )
-SUCCESSOR_TARGET = "pre_terminal_affine_tensor_count"
+SUCCESSOR_TARGET = "_pre_terminal_affine_stats"
 OLD_RESULT_TARGETS = (
     "_pre_terminal_affine_instancenorm_post_bias_stats",
     "_pre_terminal_affine_instancenorm_residual_mul_concat_stats",

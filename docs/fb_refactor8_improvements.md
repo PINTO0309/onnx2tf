@@ -2065,6 +2065,45 @@ Commit and push this characterization before production changes. Keep the
 store at 128/128 and continue with commits and pushes only; never create,
 update, or reopen a pull request.
 
+## Terminal-affine prune-aware summary implementation
+
+`run_terminal_affine_concat_split_recovery_summary` now snapshots tensor
+count, invokes the existing raw eleven-pass recovery owner, and delegates to
+the existing strict summary function with the original cleanup-only prune
+delta. It preserves the raw tuple schema, declared mutation-key validation,
+integer normalization, and non-negative prune count.
+
+Both lowerer boundaries now assign their existing `_pre_terminal_affine_stats`
+and `_terminal_affine_stats` targets directly from this owner. Four consumed
+intermediate locals and two duplicated summary expressions were removed. The
+nested `_run_terminal_affine_concat_split_recovery_sequence` compatibility
+wrapper remains defined and continues to dispatch to the raw owner with the
+same context. All four neighboring boundaries and the 128/128 store remain
+unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused stable/pruned owner, wrapper, and dual-boundary contracts:
+  `4 passed in 0.59s`;
+- affected terminal-affine, pre-add, slice/pad, InstanceNorm, core, and store
+  contracts: `182 passed in 2.14s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 2.02s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.17s`;
+- full architecture contracts: `258 passed in 18.81s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No recovery invocation, pass order, mutation schema, prune semantics, ModelIR
+mutation, layout state, diagnostics, public API, artifact, dependency, or
+TensorFlow boundary changed. No real-model conversion was run because focused
+runtime tests cover stable and prune-only paths, and the existing raw recovery
+tests cover all eleven pass results. Commit and push this checkpoint. On
+resume, characterize the adjacent pre-terminal pre-add prune-aware evidence
+boundary before production changes. Continue with commits and pushes only;
+never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
