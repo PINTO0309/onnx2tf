@@ -3807,3 +3807,27 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next compatible repeated evidence family before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Final placeholder binary-adapter summary characterization
+
+The next selected boundary is the indexed exact/singleton binary-adapter pair
+inside final placeholder-MatMul recovery. The pair's counter keys are disjoint;
+the current lowerer separately owns its tensor snapshot and merges pair evidence
+with the preceding placeholder reconciliation only in the following guard.
+
+The focused contract fixes count and pair representation, pair order, model
+argument, preceding mapping, rewrite-or-prune condition, topology successor,
+and continued raw pair ownership for all other callers. One strict xfail
+requires `run_indexed_binary_layout_adapter_summary(model_ir)`.
+
+Sequential validation under core-only `uv` completed with
+`380 passed, 1 xfailed in 21.00s` across the new characterization and related
+indexed binary-adapter, terminal-layout, core runtime, phase-store, and
+architecture contracts. The sole expected failure is the unimplemented merged
+summary owner. Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the merged indexed binary-adapter summary and final-placeholder site, retain
+the raw pair owner and all other pair callers, update owner-aware structural
+contracts, and validate sequentially. Continue with commits and pushes only;
+never create, update, or reopen a pull request.

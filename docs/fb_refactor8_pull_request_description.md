@@ -759,3 +759,10 @@ summary owner. It removes the tensor snapshot and inline mapping extension
 while retaining the fixed flags, diagnostics, raw compatibility re-export,
 rewrite-only guard, every other Pad route, neighboring boundaries, and the full
 128/128 store.
+
+The next characterization fixes the final placeholder-MatMul indexed
+binary-adapter count-plus-pair boundary. It preserves pair order, both disjoint
+counter schemas, the preceding placeholder reconciliation mapping,
+rewrite-or-prune guard, following topology checkpoint, and every other raw pair
+caller. Production remains unchanged until its merged prune-aware summary owner
+is implemented separately.

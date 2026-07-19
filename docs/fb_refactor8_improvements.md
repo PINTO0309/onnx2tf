@@ -4299,3 +4299,27 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves exact flag and diagnostics forwarding plus stable and prune-only schema
 preservation, while affected and architecture gates preserve all other Pad
 routes, runner count, reconciliation semantics, and neighboring boundaries.
+
+## Final placeholder binary-adapter summary characterization
+
+The next isolated boundary is the indexed exact/singleton binary-adapter pair
+inside the final placeholder-MatMul recovery guard. Its two raw mappings have
+disjoint counter keys. The lowerer currently snapshots tensor count, retains
+both mappings separately, and combines them with the preceding placeholder
+shape-reconciliation mapping plus prune-only change.
+
+`tests/test_flatbuffer_direct_final_placeholder_binary_summary_orchestration.py`
+fixes the current count-plus-pair representation, pair order and model argument,
+preceding reconciliation mapping, exact rewrite-or-prune guard, following
+topology checkpoint, and future merged summary contract. Its strict expected
+failure requires `run_indexed_binary_layout_adapter_summary(model_ir)` to
+return both raw counters plus prune evidence while leaving the existing pair
+owner available to every other caller. No production source, graph mutation,
+pass order, store entry, public API, artifact, dependency, or TensorFlow
+boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`380 passed, 1 xfailed in 21.00s` across the dedicated contract and related
+indexed binary-adapter, terminal-layout, core runtime, phase-store, and
+architecture contracts. The sole expected failure is the intentionally absent
+merged summary owner. Targeted Ruff and whitespace checks passed.
