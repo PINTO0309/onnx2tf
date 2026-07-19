@@ -6400,3 +6400,42 @@ callback identities, child schemas, and independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Layout-pass-set-2 pre-add/attention-gate characterization checkpoint
+
+The refreshed inventory selects
+`_layout_pass_set_2_preadd_mean_attention_results` followed immediately by
+`_layout_pass_set_2_attention_gate_qdq_results`. Both are unconditional inside
+the second `optimize_layout_transpose_chains` guard and both wrappers forward
+the exact same `attention_recovery_context`. The predecessor remains
+`_layout_pass_set_2_qlinear_layout_recovery_results`; the successor remains the
+recorded `cleanup.layout_pass_set_2.dequant_transposeconv_quantize` phase.
+
+The characterization fixes the existing zero-argument wrappers, source
+adjacency, observation-only result policy, exact seven-slot pre-add schema,
+exact ten-slot attention-gate/QDQ schema, and the identities of the nested
+mean-attention, gate-layout, and Transpose/unary-fanout callback results. It
+also requires the wrappers and every independent callback or nested attention
+route to survive the future ownership move.
+
+Production is unchanged pending
+`passes/layout_pass_set_2_preadd_attention_gate_orchestration.py` and
+`run_layout_pass_set_2_preadd_attention_gate_recovery()`. That owner must call
+`run_preadd_mean_attention_recovery(context)` and then
+`run_attention_gate_qdq_recovery(context)`, returning both complete tuples in
+source order and by identity. The lowerer must replace only the two selected
+locals with `_layout_pass_set_2_preadd_attention_gate_results`, passing the
+original `attention_recovery_context` and preserving both outer boundaries.
+
+Focused sequential validation reports `2 passed, 1 xfailed`; complete
+reference-based affected validation reports `416 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent owner. Production, the
+42-result inventory, and the exactly 128-ID/128-owner phase store are
+unchanged. No real-model conversion was repeated for this characterization.
+
+At resume, implement only this characterized owner and lowerer replacement,
+convert the strict xfail to runtime order/context/result-identity coverage,
+and update only structural expectations made stale by the new outer route.
+Run affected and standard gates sequentially under `uv`, confirm the expected
+inventory reduction from 42 to 41, then commit and push the complete unit.
+Do not create, update, reopen, or otherwise modify a pull request.

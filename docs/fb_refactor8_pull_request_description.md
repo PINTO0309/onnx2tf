@@ -1759,3 +1759,16 @@ isolation remain unchanged. Focused `6`, affected `392`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
 exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
 from 43 to 42.
+
+The next characterization fixes the adjacent layout-pass-set-2
+pre-add/mean/attention and attention-gate/QDQ observations before any
+production edit. Both must receive the exact shared callback-bearing attention
+context and return their complete seven-slot and ten-slot results unchanged.
+The existing QLinear/layout owner and recorded dequantize/TransposeConv/
+quantize cleanup remain the outer boundaries.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `416 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 42-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.

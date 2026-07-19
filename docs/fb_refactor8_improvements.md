@@ -6952,3 +6952,24 @@ Sequential validation passes: focused `6`, affected `392`, and standard
 `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
 pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 43 to 42.
+
+## Characterize the layout-pass-set-2 pre-add/attention-gate boundary
+
+The refreshed 42-result inventory selects the next two adjacent observations:
+pre-add/mean/attention recovery followed by attention-gate/QDQ recovery. Both
+use the exact same callback-bearing `AttentionRecoveryContext`. The existing
+QLinear/layout composite result remains the immediate predecessor, while the
+recorded dequantize/TransposeConv/quantize cleanup remains the immediate
+successor.
+
+The new strict contract freezes both zero-argument compatibility wrappers,
+their source order, the shared context, the complete seven-slot and ten-slot
+child schemas, callback-result identity, observation-only result policy, and
+the outer guard and phase boundary. It also requires both wrappers and all
+independent nested attention routes to remain available after extraction.
+
+Production remains unchanged pending one two-child attention-context owner.
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `416 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. The characterized inventory remains 42,
+and the phase-result store remains exactly 128 IDs and 128 owners.
