@@ -818,12 +818,12 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_pre_concat_stats"
+    assert following.targets[0].id == "_terminal_layout_shape_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert (
         following.value.func.id
-        == "_optimize_transpose_pre_concat_nhwc_chains"
+        == "run_terminal_layout_shape_cleanup"
     )
 
 

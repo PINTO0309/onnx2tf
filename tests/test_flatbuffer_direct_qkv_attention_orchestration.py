@@ -426,12 +426,14 @@ def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_affine_slice_spp_results"
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_slice_spp_results"
+    )
     following = lowerer.body[summary_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
+    assert following.targets[0].id == "_terminal_activation_bridge_results"
     owner_calls = _terminal_qkv_owner_calls("run_qkv_attention_summary")
     assert len(owner_calls) == 1
     assert [_expression_path(argument) for argument in owner_calls[0].args] == [
@@ -641,19 +643,19 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
     assert previous_boundary.targets[0].id == (
-        "_terminal_affine_slice_spp_results"
+        "_pre_terminal_affine_slice_spp_results"
     )
     next_boundary = lowerer.body[late_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
     assert next_boundary.targets[0].id == (
-        "_terminal_split_conv_concat_bridge_stats"
+        "_terminal_activation_bridge_results"
     )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert next_boundary.value.func.id == (
-        "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+        "run_terminal_activation_bridge_cleanup"
     )
     assert len(_terminal_qkv_owner_calls("run_qkv_attention_summary")) == 1
 

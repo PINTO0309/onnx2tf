@@ -407,10 +407,14 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_affine_slice_spp_results"
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_slice_spp_results"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "run_terminal_affine_slice_spp_cleanup"
+    assert previous.value.func.id == (
+        "run_pre_terminal_affine_slice_spp_cleanup"
+    )
     assert [ast.unparse(argument) for argument in previous.value.args] == [
         "shared_model_ir_pass_context"
     ]

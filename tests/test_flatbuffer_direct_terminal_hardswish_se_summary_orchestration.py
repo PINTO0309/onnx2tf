@@ -41,7 +41,7 @@ COUNT_TARGET = "terminal_hardswish_se_tensor_count"
 SUMMARY_TARGET = "_terminal_hardswish_se_stats"
 COMPOSITE_TARGET = "_terminal_activation_bridge_results"
 PREDECESSOR_TARGET = "_terminal_qkv_shape_attention_results"
-SUCCESSOR_TARGET = "_absolute_final_pre_concat_stats"
+SUCCESSOR_TARGET = "_terminal_layout_shape_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:

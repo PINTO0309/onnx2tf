@@ -5251,3 +5251,36 @@ whose children already have pass-module owners. Characterize it before any
 production change, keep all tests sequential and single-process under `uv`,
 and commit/push completed checkpoints only. Never create, update, or reopen a
 pull request.
+
+## Terminal QKV/activation-bridge characterization checkpoint
+
+The current inventory contains 60 unconsumed underscore assignment targets.
+The next characterized pair is
+`run_terminal_qkv_shape_attention_cleanup(context, ...)` followed by
+`run_terminal_activation_bridge_cleanup(context, ...)`. Both receive the
+exact shared `ModelIRPassContext` and the same layout-Transpose option.
+
+The contract requires one two-child owner, fixed order, unchanged option
+forwarding, and identity preservation for the nested two-result QKV tuple and
+three-result activation tuple. The pre-terminal affine/Slice/SPP composite is
+the fixed predecessor; terminal layout/shape is the fixed successor. Neither
+outer boundary may be absorbed.
+
+Focused characterization reports `2 passed, 1 xfailed`; complete affected
+characterization reports `532 passed, 1 xfailed`. The sole xfail is the
+intentionally absent
+`passes/terminal_qkv_activation_bridge_orchestration.py`. Eleven stale AST
+expectations were corrected to resolve already-moved predecessor, activation,
+and terminal layout/shape operations through their existing owners.
+Production, graph mutations, independent routes, and the 128-ID/128-owner
+phase store are unchanged.
+
+At resume, implement
+`run_terminal_qkv_activation_bridge_cleanup(context, *,
+include_layout_transpose)` as a straight-line two-child owner. Return both raw
+nested tuples unchanged, replace only `_terminal_qkv_shape_attention_results`
+and `_terminal_activation_bridge_results`, preserve both outer boundaries,
+add runtime order/context/option/result-identity injection, and update
+child-family ownership tests. Run all affected and standard gates
+sequentially, then commit and push only. Never create, update, or reopen a
+pull request.

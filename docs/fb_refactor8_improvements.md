@@ -6053,3 +6053,39 @@ changed. The bounded store remains exactly 128 IDs and 128 owners. No
 real-model conversion was repeated because this is a straight-line ownership
 extraction with exact state, order, schema, result-identity, route-count, and
 boundary coverage.
+
+## Terminal QKV/activation-bridge composite characterization
+
+The post-implementation inventory contains 60 unconsumed underscore-prefixed
+lowerer assignments. The next selected pair is terminal QKV shape/attention
+cleanup followed immediately by terminal activation-bridge cleanup. Both
+children already have pass-module owners, receive the exact same
+`shared_model_ir_pass_context`, and forward the same normalized
+`include_layout_transpose` option.
+
+The proposed owner must preserve the two-result QKV tuple and three-result
+activation tuple unchanged and in source order. The preceding pre-terminal
+affine/Slice/SPP composite and following terminal layout/shape composite are
+fixed outer boundaries. Independent QKV, Shape-extract, Split/Conv/Concat,
+HardSwish-SE, hard-activation, raw-wrapper, and callback routes must remain
+available.
+
+`tests/test_flatbuffer_direct_terminal_qkv_activation_bridge_orchestration.py`
+fixes both layout-option variants, exact shared-context arguments, complete
+empty-model nested schemas, adjacency, absence of consumers, and both outer
+boundaries. Its only strict expected failure requires one new shared-context
+owner replacing only the two observation-only lowerer locals.
+
+The affected inventory exposed eleven stale structural expectations left by
+the already-implemented pre-terminal affine/Slice/SPP, terminal activation,
+and terminal layout/shape composites. Tests now follow those unchanged
+operations through their current owners; production and route counts did not
+change.
+
+Sequential characterization under core-only `uv` completed with
+`2 passed, 1 xfailed in 0.61s` focused and
+`532 passed, 1 xfailed in 20.06s` across QKV, Shape-extract, indexed
+Split/Conv/Concat, HardSwish-SE, hard activation, adjacent composites,
+shared-context, terminal-validation, architecture, and phase-store contracts.
+Production, public behavior, dependencies, TensorFlow isolation, and the
+exactly 128-ID/128-owner store remain unchanged.

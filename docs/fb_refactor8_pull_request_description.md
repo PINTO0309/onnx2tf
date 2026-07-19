@@ -1282,3 +1282,13 @@ successor, specialized child owners, raw wrappers, callbacks, and independent
 routes remain fixed. Runtime identity coverage, 514 affected tests, and every
 standard sequential gate pass; public behavior, graph rewrites, TensorFlow
 isolation, and the exactly 128-ID/128-owner store are unchanged.
+
+The next characterization selects terminal QKV shape/attention followed by
+the terminal activation bridge. Both receive the exact shared context and the
+same layout-Transpose option; their nested two-result and three-result tuples
+have fixed schemas and order. Pre-terminal affine/Slice/SPP remains the
+predecessor, and terminal layout/shape remains the successor. Production is
+unchanged pending one straight-line two-child owner. Focused and affected
+sequential validation report `2 passed, 1 xfailed` and
+`532 passed, 1 xfailed`; the sole expected failure is the intentionally absent
+owner.
