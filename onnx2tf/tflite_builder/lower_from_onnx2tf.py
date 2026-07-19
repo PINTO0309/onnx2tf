@@ -4784,19 +4784,21 @@ def lower_onnx_to_ir(
                 <= 0
             ):
                 break
-        _layout_pass_set_2_squeeze_reshape_identity_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.squeeze_reshape_identity",
             run_squeeze_reshape_identity_cleanup(
                 model_ir,
                 include_unary_passthrough=True,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
-            )
+            ),
         )
-        _layout_pass_set_2_prune_reconcile_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.prune_reconcile",
             run_indexed_prune_reconcile_cleanup(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
         _advance_post_progress()
     _set_post_progress_desc("terminal cleanup passes")

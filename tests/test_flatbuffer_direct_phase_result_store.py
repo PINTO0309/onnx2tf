@@ -23,6 +23,8 @@ EXPECTED_RESULT_TARGETS = (
     "_core_cleanup_dynamic_reshape_stats",
     "_core_cleanup_squeeze_reshape_identity_stats",
     "_core_cleanup_prune_reconcile_stats",
+    "_layout_pass_set_2_squeeze_reshape_identity_stats",
+    "_layout_pass_set_2_prune_reconcile_stats",
     "_terminal_cleanup_terminal_dequant_stats",
     "_terminal_cleanup_terminal_qdq_stats",
     "_terminal_cleanup_conv_affine_stats",
@@ -89,6 +91,8 @@ EXPECTED_OWNERS = (
     "_resolve_dynamic_reshape_shapes",
     "run_squeeze_reshape_identity_cleanup",
     "run_indexed_prune_reconcile_cleanup",
+    "run_squeeze_reshape_identity_cleanup",
+    "run_indexed_prune_reconcile_cleanup",
     "_sanitize_terminal_transpose_before_dequantize",
     "run_terminal_quantize_dequantize_cleanup",
     "_optimize_fold_conv_mul_add_affine_chains",
@@ -145,7 +149,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 22,
+    *("model_ir",) * 24,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -160,6 +164,8 @@ EXPECTED_PHASE_IDS = (
     "shape_resolution.core.dynamic_reshape",
     "cleanup.core.squeeze_reshape_identity",
     "cleanup.core.prune_reconcile",
+    "cleanup.layout_pass_set_2.squeeze_reshape_identity",
+    "cleanup.layout_pass_set_2.prune_reconcile",
     "cleanup.terminal.dequant",
     "cleanup.terminal.qdq",
     "cleanup.terminal.conv_affine",
@@ -254,7 +260,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_sixty_four_observations_use_the_bounded_session_store() -> None:
+def test_sixty_six_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -265,7 +271,7 @@ def test_sixty_four_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 64
+    assert len(records) == 66
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

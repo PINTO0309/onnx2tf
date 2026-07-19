@@ -232,6 +232,21 @@ def test_indexed_prune_reconcile_phase_boundaries_are_explicit() -> None:
                 "layout_state=session.layout_state, "
                 "diagnostics=session.diagnostics))"
             )
+        elif occurrence == 1:
+            assert ast.unparse(invocation) == (
+                "session.record_phase_result("
+                "'cleanup.layout_pass_set_2.prune_reconcile', "
+                "run_indexed_prune_reconcile_cleanup(model_ir, "
+                "layout_state=session.layout_state))"
+            )
+            assert ast.unparse(block[index - 1]) == (
+                "session.record_phase_result("
+                "'cleanup.layout_pass_set_2.squeeze_reshape_identity', "
+                "run_squeeze_reshape_identity_cleanup(model_ir, "
+                "include_unary_passthrough=True, "
+                "layout_state=session.layout_state, "
+                "diagnostics=session.diagnostics))"
+            )
         else:
             assert _single_target(invocation) == target
             assert _single_target(block[index - 1]) == predecessor_target
@@ -305,7 +320,7 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
     ]
     assert tuple(_single_target(statement) for statement in invocations) == (
         None,
-        RESULT_TARGETS[1],
+        None,
         RESULT_TARGETS[2],
     )
     for invocation in invocations:

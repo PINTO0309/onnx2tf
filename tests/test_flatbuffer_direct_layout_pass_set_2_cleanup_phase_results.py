@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
@@ -81,21 +78,20 @@ def _guard(lowerer: ast.FunctionDef) -> ast.If:
 def test_layout_pass_set_2_cleanup_results_are_guarded_and_unconsumed() -> None:
     lowerer = _lowerer()
     guard = _guard(lowerer)
-    assignments = [
+    records = [
         statement
         for statement in guard.body
-        if _single_target(statement) in EXPECTED_RESULT_TARGETS
+        if isinstance(statement, ast.Expr)
+        and _phase_id(statement) in EXPECTED_PHASE_IDS
     ]
-    indices = [guard.body.index(statement) for statement in assignments]
+    indices = [guard.body.index(statement) for statement in records]
 
     assert ast.unparse(guard.test) == "optimize_layout_transpose_chains"
     assert guard.orelse == []
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert tuple(ast.unparse(statement.value) for statement in assignments) == (
-        EXPECTED_OWNER_EXPRESSIONS
-    )
+    assert tuple(_phase_id(statement) for statement in records) == EXPECTED_PHASE_IDS
+    assert tuple(
+        ast.unparse(_statement_call(statement).args[1]) for statement in records
+    ) == EXPECTED_OWNER_EXPRESSIONS
     convergence = guard.body[indices[0] - 1]
     assert isinstance(convergence, ast.For)
     assert ast.unparse(convergence.target) == "_"
@@ -110,26 +106,9 @@ def test_layout_pass_set_2_cleanup_results_are_guarded_and_unconsumed() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout pass-set 2 cleanup results have not moved to phase records",
-)
-def test_layout_pass_set_2_cleanup_results_use_phase_result_store() -> None:
+def test_layout_pass_set_2_cleanup_result_locals_are_removed() -> None:
     lowerer = _lowerer()
-    guard = _guard(lowerer)
-    records = [
-        statement
-        for statement in guard.body
-        if _phase_id(statement) in EXPECTED_PHASE_IDS
-    ]
-    indices = [guard.body.index(statement) for statement in records]
 
-    assert tuple(_phase_id(statement) for statement in records) == EXPECTED_PHASE_IDS
-    assert tuple(
-        ast.unparse(_statement_call(statement).args[1]) for statement in records
-    ) == EXPECTED_OWNER_EXPRESSIONS
-    assert isinstance(guard.body[indices[0] - 1], ast.For)
-    assert ast.unparse(guard.body[indices[-1] + 1]) == "_advance_post_progress()"
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)

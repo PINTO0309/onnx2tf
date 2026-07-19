@@ -1188,3 +1188,25 @@ destinations. Preserve the outer guard, convergence predecessor, owner calls,
 and progress successor. Then update the two existing multi-occurrence owner
 contracts and bounded-store inventory, validate, document, commit, and push.
 Never create, update, or reopen a pull request.
+
+## Layout pass-set 2 cleanup implementation
+
+The guarded pair now uses stable
+`cleanup.layout_pass_set_2.squeeze_reshape_identity` and
+`cleanup.layout_pass_set_2.prune_reconcile` records. The outer layout guard,
+convergence predecessor, owner expressions, and progress successor remain
+unchanged. No defaults existed. The bounded store now covers 66 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected contracts: `9 passed in 0.85s`;
+- synthetic core runtime contracts: `55 passed in 0.99s`;
+- broader affected contracts: `261 passed in 6.27s`;
+- lowerer architecture contracts: `258 passed in 16.57s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite exercises the guarded path. After committing and
+pushing, select the next family without mixing compound cluster return values
+with mapping-only results, and retain the 128-phase limit in the sizing audit.
+Never create, update, or reopen a pull request.

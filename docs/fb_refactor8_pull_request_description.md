@@ -141,15 +141,16 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Sixty-four stable phase IDs
+### Sixty-six stable phase IDs
 
-The lowerer now records 64 bounded observations covering:
+The lowerer now records 66 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
   Squeeze/Reshape, and indexed prune/reconcile cleanup;
 - four unconditional terminal cleanup results covering terminal Dequantize/QDQ
   and Conv affine/activation cleanup;
+- guarded layout pass-set 2 Squeeze/Reshape and indexed prune/reconcile cleanup;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -207,7 +208,7 @@ changes were then limited to the characterized boundary.
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 64 phase IDs and owners appear in deterministic source order;
+- all 66 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -241,8 +242,9 @@ Final checkpoint results:
 - synthetic core runtime contracts: **55 passed**;
 - direct terminal-cleanup, phase-store, terminal orchestration, and indexed-
   owner architecture-boundary contracts: **68 passed**;
+- direct layout pass-set 2 cleanup and owner contracts: **9 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
-  **259 passed**;
+  **261 passed**;
 - lowerer architecture suite: **258 passed**;
 - targeted Ruff checks: **passed**;
 - Python bytecode compilation: **passed**;
