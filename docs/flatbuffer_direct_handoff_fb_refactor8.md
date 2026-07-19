@@ -347,3 +347,55 @@ the three fallback-wide sorts separately. Do not fold them into the new owner
 merely because they call the same sorter: their predecessors, guards, and
 validation successors differ. Continue with coherent commits and pushes only;
 never create, update, or reopen a pull request.
+
+## Terminal topology/layout validation characterization
+
+The fallback and primary terminal paths both contained the exact sequence
+`topological sort → layout annotation validation → validation metadata set/pop
+→ ModelIR finalization`. The validator is pure; the surrounding lowerer block
+owns the metadata update. The characterization contract fixed both complete
+boundaries and a graph that exercises operator reordering and one rank/layout
+diagnostic. It passed as `2 passed in 0.51s` and was committed and pushed as
+`400071a7` before implementation.
+
+## Terminal topology/layout validation implementation checkpoint
+
+`passes/topology_layout_validation.py` now owns the duplicated terminal
+invariant boundary. `run_topology_layout_validation()` performs the unchanged
+sort and validation, writes or clears `logical_layout_validation_errors`, and
+returns only:
+
+- `reordered_operators`;
+- `cycle_detected`;
+- `layout_validation_errors`.
+
+The full error list remains solely in ModelIR metadata. The fallback and
+primary call sites retain compact phase-local results immediately before their
+unchanged `_finalize_model_ir(...)` returns. The lowerer no longer imports the
+layout validator directly. Cycle handling and stale-error clearing are covered
+explicitly.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated boundary/effect/cycle contract: `3 passed`;
+- affected fallback, terminal, shape, and topology contracts:
+  `117 passed in 2.68s`;
+- lowerer architecture contracts: `258 passed in 16.94s`;
+- direct-builder topology/reconciliation selection:
+  `17 passed, 724 deselected in 0.60s`.
+
+No real-model conversion was needed for this differentially equivalent
+ownership extraction. Five raw sort-only boundaries remain:
+
+1. fallback after placeholder-MatMul restoration;
+2. fallback after the late Conv/Concat/binary repair family;
+3. the primary post-lowering baseline sort;
+4. the guarded no-layout safe-reduction sequence;
+5. final placeholder-MatMul restoration.
+
+On resume, audit the two unconditional fallback-wide sorts first. Determine
+which preceding repairs can actually mutate operator order and whether one of
+the sorts is redundant; do not remove or guard a traversal without a
+differential test proving identical operator order and downstream behavior.
+Continue with coherent commits and pushes only; never create, update, or reopen
+a pull request.

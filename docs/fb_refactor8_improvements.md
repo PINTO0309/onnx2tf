@@ -348,3 +348,44 @@ extra and fail in the core-only environment. Those tests are outside this
 TensorFlow-free unit; the directly affected selection above passes. No
 real-model conversion was run because the new owner is differentially
 equivalent to the former adjacent calls.
+
+## Terminal topology/layout validation owner
+
+The fallback and primary terminal paths each ended with the same invariant
+boundary: topologically sort operators, validate logical-layout annotations,
+store the full problem list in `logical_layout_validation_errors` or remove a
+stale value, and then finalize the ModelIR. The duplicated lowerer blocks also
+discarded the topological-sort result.
+
+The characterization checkpoint fixed both complete four-statement sequences,
+their model arguments, metadata behavior, finalize boundary, and a fixture that
+requires both operator reordering and an invalid rank/layout diagnostic. It
+passed as `2 passed in 0.51s` before production code changed.
+
+`passes/topology_layout_validation.py` now owns this invariant boundary through
+`run_topology_layout_validation(model_ir)`. The owner preserves the exact
+execution order and metadata payload while returning only three small integer
+counters: `reordered_operators`, `cycle_detected`, and
+`layout_validation_errors`. The complete error strings remain in ModelIR
+metadata and are not duplicated in the returned result. A cycle fixture also
+proves that operator order remains unchanged and a stale validation-error entry
+is removed when the current validation is clean.
+
+The fallback and primary lowerer paths retain the result as
+`_fallback_topology_layout_validation_stats` and
+`_terminal_topology_layout_validation_stats`. Direct layout-validator imports
+were removed from the lowerer. No validator rule, finalize behavior, graph
+mutation, artifact, dependency, public API, or TensorFlow boundary changed.
+Five raw topological-sort sites remain after this extraction.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated owner, boundary, metadata, and cycle contracts: `3 passed`;
+- affected fallback, terminal, shape, and topology contracts:
+  `117 passed in 2.68s`;
+- lowerer architecture contracts: `258 passed in 16.94s`;
+- selected direct-builder topology and reconciliation tests:
+  `17 passed, 724 deselected in 0.60s`.
+
+No real-model conversion was run because this owner is differentially
+equivalent to the former terminal sequences.

@@ -61,43 +61,25 @@ def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> Non
         "_realign_dynamic_boundary_shape_signature_map",
         start=coalesce_index + 1,
     )
-    terminal_sort_index = next(
+    validation_index = next(
         index
         for index in range(realign_index + 1, len(body))
         if _call_name(_statement_call(body[index]))
-        == "_topologically_sort_operators"
-    )
-    validation_index = next(
-        index
-        for index, statement in enumerate(body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "layout_problems"
+        == "run_topology_layout_validation"
     )
 
-    assert convergence_index < coalesce_index < realign_index < terminal_sort_index
-    assert validation_index == terminal_sort_index + 1
+    assert convergence_index < coalesce_index < realign_index < validation_index
     validation = body[validation_index]
     assert isinstance(validation, ast.Assign)
+    assert isinstance(validation.targets[0], ast.Name)
+    assert validation.targets[0].id == (
+        "_terminal_topology_layout_validation_stats"
+    )
     assert ast.unparse(validation.value) == (
-        "validate_model_ir_layout_annotations(model_ir)"
+        "run_topology_layout_validation(model_ir)"
     )
 
-    guard = body[validation_index + 1]
-    assert isinstance(guard, ast.If)
-    assert ast.unparse(guard.test) == "len(layout_problems) > 0"
-    assert len(guard.body) == 1
-    assert ast.unparse(guard.body[0]) == (
-        "model_ir.metadata['logical_layout_validation_errors'] = "
-        "list(layout_problems)"
-    )
-    assert len(guard.orelse) == 1
-    assert ast.unparse(guard.orelse[0]) == (
-        "model_ir.metadata.pop('logical_layout_validation_errors', None)"
-    )
-
-    terminal = body[validation_index + 2]
+    terminal = body[validation_index + 1]
     assert isinstance(terminal, ast.Return)
     assert ast.unparse(terminal.value) == "_finalize_model_ir(model_ir)"
 

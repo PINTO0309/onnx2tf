@@ -809,36 +809,17 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
         "_run_indexed_binary_layout_convergence(fallback_ir)"
     )
 
-    final_sort = body[stats_index + 4]
-    assert isinstance(final_sort, ast.Expr)
-    assert ast.unparse(final_sort.value) == (
-        "_topologically_sort_operators(fallback_ir)"
-    )
-
-    validation = body[stats_index + 5]
+    validation = body[stats_index + 4]
     assert isinstance(validation, ast.Assign)
     assert isinstance(validation.targets[0], ast.Name)
-    assert validation.targets[0].id == "fallback_layout_problems"
+    assert validation.targets[0].id == (
+        "_fallback_topology_layout_validation_stats"
+    )
     assert ast.unparse(validation.value) == (
-        "validate_model_ir_layout_annotations(fallback_ir)"
+        "run_topology_layout_validation(fallback_ir)"
     )
 
-    validation_guard = body[stats_index + 6]
-    assert isinstance(validation_guard, ast.If)
-    assert ast.unparse(validation_guard.test) == (
-        "len(fallback_layout_problems) > 0"
-    )
-    assert len(validation_guard.body) == 1
-    assert ast.unparse(validation_guard.body[0]) == (
-        "fallback_ir.metadata['logical_layout_validation_errors'] = "
-        "list(fallback_layout_problems)"
-    )
-    assert len(validation_guard.orelse) == 1
-    assert ast.unparse(validation_guard.orelse[0]) == (
-        "fallback_ir.metadata.pop('logical_layout_validation_errors', None)"
-    )
-
-    terminal = body[stats_index + 7]
+    terminal = body[stats_index + 5]
     assert isinstance(terminal, ast.Return)
     assert ast.unparse(terminal.value) == "_finalize_model_ir(fallback_ir)"
 
@@ -957,7 +938,11 @@ def test_safety_fallback_retains_indexed_binary_convergence_result() -> None:
     assert owner.value.keywords == []
 
     following = body[owner_index + 1]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_fallback_topology_layout_validation_stats"
+    )
     assert ast.unparse(following.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+        "run_topology_layout_validation(fallback_ir)"
     )

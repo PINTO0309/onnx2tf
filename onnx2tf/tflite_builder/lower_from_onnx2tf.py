@@ -54,7 +54,6 @@ from onnx2tf.tflite_builder.op_registry import (
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
-    validate_model_ir_layout_annotations,
 )
 from onnx2tf.tflite_builder.op_families.constant import lower_constant_node
 from onnx2tf.tflite_builder.passes.precision import (
@@ -678,6 +677,9 @@ from onnx2tf.tflite_builder.passes.prune_reconcile import (
 )
 from onnx2tf.tflite_builder.passes.topology_layout_refresh import (
     run_topology_layout_refresh,
+)
+from onnx2tf.tflite_builder.passes.topology_layout_validation import (
+    run_topology_layout_validation,
 )
 from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
     _optimize_singleton_layout_reshape_maxpool_binary_cast_chains as _optimize_singleton_layout_reshape_maxpool_binary_cast_chains_pass,
@@ -6023,19 +6025,9 @@ def lower_onnx_to_ir(
         _fallback_binary_layout_convergence_stats = (
             _run_indexed_binary_layout_convergence(fallback_ir)
         )
-        _topologically_sort_operators(fallback_ir)
-        fallback_layout_problems = validate_model_ir_layout_annotations(
-            fallback_ir
+        _fallback_topology_layout_validation_stats = (
+            run_topology_layout_validation(fallback_ir)
         )
-        if len(fallback_layout_problems) > 0:
-            fallback_ir.metadata["logical_layout_validation_errors"] = list(
-                fallback_layout_problems
-            )
-        else:
-            fallback_ir.metadata.pop(
-                "logical_layout_validation_errors",
-                None,
-            )
         return _finalize_model_ir(fallback_ir)
 
     _final_precision_div_rewrite_stats = (
@@ -6616,15 +6608,7 @@ def lower_onnx_to_ir(
     _final_dynamic_boundary_signature_stats = (
         _realign_dynamic_boundary_shape_signature_map(model_ir)
     )
-    _topologically_sort_operators(model_ir)
-    layout_problems = validate_model_ir_layout_annotations(model_ir)
-    if len(layout_problems) > 0:
-        model_ir.metadata["logical_layout_validation_errors"] = list(
-            layout_problems
-        )
-    else:
-        model_ir.metadata.pop(
-            "logical_layout_validation_errors",
-            None,
-        )
+    _terminal_topology_layout_validation_stats = (
+        run_topology_layout_validation(model_ir)
+    )
     return _finalize_model_ir(model_ir)
