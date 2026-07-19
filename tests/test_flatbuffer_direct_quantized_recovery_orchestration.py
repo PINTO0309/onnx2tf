@@ -29,6 +29,13 @@ ORCHESTRATION_PATH = (
     / "passes"
     / "quantized_recovery_orchestration.py"
 )
+LAYOUT_PASS_SET_1_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_attention_quantized_safe_binary_orchestration.py"
+)
 SAFE_BINARY = "_run_safe_binary_bridge_recovery_sequence"
 QUANTIZED_ACTIVATION_BINARY = (
     "_run_quantized_activation_binary_bridge_recovery_sequence"
@@ -38,8 +45,10 @@ RESULT_TARGETS = (
     "_layout_pass_set_2_quantized_activation_binary_results",
 )
 SAFE_RESULT_TARGETS = (
-    "_layout_pass_set_1_safe_binary_results",
     "_layout_pass_set_1_final_safe_binary_results",
+)
+REMOVED_LAYOUT_PASS_SET_1_SAFE_RESULT_TARGET = (
+    "_layout_pass_set_1_safe_binary_results"
 )
 
 
@@ -56,6 +65,26 @@ def _lowerer_and_helper(helper_name: str) -> tuple[ast.FunctionDef, ast.Function
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     return lowerer, helper
+
+
+def _layout_pass_set_1_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_layout_pass_set_1_attention_quantized_safe_binary_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -238,9 +267,16 @@ def test_quantized_recovery_invocation_boundaries_remain_zero_argument() -> None
             and node.func.id == helper_name
         ]
         orchestrated_count = 0
+        composite_count = 0
         if helper_name == SAFE_BINARY:
             orchestrated_count = QUANTIZED_ACTIVATION_BINARY_PASS_IDS.count(helper_name)
-        assert len(invocations) + orchestrated_count == expected_count
+            composite_count = len(
+                _layout_pass_set_1_owner_calls("run_safe_binary_recovery")
+            )
+        assert (
+            len(invocations) + orchestrated_count + composite_count
+            == expected_count
+        )
         assert all(call.args == [] for call in invocations)
         assert all(call.keywords == [] for call in invocations)
 
@@ -482,7 +518,7 @@ def test_quantized_activation_binary_propagates_nested_results_to_both_calls(
         )
 
 
-def test_safe_binary_helper_propagates_and_retains_both_direct_results() -> None:
+def test_safe_binary_helper_propagates_and_retains_all_routes() -> None:
     orchestration_functions = {
         node.name: node
         for node in ast.parse(
@@ -515,7 +551,7 @@ def test_safe_binary_helper_propagates_and_retains_both_direct_results() -> None
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == SAFE_BINARY:
                 production_results.append((statement.body, index))
-    assert len(production_results) == 2
+    assert len(production_results) == 1
     assert tuple(
         _single_target(body[index]) for body, index in production_results
     ) == SAFE_RESULT_TARGETS
@@ -523,23 +559,31 @@ def test_safe_binary_helper_propagates_and_retains_both_direct_results() -> None
         _direct_call_name(body[index - 1])
         for body, index in production_results
     ) == (
-        "_run_layout_attention_quantized_recovery_suffix",
         "_run_transpose_unary_fanout_layout_pass_cluster",
     )
     assert tuple(
         _direct_call_name(body[index + 1])
         for body, index in production_results
     ) == (
-        "_optimize_transpose_dequantize_mean_quantize_bridges",
         "_advance_post_progress",
     )
-    for target in SAFE_RESULT_TARGETS:
+    for target in (
+        *SAFE_RESULT_TARGETS,
+        REMOVED_LAYOUT_PASS_SET_1_SAFE_RESULT_TARGET,
+    ):
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
             and isinstance(node.ctx, ast.Load)
             for node in ast.walk(lowerer)
         )
+
+    owner_calls = _layout_pass_set_1_owner_calls("run_safe_binary_recovery")
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context.pass_context"
+    ]
+    assert owner_calls[0].keywords == []
 
 
 def test_quantized_recovery_module_does_not_import_the_lowerer() -> None:

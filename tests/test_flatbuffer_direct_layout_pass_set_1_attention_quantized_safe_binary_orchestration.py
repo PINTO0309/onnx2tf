@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    layout_pass_set_1_attention_quantized_safe_binary_orchestration,
+)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     AttentionRecoveryContext,
     run_attention_gate_qdq_recovery,
@@ -21,13 +24,9 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
     LayoutAttentionQuantizedSuffixContext,
-    run_layout_attention_quantized_suffix,
 )
 from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
     run_mean_attention,
-)
-from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
-    run_safe_binary_recovery,
 )
 from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
     run_transpose_unary_fanout,
@@ -184,7 +183,7 @@ def _guard_body() -> list[ast.stmt]:
         if isinstance(statement, ast.If)
         and ast.unparse(statement.test) == GUARD
         and any(
-            _single_target(candidate) in RESULT_TARGETS
+            _single_target(candidate) in (*RESULT_TARGETS, COMPOSITE_TARGET)
             for candidate in statement.body
         )
     )
@@ -269,36 +268,26 @@ def test_layout_pass_set_1_attention_quantized_safe_current_contract(
     include_duplicate_transpose: bool,
 ) -> None:
     body = _guard_body()
-    assignments = [
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) in RESULT_TARGETS
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_attention_quantized_suffix_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        CURRENT_CHILD_OWNERS
-    )
-    indices = [body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-    assert _phase_id(body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
-
-    suffix_call = _call(assignments[0])
-    safe_call = _call(assignments[1])
-    assert suffix_call is not None
-    assert safe_call is not None
-    assert suffix_call.args == []
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in suffix_call.keywords
+        for keyword in call.keywords
     } == {"include_duplicate_transpose": OPTION}
-    assert safe_call.args == []
-    assert safe_call.keywords == []
+    assert _phase_id(body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for statement in body
         for node in ast.walk(statement)
@@ -340,12 +329,9 @@ def test_layout_pass_set_1_attention_quantized_safe_current_contract(
     }
 
     context = _context()
-    results = (
-        run_layout_attention_quantized_suffix(
-            context,
-            include_duplicate_transpose=include_duplicate_transpose,
-        ),
-        run_safe_binary_recovery(context.pass_context),
+    results = layout_pass_set_1_attention_quantized_safe_binary_orchestration.run_layout_pass_set_1_attention_quantized_safe_binary_cleanup(
+        context,
+        include_duplicate_transpose=include_duplicate_transpose,
     )
     assert _schema(results) == (
         _expected_suffix_schema(
@@ -362,8 +348,8 @@ def test_layout_pass_set_1_attention_quantized_safe_current_contract(
     assert later_targets == list(LATER_RESULT_TARGETS)
     later_indices = [
         next(
-            index
-            for index, statement in enumerate(body)
+            later_index
+            for later_index, statement in enumerate(body)
             if _single_target(statement) == target
         )
         for target in LATER_RESULT_TARGETS
@@ -373,10 +359,6 @@ def test_layout_pass_set_1_attention_quantized_safe_current_contract(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout-pass-set-1 quantized suffix/safe owner is not implemented",
-)
 def test_layout_pass_set_1_attention_quantized_safe_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -430,3 +412,51 @@ def test_layout_pass_set_1_attention_quantized_safe_has_one_context_owner() -> N
         if isinstance(node, ast.FunctionDef)
     }
     assert all(name in lowerer_functions for name in CURRENT_CHILD_OWNERS)
+
+
+@pytest.mark.parametrize("include_duplicate_transpose", [False, True])
+def test_layout_pass_set_1_attention_quantized_safe_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_duplicate_transpose: bool,
+) -> None:
+    context = _context()
+    expected_results = (
+        tuple({f"suffix_{index}": index} for index in range(13)),
+        ({"safe_binary": 13},),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def suffix(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return expected_results[0]
+
+    def safe(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context, {}))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        layout_pass_set_1_attention_quantized_safe_binary_orchestration,
+        CHILD_OWNERS[0],
+        suffix,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_1_attention_quantized_safe_binary_orchestration,
+        CHILD_OWNERS[1],
+        safe,
+    )
+
+    actual = layout_pass_set_1_attention_quantized_safe_binary_orchestration.run_layout_pass_set_1_attention_quantized_safe_binary_cleanup(
+        context,
+        include_duplicate_transpose=include_duplicate_transpose,
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context,
+            {"include_duplicate_transpose": include_duplicate_transpose},
+        ),
+        (CHILD_OWNERS[1], context.pass_context, {}),
+    ]

@@ -41,7 +41,7 @@ POST_BINARY_PREDECESSOR_TARGET = (
     "_layout_pass_set_1_post_binary_attention_recovery_results"
 )
 POST_BINARY_SUCCESSOR_TARGET = (
-    "_layout_pass_set_1_attention_quantized_suffix_results"
+    "_layout_pass_set_1_attention_quantized_safe_binary_results"
 )
 
 

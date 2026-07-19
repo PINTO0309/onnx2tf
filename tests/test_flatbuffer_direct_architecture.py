@@ -176,6 +176,13 @@ LAYOUT_PASS_SET_1_MEAN_ATTENTION_GATE_OWNER_PATH = (
     / "passes"
     / "layout_pass_set_1_mean_attention_gate_orchestration.py"
 )
+LAYOUT_PASS_SET_1_ATTENTION_QUANTIZED_SAFE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_attention_quantized_safe_binary_orchestration.py"
+)
 
 
 def _layout_pass_set_1_mean_attention_gate_calls(
@@ -191,6 +198,30 @@ def _layout_pass_set_1_mean_attention_gate_calls(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "run_layout_pass_set_1_mean_attention_gate_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _layout_pass_set_1_attention_quantized_safe_calls(
+    child_owner: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_ATTENTION_QUANTIZED_SAFE_OWNER_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_layout_pass_set_1_attention_quantized_safe_binary_cleanup"
     )
     return [
         node
@@ -1785,24 +1816,17 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
                     statement.body[index + 1],
                 )
             )
-    assert len(direct_boundaries) == 2
+    assert len(direct_boundaries) == 1
     assert [boundary[0] for boundary in direct_boundaries] == [
-        "_layout_pass_set_1_safe_binary_results",
         "_layout_pass_set_1_final_safe_binary_results",
     ]
     assert [boundary[1].value.func.id for boundary in direct_boundaries] == [
-        "_run_layout_attention_quantized_recovery_suffix",
         "_run_transpose_unary_fanout_layout_pass_cluster",
     ]
-    assert ast.unparse(direct_boundaries[0][2]) == (
-        "session.record_phase_result("
-        "'cleanup.layout_pass_set_1.dequant_mean_quantize', "
-        "_optimize_transpose_dequantize_mean_quantize_bridges(model_ir))"
-    )
-    assert isinstance(direct_boundaries[1][2], ast.Expr)
-    assert isinstance(direct_boundaries[1][2].value, ast.Call)
-    assert isinstance(direct_boundaries[1][2].value.func, ast.Name)
-    assert direct_boundaries[1][2].value.func.id == "_advance_post_progress"
+    assert isinstance(direct_boundaries[0][2], ast.Expr)
+    assert isinstance(direct_boundaries[0][2].value, ast.Call)
+    assert isinstance(direct_boundaries[0][2].value.func, ast.Name)
+    assert direct_boundaries[0][2].value.func.id == "_advance_post_progress"
     all_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -1810,7 +1834,18 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 3
+    owner_invocations = _layout_pass_set_1_attention_quantized_safe_calls(
+        "run_safe_binary_recovery"
+    )
+    assert (
+        len(all_invocations)
+        + _orchestrated_pass_count(helper_name)
+        + len(owner_invocations)
+        == 3
+    )
+    assert len(owner_invocations) == 1
+    assert ast.unparse(owner_invocations[0].args[0]) == "context.pass_context"
+    assert owner_invocations[0].keywords == []
 
 
 def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
@@ -2229,7 +2264,7 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) == 1
     for invocation in helper_invocations:
         keyword = next(
             keyword
@@ -2241,6 +2276,15 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
             keyword.value.id
             == "enable_duplicate_transpose_fanout_optimizations"
         )
+    owner_invocations = _layout_pass_set_1_attention_quantized_safe_calls(
+        "run_layout_attention_quantized_suffix"
+    )
+    assert len(owner_invocations) == 1
+    assert ast.unparse(owner_invocations[0].args[0]) == "context"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_invocations[0].keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
 
     layernorm_variant_calls = [
         node

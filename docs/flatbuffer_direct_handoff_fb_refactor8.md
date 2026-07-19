@@ -6103,3 +6103,45 @@ order/context/option/result-identity injection, and update only stale entry
 assertions. Run affected and standard gates sequentially under `uv`, then
 confirm the 46-result inventory. Commit and push only; do not create, update,
 reopen, or otherwise modify a pull request.
+
+## Post-binary quantized-suffix/safe-binary implementation checkpoint
+
+`passes/layout_pass_set_1_attention_quantized_safe_binary_orchestration.py`
+now provides
+`run_layout_pass_set_1_attention_quantized_safe_binary_cleanup()`. It receives
+the original `LayoutAttentionQuantizedSuffixContext`, forwards it unchanged to
+`run_layout_attention_quantized_suffix()` with the exact normalized
+duplicate-Transpose policy, then passes `context.pass_context` directly to
+`run_safe_binary_recovery()`. Both complete results are returned in source
+order without copying, flattening, or normalization.
+
+The lowerer replaces only
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_safe_binary_results` with
+`_layout_pass_set_1_attention_quantized_safe_binary_results`. The recorded
+post-binary affine phase remains the direct predecessor and recorded
+dequant-Mean phase remains the direct successor. Both lowerer wrappers and the
+quantized-activation nested route remain available. The later final suffix,
+transpose-unary/fan-out, and final safe-binary calls remain three separate
+contiguous observations with their original policy and order.
+
+Runtime injection covers both duplicate-Transpose policy values and proves
+exact child order, suffix-context identity, embedded pass-context identity,
+option forwarding, and both raw-result identities. Eleven stale structural
+assertions now count the new public-child route and retain all independent
+wrapper coverage.
+
+Sequential validation passes: focused `5`, complete affected `429`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase store
+`2`, and TensorFlow import-blocking/default-direct/`-cotof` `11`. Ruff,
+bytecode compilation, and whitespace validation pass. The phase-result store
+remains exactly 128 IDs and 128 owners. The read-only unconsumed lowerer-result
+inventory decreases from 47 to 46. No real-model conversion was repeated for
+this straight-line ownership-only extraction.
+
+At resume, refresh the 46-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Preserve all
+result-driven branches, progress updates, phase records, wrappers, and
+independent routes. Characterize before production changes, run every test
+sequentially under `uv`, and commit/push only. Do not create, update, reopen,
+or otherwise modify a pull request.

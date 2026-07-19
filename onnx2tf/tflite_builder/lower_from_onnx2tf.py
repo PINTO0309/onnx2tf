@@ -209,6 +209,9 @@ from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestrati
     LayoutAttentionQuantizedSuffixContext,
     run_layout_attention_quantized_suffix,
 )
+from onnx2tf.tflite_builder.passes.layout_pass_set_1_attention_quantized_safe_binary_orchestration import (
+    run_layout_pass_set_1_attention_quantized_safe_binary_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
     TerminalSliceConcatRecoveryContext,
     run_terminal_slice_concat_recovery,
@@ -4367,13 +4370,11 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             ),
         )
-        _layout_pass_set_1_attention_quantized_suffix_results = (
-            _run_layout_attention_quantized_recovery_suffix(
+        _layout_pass_set_1_attention_quantized_safe_binary_results = (
+            run_layout_pass_set_1_attention_quantized_safe_binary_cleanup(
+                layout_attention_quantized_suffix_context,
                 include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
             )
-        )
-        _layout_pass_set_1_safe_binary_results = (
-            _run_safe_binary_bridge_recovery_sequence()
         )
         session.record_phase_result(
             "cleanup.layout_pass_set_1.dequant_mean_quantize",

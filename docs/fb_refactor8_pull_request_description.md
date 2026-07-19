@@ -1662,3 +1662,15 @@ and dequant-Mean outer phases, and the separate later suffix/transpose-unary/
 safe-binary route. Production remains unchanged. Focused and affected
 sequential validation report `2 passed, 1 xfailed` and
 `426 passed, 1 xfailed`; the sole expected failure is the absent owner.
+
+The latest checkpoint implements that boundary as one context-owned stage. It
+forwards the unchanged suffix context and duplicate-Transpose policy first,
+then passes the exact embedded pass context to safe-binary recovery. Both raw
+results and their identities are preserved. Only the first two observation
+locals are replaced; phase neighbors, wrappers, quantized-activation recovery,
+and the later final three-stage route are unchanged.
+
+Focused `5`, affected `429`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. TensorFlow isolation and the exactly 128-ID/128-owner phase store
+remain unchanged, while the unconsumed-result inventory decreases from 47 to
+46.

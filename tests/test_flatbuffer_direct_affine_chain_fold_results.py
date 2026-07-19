@@ -145,7 +145,7 @@ def test_direct_affine_chain_fold_results_are_retained_observation_only() -> Non
         "_layout_pass_set_1_post_binary_attention_recovery_results"
     )
     assert _single_target(second_body[second_index + 1]) == (
-        "_layout_pass_set_1_attention_quantized_suffix_results"
+        "_layout_pass_set_1_attention_quantized_safe_binary_results"
     )
 
     for target in RESULT_TARGETS:

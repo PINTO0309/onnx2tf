@@ -6795,3 +6795,24 @@ planned extraction. Production remains unchanged pending one two-child owner.
 Focused and reference-based affected validation report `2 passed, 1 xfailed`
 and `426 passed, 1 xfailed`; the sole expected failure is the intentionally
 absent owner. Ruff, bytecode compilation, and whitespace validation pass.
+
+## Extract the post-binary quantized suffix and safe-binary boundary
+
+`passes/layout_pass_set_1_attention_quantized_safe_binary_orchestration.py`
+now owns the characterized pair. It forwards the original suffix context and
+duplicate-Transpose option to the public suffix owner, then forwards that
+context's exact `ModelIRPassContext` to public safe-binary recovery. Both
+complete nested results are returned unchanged and by identity.
+
+The lowerer replaces only the first suffix and safe-binary observation locals
+with one composite result. The recorded post-binary affine and dequant-Mean
+phases remain immediate neighbors. Both lowerer wrappers, the independent
+quantized-activation route, and the later final suffix/transpose-unary/final
+safe-binary sequence remain intact.
+
+Eleven stale structural assertions now follow the new public-child route while
+continuing to verify the independent wrappers. Sequential validation passes:
+focused `5`, affected `429`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
+bytecode compilation, and whitespace validation pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed lowerer-result inventory
+decreases from 47 to 46.
