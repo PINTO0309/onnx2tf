@@ -4901,3 +4901,45 @@ This checkpoint changes no production source, callback, context lifetime,
 graph mutation, pass order, argument policy, result schema, validation
 boundary, store entry, API, artifact, dependency, or TensorFlow boundary. No
 real-model conversion was repeated.
+
+## Terminal stabilization composite implementation
+
+`passes/terminal_stabilization_orchestration.py` now owns the final primary
+stabilization triple. Using the existing shared `ModelIRPassContext`, it runs
+indexed binary-layout convergence, static high-rank binary coalescing, and
+dynamic boundary-signature realignment in the original order. It forwards
+ModelIR to all three owners, forwards LayoutState only to high-rank binary
+coalescing, and returns the three original mappings unchanged as an ordered
+tuple.
+
+The lowerer now retains one `_final_terminal_stabilization_results` composite
+instead of three individual unconsumed result locals. The two raw lowerer
+compatibility wrappers remain available for independent callers, the safety-
+fallback convergence call remains unchanged, and terminal topology/layout
+validation and ModelIR finalization remain the immediate successors. The
+lowerer no longer imports the high-rank binary owner solely for this terminal
+site.
+
+Runtime coverage injects all three callbacks and proves ModelIR/LayoutState
+identity, exact call order, raw mapping object identity, and ordered tuple
+shape. Owner-aware structural coverage accounts for the remaining wrapper
+callers and each pass-module invocation. The composite remains outside the
+full phase-result store, which stays exactly 128 IDs and 128 owners.
+
+Final sequential validation under core-only `uv`:
+
+- focused context-owner runtime and structure contracts:
+  `3 passed in 0.54s`;
+- affected binary-convergence, high-rank-binary, boundary-signature,
+  terminal-validation, shared-context, phase-store, and architecture
+  contracts: `390 passed in 18.66s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.74s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.03s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.64s`.
+
+No real-model conversion was repeated because this is a straight-line
+ownership move and dedicated runtime injection proves the complete terminal
+sequence, state identity, and raw result preservation.

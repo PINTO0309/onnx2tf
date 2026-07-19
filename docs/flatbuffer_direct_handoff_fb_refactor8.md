@@ -4348,3 +4348,34 @@ straight-line context owner using the three existing pass-module owners,
 replace the three terminal locals with one ordered composite result, update
 owner-aware structural/runtime coverage, and run all affected and standard
 gates sequentially. Never create, update, or reopen a pull request.
+
+## Terminal stabilization composite implementation
+
+`passes/terminal_stabilization_orchestration.py` now runs the characterized
+triple through `shared_model_ir_pass_context`. It preserves convergence →
+high-rank binary coalescing → boundary-signature realignment order, forwards
+LayoutState only to coalescing, and returns all three unchanged mappings as an
+ordered tuple.
+
+The lowerer replaces the three old result locals with
+`_final_terminal_stabilization_results`. Both raw lowerer compatibility
+wrappers remain defined, the fallback convergence path is unchanged, and
+primary terminal topology/layout validation plus finalization remain directly
+after the new composite. No phase result was added; the store remains exactly
+128/128.
+
+Sequential validation under core-only `uv` completed with:
+
+- focused context-owner contracts: `3 passed in 0.54s`;
+- affected contracts: `390 passed in 18.66s`;
+- terminal-layout/pass-efficiency: `92 passed in 1.74s`;
+- core runtime: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.03s`;
+- phase-store capacity: `2 passed in 0.52s`;
+- TensorFlow isolation/default direct/`-cotof`: `11 passed in 9.64s`.
+
+Runtime injection proves model/layout identity, callback order, tuple shape,
+and raw mapping identity. On resume, perform a fresh AST inventory of remaining
+unconsumed lowerer results and select the next small semantically closed non-
+store boundary before changing production. Keep validation sequential, the
+store at 128/128, and never create, update, or reopen a pull request.

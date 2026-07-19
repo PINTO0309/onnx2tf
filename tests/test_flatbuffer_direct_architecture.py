@@ -294,6 +294,30 @@ def _boundary_signature_cleanup_call_count(function_name: str) -> int:
     )
 
 
+def _terminal_stabilization_calls(function_name: str) -> list[ast.Call]:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_stabilization_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_stabilization_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
 def _no_layout_final_cleanup_call_count(function_name: str) -> int:
     owner_path = (
         REPO_ROOT
@@ -3427,6 +3451,11 @@ def test_boundary_signature_realigner_has_one_module_owner() -> None:
         + _boundary_signature_cleanup_call_count(
             "realign_dynamic_boundary_shape_signature_map"
         )
+        + len(
+            _terminal_stabilization_calls(
+                "realign_dynamic_boundary_shape_signature_map"
+            )
+        )
         == 3
     )
 
@@ -3927,14 +3956,16 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(invocations) == 2
+    assert len(invocations) == 1
     assert [
         call.args[0].id
         for call in sorted(invocations, key=lambda candidate: candidate.lineno)
-    ] == [
-        "fallback_ir",
-        "model_ir",
-    ]
+    ] == ["fallback_ir"]
+    terminal_invocations = _terminal_stabilization_calls(helper_name)
+    assert len(terminal_invocations) == 1
+    assert ast.unparse(terminal_invocations[0]) == (
+        "run_indexed_binary_layout_convergence(context.model_ir)"
+    )
     wrapper = next(
         node
         for node in lowering_tree.body

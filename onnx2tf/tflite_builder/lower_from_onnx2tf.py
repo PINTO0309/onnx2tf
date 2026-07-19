@@ -349,6 +349,9 @@ from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
 from onnx2tf.tflite_builder.passes.binary_layout_convergence import (
     run_indexed_binary_layout_convergence,
 )
+from onnx2tf.tflite_builder.passes.terminal_stabilization_orchestration import (
+    run_terminal_stabilization_cleanup,
+)
 from onnx2tf.tflite_builder.passes.conv_output_passthrough_layout import (
     optimize_transposeconv_output_channel1_terminal_transpose_chains as _optimize_transposeconv_output_channel1_terminal_transpose_chains_pass,
     optimize_transposeconv_output_nhwc_passthrough_chains as _optimize_transposeconv_output_nhwc_passthrough_chains_pass,
@@ -676,9 +679,6 @@ from onnx2tf.tflite_builder.passes.quantized_prelu import (
 from onnx2tf.tflite_builder.passes.quantized_reshape import (
     _optimize_dequant_reshape_quantize_chains as _optimize_dequant_reshape_quantize_chains_pass,
     run_quantized_reshape_cleanup,
-)
-from onnx2tf.tflite_builder.passes.high_rank_binary import (
-    coalesce_static_high_rank_binary_operators,
 )
 from onnx2tf.tflite_builder.passes.high_rank_matmul import (
     _compress_static_high_rank_batch_matmul as _compress_static_high_rank_batch_matmul_pass,
@@ -6110,15 +6110,8 @@ def lower_onnx_to_ir(
 
     # Terminal layout cleanup can expose stale direct-NCHW fallback bridges
     # that were not identifiable before the final annotations were available.
-    _final_binary_layout_convergence_stats = (
-        _run_indexed_binary_layout_convergence(model_ir)
-    )
-    _final_high_rank_binary_stats = coalesce_static_high_rank_binary_operators(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    _final_dynamic_boundary_signature_stats = (
-        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    _final_terminal_stabilization_results = (
+        run_terminal_stabilization_cleanup(shared_model_ir_pass_context)
     )
     session.record_phase_result(
         "layout_validation.primary.terminal",

@@ -16,6 +16,14 @@ OWNER_PATH = (
 )
 WRAPPER = "_run_indexed_binary_layout_convergence"
 OWNER = "run_indexed_binary_layout_convergence"
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_stabilization_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_stabilization_cleanup"
 ROUND_OWNERS = (
     "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
     "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
@@ -90,12 +98,16 @@ def test_binary_layout_convergence_pass_module_contract_is_fixed() -> None:
 
     lowerer = functions["lower_onnx_to_ir"]
     calls = _ordered_calls(lowerer, (WRAPPER,))
-    assert len(calls) == 2
-    assert [ast.unparse(call.args[0]) for call in calls] == [
-        "fallback_ir",
-        "model_ir",
-    ]
+    assert len(calls) == 1
+    assert [ast.unparse(call.args[0]) for call in calls] == ["fallback_ir"]
     assert all(call.keywords == [] for call in calls)
+
+    terminal_calls = _ordered_calls(
+        _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER],
+        (OWNER,),
+    )
+    assert len(terminal_calls) == 1
+    assert ast.unparse(terminal_calls[0]) == f"{OWNER}(context.model_ir)"
 
 
 def test_binary_layout_convergence_lowerer_wrapper_is_compatible() -> None:
@@ -108,8 +120,11 @@ def test_binary_layout_convergence_lowerer_wrapper_is_compatible() -> None:
 
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     calls = _ordered_calls(lowerer, (WRAPPER,))
-    assert len(calls) == 2
-    assert [ast.unparse(call.args[0]) for call in calls] == [
-        "fallback_ir",
-        "model_ir",
-    ]
+    assert len(calls) == 1
+    assert [ast.unparse(call.args[0]) for call in calls] == ["fallback_ir"]
+
+    terminal_calls = _ordered_calls(
+        _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER],
+        (OWNER,),
+    )
+    assert len(terminal_calls) == 1

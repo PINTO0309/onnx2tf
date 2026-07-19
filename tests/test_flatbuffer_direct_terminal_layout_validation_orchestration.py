@@ -86,6 +86,15 @@ BINARY_LAYOUT_CONVERGENCE_OWNER_PATH = (
     / "binary_layout_convergence.py"
 )
 BINARY_LAYOUT_CONVERGENCE_OWNER = "run_indexed_binary_layout_convergence"
+TERMINAL_STABILIZATION_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_stabilization_orchestration.py"
+)
+TERMINAL_STABILIZATION_OWNER = "run_terminal_stabilization_cleanup"
+TERMINAL_STABILIZATION_RESULT = "_final_terminal_stabilization_results"
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -341,6 +350,27 @@ def _binary_layout_convergence_owner_call_count(function_name: str) -> int:
     )
 
 
+def _terminal_stabilization_owner_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        TERMINAL_STABILIZATION_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_STABILIZATION_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+    ]
+
+
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if isinstance(statement, (ast.Assign, ast.Expr)) and isinstance(
         statement.value,
@@ -414,28 +444,15 @@ def _call_index(
 
 def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> None:
     body = _lowerer_body()
-    convergence_index = _call_index(
-        body,
-        "_run_indexed_binary_layout_convergence",
-    )
-    coalesce_index = _call_index(
-        body,
-        "coalesce_static_high_rank_binary_operators",
-        start=convergence_index + 1,
-    )
-    realign_index = _call_index(
-        body,
-        "_realign_dynamic_boundary_shape_signature_map",
-        start=coalesce_index + 1,
-    )
+    stabilization_index = _call_index(body, TERMINAL_STABILIZATION_OWNER)
     validation_index = next(
         index
-        for index in range(realign_index + 1, len(body))
+        for index in range(stabilization_index + 1, len(body))
         if _call_name(_phase_result_owner(body[index]))
         == "run_topology_layout_validation"
     )
 
-    assert convergence_index < coalesce_index < realign_index < validation_index
+    assert stabilization_index + 1 == validation_index
     validation = body[validation_index]
     _assert_phase_result_record(
         validation,
@@ -450,58 +467,46 @@ def test_primary_path_validates_terminal_layout_and_clears_stale_errors() -> Non
 
 def test_primary_path_retains_terminal_mutation_results() -> None:
     body = _lowerer_body()
-    convergence_index = _call_index(
-        body,
-        "_run_indexed_binary_layout_convergence",
-    )
-    coalesce_index = _call_index(
-        body,
-        "coalesce_static_high_rank_binary_operators",
-        start=convergence_index + 1,
-    )
-    realign_index = _call_index(
-        body,
-        "_realign_dynamic_boundary_shape_signature_map",
-        start=coalesce_index + 1,
-    )
+    stabilization_index = _call_index(body, TERMINAL_STABILIZATION_OWNER)
+    statement = body[stabilization_index]
+    assert isinstance(statement, ast.Assign)
+    assert len(statement.targets) == 1
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == TERMINAL_STABILIZATION_RESULT
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == TERMINAL_STABILIZATION_OWNER
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert call.keywords == []
 
-    expected = (
+    expected_owner_calls = (
         (
-            convergence_index,
-            "_final_binary_layout_convergence_stats",
-            "_run_indexed_binary_layout_convergence",
-            ["model_ir"],
+            "run_indexed_binary_layout_convergence",
+            ["context.model_ir"],
             {},
         ),
         (
-            coalesce_index,
-            "_final_high_rank_binary_stats",
             "coalesce_static_high_rank_binary_operators",
-            ["model_ir"],
-            {"layout_state": "session.layout_state"},
+            ["context.model_ir"],
+            {"layout_state": "context.layout_state"},
         ),
         (
-            realign_index,
-            "_final_dynamic_boundary_signature_stats",
-            "_realign_dynamic_boundary_shape_signature_map",
-            ["model_ir"],
+            "realign_dynamic_boundary_shape_signature_map",
+            ["context.model_ir"],
             {},
         ),
     )
-    for index, result_name, function_name, arguments, keywords in expected:
-        statement = body[index]
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == result_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == function_name
-        assert [ast.unparse(argument) for argument in call.args] == arguments
+    for function_name, arguments, keywords in expected_owner_calls:
+        owner_calls = _terminal_stabilization_owner_calls(function_name)
+        assert len(owner_calls) == 1
+        owner_call = owner_calls[0]
+        assert [ast.unparse(argument) for argument in owner_call.args] == arguments
         assert {
             keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
+            for keyword in owner_call.keywords
         } == keywords
 
 
@@ -1120,19 +1125,11 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == sanitize_name
     ]
-    assert len(realign_indices) == 1
+    assert len(realign_indices) == 0
+    assert len(_terminal_stabilization_owner_calls(realign_name)) == 1
     assert _shared_late_owner_call_count(realign_name) == 1
     assert len(sanitize_indices) == 0
     assert _late_binary_repair_owner_call_count(sanitize_name) == 1
-
-    terminal_realign = body[realign_indices[0]]
-    assert isinstance(terminal_realign, ast.Assign)
-    assert isinstance(terminal_realign.targets[0], ast.Name)
-    assert (
-        terminal_realign.targets[0].id
-        == "_final_dynamic_boundary_signature_stats"
-    )
-    assert ast.unparse(terminal_realign.value) == f"{realign_name}(model_ir)"
 
     following = body[summary_index + 1]
     assert isinstance(following, ast.Assign)

@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Thirty-eight late lowerer clusters now have focused orchestration owners. The
+Thirty-nine late lowerer clusters now have focused orchestration owners. The
 first combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -308,10 +308,18 @@ graph index, shares it across broadcast-constant repair, stale binary-adapter
 repair, and static-shape reconciliation, preserves that exact order, retains
 the three-round cap and stable-stop rule, and returns the unchanged ordered
 three-counter mapping. The lowerer compatibility wrapper and both fallback and
-primary callers remain intact.
+primary behaviors remain intact; the fallback still uses the wrapper and the
+primary use is composed by the following terminal owner.
+
+The thirty-ninth composes final-primary indexed binary-layout convergence,
+static high-rank binary coalescing, and dynamic boundary-signature realignment.
+It preserves model/layout argument policy, exact callback order, every raw
+mapping object, both raw lowerer compatibility wrappers, the fallback
+convergence path, and terminal validation/finalization successors while
+replacing three lowerer results with one ordered context-owned tuple.
 
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing fifty-nine former unconsumed locals and three
+and result schemas while removing sixty-two former unconsumed locals and three
 lowerer scope locals. They also replace twenty-nine consumed mutation-evidence
 or aggregate-result locals and twenty tensor-count snapshots with three
 explicit boolean decisions, nineteen reusable summary calls, and one prune-aware
@@ -940,3 +948,11 @@ It preserves raw mapping identities and order, model/layout argument policy,
 the validation and finalizer successors, shared context identity, and the full
 128/128 store. Production remains unchanged until the composite context owner
 is implemented separately.
+
+The latest checkpoint implements that terminal stabilization context owner.
+It replaces the three final-primary locals with one ordered composite, removes
+the direct high-rank-binary import from the lowerer, and preserves exact pass
+order, ModelIR/LayoutState identity, all raw mappings, both compatibility
+wrappers, fallback behavior, terminal validation, finalization, and the full
+128/128 store. Runtime injection and owner-aware structural tests cover the
+new boundary directly.

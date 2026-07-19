@@ -3,8 +3,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    terminal_stabilization_orchestration as owner_module,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -106,35 +109,7 @@ def _assert_terminal_successor(body: list[ast.stmt], index: int) -> None:
     assert ast.unparse(terminal.value) == "_finalize_model_ir(model_ir)"
 
 
-def test_terminal_stabilization_raw_lowerer_contract_is_fixed() -> None:
-    body = _lowerer().body
-    indices = []
-    for result_name, owner_name, arguments, keywords in RAW_CONTRACTS:
-        matches = [
-            (index, statement)
-            for index, statement in enumerate(body)
-            if _assignment_name(statement) == result_name
-        ]
-        assert len(matches) == 1
-        index, statement = matches[0]
-        assert isinstance(statement, ast.Assign)
-        _assert_call(
-            statement.value,
-            name=owner_name,
-            arguments=arguments,
-            keywords=keywords,
-        )
-        indices.append(index)
-
-    assert indices == list(range(indices[0], indices[0] + len(indices)))
-    _assert_terminal_successor(body, indices[-1] + 1)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal stabilization still has three lowerer-owned results",
-)
-def test_terminal_stabilization_has_one_context_owner() -> None:
+def test_terminal_stabilization_context_owner_preserves_raw_contracts() -> None:
     owner = _function(OWNER_PATH, OWNER)
     assert [argument.arg for argument in owner.args.args] == ["context"]
     assert len(owner.body) == 1
@@ -170,3 +145,85 @@ def test_terminal_stabilization_has_one_context_owner() -> None:
         keywords={},
     )
     _assert_terminal_successor(body, index + 1)
+
+    assert not any(
+        _assignment_name(statement) in {
+            result_name for result_name, *_ in RAW_CONTRACTS
+        }
+        for statement in body
+    )
+
+
+def test_terminal_stabilization_lowerer_retains_one_composite_result() -> None:
+    body = _lowerer().body
+    matches = [
+        (index, statement)
+        for index, statement in enumerate(body)
+        if _assignment_name(statement) == RESULT_NAME
+    ]
+    assert len(matches) == 1
+    index, statement = matches[0]
+    assert isinstance(statement, ast.Assign)
+    _assert_call(
+        statement.value,
+        name=OWNER,
+        arguments=("shared_model_ir_pass_context",),
+        keywords={},
+    )
+    _assert_terminal_successor(body, index + 1)
+
+
+def test_terminal_stabilization_runtime_preserves_identity_order_and_tuple(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("terminal_stabilization")
+    layout_state = LayoutState.from_model_ir(model_ir)
+    context = owner_module.TerminalStabilizationContext(
+        model_ir=model_ir,
+        layout_state=layout_state,
+        diagnostics=[],
+    )
+    expected = (
+        {"repaired_rank4_channelwise_broadcast_constants": 1},
+        {"coalesced_static_high_rank_binary_operators": 2},
+        {"realigned_dynamic_boundary_shape_signature_map": 3},
+    )
+    calls: list[str] = []
+
+    def convergence(received_model_ir):
+        assert received_model_ir is model_ir
+        calls.append("convergence")
+        return expected[0]
+
+    def coalesce(received_model_ir, *, layout_state):
+        assert received_model_ir is model_ir
+        assert layout_state is context.layout_state
+        calls.append("coalesce")
+        return expected[1]
+
+    def realign(received_model_ir):
+        assert received_model_ir is model_ir
+        calls.append("realign")
+        return expected[2]
+
+    monkeypatch.setattr(
+        owner_module,
+        "run_indexed_binary_layout_convergence",
+        convergence,
+    )
+    monkeypatch.setattr(
+        owner_module,
+        "coalesce_static_high_rank_binary_operators",
+        coalesce,
+    )
+    monkeypatch.setattr(
+        owner_module,
+        "realign_dynamic_boundary_shape_signature_map",
+        realign,
+    )
+
+    result = owner_module.run_terminal_stabilization_cleanup(context)
+
+    assert calls == ["convergence", "coalesce", "realign"]
+    assert result == expected
+    assert all(actual is wanted for actual, wanted in zip(result, expected))
