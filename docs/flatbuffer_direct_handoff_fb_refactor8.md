@@ -3225,3 +3225,20 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Late SPP/Concat/Unary direct-summary characterization
+
+The direct late SPP pair currently assigns its raw two-result tuple and
+immediately normalizes it into `_late_spp_stats`. The tuple has no other
+consumer and the summary is unconsumed. The existing raw wrapper remains a
+required compatibility boundary.
+
+The focused contract fixes this representation and adds one strict xfail for
+`run_late_spp_concat_unary_conv_summary(context)`. Sequential validation
+completed with `1 passed, 1 xfailed in 0.14s`; targeted Ruff, bytecode
+compilation, and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, add only the
+direct summary owner, preserve the raw wrapper, update owner-aware neighboring
+contracts, and validate sequentially. Continue with commits and pushes only;
+never create, update, or reopen a pull request.

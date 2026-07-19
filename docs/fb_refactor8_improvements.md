@@ -3664,3 +3664,22 @@ No real-model corpus conversion was repeated because the focused runtime
 contract proves exact order, argument identity, and tuple preservation, while
 the affected and architecture gates cover the other production call sites and
 total invocation counts.
+
+## Late SPP/Concat/Unary direct-summary characterization
+
+The next late evidence pair stores the raw ordered SPP and Concat/Unary/Conv
+results and immediately normalizes them into `_late_spp_stats`. The raw tuple
+is consumed only by that summary call, and the normalized mapping is not used
+for control flow. The existing raw wrapper remains a separate owner boundary.
+
+`tests/test_flatbuffer_direct_late_spp_summary_orchestration.py` fixes the
+two-statement representation, wrapper and summarizer calls, result use counts,
+predecessor, successor, and retained wrapper dispatch. Its strict expected
+failure requires one pass-module direct-summary owner. No production source,
+pass, graph, result, store, public API, artifact, dependency, or TensorFlow
+boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.14s`; targeted Ruff, bytecode compilation, and
+whitespace checks passed. The sole expected failure is the intentionally
+absent direct-summary owner.
