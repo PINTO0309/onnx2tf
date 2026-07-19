@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.static_shape_reconciliation import (
     reconcile_static_tensor_shapes,
+    run_static_shape_topology_reconciliation,
 )
 
 
@@ -18,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 RECONCILE_OWNER = "_reconcile_static_tensor_shapes"
 SORT_OWNER = "_topologically_sort_operators"
+RUNNER = "run_static_shape_topology_reconciliation"
 EXPECTED_RESULT_TARGETS = (
     "_fallback_norm_static_shape_stats",
     "_fallback_high_rank_bmm_static_shape_stats",
@@ -99,6 +102,20 @@ def _raw_reconcile_sort_pairs(
     )
 
 
+def _runner_locations(
+    lowerer: ast.FunctionDef,
+) -> list[tuple[list[ast.stmt], int]]:
+    return sorted(
+        [
+            (block, index)
+            for block in _pipeline_blocks(lowerer.body)
+            for index, statement in enumerate(block)
+            if _call_name(statement) == RUNNER
+        ],
+        key=lambda item: item[0][item[1]].lineno,
+    )
+
+
 def _stale_reversed_model_ir() -> ModelIR:
     model_ir = ModelIR("static_shape_topology_reconciliation")
     model_ir.inputs = ["input"]
@@ -142,40 +159,48 @@ def _stale_reversed_model_ir() -> ModelIR:
     return model_ir
 
 
-def test_eight_static_shape_topology_boundaries_are_explicit() -> None:
-    pairs = _raw_reconcile_sort_pairs(_lowerer())
+def _cyclic_model_ir() -> ModelIR:
+    model_ir = ModelIR("static_shape_topology_cycle")
+    model_ir.tensors = {
+        name: TensorIR(name=name, dtype="FLOAT32", shape=[1])
+        for name in ("a", "b")
+    }
+    model_ir.operators = [
+        OperatorIR("CUSTOM_A", ["b"], ["a"]),
+        OperatorIR("CUSTOM_B", ["a"], ["b"]),
+    ]
+    return model_ir
 
-    assert len(pairs) == 8
-    assert tuple(_single_target(block[index]) for block, index in pairs) == (
+
+def test_eight_static_shape_topology_boundaries_are_explicit() -> None:
+    lowerer = _lowerer()
+    assert _raw_reconcile_sort_pairs(lowerer) == []
+    locations = _runner_locations(lowerer)
+
+    assert len(locations) == 8
+    assert tuple(_single_target(block[index]) for block, index in locations) == (
         EXPECTED_RESULT_TARGETS
     )
     assert tuple(
         ast.unparse(_statement_call(block[index]).args[0])
-        for block, index in pairs
+        for block, index in locations
     ) == EXPECTED_MODEL_ARGUMENTS
-    for block, index in pairs:
-        reconcile_call = _statement_call(block[index])
-        sort_call = _statement_call(block[index + 1])
-        assert reconcile_call is not None
-        assert sort_call is not None
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in reconcile_call.keywords
-        } == {"include_mutation_count": "True"}
-        assert [ast.unparse(argument) for argument in sort_call.args] == [
-            ast.unparse(reconcile_call.args[0])
-        ]
-        assert sort_call.keywords == []
+    for block, index in locations:
+        call = _statement_call(block[index])
+        assert call is not None
+        assert call.keywords == []
 
 
 def test_static_shape_then_topology_contract_is_explicit() -> None:
-    model_ir = _stale_reversed_model_ir()
+    expected_ir = _stale_reversed_model_ir()
+    actual_ir = copy.deepcopy(expected_ir)
 
     shape_stats = reconcile_static_tensor_shapes(
-        model_ir,
+        expected_ir,
         include_mutation_count=True,
     )
-    sort_stats = _topologically_sort_operators(model_ir)
+    sort_stats = _topologically_sort_operators(expected_ir)
+    actual_stats = run_static_shape_topology_reconciliation(actual_ir)
 
     assert shape_stats == {
         "reconciled_static_tensor_shapes": 3,
@@ -185,8 +210,27 @@ def test_static_shape_then_topology_contract_is_explicit() -> None:
         "reordered_operators": 2,
         "cycle_detected": 0,
     }
-    assert model_ir.tensors["reshaped"].shape == [2, 2]
-    assert [operator.op_type for operator in model_ir.operators] == [
+    assert actual_stats == {**shape_stats, **sort_stats}
+    assert actual_ir.tensors["reshaped"].shape == [2, 2]
+    assert [operator.op_type for operator in actual_ir.operators] == [
         "RESHAPE",
         "RELU",
+    ]
+    assert [operator.op_type for operator in actual_ir.operators] == [
+        operator.op_type for operator in expected_ir.operators
+    ]
+
+
+def test_static_shape_topology_runner_preserves_cycle_behavior() -> None:
+    model_ir = _cyclic_model_ir()
+
+    assert run_static_shape_topology_reconciliation(model_ir) == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 1,
+    }
+    assert [operator.op_type for operator in model_ir.operators] == [
+        "CUSTOM_A",
+        "CUSTOM_B",
     ]

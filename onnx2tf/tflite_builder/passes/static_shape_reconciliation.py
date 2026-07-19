@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _normalize_squeeze_axes_for_rank,
     _permute_shape,
     _read_const_ints_from_tensor,
+    _topologically_sort_operators,
     _write_const_ints_to_tensor,
 )
 from onnx2tf.tflite_builder.ir import ModelIR
@@ -1728,3 +1729,25 @@ def reconcile_static_tensor_shapes(
     if include_mutation_count:
         details["reconciled_static_shape_mutations"] = int(mutation_count)
     return details
+
+
+def run_static_shape_topology_reconciliation(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Reconcile static shapes, then restore operator topology."""
+
+    shape_stats = reconcile_static_tensor_shapes(
+        model_ir,
+        include_mutation_count=True,
+    )
+    sort_stats = _topologically_sort_operators(model_ir)
+    return {
+        "reconciled_static_tensor_shapes": int(
+            shape_stats.get("reconciled_static_tensor_shapes", 0)
+        ),
+        "reconciled_static_shape_mutations": int(
+            shape_stats.get("reconciled_static_shape_mutations", 0)
+        ),
+        "reordered_operators": int(sort_stats.get("reordered_operators", 0)),
+        "cycle_detected": int(sort_stats.get("cycle_detected", 0)),
+    }

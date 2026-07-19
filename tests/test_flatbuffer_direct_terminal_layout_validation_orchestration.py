@@ -184,6 +184,8 @@ def test_primary_path_stages_final_high_rank_bmm_reconciliation() -> None:
     } == {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
 
     guard = body[stats_index + 2]
@@ -192,7 +194,7 @@ def test_primary_path_stages_final_high_rank_bmm_reconciliation() -> None:
         "int(final_high_rank_bmm_stats.get("
         "'compressed_static_high_rank_batch_matmul', 0)) > 0"
     )
-    assert len(guard.body) == 2
+    assert len(guard.body) == 1
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
     assert isinstance(reconciliation.targets[0], ast.Name)
@@ -201,18 +203,14 @@ def test_primary_path_stages_final_high_rank_bmm_reconciliation() -> None:
     )
     assert isinstance(reconciliation.value, ast.Call)
     assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert (
+        reconciliation.value.func.id
+        == "run_static_shape_topology_reconciliation"
+    )
     assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
         "model_ir"
     ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(guard.body[1], ast.Expr)
-    assert ast.unparse(guard.body[1].value) == (
-        "_topologically_sort_operators(model_ir)"
-    )
+    assert reconciliation.value.keywords == []
 
     following = body[stats_index + 3]
     assert isinstance(following, ast.Assign)
@@ -243,6 +241,8 @@ def test_primary_path_stages_final_pad_reconciliation() -> None:
     } == {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
 
     guard = body[stats_index + 2]
@@ -251,7 +251,7 @@ def test_primary_path_stages_final_pad_reconciliation() -> None:
         "int(final_pad_layout_stats.get("
         "'repaired_channel_last_inputs_for_channel_first_pad', 0)) > 0"
     )
-    assert len(guard.body) == 2
+    assert len(guard.body) == 1
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
     assert isinstance(reconciliation.targets[0], ast.Name)
@@ -260,18 +260,14 @@ def test_primary_path_stages_final_pad_reconciliation() -> None:
     )
     assert isinstance(reconciliation.value, ast.Call)
     assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert (
+        reconciliation.value.func.id
+        == "run_static_shape_topology_reconciliation"
+    )
     assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
         "model_ir"
     ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(guard.body[1], ast.Expr)
-    assert ast.unparse(guard.body[1].value) == (
-        "_topologically_sort_operators(model_ir)"
-    )
+    assert reconciliation.value.keywords == []
 
     following = body[stats_index + 3]
     assert isinstance(following, ast.Assign)
@@ -326,6 +322,8 @@ def test_primary_path_stages_complete_final_conv_input_evidence() -> None:
     } == {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
 
     guard = body[stats_index + 2]
@@ -334,7 +332,7 @@ def test_primary_path_stages_complete_final_conv_input_evidence() -> None:
         "int(final_conv_input_stats.get("
         "'repaired_stale_nchw_to_nhwc_conv_input_transposes', 0)) > 0"
     )
-    assert len(guard.body) == 2
+    assert len(guard.body) == 1
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
     assert isinstance(reconciliation.targets[0], ast.Name)
@@ -343,18 +341,14 @@ def test_primary_path_stages_complete_final_conv_input_evidence() -> None:
     )
     assert isinstance(reconciliation.value, ast.Call)
     assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert (
+        reconciliation.value.func.id
+        == "run_static_shape_topology_reconciliation"
+    )
     assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
         "model_ir"
     ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(guard.body[1], ast.Expr)
-    assert ast.unparse(guard.body[1].value) == (
-        "_topologically_sort_operators(model_ir)"
-    )
+    assert reconciliation.value.keywords == []
 
     following = body[stats_index + 3]
     assert isinstance(following, ast.Assign)
@@ -387,6 +381,8 @@ def test_primary_path_stages_final_mixed_concat_reconciliation() -> None:
     } == {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
 
     guard = body[stats_index + 2]
@@ -395,7 +391,7 @@ def test_primary_path_stages_final_mixed_concat_reconciliation() -> None:
         "int(final_concat_layout_stats.get("
         "'repaired_mixed_nhwc_inputs_for_nchw_concat', 0)) > 0"
     )
-    assert len(guard.body) == 2
+    assert len(guard.body) == 1
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
     assert isinstance(reconciliation.targets[0], ast.Name)
@@ -404,18 +400,14 @@ def test_primary_path_stages_final_mixed_concat_reconciliation() -> None:
     )
     assert isinstance(reconciliation.value, ast.Call)
     assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert (
+        reconciliation.value.func.id
+        == "run_static_shape_topology_reconciliation"
+    )
     assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
         "model_ir"
     ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(guard.body[1], ast.Expr)
-    assert ast.unparse(guard.body[1].value) == (
-        "_topologically_sort_operators(model_ir)"
-    )
+    assert reconciliation.value.keywords == []
 
     following = body[stats_index + 3]
     assert isinstance(following, ast.Assign)
@@ -446,6 +438,8 @@ def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> Non
     } == {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
 
     axis_guard = body[axis_index + 2]
@@ -454,7 +448,7 @@ def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> Non
         "int(final_concat_axis_stats.get("
         "'repaired_nchw_concat_transpose_conv_axes', 0)) > 0"
     )
-    assert len(axis_guard.body) == 2
+    assert len(axis_guard.body) == 1
     axis_reconciliation = axis_guard.body[0]
     assert isinstance(axis_reconciliation, ast.Assign)
     assert isinstance(axis_reconciliation.targets[0], ast.Name)
@@ -463,18 +457,14 @@ def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> Non
     )
     assert isinstance(axis_reconciliation.value, ast.Call)
     assert isinstance(axis_reconciliation.value.func, ast.Name)
-    assert axis_reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert (
+        axis_reconciliation.value.func.id
+        == "run_static_shape_topology_reconciliation"
+    )
     assert [
         ast.unparse(argument) for argument in axis_reconciliation.value.args
     ] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in axis_reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(axis_guard.body[1], ast.Expr)
-    assert ast.unparse(axis_guard.body[1].value) == (
-        "_topologically_sort_operators(model_ir)"
-    )
+    assert axis_reconciliation.value.keywords == []
 
     tensor_count = body[axis_index + 3]
     assert isinstance(tensor_count, ast.Assign)
@@ -523,6 +513,8 @@ def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> Non
     } == {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
 
     binary_guard = body[binary_index + 2]
@@ -531,7 +523,7 @@ def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> Non
         "int(final_binary_layout_stats.get("
         "'repaired_stale_nchw_to_nhwc_channelwise_binary_transposes', 0)) > 0"
     )
-    assert len(binary_guard.body) == 2
+    assert len(binary_guard.body) == 1
     binary_reconciliation = binary_guard.body[0]
     assert isinstance(binary_reconciliation, ast.Assign)
     assert isinstance(binary_reconciliation.targets[0], ast.Name)
@@ -541,19 +533,12 @@ def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> Non
     assert isinstance(binary_reconciliation.value, ast.Call)
     assert isinstance(binary_reconciliation.value.func, ast.Name)
     assert binary_reconciliation.value.func.id == (
-        "_reconcile_static_tensor_shapes"
+        "run_static_shape_topology_reconciliation"
     )
     assert [
         ast.unparse(argument) for argument in binary_reconciliation.value.args
     ] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in binary_reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(binary_guard.body[1], ast.Expr)
-    assert ast.unparse(binary_guard.body[1].value) == (
-        "_topologically_sort_operators(model_ir)"
-    )
+    assert binary_reconciliation.value.keywords == []
 
     following = body[binary_index + 3]
     assert isinstance(following, ast.Expr)

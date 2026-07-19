@@ -463,12 +463,9 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
         "_fallback_norm_static_shape_stats"
     )
     assert _statement_call_name(reconciliation) == (
-        "_reconcile_static_tensor_shapes"
+        "run_static_shape_topology_reconciliation"
     )
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
+    assert reconciliation.value.keywords == []
 
 
 def test_singleton_consecutive_phase_imports_owners_without_lowerer() -> None:

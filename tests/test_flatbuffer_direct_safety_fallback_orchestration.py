@@ -894,6 +894,8 @@ def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
     } == {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
 
     guard = body[stats_index + 2]
@@ -902,7 +904,7 @@ def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
         "int(fallback_high_rank_bmm_stats.get("
         "'compressed_static_high_rank_batch_matmul', 0)) > 0"
     )
-    assert len(guard.body) == 2
+    assert len(guard.body) == 1
     reconciliation = guard.body[0]
     assert isinstance(reconciliation, ast.Assign)
     assert isinstance(reconciliation.targets[0], ast.Name)
@@ -911,18 +913,14 @@ def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
     )
     assert isinstance(reconciliation.value, ast.Call)
     assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
+    assert (
+        reconciliation.value.func.id
+        == "run_static_shape_topology_reconciliation"
+    )
     assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
         "fallback_ir"
     ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(guard.body[1], ast.Expr)
-    assert ast.unparse(guard.body[1].value) == (
-        "_topologically_sort_operators(fallback_ir)"
-    )
+    assert reconciliation.value.keywords == []
 
     following = body[stats_index + 3]
     assert isinstance(following, ast.Assign)

@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 RESULT_TARGET = "_fallback_norm_static_shape_stats"
 RECONCILE_OWNER = "_reconcile_static_tensor_shapes"
-SORT_OWNER = "_topologically_sort_operators"
+RECONCILE_TOPOLOGY_OWNER = "run_static_shape_topology_reconciliation"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -118,7 +118,7 @@ def test_fallback_norm_reconciliation_schema_and_mutation_are_explicit() -> None
 
 def test_fallback_norm_reconciliation_boundary_is_explicit() -> None:
     guard = _fallback_norm_guard()
-    assert len(guard.body) == 4
+    assert len(guard.body) == 3
     assert _call_name(guard.body[0]) == (
         "run_indexed_binary_layout_adapter_cleanup"
     )
@@ -127,15 +127,11 @@ def test_fallback_norm_reconciliation_boundary_is_explicit() -> None:
     )
     reconciliation = guard.body[2]
     assert _single_target(reconciliation) == RESULT_TARGET
-    assert _call_name(reconciliation) == RECONCILE_OWNER
+    assert _call_name(reconciliation) == RECONCILE_TOPOLOGY_OWNER
     call = _statement_call(reconciliation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"include_mutation_count": "True"}
-    assert _call_name(guard.body[3]) == SORT_OWNER
+    assert call.keywords == []
 
 
 def test_fallback_norm_reconciliation_retains_complete_observation() -> None:
@@ -145,13 +141,9 @@ def test_fallback_norm_reconciliation_retains_complete_observation() -> None:
     call = _statement_call(reconciliation)
     assert call is not None
     assert isinstance(call.func, ast.Name)
-    assert call.func.id == RECONCILE_OWNER
+    assert call.func.id == RECONCILE_TOPOLOGY_OWNER
     assert [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"include_mutation_count": "True"}
-    assert _call_name(guard.body[3]) == SORT_OWNER
+    assert call.keywords == []
 
     lowerer = _lowerer()
     assert not any(

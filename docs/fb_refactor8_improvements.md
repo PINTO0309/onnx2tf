@@ -295,3 +295,56 @@ expectation for the intentionally replaced two-expression boundary. After the
 six contracts required the new phase-specific result targets, the same gate
 passed. No model conversion was run because the owner is differentially
 equivalent to the existing adjacent calls.
+
+## Static-shape/topology reconciliation owner
+
+The follow-up audit classified the fifteen sort-only boundaries left after the
+topology/layout refresh extraction. Eight of those boundaries had one exact
+contract: a guarded static-shape reconciliation with
+`include_mutation_count=True`, immediately followed by an unconditional
+topological sort of the same `ModelIR`. They cover fallback norm and high-rank
+BatchMatMul recovery plus the final high-rank BatchMatMul, Pad, Conv-input,
+mixed-Concat, Concat-axis, and binary-layout repairs.
+
+The characterization checkpoint fixed the eight locations, model arguments,
+result targets, reconciliation result schema, sort result schema, mutation
+order, and a graph where reconciliation and reordering are both observable.
+It also exposed that the existing iterative reconciler reports three updates
+for the deliberately stale Reshape fixture rather than one; that existing
+convergence result is preserved exactly.
+
+`passes/static_shape_reconciliation.py` now owns
+`run_static_shape_topology_reconciliation(model_ir)`. The owner:
+
+- runs the existing shape reconciler with mutation counting enabled;
+- runs the existing topological sorter immediately afterward;
+- returns the normalized four-counter result
+  `reconciled_static_tensor_shapes`,
+  `reconciled_static_shape_mutations`, `reordered_operators`, and
+  `cycle_detected`;
+- preserves the old cycle behavior, including leaving operator order unchanged
+  when a cycle is detected.
+
+The eight lowerer branches now retain that compact result under their existing
+phase-local targets. Their zero-result defaults contain the same four keys.
+No guard, repair owner, graph mutation, following pass, public API, artifact,
+dependency, or TensorFlow boundary changed. This reduces the remaining raw
+topological-sort sites from fifteen to seven without adding a graph traversal;
+the runtime still performs the same reconciliation and sort at the same eight
+boundaries.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated owner and eight-boundary contract: `3 passed`;
+- affected fallback, terminal, singleton/Reshape, topology/layout, and shape
+  resolution contracts: `114 passed in 3.17s`;
+- lowerer architecture contracts: `258 passed in 18.50s`;
+- selected direct-builder topology and reconciliation tests:
+  `17 passed, 724 deselected in 0.68s`.
+
+An attempted unfiltered run of `test_tflite_builder_direct.py` reached its two
+`tf_converter` matrix tests, which correctly require the optional TensorFlow
+extra and fail in the core-only environment. Those tests are outside this
+TensorFlow-free unit; the directly affected selection above passes. No
+real-model conversion was run because the new owner is differentially
+equivalent to the former adjacent calls.

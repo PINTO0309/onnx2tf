@@ -121,6 +121,9 @@ from onnx2tf.tflite_builder.passes.dynamic_reshape_resolution import (
 from onnx2tf.tflite_builder.passes import (
     static_shape_reconciliation as _static_shape_reconciliation_pass,
 )
+from onnx2tf.tflite_builder.passes.static_shape_reconciliation import (
+    run_static_shape_topology_reconciliation,
+)
 from onnx2tf.tflite_builder.passes.hardswish_shape_sanitization import (
     sanitize_hardswish_tensor_shapes as _sanitize_hardswish_tensor_shapes_pass,
 )
@@ -5798,12 +5801,8 @@ def lower_onnx_to_ir(
                 )
             )
             _fallback_norm_static_shape_stats = (
-                _reconcile_static_tensor_shapes(
-                    fallback_ir,
-                    include_mutation_count=True,
-                )
+                run_static_shape_topology_reconciliation(fallback_ir)
             )
-            _topologically_sort_operators(fallback_ir)
         _fallback_dynamic_rank1_stats = (
             _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
         )
@@ -6009,6 +6008,8 @@ def lower_onnx_to_ir(
         _fallback_high_rank_bmm_static_shape_stats = {
             "reconciled_static_tensor_shapes": 0,
             "reconciled_static_shape_mutations": 0,
+            "reordered_operators": 0,
+            "cycle_detected": 0,
         }
         if int(
             fallback_high_rank_bmm_stats.get(
@@ -6017,12 +6018,8 @@ def lower_onnx_to_ir(
             )
         ) > 0:
             _fallback_high_rank_bmm_static_shape_stats = (
-                _reconcile_static_tensor_shapes(
-                    fallback_ir,
-                    include_mutation_count=True,
-                )
+                run_static_shape_topology_reconciliation(fallback_ir)
             )
-            _topologically_sort_operators(fallback_ir)
         _fallback_binary_layout_convergence_stats = (
             _run_indexed_binary_layout_convergence(fallback_ir)
         )
@@ -6491,6 +6488,8 @@ def lower_onnx_to_ir(
     _final_high_rank_bmm_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
     if int(
         final_high_rank_bmm_stats.get(
@@ -6499,12 +6498,8 @@ def lower_onnx_to_ir(
         )
     ) > 0:
         _final_high_rank_bmm_static_shape_stats = (
-            _reconcile_static_tensor_shapes(
-                model_ir,
-                include_mutation_count=True,
-            )
+            run_static_shape_topology_reconciliation(model_ir)
         )
-        _topologically_sort_operators(model_ir)
     final_pad_layout_stats = repair_channel_last_inputs_for_channel_first_pad(
         model_ir,
         layout_state=session.layout_state,
@@ -6512,6 +6507,8 @@ def lower_onnx_to_ir(
     _final_pad_layout_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
     if int(
         final_pad_layout_stats.get(
@@ -6519,11 +6516,9 @@ def lower_onnx_to_ir(
             0,
         )
     ) > 0:
-        _final_pad_layout_static_shape_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
+        _final_pad_layout_static_shape_stats = (
+            run_static_shape_topology_reconciliation(model_ir)
         )
-        _topologically_sort_operators(model_ir)
     final_conv_input_tensor_count = len(model_ir.tensors)
     final_conv_input_stats = {
         **_repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir),
@@ -6535,6 +6530,8 @@ def lower_onnx_to_ir(
     _final_conv_input_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
     if int(
         final_conv_input_stats.get(
@@ -6542,17 +6539,17 @@ def lower_onnx_to_ir(
             0,
         )
     ) > 0:
-        _final_conv_input_static_shape_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
+        _final_conv_input_static_shape_stats = (
+            run_static_shape_topology_reconciliation(model_ir)
         )
-        _topologically_sort_operators(model_ir)
     final_concat_layout_stats = _repair_mixed_nhwc_inputs_for_nchw_concat(
         model_ir
     )
     _final_mixed_concat_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
     if int(
         final_concat_layout_stats.get(
@@ -6561,16 +6558,14 @@ def lower_onnx_to_ir(
         )
     ) > 0:
         _final_mixed_concat_static_shape_stats = (
-            _reconcile_static_tensor_shapes(
-                model_ir,
-                include_mutation_count=True,
-            )
+            run_static_shape_topology_reconciliation(model_ir)
         )
-        _topologically_sort_operators(model_ir)
     final_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
     _final_concat_axis_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
     if int(
         final_concat_axis_stats.get(
@@ -6579,12 +6574,8 @@ def lower_onnx_to_ir(
         )
     ) > 0:
         _final_concat_axis_static_shape_stats = (
-            _reconcile_static_tensor_shapes(
-                model_ir,
-                include_mutation_count=True,
-            )
+            run_static_shape_topology_reconciliation(model_ir)
         )
-        _topologically_sort_operators(model_ir)
     final_binary_layout_tensor_count = len(model_ir.tensors)
     final_binary_layout_stats = {
         **_repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir),
@@ -6596,6 +6587,8 @@ def lower_onnx_to_ir(
     _final_binary_layout_static_shape_stats = {
         "reconciled_static_tensor_shapes": 0,
         "reconciled_static_shape_mutations": 0,
+        "reordered_operators": 0,
+        "cycle_detected": 0,
     }
     if int(
         final_binary_layout_stats.get(
@@ -6604,12 +6597,8 @@ def lower_onnx_to_ir(
         )
     ) > 0:
         _final_binary_layout_static_shape_stats = (
-            _reconcile_static_tensor_shapes(
-                model_ir,
-                include_mutation_count=True,
-            )
+            run_static_shape_topology_reconciliation(model_ir)
         )
-        _topologically_sort_operators(model_ir)
     _advance_post_progress()
     if post_progress_bar is not None:
         post_progress_spinner.stop()

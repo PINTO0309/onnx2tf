@@ -281,3 +281,69 @@ boundaries by semantic phase. Do not retain all results mechanically: select
 only repeated sequences or mutation evidence that can drive a proven safety or
 efficiency improvement without extending large result lifetimes. Continue
 with commits and pushes only; do not create or update a pull request.
+
+## Static-shape/topology reconciliation characterization
+
+The fifteen remaining sort-only boundaries were classified before any
+production edit. Eight are exact adjacent
+`_reconcile_static_tensor_shapes(..., include_mutation_count=True)` then
+`_topologically_sort_operators(...)` pairs over the same `ModelIR`. The eight
+sites are fallback norm, fallback high-rank BatchMatMul, and the final
+high-rank BatchMatMul, Pad, Conv-input, mixed-Concat, Concat-axis, and
+binary-layout repair guards. The other seven sites have materially different
+predecessors or scope and were excluded from this unit.
+
+`tests/test_flatbuffer_direct_static_shape_topology_reconciliation.py` fixed
+the exact eight targets and model arguments and exercised both observable
+shape convergence and operator reordering. The existing iterative reconciler
+reports three updates for that fixture; do not simplify that result to a count
+of distinct output tensors. Characterization passed as `2 passed in 0.51s`
+and was committed and pushed as `f8431200` before production changes.
+
+## Static-shape/topology reconciliation implementation checkpoint
+
+`run_static_shape_topology_reconciliation()` now lives with the reconciler in
+`passes/static_shape_reconciliation.py`. It runs the unchanged reconciler and
+sorter in their original order and returns one normalized four-counter result:
+
+- `reconciled_static_tensor_shapes`;
+- `reconciled_static_shape_mutations`;
+- `reordered_operators`;
+- `cycle_detected`.
+
+The same eight lowerer targets retain the combined result. Guard predicates,
+repair calls, fallback recursion, following owners, graph mutations, public
+behavior, dependencies, and TensorFlow isolation are unchanged. A dedicated
+cycle fixture proves that a detected cycle is reported and the original
+operator order remains intact.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated owner/boundary/cycle contract: `3 passed`;
+- affected fallback, terminal, singleton/Reshape, topology/layout, and shape
+  resolution contracts: `114 passed in 3.17s`;
+- lowerer architecture contracts: `258 passed in 18.50s`;
+- direct-builder topology/reconciliation selection:
+  `17 passed, 724 deselected in 0.68s`.
+
+The unfiltered direct-builder attempt also selected two `tf_converter` matrix
+tests. Their failures were the expected missing optional TensorFlow dependency
+in the core-only environment, not a `flatbuffer_direct` regression. No
+real-model conversion was run for this differentially equivalent ownership
+change.
+
+Seven raw sort-only boundaries remain:
+
+1. fallback after placeholder-MatMul restoration;
+2. fallback after the late Conv/Concat/binary repair family;
+3. fallback after indexed binary-layout convergence;
+4. the primary post-lowering baseline sort;
+5. the guarded no-layout safe-reduction sequence;
+6. final placeholder-MatMul restoration;
+7. the terminal sort before layout validation.
+
+On resume, characterize the two unconditional validation-boundary sorts and
+the three fallback-wide sorts separately. Do not fold them into the new owner
+merely because they call the same sorter: their predecessors, guards, and
+validation successors differ. Continue with coherent commits and pushes only;
+never create, update, or reopen a pull request.
