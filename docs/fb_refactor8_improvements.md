@@ -1291,6 +1291,33 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented result-destination
 migration.
 
+## Layout pass-set 2 quantized cleanup implementation
+
+The remaining direct result now records under
+`cleanup.layout_pass_set_2.dequant_transposeconv_quantize`. It remains inside
+the existing layout guard and between the same composite attention-gate/QDQ and
+quantized-activation recovery results.
+
+Only the unconsumed mapping destination changed. The owner call, argument,
+layout-state keyword, evaluation count, graph traversal, ModelIR mutation,
+guard, composite boundaries, public results, reports, artifacts, dependencies,
+and TensorFlow import boundaries are unchanged. No default existed. The bounded
+store now covers 72 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct result, multi-occurrence owner, phase-store, and adjacent architecture
+  contracts: `8 passed in 0.82s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader phase-result, owner, cleanup, fallback, terminal, shape, and topology
+  contracts: `275 passed in 6.94s`;
+- lowerer architecture contracts: `258 passed in 17.39s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No root-model corpus conversion was run because this is an observation-
+destination-only change and the runtime suite executes the guarded layout path.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

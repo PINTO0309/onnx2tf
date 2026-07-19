@@ -1325,3 +1325,24 @@ Commit and push this characterization before replacing only the single mapping
 destination. Preserve the guard and both composite boundaries, then update the
 multi-occurrence owner and bounded-store contracts, validate, document, commit,
 and push. Never create, update, or reopen a pull request.
+
+## Layout pass-set 2 quantized cleanup implementation
+
+The sole mapping result now uses the stable
+`cleanup.layout_pass_set_2.dequant_transposeconv_quantize` record. Its outer
+guard, owner expression, and composite recovery boundaries remain unchanged.
+No default existed. The bounded store now covers 72 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected contracts: `8 passed in 0.82s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader affected contracts: `275 passed in 6.94s`;
+- lowerer architecture contracts: `258 passed in 17.39s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only the observation destination
+changed and the runtime suite exercises the guarded path. After committing and
+pushing, retain the 72/128 phase-cap audit and keep composite results outside
+the bounded integer mapping store. Never create, update, or reopen a pull
+request.

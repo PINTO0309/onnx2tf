@@ -129,7 +129,7 @@ def test_direct_quantized_transpose_conv_results_are_retained_observation_only()
     assert len(locations) == 2
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == (None, RESULT_TARGETS[1])
+    ) == (None, None)
 
     first_body, first_index = locations[0]
     assert ast.unparse(first_body[first_index - 1]) == (
@@ -154,6 +154,12 @@ def test_direct_quantized_transpose_conv_results_are_retained_observation_only()
     )
 
     second_body, second_index = locations[1]
+    assert ast.unparse(second_body[second_index]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_2.dequant_transposeconv_quantize', "
+        "_optimize_dequant_transposeconv_quantize_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
     assert _single_target(second_body[second_index - 1]) == (
         "_layout_pass_set_2_attention_gate_qdq_results"
     )

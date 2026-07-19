@@ -28,6 +28,7 @@ EXPECTED_RESULT_TARGETS = (
     "_core_cleanup_dynamic_reshape_stats",
     "_core_cleanup_squeeze_reshape_identity_stats",
     "_core_cleanup_prune_reconcile_stats",
+    "_layout_pass_set_2_dequant_transposeconv_quantize_stats",
     "_layout_pass_set_2_squeeze_reshape_identity_stats",
     "_layout_pass_set_2_prune_reconcile_stats",
     "_terminal_cleanup_terminal_dequant_stats",
@@ -101,6 +102,7 @@ EXPECTED_OWNERS = (
     "_resolve_dynamic_reshape_shapes",
     "run_squeeze_reshape_identity_cleanup",
     "run_indexed_prune_reconcile_cleanup",
+    "_optimize_dequant_transposeconv_quantize_chains",
     "run_squeeze_reshape_identity_cleanup",
     "run_indexed_prune_reconcile_cleanup",
     "_sanitize_terminal_transpose_before_dequantize",
@@ -159,7 +161,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 29,
+    *("model_ir",) * 30,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -179,6 +181,7 @@ EXPECTED_PHASE_IDS = (
     "shape_resolution.core.dynamic_reshape",
     "cleanup.core.squeeze_reshape_identity",
     "cleanup.core.prune_reconcile",
+    "cleanup.layout_pass_set_2.dequant_transposeconv_quantize",
     "cleanup.layout_pass_set_2.squeeze_reshape_identity",
     "cleanup.layout_pass_set_2.prune_reconcile",
     "cleanup.terminal.dequant",
@@ -275,7 +278,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_seventy_one_observations_use_the_bounded_session_store() -> None:
+def test_seventy_two_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -286,7 +289,7 @@ def test_seventy_one_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 71
+    assert len(records) == 72
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

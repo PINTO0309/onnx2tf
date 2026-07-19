@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 RESULT_TARGET = "_layout_pass_set_2_dequant_transposeconv_quantize_stats"
@@ -73,45 +70,27 @@ def test_layout_pass_set_2_quantized_result_is_guarded_and_unconsumed() -> None:
     index = next(
         index
         for index, statement in enumerate(guard.body)
-        if _single_target(statement) == RESULT_TARGET
-    )
-    assignment = guard.body[index]
-
-    assert ast.unparse(guard.test) == "optimize_layout_transpose_chains"
-    assert guard.orelse == []
-    assert isinstance(assignment, ast.Assign)
-    assert ast.unparse(assignment.value) == OWNER_EXPRESSION
-    assert _single_target(guard.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(guard.body[index + 1]) == SUCCESSOR_TARGET
-    target_names = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Name) and node.id == RESULT_TARGET
-    ]
-    assert len(target_names) == 1
-    assert isinstance(target_names[0].ctx, ast.Store)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout pass-set 2 quantized result has not moved to a phase record",
-)
-def test_layout_pass_set_2_quantized_result_uses_phase_result_store() -> None:
-    lowerer = _lowerer()
-    guard = _guard(lowerer)
-    index = next(
-        index
-        for index, statement in enumerate(guard.body)
         if _phase_id(statement) == PHASE_ID
     )
     record = guard.body[index]
 
+    assert ast.unparse(guard.test) == "optimize_layout_transpose_chains"
+    assert guard.orelse == []
     assert isinstance(record, ast.Expr)
     assert ast.unparse(record) == (
         f"session.record_phase_result('{PHASE_ID}', {OWNER_EXPRESSION})"
     )
     assert _single_target(guard.body[index - 1]) == PREDECESSOR_TARGET
     assert _single_target(guard.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGET
+        for node in ast.walk(lowerer)
+    )
+
+
+def test_layout_pass_set_2_quantized_result_local_is_removed() -> None:
+    lowerer = _lowerer()
+
     assert not any(
         isinstance(node, ast.Name) and node.id == RESULT_TARGET
         for node in ast.walk(lowerer)

@@ -4637,11 +4637,12 @@ def lower_onnx_to_ir(
         _layout_pass_set_2_attention_gate_qdq_results = (
             _run_attention_gate_qdq_recovery_sequence()
         )
-        _layout_pass_set_2_dequant_transposeconv_quantize_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_2.dequant_transposeconv_quantize",
             _optimize_dequant_transposeconv_quantize_chains(
                 model_ir,
                 layout_state=session.layout_state,
-            )
+            ),
         )
         _layout_pass_set_2_quantized_activation_binary_results = (
             _run_quantized_activation_binary_bridge_recovery_sequence()
