@@ -5,6 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    late_conv1d_decoder_layout_orchestration,
+)
+from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
+    LATE_CONV1D_DECODER_LAYOUT_PASS_IDS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -76,45 +86,36 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
-def test_late_conv1d_decoder_cluster_is_ordered_and_unconsumed() -> None:
+def test_late_conv1d_decoder_cluster_uses_composite_result_outside_store() -> None:
     lowerer = _lowerer()
-    assignments = [
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) in OLD_RESULT_TARGETS
-    ]
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        OLD_RESULT_TARGETS
+        if _single_target(statement) == RESULT_TARGET
     )
-    indices = [lowerer.body.index(statement) for statement in assignments]
-    assert indices == list(range(indices[0], indices[0] + len(indices)))
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-    assert tuple(_call_name(statement) for statement in assignments) == PASS_IDS
-
-    for statement in assignments:
-        call = _statement_call(statement)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "model_ir"
-        ]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {"layout_state": "session.layout_state"}
-    for target in OLD_RESULT_TARGETS:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
+    index = lowerer.body.index(assignment)
+    assert ast.unparse(assignment.value) == (
+        "run_late_conv1d_decoder_layout_cleanup("
+        "shared_model_ir_pass_context)"
+    )
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "record_phase_result"
+        and any(
+            isinstance(child, ast.Name) and child.id == OWNER
+            for child in ast.walk(node)
         )
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late Conv1D/decoder cluster has not moved to one composite owner",
-)
 def test_late_conv1d_decoder_cluster_uses_one_composite_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -144,3 +145,48 @@ def test_late_conv1d_decoder_cluster_uses_one_composite_owner() -> None:
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_late_conv1d_decoder_owner_preserves_context_and_result_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("late_conv1d_decoder_layout_owner")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    observed: list[tuple[str, object, object]] = []
+    expected_results = tuple(
+        {f"result_{index}": index}
+        for index in range(1, len(PASS_IDS) + 1)
+    )
+
+    def _callback(name: str, result: dict[str, int]):
+        def _run(
+            candidate: ModelIR,
+            *,
+            layout_state: object,
+        ) -> dict[str, int]:
+            observed.append((name, candidate, layout_state))
+            return dict(result)
+
+        return _run
+
+    for pass_id, result in zip(PASS_IDS, expected_results, strict=True):
+        monkeypatch.setattr(
+            late_conv1d_decoder_layout_orchestration,
+            pass_id,
+            _callback(pass_id, result),
+        )
+
+    assert (
+        late_conv1d_decoder_layout_orchestration.run_late_conv1d_decoder_layout_cleanup(
+            context
+        )
+        == expected_results
+    )
+    assert [entry[0] for entry in observed] == list(PASS_IDS)
+    assert all(entry[1] is context.model_ir for entry in observed)
+    assert all(entry[2] is context.layout_state for entry in observed)
+    assert LATE_CONV1D_DECODER_LAYOUT_PASS_IDS == PASS_IDS

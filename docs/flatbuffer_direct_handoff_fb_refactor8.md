@@ -2635,3 +2635,34 @@ The characterization gate completed with `1 passed, 1 xfailed in 0.17s`;
 the sole xfail is the intentionally absent composite owner. Targeted Ruff,
 bytecode compilation, and whitespace checks passed. Commit and push this
 checkpoint before production changes.
+
+## Late Conv1D/decoder composite implementation
+
+`run_late_conv1d_decoder_layout_cleanup` now owns all eight characterized
+callbacks. Each receives the same ModelIR and layout state, and the independent
+counter mappings are returned in their original order.
+
+The lowerer retains `_late_conv1d_decoder_layout_results` outside the full
+store. The eight old unconsumed locals and long inline call block are gone;
+compatibility wrappers, indexed owners, late Swish, and very-late Pad remain
+unchanged. Focused runtime coverage proves callback order, context identity,
+and tuple ordering.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite and boundaries: `3 passed in 0.65s`;
+- indexed Conv1D/decoder and affected result contracts:
+  `431 passed in 2.01s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.93s`;
+- synthetic core runtime contracts: `55 passed in 1.04s`;
+- result contracts: `196 passed in 9.27s`;
+- full architecture contracts: `258 passed in 19.39s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No graph, numerical, diagnostics, public API, or artifact behavior changed.
+Commit and push this implementation checkpoint. Resume by auditing the
+adjacent very-late Pad/InstanceNorm unit before the singleton-reshape cluster.
+Continue with coherent commits and pushes only; never create, update, or reopen
+a pull request.

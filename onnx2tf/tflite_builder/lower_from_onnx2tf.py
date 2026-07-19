@@ -287,6 +287,9 @@ from onnx2tf.tflite_builder.passes.final_slice_pre_concat_layout_orchestration i
 from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
     run_terminal_concat_bridge_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
+    run_late_conv1d_decoder_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5217,73 +5220,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    # Conv1D shim patterns can retain:
-    # TRANSPOSE -> SQUEEZE -> UNARY -> EXPAND_DIMS -> TRANSPOSE.
-    # Fold them to a single rank-4 UNARY op.
-    _late_conv1d_squeeze_unary_stats = (
-        _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # Variant with intermediate rank-4 transpose:
-    # TRANSPOSE -> UNARY -> TRANSPOSE -> RESHAPE -> EXPAND_DIMS -> TRANSPOSE.
-    _late_conv1d_rank4_unary_stats = (
-        _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # Fanout variant:
-    # Keep NCHW side branch and bypass only the NHWC wrapper branch.
-    _late_conv1d_unary_fanout_stats = (
-        _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # InstanceNorm(flat) bridge variant:
-    # T -> SQUEEZE -> RESHAPE -> IN -> RESHAPE -> UNARY -> EXPAND -> T
-    # can be rewritten in NHWC by swapping C/W at reshape boundary.
-    _late_conv1d_instancenorm_unary_stats = (
-        _optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # tencoder residual-gated branch variant:
-    # dual (post-conv T->SQUEEZE) branches merge via ADD then EXPAND->T before next CONV.
-    _late_conv1d_tencoder_stats = (
-        _optimize_tencoder_add_expand_transpose_conv_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # Conv1D tail patterns may still contain:
-    # TRANSPOSE -> SQUEEZE -> UNARY* -> BATCH_MATMUL.
-    # Rewire to NHWC + adjX matmul when mathematically equivalent.
-    _late_conv1d_batchmatmul_stats = (
-        _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # Decoder linear->deconv tails can keep:
-    # BATCH_MATMUL -> ADD -> EXPAND_DIMS -> TRANSPOSE -> TRANSPOSE_CONV.
-    # Transpose BATCH_MATMUL/ADD layout so TRANSPOSE before deconv is removed.
-    _late_decoder_deconv_stats = (
-        _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    # Decoder terminal tails can keep:
-    # TRANSPOSE -> SQUEEZE -> MEAN -> SQUEEZE.
-    # Remap squeeze/mean axes in NHWC and drop the transpose.
-    _late_terminal_squeeze_mean_stats = (
-        _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+    # Keep related Conv1D and decoder tail repairs in their fixed late order.
+    _late_conv1d_decoder_layout_results = (
+        run_late_conv1d_decoder_layout_cleanup(
+            shared_model_ir_pass_context,
         )
     )
     # Very late transpose/layout rewrites can recreate PAD-adjacent NCHW wrappers.

@@ -1601,6 +1601,39 @@ Sequential characterization under core-only `uv` completed with
 composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed.
 
+## Late Conv1D/decoder composite implementation
+
+`run_late_conv1d_decoder_layout_cleanup(context)` now invokes the eight
+characterized pass owners in their original order. Every callback receives the
+shared ModelIR and conversion-local layout state, and their independent
+mapping results are returned as an ordered tuple.
+
+The lowerer retains one `_late_conv1d_decoder_layout_results` composite via
+`shared_model_ir_pass_context`, outside the full phase-result store. The eight
+old unconsumed locals and their long inline call block are absent. All eight
+compatibility wrappers, owner implementations, indexed graph behavior, late
+Swish predecessor, and very-late Pad successor remain intact.
+
+Sequential validation under core-only `uv` completed with:
+
+- focused composite order, context identity, tuple, and boundary contracts:
+  `3 passed in 0.65s`;
+- indexed Conv1D/decoder mutations plus affected result contracts:
+  `431 passed in 2.01s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.93s`;
+- synthetic core runtime contracts: `55 passed in 1.04s`;
+- broader result contracts: `196 passed in 9.27s`;
+- full lowerer architecture contracts: `258 passed in 19.39s`;
+- phase-result capacity contracts: `2 passed in 0.53s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No callback, graph rewrite, execution count, ordering, result mapping,
+LayoutState identity, public compatibility name, artifact, dependency, or
+TensorFlow boundary changed. No root-model conversion was repeated because the
+431-test indexed family gate exercises the extracted owner paths. The store
+remains exactly 128/128.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

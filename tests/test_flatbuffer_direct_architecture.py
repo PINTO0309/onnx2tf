@@ -113,6 +113,9 @@ from onnx2tf.tflite_builder.passes.final_slice_pre_concat_layout_orchestration i
 from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
     TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
+    LATE_CONV1D_DECODER_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -199,6 +202,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *FINAL_BOUNDARY_CHANNEL_LAYOUT_PASS_IDS,
     *FINAL_SLICE_PRE_CONCAT_LAYOUT_PASS_IDS,
     *TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
+    *LATE_CONV1D_DECODER_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -10074,16 +10078,17 @@ def test_conv1d_unary_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_rank4_conv1d_unary_layout_rewrite_has_indexed_owner() -> None:
@@ -10139,16 +10144,17 @@ def test_rank4_conv1d_unary_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_conv1d_unary_fanout_layout_rewrite_has_indexed_owner() -> None:
@@ -10207,16 +10213,17 @@ def test_conv1d_unary_fanout_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_conv1d_instance_norm_layout_rewrite_has_indexed_owner() -> None:
@@ -10274,16 +10281,17 @@ def test_conv1d_instance_norm_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_conv1d_tencoder_layout_rewrite_has_indexed_owner() -> None:
@@ -10347,16 +10355,17 @@ def test_conv1d_tencoder_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_conv1d_batchmatmul_layout_rewrite_has_indexed_owner() -> None:
@@ -10410,16 +10419,17 @@ def test_conv1d_batchmatmul_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_decoder_deconv_layout_rewrite_has_indexed_owner() -> None:
@@ -10479,16 +10489,17 @@ def test_decoder_deconv_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_terminal_squeeze_mean_layout_rewrite_has_indexed_owner() -> None:
@@ -10551,16 +10562,17 @@ def test_terminal_squeeze_mean_layout_rewrite_has_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == function_name
     ]
-    assert len(production_calls) == 1
-    layout_keyword = next(
-        keyword
-        for keyword in production_calls[0].keywords
-        if keyword.arg == "layout_state"
-    )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert len(production_calls) + _orchestrated_pass_count(function_name) == 1
+    for production_call in production_calls:
+        layout_keyword = next(
+            keyword
+            for keyword in production_call.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
 
 
 def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:

@@ -23,7 +23,7 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 OWNER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "pad_layout.py"
 OWNER = "run_pad_layout_cleanup"
 RESULT_TARGET = "_very_late_pad_layout_stats"
-PREDECESSOR = "_optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains"
+PREDECESSOR = "run_late_conv1d_decoder_layout_cleanup"
 SUCCESSOR_TARGET = "_very_late_instancenorm_post_bias_stats"
 RESULT_SCHEMA = {
     "optimized_transpose_pad_prepost_nhwc_chains": 0,
