@@ -128,3 +128,25 @@ this checkpoint is committed and pushed, inventory the raw
 Freeze its schema, mutation/cleanup semantics, surrounding conditional
 boundary, and whether the existing pass already owns all required state.
 Continue with commits and pushes only; do not create or update a pull request.
+
+## Safe-transpose reduction result characterization
+
+The raw no-layout fallback call to
+`_apply_safe_transpose_reduction_lite(model_ir)` has been selected. Its fixed
+three-key schema represents the applied pass count, net Transpose reduction,
+and unbound-input rollback count. The owner itself owns the complete snapshot,
+curated pass sequence, prune/reconcile work, validation, and rollback, so this
+boundary has no live state to share safely.
+
+A strict expected failure requires assignment to
+`_no_layout_safe_transpose_reduction_stats` immediately before
+`_no_layout_fallback_affine_prepost_stats`. The result remains unconsumed; do
+not change the `elif` condition, arguments, transaction, pass sequence,
+following affine cleanup, dependency set, public behavior, or TensorFlow
+boundary.
+
+Characterization validation completed sequentially under `uv`: the dedicated
+contract is `2 passed, 1 xfailed in 0.55s`, and targeted Ruff, bytecode
+compilation, and whitespace checks pass. The sole expected failure is the
+unimplemented assignment. Commit and push this contract before changing
+production code; do not create or update a pull request.

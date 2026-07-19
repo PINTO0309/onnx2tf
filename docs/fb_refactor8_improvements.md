@@ -136,3 +136,29 @@ Implementation validation completed sequentially under `uv`:
 
 No model conversion was run because retaining an already-computed dictionary
 cannot change ModelIR or serialization.
+
+## Safe-transpose reduction result characterization
+
+The no-layout fallback calls `_apply_safe_transpose_reduction_lite(model_ir)`
+as a raw expression before the retained affine pre/post cleanup. The owner
+returns three counters covering executed passes, removed Transposes, and
+rollback-triggering unbound inputs.
+
+The owner already contains its complete safety transaction: it snapshots the
+ModelIR, runs the curated pass sequence, prunes and reconciles, rejects unbound
+inputs, and restores the snapshot when no safe reduction is achieved. No live
+caller index or external cleanup is available to combine with this boundary.
+
+The selected implementation is observation-only assignment to
+`_no_layout_safe_transpose_reduction_stats`. The conditional branch, sole
+`model_ir` argument, owner transaction, following affine cleanup, and result
+schema must remain unchanged.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated contract: `2 passed, 1 xfailed in 0.55s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the unimplemented assignment. No production
+source changed in this checkpoint.
