@@ -6325,3 +6325,43 @@ callback identities, child schemas, and all independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Next 43-result candidate characterization
+
+The refreshed inventory selects
+`_layout_pass_set_2_qlinear_mean_concat_results` followed immediately by
+`_layout_pass_set_2_layout_recovery_prefix_results`. Both are unconditional
+inside the second `optimize_layout_transpose_chains` guard. The predecessor is
+`_set_post_progress_desc("layout recovery pass-set 2")`; the successor is
+`_layout_pass_set_2_preadd_mean_attention_results`.
+
+`qlinear_recovery_context` and `layout_recovery_context.pass_context` are the
+same session `ModelIRPassContext`. The layout context retains the original
+boundary-BatchMatMul, pre-Concat, and channel-shuffle/Gather callbacks. The
+characterization reuses the exact five-slot QLinear and nineteen-slot layout
+prefix schemas already defined for the preceding extraction, and also fixes
+source adjacency, zero-argument wrappers, observation-only raw results, and all
+independent routes.
+
+Production is unchanged pending
+`passes/layout_pass_set_2_qlinear_layout_recovery_orchestration.py` and
+`run_layout_pass_set_2_qlinear_layout_recovery()`. That owner must call
+`run_qlinear_mean_concat_recovery(context.pass_context)` and then
+`run_layout_recovery_prefix(context)`, returning both raw tuples unchanged and
+by identity. The lowerer must replace only the two characterized locals with
+`_layout_pass_set_2_qlinear_layout_recovery_results`; both wrappers and all
+independent recovery paths must remain intact.
+
+Focused sequential validation reports `4 passed, 1 xfailed`; complete
+reference-based affected validation reports `390 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent owner. Ruff, bytecode
+compilation, whitespace checks, and the two phase-store tests pass. The
+unconsumed-result inventory remains 43 and the phase store remains exactly 128
+IDs and 128 owners.
+
+At resume, implement only this characterized owner and lowerer replacement,
+convert the strict xfail to runtime order/context/result-identity coverage,
+update only stale structural entry expectations, and run affected plus standard
+gates sequentially under `uv`. Confirm the expected inventory reduction from
+43 to 42, then commit and push the complete unit only. Do not create, update,
+reopen, or otherwise modify a pull request.

@@ -1732,3 +1732,16 @@ and TensorFlow isolation remain unchanged. Focused `10`, affected `482`, and
 standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
 remains exactly 128 IDs and 128 owners, and the unconsumed-result inventory
 decreases from 45 to 43.
+
+The next characterization fixes the first two stages of layout pass set 2
+before any production edit. QLinear/Mean/Concat recovery must run before the
+base layout-recovery prefix through the exact shared callback-bearing layout
+context. The existing pass-set-2 progress description and downstream
+pre-add/mean/attention recovery remain the outer boundaries, and both
+compatibility wrappers remain available.
+
+Focused and reference-based affected sequential validation report
+`4 passed, 1 xfailed` and `390 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future composite owner. Production behavior,
+dependencies, TensorFlow isolation, the 43-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.

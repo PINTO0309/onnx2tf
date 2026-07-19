@@ -6907,3 +6907,26 @@ Sequential validation passes: focused `10`, affected `482`, and standard
 `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
 pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 45 to 43.
+
+## Characterize the layout-pass-set-2 QLinear/layout-recovery prefix
+
+The refreshed 43-result inventory selects the first two observations of layout
+pass set 2: QLinear/Mean/Concat recovery followed immediately by the base
+layout-recovery prefix. They are contiguous inside the existing
+layout-Transpose guard and share the exact callback-bearing
+`LayoutRecoveryContext`. The pass-set-2 progress description remains the
+immediate predecessor, while pre-add/mean/attention recovery remains the
+immediate successor.
+
+The new characterization reuses the already authoritative five-slot QLinear
+and nineteen-slot layout-prefix schemas instead of duplicating another large
+schema block. It fixes exact child order, shared pass-context and callback
+identities, observation-only status, zero-argument compatibility wrapper
+routes, the progress argument, and the independent downstream recovery paths.
+
+Production remains unchanged pending one two-child context owner. Focused and
+reference-based affected sequential validation report `4 passed, 1 xfailed`
+and `390 passed, 1 xfailed`; the sole expected failure is the intentionally
+absent owner module. Ruff, bytecode compilation, and whitespace checks pass.
+The inventory remains 43 and the phase-result store remains exactly 128 IDs
+and 128 owners.

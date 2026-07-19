@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.passes import (
 )
 from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     LayoutRecoveryContext,
+    run_layout_recovery_prefix,
     run_layout_reshape_attention_recovery_prefix,
 )
 from onnx2tf.tflite_builder.passes.pre_concat_nhwc_layout import (
@@ -58,6 +59,30 @@ COMPOSITE_TARGET = "_layout_pass_set_1_qlinear_attention_recovery_results"
 PREDECESSOR_PHASE_ID = "cleanup.layout_pass_set_1.dequant_mean_quantize"
 SUCCESSOR_PHASE_ID = "cleanup.layout_pass_set_1.instancenorm_prepost"
 GUARD = "optimize_layout_transpose_chains"
+SET_2_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_qlinear_layout_recovery_orchestration.py"
+)
+SET_2_OWNER = "run_layout_pass_set_2_qlinear_layout_recovery"
+SET_2_CHILD_OWNERS = (
+    "run_qlinear_mean_concat_recovery",
+    "run_layout_recovery_prefix",
+)
+SET_2_CURRENT_CHILD_OWNERS = (
+    "_run_qlinear_mean_concat_recovery_sequence",
+    "_run_layout_recovery_prefix_pass_sequence",
+)
+SET_2_RESULT_TARGETS = (
+    "_layout_pass_set_2_qlinear_mean_concat_results",
+    "_layout_pass_set_2_layout_recovery_prefix_results",
+)
+SET_2_COMPOSITE_TARGET = "_layout_pass_set_2_qlinear_layout_recovery_results"
+SET_2_PREDECESSOR = "_set_post_progress_desc"
+SET_2_PREDECESSOR_ARGUMENT = "layout recovery pass-set 2"
+SET_2_SUCCESSOR_TARGET = "_layout_pass_set_2_preadd_mean_attention_results"
 
 QLINEAR_SCHEMA = (
     ("optimized_transpose_mean_hardsigmoid_muladd_chains",),
@@ -194,6 +219,23 @@ def _guard_body() -> list[ast.stmt]:
         and ast.unparse(statement.test) == GUARD
         and any(
             _single_target(candidate) in (*RESULT_TARGETS, COMPOSITE_TARGET)
+            for candidate in statement.body
+        )
+    )
+    assert guard.orelse == []
+    return guard.body
+
+
+def _set_2_guard_body() -> list[ast.stmt]:
+    lowerer = _lowerer()
+    guard = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test) == GUARD
+        and any(
+            _single_target(candidate)
+            in (*SET_2_RESULT_TARGETS, SET_2_COMPOSITE_TARGET)
             for candidate in statement.body
         )
     )
@@ -396,3 +438,107 @@ def test_layout_pass_set_1_qlinear_attention_runtime_identity(
         (CHILD_OWNERS[0], context.pass_context),
         (CHILD_OWNERS[1], context),
     ]
+
+
+def test_layout_pass_set_2_qlinear_layout_recovery_current_contract() -> None:
+    body = _set_2_guard_body()
+    assignments = [
+        statement
+        for statement in body
+        if _single_target(statement) in SET_2_RESULT_TARGETS
+    ]
+    assert [_single_target(statement) for statement in assignments] == list(
+        SET_2_RESULT_TARGETS
+    )
+    assert [_call_name(statement) for statement in assignments] == list(
+        SET_2_CURRENT_CHILD_OWNERS
+    )
+    indices = [body.index(statement) for statement in assignments]
+    assert indices[1] == indices[0] + 1
+    predecessor = body[indices[0] - 1]
+    assert _call_name(predecessor) == SET_2_PREDECESSOR
+    predecessor_call = _call(predecessor)
+    assert predecessor_call is not None
+    assert [ast.literal_eval(argument) for argument in predecessor_call.args] == [
+        SET_2_PREDECESSOR_ARGUMENT
+    ]
+    assert predecessor_call.keywords == []
+    assert _single_target(body[indices[-1] + 1]) == SET_2_SUCCESSOR_TARGET
+    assert all(_call(statement).args == [] for statement in assignments)
+    assert all(_call(statement).keywords == [] for statement in assignments)
+    assert not any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in SET_2_RESULT_TARGETS
+        for statement in body
+        for node in ast.walk(statement)
+    )
+
+    context = _context()
+    results = (
+        run_qlinear_mean_concat_recovery(context.pass_context),
+        run_layout_recovery_prefix(context),
+    )
+    assert _schema(results) == (QLINEAR_SCHEMA, LAYOUT_PREFIX_SCHEMA)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="layout-pass-set-2 QLinear/layout owner is not implemented",
+)
+def test_layout_pass_set_2_qlinear_layout_recovery_has_one_context_owner() -> None:
+    assert SET_2_OWNER_PATH.exists()
+    owner = _functions(SET_2_OWNER_PATH)[SET_2_OWNER]
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in SET_2_CHILD_OWNERS
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    assert [call.func.id for call in calls] == list(SET_2_CHILD_OWNERS)
+    assert [ast.unparse(argument) for argument in calls[0].args] == [
+        "context.pass_context"
+    ]
+    assert calls[0].keywords == []
+    assert [ast.unparse(argument) for argument in calls[1].args] == ["context"]
+    assert calls[1].keywords == []
+
+    body = _set_2_guard_body()
+    assignment = next(
+        statement
+        for statement in body
+        if _single_target(statement) == SET_2_COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == SET_2_OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_recovery_context"
+    ]
+    assert call.keywords == []
+    predecessor = body[index - 1]
+    assert _call_name(predecessor) == SET_2_PREDECESSOR
+    predecessor_call = _call(predecessor)
+    assert predecessor_call is not None
+    assert [ast.literal_eval(argument) for argument in predecessor_call.args] == [
+        SET_2_PREDECESSOR_ARGUMENT
+    ]
+    assert _single_target(body[index + 1]) == SET_2_SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id in SET_2_RESULT_TARGETS
+        for node in ast.walk(_lowerer())
+    )
+
+    lowerer_functions = {
+        node.name: node
+        for node in _lowerer().body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert all(
+        name in lowerer_functions for name in SET_2_CURRENT_CHILD_OWNERS
+    )
