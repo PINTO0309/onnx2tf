@@ -3603,3 +3603,24 @@ No real-model corpus conversion was repeated because the focused runtime test
 proves the raw context and normalized schema, while the affected recovery and
 architecture gates prove the unchanged callback and production invocation
 counts.
+
+## Pre-terminal affine-tail composite characterization
+
+The next two adjacent mappings cover affine post-Add cleanup followed by the
+strict StridedSlice/Pad/Concat affine bridge. Both results are unconsumed, but
+their argument policies differ: the first receives ModelIR plus LayoutState,
+while the second receives ModelIR only. They run after the normalized channel
+Slice/Pad/Mul summary and immediately before the second terminal-affine
+recovery summary.
+
+`tests/test_flatbuffer_direct_pre_terminal_affine_tail_orchestration.py` fixes
+the two targets, exact call expressions, argument policies, order, neighboring
+boundaries, and absence of result consumers. Its strict expected failure
+requires one direct pass-module owner returning both mappings in order. No
+production source, pass, graph, result, store, public API, artifact,
+dependency, or TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.14s`; targeted Ruff, bytecode compilation, and
+whitespace checks passed. The sole expected failure is the intentionally
+absent ordered owner.

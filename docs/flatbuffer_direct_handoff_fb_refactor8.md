@@ -3176,3 +3176,23 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Pre-terminal affine-tail composite characterization
+
+The two calls immediately after the channel Slice/Pad/Mul summary are now
+characterized as one possible ordered boundary: affine post-Add cleanup with
+ModelIR/LayoutState, then strict StridedSlice/Pad/Concat cleanup with ModelIR
+only. Their mappings are unconsumed, and the following terminal-affine summary
+is unchanged.
+
+The focused contract passes for the current two-call representation and has
+one strict xfail for a future
+`run_pre_terminal_affine_tail_cleanup(shared_model_ir_pass_context)` owner.
+Sequential validation completed with `1 passed, 1 xfailed in 0.14s`; targeted
+Ruff, bytecode compilation, and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the ordered pair, retain both lowerer compatibility wrappers and all other
+call sites, update owner-aware neighboring contracts, and validate
+sequentially. Continue with commits and pushes only; never create, update, or
+reopen a pull request.

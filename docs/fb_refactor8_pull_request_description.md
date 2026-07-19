@@ -479,6 +479,8 @@ Final checkpoint results:
 - channel Slice/Pad/Mul direct-summary owner contracts: **3 passed**;
 - affected channel Slice/Pad/Mul, pre-add, terminal recovery, and related
   contracts: **195 passed**;
+- pre-terminal affine-tail composite characterization:
+  **1 passed, 1 intentional strict xfail**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -526,3 +528,8 @@ The following checkpoint implements the adjacent direct channel Slice/Pad/Mul
 raw-to-summary owner. It removes only the consumed direct raw-result local and
 explicitly preserves the existing raw wrapper for terminal recovery callback
 composition.
+
+The next characterization fixes the adjacent affine post-Add and strict
+StridedSlice/Pad/Concat pair, including its layout-aware/model-only argument
+policy. It makes no production change and defines the next bounded ordered
+owner extraction.
