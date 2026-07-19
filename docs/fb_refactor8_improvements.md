@@ -1095,6 +1095,33 @@ No root-model corpus conversion was run because this mechanical owner
 extraction preserves both already-tested callbacks and now has a focused
 runtime equivalence contract.
 
+## Late Concat shared-scope characterization
+
+With the phase store fixed at 128/128, the next refactoring does not add a
+phase record. The selected lowerer cluster creates one
+`ModelIRPassStateScope` and runs four consecutive owners: axis-3 constant
+Concat layout, Dequantize/Concat/Quantize layout, LayerNorm statistics layout,
+and layout-Transpose cleanup. All four result locals are unconsumed, while the
+scope is loaded exactly once by each owner.
+
+A new focused contract fixes the current four-owner order, targets, arguments,
+shared-scope identity, preceding late cost-volume Conv-affine result, following
+layout-optimization guard, and absence of result consumers. A strict expected
+failure requires one `run_late_concat_layout_cleanup` owner that creates the
+scope internally and a single retained `_late_concat_layout_results`
+composite. The composite deliberately remains outside the full phase store.
+
+No production source changed. Validation completed sequentially under
+core-only `uv`: the related baseline is `72 passed in 0.86s`. The focused
+characterization must retain those passes plus one intentional strict xfail;
+targeted Ruff, bytecode compilation, and whitespace validation must pass
+before commit and push.
+
+Implementation must return the four mappings as an ordered tuple without
+merging schemas, prove callback order and shared scope identity, keep the
+128-phase bound unchanged, run sequential gates, document, commit, and push.
+Never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

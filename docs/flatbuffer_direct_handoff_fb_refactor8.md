@@ -2179,3 +2179,24 @@ No root-model conversion was required because this is a characterized
 two-call owner extraction with focused runtime equivalence. Commit and push
 this unit. Resume with a non-store refactoring audit, keeping the 128-phase
 bound fixed, and never create, update, or reopen a pull request.
+
+## Late Concat shared-scope characterization
+
+The next unit is intentionally outside the full phase store. Four adjacent
+late Concat/layout owners share `late_concat_layout_state_scope`: axis-3
+constant Concat, Dequantize/Concat/Quantize, LayerNorm statistics, and layout
+Transpose cleanup. Their four locals have no consumers.
+
+The new focused module fixes current order, arguments, shared-scope loads,
+outer boundaries, and unconsumed results. Its strict expected-failure contract
+requires a new `run_late_concat_layout_cleanup` orchestration owner and one
+`_late_concat_layout_results` tuple assignment in the lowerer. The owner must
+create the scope internally and return all four mappings in order; this
+composite remains outside `ConversionSession.phase_results`.
+
+The related baseline is `72 passed in 0.86s`. Run the focused characterization
+with one expected xfail, plus targeted Ruff, bytecode compilation, and
+whitespace validation. Commit and push characterization first. Implementation
+must leave the store at 128/128, add a runtime shared-scope/order/tuple test,
+update structural ownership counts, run sequential gates, document, commit,
+and push. Never create, update, or reopen a pull request.
