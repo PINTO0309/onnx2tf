@@ -3372,3 +3372,25 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Late hard-activation prune-aware summary characterization
+
+The next selected unit is the three-statement late hard-activation evidence
+boundary. It snapshots tensor count, runs the existing raw ordered owner with
+the runtime layout-Transpose flag, and applies the existing strict prune-aware
+normalizer. The summary is unconsumed.
+
+The focused contract fixes the current representation, exact flag and prune
+expression, raw wrapper retention, terminal HardSwish/SE predecessor, and
+absolute-final pre-ConCat successor. One strict xfail requires
+`run_late_hard_activation_layout_summary(context, flags...)`.
+
+Sequential validation under core-only `uv` completed with
+`22 passed, 1 xfailed in 1.15s` across the new characterization and related
+late hard-activation, HardSwish/SE, pre-ConCat result, and store contracts. The
+sole expected failure is the unimplemented summary owner.
+
+Commit and push this characterization separately. At resume, implement only
+the prune-aware owner and direct late site, retain the raw lowerer wrapper,
+update owner-aware structural contracts, and validate sequentially. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

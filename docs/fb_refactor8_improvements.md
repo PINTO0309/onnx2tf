@@ -3834,3 +3834,24 @@ Final sequential validation under core-only `uv`:
 No real-model corpus conversion was repeated because the focused runtime tests
 prove stable and prune-only summary behavior, while affected owner and
 architecture gates preserve both production policies and their boundaries.
+
+## Late hard-activation prune-aware summary characterization
+
+The immediately following evidence triple snapshots tensor count, invokes the
+late hard-activation/layout raw owner with the runtime layout-Transpose flag,
+and normalizes the ordered results through the existing strict summarizer. The
+count and raw tuple are consumed only by that summary; the normalized mapping
+does not control later work.
+
+`tests/test_flatbuffer_direct_late_hard_activation_summary_orchestration.py`
+fixes the exact three statements, flag forwarding, prune expression, retained
+raw wrapper, terminal HardSwish/SE predecessor, absolute-final pre-ConCat
+successor, and absence of a summary consumer. Its strict expected failure
+requires one pass-module prune-aware summary owner. No production source, pass
+selection, graph mutation, store entry, public API, artifact, dependency, or
+TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`22 passed, 1 xfailed in 1.15s` across the dedicated contract and related late
+hard-activation, HardSwish/SE, pre-ConCat result, and phase-store contracts.
+The sole expected failure is the intentionally absent summary owner.
