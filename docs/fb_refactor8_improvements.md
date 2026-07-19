@@ -780,6 +780,30 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and the synthetic runtime suite exercises
 the guarded terminal path.
 
+## Guarded terminal QKV bridge characterization
+
+The next source-order semantic unit is the single Split/Conv/Concat bridge
+mapping observation between the retained QKV-attention and singleton-reshape
+composites inside `optimize_layout_transpose_chains`.
+
+Existing indexed owner tests fix its single integer counter, no-op behavior,
+fan-out handling, dynamic shapes, quantization preservation, invariant
+validation, and transactional rollback. The local has no default or consumer.
+The characterization fixes the guard, exact owner expression and keyword,
+both composite boundaries, and absence of loads. A strict expected failure
+requires `cleanup.terminal.qkv_split_conv_concat_bridge` in the same position.
+No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- related bridge/QKV/singleton baseline: `103 passed in 1.05s`;
+- characterization plus related contracts: `104 passed, 1 xfailed in 1.13s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented destination
+migration.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

@@ -1708,3 +1708,26 @@ Validation completed sequentially under core-only `uv`:
 No root-model conversion was required for this observation-only destination
 migration. Commit and push this unit. Start the next unit with a fresh
 characterize-first audit and never create, update, or reopen a pull request.
+
+## Guarded terminal QKV bridge characterization
+
+The next unit contains only the guarded QKV Split/Conv/Concat bridge mapping
+result between the existing QKV-attention and singleton-reshape composites.
+Its indexed owner contract already covers the bounded counter schema, no-op,
+dynamic, fan-out, quantized, invariant, and rollback paths. The result has no
+default or load.
+
+The strict contract fixes the guard, exact owner expression, both composite
+boundaries, and proposed
+`cleanup.terminal.qkv_split_conv_concat_bridge` record. No production source
+changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `103 passed in 1.05s`; characterization plus related contracts is
+`104 passed, 1 xfailed in 1.13s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only the one mapping
+destination. Preserve the guard and both composites, update structural
+contracts, run sequential gates, document, commit, and push. Never create,
+update, or reopen a pull request.
