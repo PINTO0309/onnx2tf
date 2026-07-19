@@ -1059,3 +1059,20 @@ its established downstream guard and must remain local unless that control-
 flow contract is redesigned separately. After committing and pushing this
 checkpoint, inventory the next unconsumed result family rather than altering
 that consumed value. Never create, update, or reopen a pull request.
+
+## Stale Squeeze/Reshape boundary assertion correction
+
+The broader core-cleanup characterization gate found one stale test assertion:
+the core Squeeze/Reshape result contract still expected a raw dynamic-Reshape
+call as its predecessor. Since `dd58fd84`, that predecessor has been the exact
+`shape_resolution.core.dynamic_reshape` session record. The assertion was
+updated to the current stable boundary; production source is unchanged.
+
+The same related gate now reports `72 passed, 1 xfailed in 2.18s`. The only
+xfail is the deliberate characterization gate for the not-yet-implemented
+core-cleanup result migration. Ruff, bytecode compilation, and whitespace
+checks pass.
+
+Commit and push this stale-contract correction independently. Then commit the
+core-cleanup characterization separately before changing production source.
+Never create, update, or reopen a pull request.

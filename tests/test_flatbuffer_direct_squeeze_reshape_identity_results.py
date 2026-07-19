@@ -137,8 +137,10 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
     )
 
     core_body, core_index = locations[1]
-    assert _call_name(core_body[core_index - 1]) == (
-        "_resolve_dynamic_reshape_shapes"
+    assert ast.unparse(core_body[core_index - 1]) == (
+        "session.record_phase_result("
+        "'shape_resolution.core.dynamic_reshape', "
+        "_resolve_dynamic_reshape_shapes(model_ir))"
     )
     assert _call_name(core_body[core_index + 1]) == (
         "run_indexed_prune_reconcile_cleanup"

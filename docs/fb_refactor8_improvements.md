@@ -962,6 +962,22 @@ change at an already-characterized boundary. An AST audit confirms that
 remaining `_final_placeholder_matmul_static_shape_stats` local is intentionally
 retained because its counters are loaded by an existing downstream guard.
 
+## Stale Squeeze/Reshape boundary assertion correction
+
+The expanded core-cleanup characterization gate exposed one stale structural
+assertion in `test_flatbuffer_direct_squeeze_reshape_identity_results.py`.
+That test still expected a raw `_resolve_dynamic_reshape_shapes(model_ir)` call
+immediately before the core Squeeze/Reshape cleanup, although the call had
+already moved to the stable `shape_resolution.core.dynamic_reshape` phase
+record in commit `dd58fd84`.
+
+The assertion now fixes the exact existing session record. No production code,
+owner call, graph mutation, phase order, public result, artifact, dependency,
+or TensorFlow boundary changed. The expanded related suite moved from one
+failure to `72 passed, 1 xfailed in 2.18s`; the sole xfail is the separately
+characterized, intentionally unimplemented core-cleanup result migration.
+Targeted Ruff, bytecode compilation, and whitespace validation pass.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
