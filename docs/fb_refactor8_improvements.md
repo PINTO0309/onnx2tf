@@ -183,3 +183,32 @@ Implementation validation completed sequentially under `uv`:
 
 No model conversion was run because assigning the already-returned transaction
 summary cannot affect ModelIR or artifacts.
+
+## Fallback norm reconciliation characterization
+
+After a positive fallback norm rewrite, the lowerer retains the exact and
+singleton binary-adapter results plus the singleton/consecutive-Reshape tuple,
+then discards one static-shape reconciliation dictionary before topological
+sorting.
+
+The new contract freezes the guarded four-statement order, the complete
+two-key reconciliation schema, and a positive stale-Reshape metadata repair.
+The existing explicit shape signature remains unchanged, matching the current
+reconciler contract.
+
+The selected implementation is observation-only assignment to
+`_fallback_norm_static_shape_stats` with `include_mutation_count=True`.
+Reconciliation remains unconditional inside the existing positive norm guard.
+The preceding owners construct internal state that is not exposed to this
+boundary, so graph-index sharing is not mixed into this result-retention unit.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated contract: `2 passed, 1 xfailed in 0.56s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The first test run exposed only an incorrect top-level-only AST search for the
+nested fallback guard. After selecting the unique guard recursively, the sole
+expected failure is the intentionally unimplemented assignment. No production
+source changed in this checkpoint.

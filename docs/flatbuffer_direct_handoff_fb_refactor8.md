@@ -129,6 +129,29 @@ Freeze its schema, mutation/cleanup semantics, surrounding conditional
 boundary, and whether the existing pass already owns all required state.
 Continue with commits and pushes only; do not create or update a pull request.
 
+## Fallback norm reconciliation characterization
+
+The remaining raw `_reconcile_static_tensor_shapes(fallback_ir)` inside the
+positive `fallback_norm_stats` guard is selected. Its exact predecessors are
+the retained indexed binary-adapter pair and the retained
+singleton/consecutive-Reshape tuple; its immediate successor is the
+unconditional fallback topological sort.
+
+The characterization freezes a complete two-key schema and one stale-Reshape
+shape repair while preserving the current explicit shape signature. A strict
+expected failure requires the unconsumed target
+`_fallback_norm_static_shape_stats` with
+`include_mutation_count=True`. Do not narrow the existing norm guard or add a
+new guard, index, pass, cleanup, consumer, or sort. The preceding owners do not
+expose a live index to reuse at this boundary.
+
+Characterization validation completed sequentially under `uv`: the dedicated
+contract is `2 passed, 1 xfailed in 0.56s`, and targeted Ruff, bytecode
+compilation, and whitespace checks pass. The initial test-only AST lookup was
+corrected to search the nested fallback block. The sole expected failure is
+the unimplemented result assignment. Commit and push before changing
+production code; do not create or update a pull request.
+
 ## Safe-transpose reduction result characterization
 
 The raw no-layout fallback call to
