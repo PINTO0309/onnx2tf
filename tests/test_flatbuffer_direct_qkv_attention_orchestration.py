@@ -372,49 +372,32 @@ def test_qkv_attention_returns_and_summarizes_all_production_forms(
 
 def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = (
-        "late_qkv_tensor_count",
-        "late_qkv_results",
-        "_late_qkv_stats",
+    summary_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_late_qkv_stats"
     )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-        target_names[2]: first_index + 2,
-    }
-    result_call = assignments[target_names[1]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == QKV_ATTENTION
+    summary = lowerer.body[summary_index]
+    assert isinstance(summary, ast.Assign)
+    summary_call = summary.value
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == "run_qkv_attention_summary"
+    assert [_expression_path(argument) for argument in summary_call.args] == [
+        "qkv_attention_context"
+    ]
     assert {
         keyword.arg: _expression_path(keyword.value)
-        for keyword in result_call.keywords
+        for keyword in summary_call.keywords
     } == {
         "include_layout_transpose": "optimize_layout_transpose_chains",
         "include_prefix": False,
     }
-    summary_call = assignments[target_names[2]]
-    assert isinstance(summary_call, ast.Call)
-    assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == "summarize_qkv_attention_mutations"
-    assert {keyword.arg for keyword in summary_call.keywords} == {
-        "include_layout_transpose",
-        "include_prefix",
-        "pruned_unused_tensors",
-    }
 
-    previous = lowerer.body[first_index - 1]
+    previous = lowerer.body[summary_index - 1]
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
@@ -425,7 +408,7 @@ def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
         previous.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    following = lowerer.body[first_index + 3]
+    following = lowerer.body[summary_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -442,12 +425,21 @@ def test_qkv_attention_preserves_both_invocation_forms() -> None:
         and node.func.id == QKV_ATTENTION
     ]
 
-    assert len(invocations) == 3
+    assert len(invocations) == 2
     default_invocations = [call for call in invocations if call.keywords == []]
     assert len(default_invocations) == 2
     assert all(call.args == [] for call in default_invocations)
-    late_invocation = next(call for call in invocations if call.keywords)
-    assert late_invocation.args == []
+
+    late_invocation = next(
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_qkv_attention_summary"
+    )
+    assert [_expression_path(argument) for argument in late_invocation.args] == [
+        "qkv_attention_context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in late_invocation.keywords
@@ -580,15 +572,20 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == QKV_ATTENTION
     ]
-    assert len(all_calls) == 3
+    assert len(all_calls) == 2
     late_result = next(
         statement
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_qkv_results"
+        and statement.targets[0].id == "_late_qkv_stats"
     )
     assert isinstance(late_result.value, ast.Call)
+    assert isinstance(late_result.value.func, ast.Name)
+    assert late_result.value.func.id == "run_qkv_attention_summary"
+    assert [ast.unparse(argument) for argument in late_result.value.args] == [
+        "qkv_attention_context"
+    ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in late_result.value.keywords
@@ -606,13 +603,13 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_qkv_results"
+        and statement.targets[0].id == "_late_qkv_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == QKV_ATTENTION
+        and statement.value.func.id == "run_qkv_attention_summary"
     )
 
-    previous_boundary = lowerer.body[late_index - 2]
+    previous_boundary = lowerer.body[late_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
@@ -623,7 +620,7 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
         previous_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    next_boundary = lowerer.body[late_index + 2]
+    next_boundary = lowerer.body[late_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)

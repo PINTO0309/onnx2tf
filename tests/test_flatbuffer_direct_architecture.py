@@ -1912,10 +1912,20 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 3
+    assert len(helper_invocations) == 2
+    assert all(call.args == [] and call.keywords == [] for call in helper_invocations)
+
+    summary_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_qkv_attention_summary"
+    ]
+    assert len(summary_invocations) == 1
     late_bridge_invocations = [
         call
-        for call in helper_invocations
+        for call in summary_invocations
         if any(
             keyword.arg == "include_prefix"
             and isinstance(keyword.value, ast.Constant)
@@ -1931,6 +1941,29 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
     )
     assert isinstance(layout_keyword.value, ast.Name)
     assert layout_keyword.value.id == "optimize_layout_transpose_chains"
+
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "qkv_attention_orchestration.py"
+    )
+    orchestration_tree = ast.parse(orchestration_path.read_text(encoding="utf-8"))
+    summary_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_qkv_attention_summary"
+    )
+    summary_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_qkv_attention"
+    ]
+    assert len(summary_owner_calls) == 1
 
 
 def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
@@ -5283,17 +5316,16 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    helper_name = "_run_qkv_attention_layout_pass_cluster"
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_qkv_results"
+        and statement.targets[0].id == "_late_qkv_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id == "run_qkv_attention_summary"
         and any(
             keyword.arg == "include_prefix"
             and isinstance(keyword.value, ast.Constant)
@@ -5301,7 +5333,7 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
             for keyword in statement.value.keywords
         )
     )
-    previous_boundary = lowerer.body[invocation_index - 2]
+    previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
@@ -5312,7 +5344,7 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
         previous_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 2]
+    next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)

@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import qkv_attention_orchestration
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -49,52 +53,26 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_late_qkv_prune_aware_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    count = next(
+    summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COUNT_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    index = lowerer.body.index(count)
-    raw = lowerer.body[index + 1]
-    summary = lowerer.body[index + 2]
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
-    assert _single_target(raw) == RAW_TARGET
-    assert isinstance(raw, ast.Assign)
-    assert ast.unparse(raw.value) == (
-        f"{RAW_WRAPPER}(include_layout_transpose="
-        "optimize_layout_transpose_chains, include_prefix=False)"
-    )
-    assert _single_target(summary) == SUMMARY_TARGET
+    index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_FUNCTION}({RAW_TARGET}, include_layout_transpose="
-        "optimize_layout_transpose_chains, include_prefix=False, "
-        "pruned_unused_tensors=max(0, int(late_qkv_tensor_count - "
-        "len(model_ir.tensors))))"
+        f"{SUMMARY_OWNER}(qkv_attention_context, include_layout_transpose="
+        "optimize_layout_transpose_chains, include_prefix=False)"
     )
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 3]) == SUCCESSOR_TARGET
-    assert sum(
-        isinstance(node, ast.Name) and node.id == COUNT_TARGET
-        for node in ast.walk(lowerer)
-    ) == 2
-    assert sum(
-        isinstance(node, ast.Name) and node.id == RAW_TARGET
-        for node in ast.walk(lowerer)
-    ) == 2
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id == SUMMARY_TARGET
+        and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late QKV lacks one prune-aware summary owner",
-)
 def test_late_qkv_uses_one_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     owner_calls = [
@@ -144,3 +122,63 @@ def test_late_qkv_uses_one_prune_aware_summary_owner() -> None:
         and node.func.id == RAW_OWNER
         for node in ast.walk(wrapper)
     )
+
+
+@pytest.mark.parametrize(
+    ("include_layout_transpose", "include_prefix", "prune"),
+    (
+        (False, False, False),
+        (True, False, True),
+        (False, True, True),
+    ),
+)
+def test_qkv_summary_owner_preserves_flags_context_schema_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+    include_prefix: bool,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("late_qkv_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    result_count = 1 + int(include_layout_transpose) + int(include_prefix)
+    raw_results = tuple({} for _ in range(result_count))
+    expected = qkv_attention_orchestration.summarize_qkv_attention_mutations(
+        raw_results,
+        include_layout_transpose=include_layout_transpose,
+        include_prefix=include_prefix,
+        pruned_unused_tensors=int(prune),
+    )
+    observed: list[tuple[object, bool, bool]] = []
+
+    def _run(
+        candidate: ModelIRPassContext,
+        *,
+        include_layout_transpose: bool,
+        include_prefix: bool,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append(
+            (candidate, include_layout_transpose, include_prefix)
+        )
+        if prune:
+            del candidate.model_ir.tensors["probe"]
+        return raw_results
+
+    monkeypatch.setattr(qkv_attention_orchestration, RAW_OWNER, _run)
+
+    assert qkv_attention_orchestration.run_qkv_attention_summary(
+        context,
+        include_layout_transpose=include_layout_transpose,
+        include_prefix=include_prefix,
+    ) == expected
+    assert observed == [
+        (context, include_layout_transpose, include_prefix)
+    ]

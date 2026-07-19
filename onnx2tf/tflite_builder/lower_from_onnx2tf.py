@@ -236,7 +236,7 @@ from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orches
 )
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     run_qkv_attention,
-    summarize_qkv_attention_mutations,
+    run_qkv_attention_summary,
 )
 from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
     run_duplicate_quantized_prelu,
@@ -5362,19 +5362,10 @@ def lower_onnx_to_ir(
     )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
-    late_qkv_tensor_count = len(model_ir.tensors)
-    late_qkv_results = _run_qkv_attention_layout_pass_cluster(
+    _late_qkv_stats = run_qkv_attention_summary(
+        qkv_attention_context,
         include_layout_transpose=optimize_layout_transpose_chains,
         include_prefix=False,
-    )
-    _late_qkv_stats = summarize_qkv_attention_mutations(
-        late_qkv_results,
-        include_layout_transpose=optimize_layout_transpose_chains,
-        include_prefix=False,
-        pruned_unused_tensors=max(
-            0,
-            int(late_qkv_tensor_count - len(model_ir.tensors)),
-        ),
     )
     _terminal_split_conv_concat_bridge_stats = (
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(

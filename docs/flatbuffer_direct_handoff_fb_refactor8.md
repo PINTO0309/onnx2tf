@@ -3287,3 +3287,34 @@ Commit and push this characterization separately. At resume, add the generic
 prune-aware owner, replace only this late triple, retain the raw lowerer
 wrapper and both default uses, and validate sequentially. Continue with commits
 and pushes only; never create, update, or reopen a pull request.
+
+## Late QKV prune-aware summary implementation
+
+The pass module now exposes `run_qkv_attention_summary(...)`. It snapshots
+tensor count, invokes the existing raw QKV owner with the supplied policy
+flags, and applies the existing strict prune-aware summary. The late lowerer
+site keeps `_late_qkv_stats` but no longer exposes the consumed tensor-count
+and raw-result locals.
+
+The raw lowerer wrapper and both default-policy uses remain intact. The late
+site still receives the runtime layout-Transpose flag and disables prefix
+cleanup. Its shape-extract predecessor, terminal Split/Conv/Concat successor,
+pass order, shared context, graph behavior, result schema, and 128/128 store
+are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `5 passed in 0.59s`;
+- affected owner, boundary, core, store, and architecture contracts:
+  `405 passed in 20.77s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.90s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.37s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.69s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next adjacent non-store evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

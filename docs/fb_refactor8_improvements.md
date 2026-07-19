@@ -3741,3 +3741,38 @@ Sequential characterization under core-only `uv` completed with
 `1 passed, 1 xfailed in 0.17s`; targeted Ruff, bytecode compilation, and
 whitespace checks passed. The sole expected failure is the intentionally
 absent summary owner.
+
+## Late QKV prune-aware summary implementation
+
+`run_qkv_attention_summary(context, *, include_layout_transpose,
+include_prefix)` now owns the characterized tensor snapshot, raw QKV
+invocation, and strict prune-aware normalization. The lowerer retains
+`_late_qkv_stats` at the same boundary and forwards the same runtime
+layout-Transpose flag with prefix cleanup disabled, while the consumed
+`late_qkv_tensor_count` and `late_qkv_results` locals are removed.
+
+The nested `_run_qkv_attention_layout_pass_cluster` compatibility wrapper and
+its two default-policy production uses remain unchanged. Pass selection,
+execution order, shared context identity, result schema, graph pruning,
+neighboring shape-extract and terminal bridge boundaries, public behavior,
+artifacts, dependencies, and TensorFlow isolation are unchanged. The summary
+remains outside the already-full 128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `5 passed in 0.59s`;
+- affected QKV, neighboring owner, core, store, and architecture contracts:
+  `405 passed in 20.77s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.90s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.37s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.69s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact flag/context forwarding, stable and prune-only behavior, and
+schema preservation, while the affected and architecture gates preserve all
+production boundaries and total pass ownership.

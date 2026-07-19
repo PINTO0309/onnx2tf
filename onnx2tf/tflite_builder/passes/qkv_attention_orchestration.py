@@ -180,3 +180,28 @@ def run_qkv_attention(
         expected_pass_ids=expected_pass_ids,
         phase_name="QKV attention",
     )
+
+
+def run_qkv_attention_summary(
+    context: QKVAttentionContext,
+    *,
+    include_layout_transpose: bool = False,
+    include_prefix: bool = True,
+) -> Dict[str, int]:
+    """Run QKV attention cleanup and return its prune-aware summary."""
+
+    initial_tensor_count = len(context.model_ir.tensors)
+    pass_results = run_qkv_attention(
+        context,
+        include_layout_transpose=include_layout_transpose,
+        include_prefix=include_prefix,
+    )
+    return summarize_qkv_attention_mutations(
+        pass_results,
+        include_layout_transpose=include_layout_transpose,
+        include_prefix=include_prefix,
+        pruned_unused_tensors=max(
+            0,
+            int(initial_tensor_count - len(context.model_ir.tensors)),
+        ),
+    )
