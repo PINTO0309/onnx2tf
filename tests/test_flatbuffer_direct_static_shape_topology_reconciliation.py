@@ -41,6 +41,16 @@ EXPECTED_MODEL_ARGUMENTS = (
     "model_ir",
     "model_ir",
 )
+EXPECTED_PHASE_IDS = (
+    "shape_topology.fallback.norm",
+    "shape_topology.fallback.high_rank_batch_matmul",
+    "shape_topology.primary.final_high_rank_batch_matmul",
+    "shape_topology.primary.final_pad_layout",
+    "shape_topology.primary.final_conv_input",
+    "shape_topology.primary.final_mixed_concat",
+    "shape_topology.primary.final_concat_axis",
+    "shape_topology.primary.final_binary_layout",
+)
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -87,6 +97,21 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
+        return None
+    return call.args[1]
+
+
 def _raw_reconcile_sort_pairs(
     lowerer: ast.FunctionDef,
 ) -> list[tuple[list[ast.stmt], int]]:
@@ -110,7 +135,11 @@ def _runner_locations(
             (block, index)
             for block in _pipeline_blocks(lowerer.body)
             for index, statement in enumerate(block)
-            if _call_name(statement) == RUNNER
+            if (
+                (owner := _phase_result_owner(statement)) is not None
+                and isinstance(owner.func, ast.Name)
+                and owner.func.id == RUNNER
+            )
         ],
         key=lambda item: item[0][item[1]].lineno,
     )
@@ -178,17 +207,22 @@ def test_eight_static_shape_topology_boundaries_are_explicit() -> None:
     locations = _runner_locations(lowerer)
 
     assert len(locations) == 8
-    assert tuple(_single_target(block[index]) for block, index in locations) == (
-        EXPECTED_RESULT_TARGETS
-    )
     assert tuple(
-        ast.unparse(_statement_call(block[index]).args[0])
+        ast.literal_eval(_statement_call(block[index]).args[0])
+        for block, index in locations
+    ) == EXPECTED_PHASE_IDS
+    assert tuple(
+        ast.unparse(_phase_result_owner(block[index]).args[0])
         for block, index in locations
     ) == EXPECTED_MODEL_ARGUMENTS
+    assert not any(
+        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
     for block, index in locations:
-        call = _statement_call(block[index])
-        assert call is not None
-        assert call.keywords == []
+        owner = _phase_result_owner(block[index])
+        assert owner is not None
+        assert owner.keywords == []
 
 
 def test_static_shape_then_topology_contract_is_explicit() -> None:

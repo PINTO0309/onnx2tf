@@ -575,3 +575,48 @@ Validation completed sequentially under `uv`:
 
 No real-model conversion was run because the owner effects are unchanged and
 only their small result destination moved.
+
+## Static-shape/topology phase-result migration
+
+The remaining eight observation-only results all use the previously
+characterized `run_static_shape_topology_reconciliation()` owner. They have
+now moved from lowerer-local variables to the bounded `ConversionSession`
+phase-result store under these stable phase IDs:
+
+- `shape_topology.fallback.norm`;
+- `shape_topology.fallback.high_rank_batch_matmul`;
+- `shape_topology.primary.final_high_rank_batch_matmul`;
+- `shape_topology.primary.final_pad_layout`;
+- `shape_topology.primary.final_conv_input`;
+- `shape_topology.primary.final_mixed_concat`;
+- `shape_topology.primary.final_concat_axis`;
+- `shape_topology.primary.final_binary_layout`.
+
+The store follows invoked-phase-only semantics. A guarded phase that does not
+run is absent from the snapshot; it is not represented as an artificial
+all-zero result. The former all-zero default dictionaries were unconsumed and
+have therefore been removed. This preserves the important distinction between
+"not invoked" and "invoked but made no change" while reducing lowerer-local
+state.
+
+Every existing guard, owner argument, owner evaluation count, graph mutation,
+topological sort, predecessor, successor, and execution order remains
+unchanged. The reconciliation owner still returns the same four bounded
+integer counters for static tensor reconciliation, mutation count, operator
+reordering, and cycle detection. No scan was added or removed, and the stored
+results are not exposed through ModelIR metadata, public APIs, reports, or
+artifacts.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated and directly affected orchestration contracts:
+  `101 passed in 2.66s`;
+- broader phase-result, owner, fallback, terminal, and topology contracts:
+  `124 passed in 3.21s`;
+- lowerer architecture contracts: `258 passed in 16.64s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because this checkpoint changes only the
+destination of already-computed bounded dictionaries. The bounded session
+contract now covers 24 phase IDs.

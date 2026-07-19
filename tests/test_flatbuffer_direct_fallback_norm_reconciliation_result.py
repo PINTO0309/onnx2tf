@@ -14,6 +14,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 RESULT_TARGET = "_fallback_norm_static_shape_stats"
+PHASE_ID = "shape_topology.fallback.norm"
 RECONCILE_OWNER = "_reconcile_static_tensor_shapes"
 RECONCILE_TOPOLOGY_OWNER = "run_static_shape_topology_reconciliation"
 
@@ -45,6 +46,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
+        return None
+    return call.args[1]
 
 
 def _fallback_norm_guard() -> ast.If:
@@ -126,24 +142,29 @@ def test_fallback_norm_reconciliation_boundary_is_explicit() -> None:
         "_run_singleton_consecutive_reshape_pass_cluster"
     )
     reconciliation = guard.body[2]
-    assert _single_target(reconciliation) == RESULT_TARGET
-    assert _call_name(reconciliation) == RECONCILE_TOPOLOGY_OWNER
-    call = _statement_call(reconciliation)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
-    assert call.keywords == []
+    record = _statement_call(reconciliation)
+    assert record is not None
+    assert ast.literal_eval(record.args[0]) == PHASE_ID
+    owner = _phase_result_owner(reconciliation)
+    assert owner is not None
+    assert isinstance(owner.func, ast.Name)
+    assert owner.func.id == RECONCILE_TOPOLOGY_OWNER
+    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
+    assert owner.keywords == []
 
 
 def test_fallback_norm_reconciliation_retains_complete_observation() -> None:
     guard = _fallback_norm_guard()
     reconciliation = guard.body[2]
-    assert _single_target(reconciliation) == RESULT_TARGET
-    call = _statement_call(reconciliation)
-    assert call is not None
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == RECONCILE_TOPOLOGY_OWNER
-    assert [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
-    assert call.keywords == []
+    record = _statement_call(reconciliation)
+    assert record is not None
+    assert ast.literal_eval(record.args[0]) == PHASE_ID
+    owner = _phase_result_owner(reconciliation)
+    assert owner is not None
+    assert isinstance(owner.func, ast.Name)
+    assert owner.func.id == RECONCILE_TOPOLOGY_OWNER
+    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
+    assert owner.keywords == []
 
     lowerer = _lowerer()
     assert not any(

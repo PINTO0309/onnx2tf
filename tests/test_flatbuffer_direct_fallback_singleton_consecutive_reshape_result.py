@@ -131,7 +131,10 @@ def test_fallback_singleton_consecutive_guard_and_boundaries_are_explicit() -> N
         "_fallback_binary_adapter_stats",
         "_fallback_singleton_adapter_stats",
     ]
-    assert _call_name(guard.body[index + 1]) == "_reconcile_static_tensor_shapes"
+    assert ast.unparse(guard.body[index + 1]) == (
+        "session.record_phase_result('shape_topology.fallback.norm', "
+        "run_static_shape_topology_reconciliation(fallback_ir))"
+    )
 
     fallback_calls = [
         node

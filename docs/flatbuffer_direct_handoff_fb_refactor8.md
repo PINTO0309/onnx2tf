@@ -611,3 +611,33 @@ whether the bounded store represents only invoked phases or also records
 guard-skipped zero results. Do not silently conflate "not invoked" with "ran
 and changed nothing". Continue with coherent commits and pushes only; never
 create, update, or reopen a pull request.
+
+## Static-shape/topology phase-result migration
+
+The eight combined reconciliation results now use the bounded session store.
+The selected contract is invoked-phase-only: a skipped guard creates no entry,
+whereas an invoked owner records its complete four-counter result even when
+all counters are zero. This avoids conflating "not invoked" with "invoked and
+stable". The eight old unconsumed zero-default locals were removed.
+
+Stable phase IDs cover fallback norm, fallback high-rank BatchMatMul, and the
+six primary final repair boundaries for high-rank BatchMatMul, Pad, Conv input,
+mixed Concat, Concat axis, and binary layout. All guards, owner calls,
+arguments, predecessors, successors, and ModelIR effects remain unchanged.
+The bounded store now covers 24 phase IDs and remains isolated from public
+results, reports, diagnostics, metadata, and artifacts.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated and directly affected contracts: `101 passed in 2.66s`;
+- broader phase-result and related owner/orchestration contracts:
+  `124 passed in 3.21s`;
+- lowerer architecture contracts: `258 passed in 16.64s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was needed for this result-destination-only change.
+After committing and pushing this checkpoint, inventory remaining unconsumed
+lowerer observations before selecting another homogeneous family. Do not use
+stored counters to skip graph scans without a separate differential
+characterization. Continue with coherent commits and pushes only; never
+create, update, or reopen a pull request.

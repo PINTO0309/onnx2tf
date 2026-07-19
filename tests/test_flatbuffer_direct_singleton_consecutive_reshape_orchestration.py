@@ -456,16 +456,11 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
         "run_indexed_binary_layout_adapter_cleanup"
     )
     reconciliation = fallback_guard.body[invocation_index + 1]
-    assert isinstance(reconciliation, ast.Assign)
-    assert len(reconciliation.targets) == 1
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_norm_static_shape_stats"
+    assert isinstance(reconciliation, ast.Expr)
+    assert ast.unparse(reconciliation) == (
+        "session.record_phase_result('shape_topology.fallback.norm', "
+        "run_static_shape_topology_reconciliation(fallback_ir))"
     )
-    assert _statement_call_name(reconciliation) == (
-        "run_static_shape_topology_reconciliation"
-    )
-    assert reconciliation.value.keywords == []
 
 
 def test_singleton_consecutive_phase_imports_owners_without_lowerer() -> None:

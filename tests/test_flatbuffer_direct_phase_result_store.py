@@ -16,10 +16,12 @@ EXPECTED_RESULT_TARGETS = (
     "_core_cleanup_dynamic_reshape_stats",
     "_no_layout_safe_transpose_reduction_stats",
     "_terminal_expand_squeeze_static_shape_stats",
+    "_fallback_norm_static_shape_stats",
     "_fallback_dynamic_rank1_topology_layout_stats",
     "_fallback_broadcast_topology_layout_stats",
     "_fallback_post_placeholder_topology_stats",
     "_fallback_post_layout_repair_topology_stats",
+    "_fallback_high_rank_bmm_static_shape_stats",
     "_fallback_topology_layout_validation_stats",
     "_primary_post_lowering_topology_stats",
     "_no_layout_post_reduction_topology_stats",
@@ -28,16 +30,24 @@ EXPECTED_RESULT_TARGETS = (
     "_final_instancenorm_topology_layout_stats",
     "_final_broadcast_topology_layout_stats",
     "_final_placeholder_topology_stats",
+    "_final_high_rank_bmm_static_shape_stats",
+    "_final_pad_layout_static_shape_stats",
+    "_final_conv_input_static_shape_stats",
+    "_final_mixed_concat_static_shape_stats",
+    "_final_concat_axis_static_shape_stats",
+    "_final_binary_layout_static_shape_stats",
     "_terminal_topology_layout_validation_stats",
 )
 EXPECTED_OWNERS = (
     "_resolve_dynamic_reshape_shapes",
     "_apply_safe_transpose_reduction_lite",
     "_reconcile_static_tensor_shapes",
+    "run_static_shape_topology_reconciliation",
     "run_topology_layout_refresh",
     "run_topology_layout_refresh",
     "_topologically_sort_operators",
     "_topologically_sort_operators",
+    "run_static_shape_topology_reconciliation",
     "run_topology_layout_validation",
     "_topologically_sort_operators",
     "_topologically_sort_operators",
@@ -46,6 +56,12 @@ EXPECTED_OWNERS = (
     "run_topology_layout_refresh",
     "run_topology_layout_refresh",
     "_topologically_sort_operators",
+    "run_static_shape_topology_reconciliation",
+    "run_static_shape_topology_reconciliation",
+    "run_static_shape_topology_reconciliation",
+    "run_static_shape_topology_reconciliation",
+    "run_static_shape_topology_reconciliation",
+    "run_static_shape_topology_reconciliation",
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
@@ -57,6 +73,14 @@ EXPECTED_MODEL_ARGUMENTS = (
     "fallback_ir",
     "fallback_ir",
     "fallback_ir",
+    "fallback_ir",
+    "fallback_ir",
+    "model_ir",
+    "model_ir",
+    "model_ir",
+    "model_ir",
+    "model_ir",
+    "model_ir",
     "model_ir",
     "model_ir",
     "model_ir",
@@ -70,10 +94,12 @@ EXPECTED_PHASE_IDS = (
     "shape_resolution.core.dynamic_reshape",
     "layout.no_layout.safe_transpose_reduction",
     "shape_reconciliation.terminal.expand_squeeze",
+    "shape_topology.fallback.norm",
     "topology_layout.fallback.post_dynamic_rank1",
     "topology_layout.fallback.broadcast",
     "topology.fallback.post_placeholder",
     "topology.fallback.post_layout_repair",
+    "shape_topology.fallback.high_rank_batch_matmul",
     "layout_validation.fallback.terminal",
     "topology.primary.post_lowering",
     "topology.primary.no_layout_post_reduction",
@@ -82,6 +108,12 @@ EXPECTED_PHASE_IDS = (
     "topology_layout.primary.final_instancenorm",
     "topology_layout.primary.final_broadcast",
     "topology.primary.final_placeholder",
+    "shape_topology.primary.final_high_rank_batch_matmul",
+    "shape_topology.primary.final_pad_layout",
+    "shape_topology.primary.final_conv_input",
+    "shape_topology.primary.final_mixed_concat",
+    "shape_topology.primary.final_concat_axis",
+    "shape_topology.primary.final_binary_layout",
     "layout_validation.primary.terminal",
 )
 
@@ -123,7 +155,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_sixteen_observations_use_the_bounded_session_store() -> None:
+def test_twenty_four_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -134,7 +166,7 @@ def test_sixteen_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 16
+    assert len(records) == 24
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
@@ -160,6 +192,7 @@ def test_phase_result_store_is_bounded_integer_only_and_snapshot_isolated() -> N
     session = _session()
     source = {"changed": 1, "cycle_detected": 0}
 
+    assert session.phase_results_snapshot() == {}
     session.record_phase_result("topology.primary", source)
     source["changed"] = 99
     assert session.phase_results_snapshot() == {
