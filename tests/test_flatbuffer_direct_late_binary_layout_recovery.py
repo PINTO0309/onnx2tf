@@ -287,18 +287,10 @@ def test_late_binary_recovery_retains_complete_shape_result() -> None:
     )
     assert len(guard.body) == 1
     statement = guard.body[0]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == (
-        "_late_binary_layout_recovery_static_shape_stats"
+    assert isinstance(statement, ast.Expr)
+    assert ast.unparse(statement) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.late_binary_layout_recovery', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
     )
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"include_mutation_count": "True"}

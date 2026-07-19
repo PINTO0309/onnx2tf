@@ -9365,19 +9365,13 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
     assert len(tensor_len_calls) == 1
     assert len(guard.body) == 1
     reconcile = guard.body[0]
-    assert isinstance(reconcile, ast.Assign)
-    assert len(reconcile.targets) == 1
-    assert isinstance(reconcile.targets[0], ast.Name)
-    assert reconcile.targets[0].id == (
-        "_late_binary_repair_static_shape_stats"
+    assert isinstance(reconcile, ast.Expr)
+    assert ast.unparse(reconcile) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.late_binary_repair', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
     )
-    assert isinstance(reconcile.value, ast.Call)
-    assert isinstance(reconcile.value.func, ast.Name)
-    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconcile.value.keywords
-    } == {"include_mutation_count": "True"}
 
 
 def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> None:
@@ -16301,19 +16295,13 @@ def test_late_binary_layout_recovery_uses_one_aggregate_runner() -> None:
     )
     assert len(reconcile_guard.body) == 1
     reconcile = reconcile_guard.body[0]
-    assert isinstance(reconcile, ast.Assign)
-    assert len(reconcile.targets) == 1
-    assert isinstance(reconcile.targets[0], ast.Name)
-    assert reconcile.targets[0].id == (
-        "_late_binary_layout_recovery_static_shape_stats"
+    assert isinstance(reconcile, ast.Expr)
+    assert ast.unparse(reconcile) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.late_binary_layout_recovery', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
     )
-    assert isinstance(reconcile.value, ast.Call)
-    assert isinstance(reconcile.value.func, ast.Name)
-    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconcile.value.keywords
-    } == {"include_mutation_count": "True"}
 
 
 def test_indexed_split_adapter_owners_are_bounded_and_transactional() -> None:

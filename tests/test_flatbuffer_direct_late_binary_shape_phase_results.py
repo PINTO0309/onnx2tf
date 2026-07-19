@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER = "_reconcile_static_tensor_shapes"
@@ -56,43 +53,54 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     return call.args[1]
 
 
-def test_two_late_binary_reconciliations_are_guarded_and_unconsumed() -> None:
-    lowerer = _lowerer()
+def _parents(lowerer: ast.FunctionDef) -> dict[ast.AST, ast.AST]:
     parents: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(lowerer):
         for child in ast.iter_child_nodes(node):
             parents[child] = node
-    assignments = sorted(
+    return parents
+
+
+def _phase_records(lowerer: ast.FunctionDef) -> list[ast.Expr]:
+    return sorted(
         (
             node
             for node in ast.walk(lowerer)
-            if isinstance(node, ast.Assign)
-            and _single_target(node) in EXPECTED_RESULT_TARGETS
+            if isinstance(node, ast.Expr)
+            and (owner := _phase_result_owner(node)) is not None
+            and isinstance(owner.func, ast.Name)
+            and owner.func.id == OWNER
+            and ast.literal_eval(_statement_call(node).args[0])
+            in EXPECTED_PHASE_IDS
         ),
         key=lambda node: node.lineno,
     )
 
-    assert tuple(_single_target(node) for node in assignments) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    for assignment in assignments:
-        call = _statement_call(assignment)
-        assert call is not None
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == OWNER
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+
+def test_two_late_binary_reconciliations_are_guarded_and_unconsumed() -> None:
+    lowerer = _lowerer()
+    parents = _parents(lowerer)
+    records = _phase_records(lowerer)
+
+    assert tuple(
+        ast.literal_eval(_statement_call(node).args[0]) for node in records
+    ) == EXPECTED_PHASE_IDS
+    for record in records:
+        owner = _phase_result_owner(record)
+        assert owner is not None
+        assert [ast.unparse(argument) for argument in owner.args] == ["model_ir"]
         assert {
             keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
+            for keyword in owner.keywords
         } == {"include_mutation_count": "True"}
-        assert isinstance(parents[assignment], ast.If)
+        assert isinstance(parents[record], ast.If)
 
-    repair_guard = parents[assignments[0]]
+    repair_guard = parents[records[0]]
     assert isinstance(repair_guard, ast.If)
     assert "len(model_ir.tensors) < late_binary_repair_tensor_count" in (
         ast.unparse(repair_guard.test)
     )
-    recovery_guard = parents[assignments[1]]
+    recovery_guard = parents[records[1]]
     assert isinstance(recovery_guard, ast.If)
     assert ast.unparse(recovery_guard.test) == (
         "_stats_have_positive_count(late_binary_layout_recovery_stats)"
@@ -111,29 +119,9 @@ def test_two_late_binary_reconciliations_are_guarded_and_unconsumed() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late binary reconciliation results have not moved to phase records",
-)
-def test_two_late_binary_reconciliations_use_phase_results() -> None:
+def test_two_late_binary_reconciliation_locals_are_removed() -> None:
     lowerer = _lowerer()
-    records = sorted(
-        (
-            node
-            for node in ast.walk(lowerer)
-            if isinstance(node, ast.Expr)
-            and (owner := _phase_result_owner(node)) is not None
-            and isinstance(owner.func, ast.Name)
-            and owner.func.id == OWNER
-            and ast.literal_eval(_statement_call(node).args[0])
-            in EXPECTED_PHASE_IDS
-        ),
-        key=lambda node: node.lineno,
-    )
 
-    assert tuple(
-        ast.literal_eval(_statement_call(node).args[0]) for node in records
-    ) == EXPECTED_PHASE_IDS
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)

@@ -814,6 +814,42 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented bounded-store
 migration.
 
+## Late binary reconciliation implementation
+
+The two characterized late binary reconciliation results now record under:
+
+- `shape_reconciliation.primary.late_binary_repair`;
+- `shape_reconciliation.primary.late_binary_layout_recovery`.
+
+The first record remains guarded by static-signature repair, indexed binary
+adapter repair, or cleanup-only tensor pruning. The second remains nested
+inside both the existing late-layout enablement condition and the positive
+late binary recovery-summary guard. Neither boundary had an all-zero default
+to remove.
+
+Only the destinations of the already-computed reconciliation counters changed.
+Both `_reconcile_static_tensor_shapes` calls retain `model_ir` and
+`include_mutation_count=True`; their guards, evaluation count, source order,
+graph traversal, ModelIR mutations, successors, public results, reports,
+artifacts, dependencies, and TensorFlow import boundaries are unchanged. The
+bounded store now covers 49 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused late-binary, terminal, and bounded-store contracts:
+  `72 passed in 2.40s`;
+- broader phase-result, owner, fallback, terminal, shape, and topology
+  contracts: `187 passed in 4.82s`;
+- lowerer architecture contracts: `258 passed in 18.40s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because this implementation changes only two
+unconsumed result destinations. The remaining unconsumed static-shape
+observations are the guarded shared-late boundary and the post-split fallback
+boundary; they have different execution semantics and must be characterized
+separately.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

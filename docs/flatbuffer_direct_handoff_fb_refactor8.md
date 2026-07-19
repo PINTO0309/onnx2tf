@@ -941,3 +941,27 @@ Commit and push before replacing only these two guarded assignments with phase
 records. Preserve both outer and inner guards, then update binary-recovery,
 terminal, architecture, and bounded-store contracts, validate, document,
 commit, and push. Never create, update, or reopen a pull request.
+
+## Late binary reconciliation implementation
+
+The two guarded reconciliation results now use stable
+`shape_reconciliation.primary.late_binary_repair` and
+`shape_reconciliation.primary.late_binary_layout_recovery` records. The repair
+record retains its mutation-or-pruning guard. The recovery record retains both
+the outer late-layout enablement guard and the inner positive-summary guard.
+Only the unconsumed result destinations changed; neither boundary had a zero
+default. The bounded store now covers 49 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused late-binary, terminal, and store contracts:
+  `72 passed in 2.40s`;
+- broader affected contracts: `187 passed in 4.82s`;
+- lowerer architecture contracts: `258 passed in 18.40s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required. After committing and pushing, only the
+shared-late and post-split fallback static-shape observations remain
+unconsumed. Characterize these separately before changing either destination;
+their guards and execution semantics differ. Never create, update, or reopen a
+pull request.

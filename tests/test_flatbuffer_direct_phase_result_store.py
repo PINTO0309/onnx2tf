@@ -16,6 +16,8 @@ EXPECTED_RESULT_TARGETS = (
     "_core_cleanup_dynamic_reshape_stats",
     "_no_layout_safe_transpose_reduction_stats",
     "_very_late_broadcast_static_shape_stats",
+    "_late_binary_repair_static_shape_stats",
+    "_late_binary_layout_recovery_static_shape_stats",
     "_terminal_expand_squeeze_static_shape_stats",
     "_very_late_static_shape_stats",
     "_fallback_norm_static_shape_stats",
@@ -67,6 +69,8 @@ EXPECTED_OWNERS = (
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
+    "_reconcile_static_tensor_shapes",
     "run_static_shape_topology_reconciliation",
     "run_topology_layout_refresh",
     "_reconcile_static_tensor_shapes",
@@ -111,7 +115,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 5,
+    *("model_ir",) * 7,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -119,6 +123,8 @@ EXPECTED_PHASE_IDS = (
     "shape_resolution.core.dynamic_reshape",
     "layout.no_layout.safe_transpose_reduction",
     "shape_reconciliation.primary.very_late_broadcast",
+    "shape_reconciliation.primary.late_binary_repair",
+    "shape_reconciliation.primary.late_binary_layout_recovery",
     "shape_reconciliation.terminal.expand_squeeze",
     "shape_reconciliation.primary.very_late_final",
     "shape_topology.fallback.norm",
@@ -203,7 +209,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_forty_seven_observations_use_the_bounded_session_store() -> None:
+def test_forty_nine_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -214,7 +220,7 @@ def test_forty_seven_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 47
+    assert len(records) == 49
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
