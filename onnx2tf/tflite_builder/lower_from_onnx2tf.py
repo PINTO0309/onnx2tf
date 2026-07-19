@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import onnx
@@ -41,6 +41,9 @@ from onnx2tf.tflite_builder.core.onnx_analysis import (
     _node_attr_ints,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.core.session import ConversionSession
+from onnx2tf.tflite_builder.core.shape_readiness import (
+    reconcile_shape_sensitive_inputs_on_demand,
+)
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_registry import (
     NodeValidationError,
@@ -52,10 +55,9 @@ from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
     infer_model_ir_logical_layouts,
-    normalize_onnx_shape,
     validate_model_ir_layout_annotations,
 )
-from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
+from onnx2tf.tflite_builder.op_families.constant import lower_constant_node
 from onnx2tf.tflite_builder.passes.precision import (
     _restore_precision_sensitive_reciprocal_divisions,
     _rewrite_constant_divisors_to_multiplicative_reciprocals,
@@ -171,6 +173,9 @@ from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     run_layout_recovery_prefix,
     run_layout_reshape_attention_recovery_prefix,
 )
+from onnx2tf.tflite_builder.passes.late_binary_layout_recovery import (
+    run_late_binary_layout_recovery,
+)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     AttentionRecoveryContext,
     run_attention_gate_qdq_recovery,
@@ -193,6 +198,7 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
     run_terminal_affine_concat_split_recovery,
+    summarize_terminal_affine_concat_split_mutations,
 )
 from onnx2tf.tflite_builder.passes.sinet_preadd_resize_recovery_orchestration import (
     run_sinet_preadd_resize_recovery,
@@ -215,27 +221,32 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.late_spp_concat_unary_conv_orchestration import (
     run_late_spp_concat_unary_conv,
+    summarize_late_spp_concat_unary_conv_mutations,
 )
 from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration import (
     run_boundary_batchmatmul_unary,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
     run_channel_slice_pad_mul,
+    summarize_channel_slice_pad_mul_mutations,
 )
 from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
     run_late_hard_activation_layout,
+    summarize_late_hard_activation_layout_mutations,
 )
 from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orchestration import (
     run_absolute_final_normalization_attention,
 )
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     run_qkv_attention,
+    summarize_qkv_attention_mutations,
 )
 from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
     run_duplicate_quantized_prelu,
 )
 from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
     run_very_late_gather_constant_normalization,
+    summarize_very_late_gather_constant_normalization_mutations,
 )
 from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
     run_se_fc_gather_channel_fanout,
@@ -245,11 +256,13 @@ from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import
 )
 from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
     run_late_layout_mean_spp_gather_constant_cast,
+    summarize_late_layout_mean_spp_gather_constant_cast_mutations,
 )
 from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
     run_singleton_consecutive_reshape,
 )
 from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    run_elementwise_gate_layout_cleanup,  # noqa: F401 - compatibility re-export
     run_gate_layout,
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
@@ -273,6 +286,7 @@ from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     repair_rank4_channelwise_broadcast_constants_to_runtime_layout as _repair_rank4_channelwise_broadcast_constants_to_runtime_layout_pass,
     repair_rank4_binary_layout_mismatch_with_transpose_adapter as _repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass,
     repair_rank4_binary_singleton_broadcast_layout_mismatch as _repair_rank4_binary_singleton_broadcast_layout_mismatch_pass,
+    run_indexed_binary_layout_adapter_cleanup,
 )
 from onnx2tf.tflite_builder.passes.conv_output_passthrough_layout import (
     optimize_transposeconv_output_channel1_terminal_transpose_chains as _optimize_transposeconv_output_channel1_terminal_transpose_chains_pass,
@@ -319,7 +333,7 @@ from onnx2tf.tflite_builder.passes.concat_input_adapter_layout import (
     optimize_transpose_input_chains_pre_concat_to_single_post_adapter as _optimize_transpose_input_chains_pre_concat_to_single_post_adapter_pass,
 )
 from onnx2tf.tflite_builder.passes.pre_add_direct_unary_layout import (
-    optimize_transpose_pre_add_direct_unary_nhwc_chains as _optimize_transpose_pre_add_direct_unary_nhwc_chains_pass,
+    optimize_transpose_pre_add_direct_unary_nhwc_chains as _optimize_transpose_pre_add_direct_unary_nhwc_chains_pass,  # noqa: F401 - compatibility re-export
 )
 from onnx2tf.tflite_builder.passes.pre_add_layout import (
     optimize_transpose_pre_add_nhwc_chains as _optimize_transpose_pre_add_nhwc_chains_pass,
@@ -549,7 +563,7 @@ from onnx2tf.tflite_builder.passes.nhwc_concat_quantized_layout import (
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,  # noqa: F401 - compatibility re-export
-    _is_inverse_perm,
+    _is_inverse_perm,  # noqa: F401 - compatibility re-export
     _optimize_layout_transpose_chains as _optimize_layout_transpose_chains_pass,
     _optimize_trailing_output_transpose_passthrough_chains as _optimize_trailing_output_transpose_passthrough_chains_pass,
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains as _optimize_transpose_gather_transpose_axis_remap_nhwc_chains_pass,
@@ -656,6 +670,9 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_consecutive_mul_constants_cleanup,
     run_duplicate_fanout_cleanup,
     run_squeeze_reshape_identity_cleanup,
+)
+from onnx2tf.tflite_builder.passes.prune_reconcile import (
+    run_indexed_prune_reconcile_cleanup,
 )
 from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
     _optimize_singleton_layout_reshape_maxpool_binary_cast_chains as _optimize_singleton_layout_reshape_maxpool_binary_cast_chains_pass,
@@ -1055,15 +1072,29 @@ def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
     )
 
 
-def _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir: ModelIR) -> Dict[str, int]:
+def _repair_rank4_binary_layout_mismatch_with_transpose_adapter(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     return _repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass(
-        model_ir
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
     )
 
 
-def _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir: ModelIR) -> Dict[str, int]:
+def _repair_rank4_binary_singleton_broadcast_layout_mismatch(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     return _repair_rank4_binary_singleton_broadcast_layout_mismatch_pass(
-        model_ir
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
     )
 
 
@@ -1222,10 +1253,12 @@ def _reconcile_static_tensor_shapes(
     model_ir: ModelIR,
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    include_mutation_count: bool = False,
 ) -> Dict[str, int]:
     return _static_shape_reconciliation_pass.reconcile_static_tensor_shapes(
         model_ir,
         graph_index=graph_index,
+        include_mutation_count=include_mutation_count,
     )
 
 
@@ -1253,10 +1286,16 @@ def _run_indexed_shape_convergence_cleanup(
         model_ir,
         graph_index=graph_index,
     )
-    final_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    final_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if _stats_have_positive_count(
+        prune_stats,
+        first_reconcile_stats,
+        reshape_stats,
+    ):
+        final_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
     return {
         "removed_dead_operators": int(
             prune_stats.get("removed_dead_operators", 0)
@@ -1294,27 +1333,46 @@ def _run_indexed_final_shape_activation_convergence(
         model_ir,
         graph_index=graph_index,
     )
-    first_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    first_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if _stats_have_positive_count(
+        convergence_stats,
+        hardswish_stats,
+    ):
+        first_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
     reshape_stats = _resolve_dynamic_reshape_shapes(
         model_ir,
         graph_index=graph_index,
     )
-    second_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    second_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if _stats_have_positive_count(
+        first_reconcile_stats,
+        reshape_stats,
+    ):
+        second_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
+    fusion_tensor_count = len(model_ir.tensors)
     fusion_stats = _optimize_fuse_conv_activation_chains(
         model_ir,
         graph_index=graph_index,
         layout_state=layout_state,
     )
-    final_reconcile_stats = _reconcile_static_tensor_shapes(
-        model_ir,
-        graph_index=graph_index,
-    )
+    final_reconcile_stats = {"reconciled_static_tensor_shapes": 0}
+    if (
+        _stats_have_positive_count(
+            second_reconcile_stats,
+            fusion_stats,
+        )
+        or len(model_ir.tensors) < fusion_tensor_count
+    ):
+        final_reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
     return {
         **convergence_stats,
         "sanitized_hardswish_tensor_shapes": int(
@@ -3375,7 +3433,7 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
 
 
 def _run_indexed_binary_layout_convergence(model_ir: ModelIR) -> Dict[str, int]:
-    """Run three terminal binary-layout convergence rounds with one index."""
+    """Run up to three terminal binary-layout convergence rounds with one index."""
 
     graph_index = ModelIRGraphIndex(model_ir)
     repaired_constants = 0
@@ -3413,6 +3471,12 @@ def _run_indexed_binary_layout_convergence(model_ir: ModelIR) -> Dict[str, int]:
         reconciled_shapes += int(
             reconcile_stats.get("reconciled_static_tensor_shapes", 0)
         )
+        if not _stats_have_positive_count(
+            broadcast_stats,
+            transpose_stats,
+            reconcile_stats,
+        ):
+            break
     return {
         "repaired_rank4_channelwise_broadcast_constants": int(
             repaired_constants
@@ -3676,6 +3740,16 @@ def _compress_static_high_rank_batch_matmul(
     )
 
 
+def _stats_have_positive_count(*stats: Dict[str, int]) -> bool:
+    """Return whether pure mutation-count dictionaries report a change."""
+
+    return any(
+        int(value) > 0
+        for result in stats
+        for value in result.values()
+    )
+
+
 def lower_onnx_to_ir(
     onnx_graph: onnx.ModelProto,
     output_file_name: str,
@@ -3800,7 +3874,10 @@ def lower_onnx_to_ir(
 
     # Inputs
     initializer_names = {ini.name for ini in onnx_graph.graph.initializer}
-    for graph_input in onnx_graph.graph.input:
+    for raw_graph_input in onnx_graph.graph.input:
+        # protobuf's generic repeated-field stub can expose the iterator item
+        # as ``type[In]`` to Pylance instead of the concrete message type.
+        graph_input = cast(onnx.ValueInfoProto, raw_graph_input)
         if graph_input.name in initializer_names:
             continue
         input_name = str(graph_input.name)
@@ -3915,29 +3992,7 @@ def lower_onnx_to_ir(
         for node in graph_nodes:
             try:
                 if node.op_type == "Constant":
-                    output_name = node.output[0]
-                    value_attr = None
-                    for attr in node.attribute:
-                        if attr.name == "value":
-                            value_attr = attr
-                            break
-                    if value_attr is None:
-                        raise NotImplementedError(f"Constant node without value is not supported. op={node.name}")
-                    const_array = np.asarray(numpy_helper.to_array(value_attr.t))
-                    if output_name in model_ir.tensors:
-                        # Replace existing placeholder tensor data.
-                        t = model_ir.tensors[output_name]
-                        t.data = const_array
-                        t.dtype = tflite_dtype_from_numpy(const_array.dtype)
-                        t.shape, t.shape_signature = normalize_onnx_shape(list(const_array.shape))
-                        constants[output_name] = const_array
-                    else:
-                        name = ctx.add_const_tensor(output_name, const_array)
-                        if name != output_name:
-                            # keep graph output name stable if collision happened.
-                            model_ir.tensors[output_name] = model_ir.tensors.pop(name)
-                            model_ir.tensors[output_name].name = output_name
-                            constants[output_name] = constants.pop(name)
+                    lower_constant_node(node=node, ctx=ctx)
                     continue
 
                 wrapped = _NodeWrap(
@@ -3946,37 +4001,10 @@ def lower_onnx_to_ir(
                     shape_map=shape_map,
                     dtype_map=dtype_map,
                 )
-                # ONNX shape inference can stop at contrib/domain operators and
-                # leave later tensors as unresolved rank-one placeholders.  At
-                # this point their producer operators have already been lowered,
-                # so recover the available rank before validating shape-sensitive
-                # consumers.  Keep this demand-driven instead of rescanning the
-                # partial graph before every node.
-                if str(node.op_type) in {
-                    "Attention",
-                    "Gather",
-                    "GatherElements",
-                    "LayerNormalization",
-                    "MatMul",
-                    "MultiHeadAttention",
-                }:
-                    wrapped_input_names = [
-                        str(input_value.name)
-                        for input_value in list(wrapped.inputs)
-                        if str(input_value.name) != ""
-                    ]
-
-                    def _has_unresolved_rank(input_name: str) -> bool:
-                        if len(ctx.get_tensor_shape(input_name)) > 1:
-                            return False
-                        tensor = model_ir.tensors.get(input_name, None)
-                        if tensor is not None and tensor.data is not None:
-                            return False
-                        raw_shape = shape_map.get(input_name, None)
-                        return raw_shape is None or len(list(raw_shape)) == 0
-
-                    if any(_has_unresolved_rank(name) for name in wrapped_input_names):
-                        _reconcile_static_tensor_shapes(model_ir)
+                reconcile_shape_sensitive_inputs_on_demand(
+                    node=wrapped,
+                    ctx=ctx,
+                )
                 try:
                     dispatch_node(wrapped, ctx)
                 except NodeValidationError as ve:
@@ -4022,8 +4050,8 @@ def lower_onnx_to_ir(
         *,
         include_layernorm: bool = False,
         include_conv_attention: bool = True,
-    ) -> None:
-        run_mean_attention(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_mean_attention(
             mean_attention_context,
             include_layernorm=include_layernorm,
             include_conv_attention=include_conv_attention,
@@ -4033,8 +4061,8 @@ def lower_onnx_to_ir(
         *,
         include_layout_transpose: bool = False,
         include_prefix: bool = True,
-    ) -> None:
-        run_qkv_attention(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_qkv_attention(
             qkv_attention_context,
             include_layout_transpose=include_layout_transpose,
             include_prefix=include_prefix,
@@ -4043,22 +4071,24 @@ def lower_onnx_to_ir(
     def _run_duplicate_quantized_prelu_pass_cluster(
         *,
         include_transpose: bool,
-    ) -> None:
-        run_duplicate_quantized_prelu(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_duplicate_quantized_prelu(
             duplicate_quantized_prelu_context,
             include_transpose=include_transpose,
         )
 
-    def _run_very_late_gather_constant_normalization_pass_cluster() -> None:
-        run_very_late_gather_constant_normalization(
+    def _run_very_late_gather_constant_normalization_pass_cluster() -> Tuple[
+        Dict[str, int], ...
+    ]:
+        return run_very_late_gather_constant_normalization(
             very_late_gather_constant_normalization_context
         )
 
     def _run_se_fc_gather_channel_fanout_pass_cluster(
         target_model_ir: ModelIR,
         target_layout_state: LayoutState | None,
-    ) -> None:
-        run_se_fc_gather_channel_fanout(
+    ) -> Tuple[Dict[str, int], Dict[str, int]]:
+        return run_se_fc_gather_channel_fanout(
             ModelIRPassContext(
                 model_ir=target_model_ir,
                 layout_state=target_layout_state,
@@ -4066,14 +4096,14 @@ def lower_onnx_to_ir(
             )
         )
 
-    def _run_terminal_boundary_layout_pass_cluster() -> None:
-        run_terminal_boundary_layout(terminal_boundary_layout_context)
+    def _run_terminal_boundary_layout_pass_cluster() -> Tuple[Dict[str, int], ...]:
+        return run_terminal_boundary_layout(terminal_boundary_layout_context)
 
     def _run_gate_layout_pass_cluster(
         *,
         include_mixed_attention: bool = True,
-    ) -> None:
-        run_gate_layout(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_gate_layout(
             gate_layout_context,
             include_mixed_attention=include_mixed_attention,
         )
@@ -4083,8 +4113,8 @@ def lower_onnx_to_ir(
         include_two_way_shuffle: bool = True,
         include_nhwc_shuffle: bool = True,
         include_post_gather_cleanup: bool = False,
-    ) -> None:
-        run_channel_shuffle_gather(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_channel_shuffle_gather(
             channel_shuffle_gather_context,
             include_two_way_shuffle=include_two_way_shuffle,
             include_nhwc_shuffle=include_nhwc_shuffle,
@@ -4095,63 +4125,69 @@ def lower_onnx_to_ir(
         *,
         include_layout_transpose: bool = False,
         include_unary_passthrough: bool = True,
-    ) -> None:
-        run_transpose_unary_fanout(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_transpose_unary_fanout(
             transpose_unary_fanout_context,
             include_layout_transpose=include_layout_transpose,
             include_unary_passthrough=include_unary_passthrough,
         )
 
-    def _run_late_dequant_unary_fanout_pass_cluster() -> None:
-        run_late_dequant_unary_fanout(
+    def _run_late_dequant_unary_fanout_pass_cluster() -> Tuple[
+        Dict[str, int], ...
+    ]:
+        return run_late_dequant_unary_fanout(
             late_dequant_unary_fanout_context
         )
 
-    def _run_terminal_singleton_maxpool_reshape_pass_pair() -> None:
-        run_terminal_singleton_maxpool_reshape(
+    def _run_terminal_singleton_maxpool_reshape_pass_pair() -> Tuple[
+        Dict[str, int], ...
+    ]:
+        return run_terminal_singleton_maxpool_reshape(
             terminal_singleton_maxpool_reshape_context
         )
 
-    def _run_terminal_clamp_unary_relu_pass_cluster() -> None:
-        run_terminal_clamp_unary_relu(
+    def _run_terminal_clamp_unary_relu_pass_cluster() -> Tuple[Dict[str, int], ...]:
+        return run_terminal_clamp_unary_relu(
             terminal_clamp_unary_relu_context
         )
 
     def _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
         *,
         include_layout_transpose: bool,
-    ) -> None:
-        run_late_layout_mean_spp_gather_constant_cast(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_late_layout_mean_spp_gather_constant_cast(
             late_layout_mean_spp_gather_constant_cast_context,
             include_layout_transpose=include_layout_transpose,
         )
 
-    def _run_late_spp_concat_unary_conv_pass_pair() -> None:
-        run_late_spp_concat_unary_conv(
+    def _run_late_spp_concat_unary_conv_pass_pair() -> Tuple[Dict[str, int], ...]:
+        return run_late_spp_concat_unary_conv(
             late_spp_concat_unary_conv_context
         )
 
     def _run_late_hard_activation_layout_pass_pair(
         *,
         include_layout_transpose: bool,
-    ) -> None:
-        run_late_hard_activation_layout(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_late_hard_activation_layout(
             late_hard_activation_layout_context,
             include_layout_transpose=include_layout_transpose,
         )
 
-    def _run_absolute_final_normalization_attention_pass_pair() -> None:
-        run_absolute_final_normalization_attention(
+    def _run_absolute_final_normalization_attention_pass_pair() -> Tuple[Dict[str, int], ...]:
+        return run_absolute_final_normalization_attention(
             absolute_final_normalization_attention_context
         )
 
-    def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
-        run_boundary_batchmatmul_unary(
+    def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> Tuple[
+        Dict[str, int], ...
+    ]:
+        return run_boundary_batchmatmul_unary(
             boundary_batchmatmul_unary_context
         )
 
-    def _run_channel_slice_pad_mul_layout_pass_cluster() -> None:
-        run_channel_slice_pad_mul(
+    def _run_channel_slice_pad_mul_layout_pass_cluster() -> Tuple[Dict[str, int], ...]:
+        return run_channel_slice_pad_mul(
             channel_slice_pad_mul_context
         )
 
@@ -4161,8 +4197,8 @@ def lower_onnx_to_ir(
         include_duplicate_fanout: bool = False,
         include_multi_branch_gate: bool = False,
         include_spatial_concat_post_transpose: bool = True,
-    ) -> None:
-        run_singleton_reshape(
+    ) -> Tuple[Dict[str, int], ...]:
+        return run_singleton_reshape(
             singleton_reshape_context,
             include_layout_transpose=include_layout_transpose,
             include_duplicate_fanout=include_duplicate_fanout,
@@ -4175,8 +4211,8 @@ def lower_onnx_to_ir(
     def _run_singleton_consecutive_reshape_pass_cluster(
         target_model_ir: ModelIR,
         target_layout_state: LayoutState | None,
-    ) -> None:
-        run_singleton_consecutive_reshape(
+    ) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int]]:
+        return run_singleton_consecutive_reshape(
             ModelIRPassContext(
                 model_ir=target_model_ir,
                 layout_state=target_layout_state,
@@ -4232,30 +4268,31 @@ def lower_onnx_to_ir(
     late_spp_concat_unary_conv_context = shared_model_ir_pass_context
     sinet_preadd_resize_recovery_context = shared_model_ir_pass_context
 
-    def _run_layout_recovery_prefix_pass_sequence() -> None:
-        run_layout_recovery_prefix(layout_recovery_context)
+    def _run_layout_recovery_prefix_pass_sequence() -> Tuple[Any, ...]:
+        return run_layout_recovery_prefix(layout_recovery_context)
 
-    def _run_layout_reshape_attention_recovery_prefix() -> None:
-        run_layout_reshape_attention_recovery_prefix(
+    def _run_layout_reshape_attention_recovery_prefix() -> Tuple[Any, ...]:
+        return run_layout_reshape_attention_recovery_prefix(
             layout_recovery_context
         )
 
-    def _run_preadd_mean_attention_recovery_sequence() -> None:
-        run_preadd_mean_attention_recovery(attention_recovery_context)
+    def _run_preadd_mean_attention_recovery_sequence() -> Tuple[Any, ...]:
+        return run_preadd_mean_attention_recovery(attention_recovery_context)
 
-    def _run_attention_gate_qdq_recovery_sequence() -> None:
-        run_attention_gate_qdq_recovery(attention_recovery_context)
+    def _run_attention_gate_qdq_recovery_sequence() -> Tuple[Any, ...]:
+        return run_attention_gate_qdq_recovery(attention_recovery_context)
 
-    def _run_safe_binary_bridge_recovery_sequence() -> None:
-        run_safe_binary_recovery(quantized_recovery_context)
+    def _run_safe_binary_bridge_recovery_sequence() -> Tuple[Any, ...]:
+        return run_safe_binary_recovery(quantized_recovery_context)
 
-    def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
-        run_quantized_activation_binary_recovery(
+    def _run_quantized_activation_binary_bridge_recovery_sequence(
+    ) -> Tuple[Any, ...]:
+        return run_quantized_activation_binary_recovery(
             quantized_recovery_context
         )
 
-    def _run_qlinear_mean_concat_recovery_sequence() -> None:
-        run_qlinear_mean_concat_recovery(qlinear_recovery_context)
+    def _run_qlinear_mean_concat_recovery_sequence() -> Tuple[Any, ...]:
+        return run_qlinear_mean_concat_recovery(qlinear_recovery_context)
 
     layout_attention_quantized_suffix_context = (
         LayoutAttentionQuantizedSuffixContext(
@@ -4273,24 +4310,24 @@ def lower_onnx_to_ir(
     def _run_layout_attention_quantized_recovery_suffix(
         *,
         include_duplicate_transpose: bool,
-    ) -> None:
-        run_layout_attention_quantized_suffix(
+    ) -> Tuple[Any, ...]:
+        return run_layout_attention_quantized_suffix(
             layout_attention_quantized_suffix_context,
             include_duplicate_transpose=include_duplicate_transpose,
         )
 
-    def _run_terminal_slice_concat_layout_recovery_sequence() -> None:
-        run_terminal_slice_concat_recovery(
+    def _run_terminal_slice_concat_layout_recovery_sequence() -> Tuple[Any, ...]:
+        return run_terminal_slice_concat_recovery(
             terminal_slice_concat_recovery_context
         )
 
-    def _run_terminal_affine_concat_split_recovery_sequence() -> None:
-        run_terminal_affine_concat_split_recovery(
+    def _run_terminal_affine_concat_split_recovery_sequence() -> "Tuple[Dict[str, int], ...]":
+        return run_terminal_affine_concat_split_recovery(
             terminal_affine_concat_split_recovery_context
         )
 
-    def _run_sinet_preadd_resize_recovery_sequence() -> None:
-        run_sinet_preadd_resize_recovery(
+    def _run_sinet_preadd_resize_recovery_sequence() -> Tuple[Dict[str, int], ...]:
+        return run_sinet_preadd_resize_recovery(
             sinet_preadd_resize_recovery_context
         )
 
@@ -4299,8 +4336,8 @@ def lower_onnx_to_ir(
         preadd_resize_recovery=_run_sinet_preadd_resize_recovery_sequence,
     )
 
-    def _run_sinet_terminal_layout_recovery_sequence() -> None:
-        run_sinet_terminal_layout_recovery(
+    def _run_sinet_terminal_layout_recovery_sequence() -> Tuple[Any, ...]:
+        return run_sinet_terminal_layout_recovery(
             sinet_terminal_layout_recovery_context
         )
 
@@ -4376,174 +4413,278 @@ def lower_onnx_to_ir(
         # removes redundant NHWC/NCHW adapters in multi-branch heads.
         enable_duplicate_transpose_fanout_optimizations = not has_qdq_ops
 
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_1_layout_transpose_cleanup_stats = (
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
-        _run_layout_reshape_attention_recovery_prefix()
-        _optimize_fold_mul_add_mul_affine_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_pass_set_1_initial_attention_recovery_results = (
+            _run_layout_reshape_attention_recovery_prefix()
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster(include_layernorm=True)
-        _run_attention_gate_qdq_recovery_sequence()
-        run_quantized_prelu_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_dequant_transposeconv_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        run_quantized_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _run_quantized_activation_binary_bridge_recovery_sequence()
-        if enable_transpose_binary_bridge_optimizations:
-            _optimize_transpose_binary_bridges(
+        _layout_pass_set_1_initial_affine_chain_fold_stats = (
+            _optimize_fold_mul_add_mul_affine_chains(
                 model_ir,
                 layout_state=session.layout_state,
             )
-        run_duplicate_fanout_cleanup(
+        )
+        _layout_pass_set_1_affine_prepost_stats = (
+            _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+        _layout_pass_set_1_pre_unary_affine_fanout_stats = (
+            _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(
+                model_ir
+            )
+        )
+        _layout_pass_set_1_mean_affine_prepost_stats = (
+            _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
+        )
+        _layout_pass_set_1_mean_attention_results = (
+            _run_mean_attention_layout_pass_cluster(include_layernorm=True)
+        )
+        _layout_pass_set_1_attention_gate_qdq_results = (
+            _run_attention_gate_qdq_recovery_sequence()
+        )
+        _layout_pass_set_1_quantized_prelu_stats = (
+            run_quantized_prelu_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
+        )
+        _layout_pass_set_1_dequant_transposeconv_quantize_stats = (
+            _optimize_dequant_transposeconv_quantize_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+        _layout_pass_set_1_quantized_reshape_stats = (
+            run_quantized_reshape_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
+        )
+        _layout_pass_set_1_quantized_activation_binary_results = (
+            _run_quantized_activation_binary_bridge_recovery_sequence()
+        )
+        if enable_transpose_binary_bridge_optimizations:
+            _layout_pass_set_1_transpose_binary_bridge_stats = (
+                _optimize_transpose_binary_bridges(
+                    model_ir,
+                    layout_state=session.layout_state,
+                )
+            )
+        _layout_pass_set_1_duplicate_fanout_stats = (
+            run_duplicate_fanout_cleanup(
+                model_ir,
+                include_transpose=enable_duplicate_transpose_fanout_optimizations,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
+        )
+        # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
+        _layout_pass_set_1_post_binary_attention_recovery_results = (
+            _run_layout_reshape_attention_recovery_prefix()
+        )
+        _layout_pass_set_1_post_binary_affine_chain_fold_stats = (
+            _optimize_fold_mul_add_mul_affine_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+        _layout_pass_set_1_attention_quantized_suffix_results = (
+            _run_layout_attention_quantized_recovery_suffix(
+                include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
+            )
+        )
+        _layout_pass_set_1_safe_binary_results = (
+            _run_safe_binary_bridge_recovery_sequence()
+        )
+        _layout_pass_set_1_dequant_mean_quantize_stats = (
+            _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
+        )
+        _layout_pass_set_1_qlinear_mean_concat_results = (
+            _run_qlinear_mean_concat_recovery_sequence()
+        )
+        _layout_pass_set_1_final_attention_recovery_results = (
+            _run_layout_reshape_attention_recovery_prefix()
+        )
+        _layout_pass_set_1_instancenorm_prepost_stats = (
+            _optimize_transpose_instancenorm_prepost_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+        _layout_pass_set_1_squeeze_reshape_identity_stats = (
+            run_squeeze_reshape_identity_cleanup(
+                model_ir,
+                include_unary_passthrough=True,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
+        )
+        _layout_pass_set_1_final_attention_quantized_suffix_results = (
+            _run_layout_attention_quantized_recovery_suffix(
+                include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
+            )
+        )
+        _layout_pass_set_1_transpose_unary_fanout_results = (
+            _run_transpose_unary_fanout_layout_pass_cluster(
+                include_layout_transpose=True,
+                include_unary_passthrough=False,
+            )
+        )
+        _layout_pass_set_1_final_safe_binary_results = (
+            _run_safe_binary_bridge_recovery_sequence()
+        )
+        _advance_post_progress()
+    _set_post_progress_desc("core cleanup passes")
+    _core_cleanup_pseudo_leakyrelu_stats = (
+        _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
+    )
+    _core_cleanup_yolo_decode_stats = (
+        _optimize_yolo_decode_mul_square_anchor_chains(model_ir)
+    )
+    _core_cleanup_consecutive_mul_stats = (
+        run_consecutive_mul_constants_cleanup(
             model_ir,
-            include_transpose=enable_duplicate_transpose_fanout_optimizations,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
-        _run_layout_reshape_attention_recovery_prefix()
-        _optimize_fold_mul_add_mul_affine_chains(
+    )
+    _core_cleanup_terminal_dequant_stats = (
+        _sanitize_terminal_transpose_before_dequantize(model_ir)
+    )
+    _core_cleanup_terminal_qdq_stats = (
+        run_terminal_quantize_dequantize_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
-        _run_layout_attention_quantized_recovery_suffix(
-            include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
-        )
-        _run_safe_binary_bridge_recovery_sequence()
-        _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
-        _run_qlinear_mean_concat_recovery_sequence()
-        _run_layout_reshape_attention_recovery_prefix()
-        _optimize_transpose_instancenorm_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
+    )
+    _core_cleanup_conv_affine_stats = _optimize_fold_conv_mul_add_affine_chains(
+        model_ir,
+        enable_conv_add_only_fold=True,
+        layout_state=session.layout_state,
+    )
+    _core_cleanup_conv_activation_stats = _optimize_fuse_conv_activation_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
+    _resolve_dynamic_reshape_shapes(model_ir)
+    _core_cleanup_squeeze_reshape_identity_stats = (
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             include_unary_passthrough=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _run_layout_attention_quantized_recovery_suffix(
-            include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
-        )
-        _run_transpose_unary_fanout_layout_pass_cluster(
-            include_layout_transpose=True,
-            include_unary_passthrough=False,
-        )
-        _run_safe_binary_bridge_recovery_sequence()
-        _advance_post_progress()
-    _set_post_progress_desc("core cleanup passes")
-    _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
-    _optimize_yolo_decode_mul_square_anchor_chains(model_ir)
-    run_consecutive_mul_constants_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
     )
-    _sanitize_terminal_transpose_before_dequantize(model_ir)
-    run_terminal_quantize_dequantize_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    _optimize_fold_conv_mul_add_affine_chains(
-        model_ir,
-        enable_conv_add_only_fold=True,
-        layout_state=session.layout_state,
-    )
-    _optimize_fuse_conv_activation_chains(
+    _core_cleanup_prune_reconcile_stats = run_indexed_prune_reconcile_cleanup(
         model_ir,
         layout_state=session.layout_state,
     )
-    _resolve_dynamic_reshape_shapes(model_ir)
-    run_squeeze_reshape_identity_cleanup(
-        model_ir,
-        include_unary_passthrough=True,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    _prune_dead_operators(model_ir, layout_state=session.layout_state)
-    _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
     if optimize_layout_transpose_chains:
         _set_post_progress_desc("layout recovery pass-set 2")
         # Final recovery sweep:
         # some transpose-binary patterns become shape-safe only after static
         # metadata reconciliation, so run bridge passes once more.
-        _run_qlinear_mean_concat_recovery_sequence()
-        _run_layout_recovery_prefix_pass_sequence()
-        _run_preadd_mean_attention_recovery_sequence()
-        _run_attention_gate_qdq_recovery_sequence()
-        _optimize_dequant_transposeconv_quantize_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_pass_set_2_qlinear_mean_concat_results = (
+            _run_qlinear_mean_concat_recovery_sequence()
         )
-        _run_quantized_activation_binary_bridge_recovery_sequence()
+        _layout_pass_set_2_layout_recovery_prefix_results = (
+            _run_layout_recovery_prefix_pass_sequence()
+        )
+        _layout_pass_set_2_preadd_mean_attention_results = (
+            _run_preadd_mean_attention_recovery_sequence()
+        )
+        _layout_pass_set_2_attention_gate_qdq_results = (
+            _run_attention_gate_qdq_recovery_sequence()
+        )
+        _layout_pass_set_2_dequant_transposeconv_quantize_stats = (
+            _optimize_dequant_transposeconv_quantize_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+        _layout_pass_set_2_quantized_activation_binary_results = (
+            _run_quantized_activation_binary_bridge_recovery_sequence()
+        )
         # Binary bridge recovery can recreate pre/post transpose wrappers around CONCAT.
-        _optimize_transpose_elementwise_concat_conv_nhwc_groups(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_elementwise_concat_conv_stats = (
+            _optimize_transpose_elementwise_concat_conv_nhwc_groups(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_opt_spp_stats = (
+            run_spp_layout_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_opt_pre_concat_stats = (
+            _optimize_transpose_pre_concat_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
-        run_ndhwc_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_opt_ndhwc_concat_stats = (
+            run_ndhwc_concat_layout_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_stridedslice_pre_concat_stats = (
+            _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
-        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_split_mixed_pre_concat_stats = (
+            _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_concat_input_adapter_stats = (
+            _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_slice_logistic_concat_tail_stats = (
+            _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
-        _run_channel_shuffle_gather_layout_pass_cluster(
-            include_post_gather_cleanup=True,
+        _layout_opt_channel_shuffle_gather_results = (
+            _run_channel_shuffle_gather_layout_pass_cluster(
+                include_post_gather_cleanup=True,
+            )
         )
-        _run_preadd_mean_attention_recovery_sequence()
-        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _layout_opt_preadd_mean_attention_results = (
+            _run_preadd_mean_attention_recovery_sequence()
         )
-        _run_gate_layout_pass_cluster(include_mixed_attention=False)
+        _layout_opt_sa_pa_mirrorpad_stats = (
+            _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+        _layout_opt_gate_layout_results = _run_gate_layout_pass_cluster(
+            include_mixed_attention=False
+        )
         for _ in range(2):
             normalization_graph_index = ModelIRGraphIndex(model_ir)
             rewritten_instnorm = int(
@@ -4618,568 +4759,976 @@ def lower_onnx_to_ir(
                 <= 0
             ):
                 break
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            include_unary_passthrough=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _layout_pass_set_2_squeeze_reshape_identity_stats = (
+            run_squeeze_reshape_identity_cleanup(
+                model_ir,
+                include_unary_passthrough=True,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         )
-        _prune_dead_operators(model_ir, layout_state=session.layout_state)
-        _reconcile_static_tensor_shapes(model_ir)
+        _layout_pass_set_2_prune_reconcile_stats = (
+            run_indexed_prune_reconcile_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
         _advance_post_progress()
     _set_post_progress_desc("terminal cleanup passes")
     # Recovery sweeps above can re-introduce terminal TRANSPOSE->DEQUANTIZE.
     # Run terminal sanitizers once more at the very end.
-    _sanitize_terminal_transpose_before_dequantize(model_ir)
-    run_terminal_quantize_dequantize_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_cleanup_terminal_dequant_stats = (
+        _sanitize_terminal_transpose_before_dequantize(model_ir)
     )
-    _optimize_fold_conv_mul_add_affine_chains(
+    _terminal_cleanup_terminal_qdq_stats = (
+        run_terminal_quantize_dequantize_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+    )
+    _terminal_cleanup_conv_affine_stats = _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,
         layout_state=session.layout_state,
     )
-    _optimize_fuse_conv_activation_chains(
+    _terminal_cleanup_conv_activation_stats = _optimize_fuse_conv_activation_chains(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_pre_argmax_nhwc_terminal_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_pre_argmax_stats = (
+        _optimize_transpose_pre_argmax_nhwc_terminal_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    run_transpose_gather_channel_fanout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_transpose_gather_channel_fanout_stats = (
+        run_transpose_gather_channel_fanout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _optimize_terminal_softmax_transpose_after_nhwc_propagation(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_softmax_transpose_stats = (
+        _optimize_terminal_softmax_transpose_after_nhwc_propagation(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    run_boundary_input_normalization_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_boundary_input_normalization_stats = (
+        run_boundary_input_normalization_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _optimize_boundary_input_transpose_channel_slice_blocks(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_boundary_input_channel_slice_stats = (
+        _optimize_boundary_input_transpose_channel_slice_blocks(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_internal_channel_slice_stats = (
+        _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_channel_slice_muladd_bridge_stats = (
+        _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _run_terminal_slice_concat_layout_recovery_sequence()
-    _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_slice_concat_recovery_results = (
+        _run_terminal_slice_concat_layout_recovery_sequence()
     )
-    _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
-    _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
-    _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
+    _terminal_boundary_stridedslice_qdq_concat_stats = (
+        _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _terminal_swish_residual_concat_closure_stats = (
+        _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
+    )
+    _terminal_dequant_logistic_mul_quantize_bridge_stats = (
+        _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
+    )
+    _terminal_swish_qdq_island_stats = (
+        _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
+    )
     # Late recovery passes can recreate Conv->InstNorm(NCHW)->Pad wrappers.
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    run_normalization_pad_layout_cleanup(
+    _terminal_normalization_pad_stats = run_normalization_pad_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_instancenorm_residual_add_stats = (
+        _optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_instancenorm_residual_mul_concat_stats = (
+        _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_instancenorm_dualstats_stats = (
+        _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _run_terminal_boundary_layout_pass_cluster()
+    _terminal_boundary_layout_results = (
+        _run_terminal_boundary_layout_pass_cluster()
+    )
     if optimize_layout_transpose_chains:
         # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
         # Run dedicated NHWC passthrough once more in the terminal stage.
-        _run_mean_attention_layout_pass_cluster(
-            include_conv_attention=False,
+        _terminal_mean_attention_results = (
+            _run_mean_attention_layout_pass_cluster(
+                include_conv_attention=False,
+            )
         )
+        _terminal_batchmatmul_affine_input_stats = (
+            _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
+        )
+        _terminal_batchmatmul_reshape_se_stats = (
+            _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
+        )
+        _terminal_batchmatmul_adj_flags_stats = (
+            _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
+        )
+        _terminal_qkv_attention_results = (
+            _run_qkv_attention_layout_pass_cluster()
+        )
+        _terminal_qkv_split_conv_concat_bridge_stats = (
+            _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+        # Run the multi-branch gate rewrite at terminal stage so earlier
+        # generic passes do not re-wrap rewritten NHWC tensors.
+        _terminal_singleton_reshape_results = (
+            _run_singleton_reshape_layout_pass_cluster(
+                include_layout_transpose=True,
+                include_multi_branch_gate=True,
+            )
+        )
+    _terminal_clamp_unary_relu_results = (
+        _run_terminal_clamp_unary_relu_pass_cluster()
+    )
+    _terminal_sinet_layout_recovery_results = (
+        _run_sinet_terminal_layout_recovery_sequence()
+    )
+    _terminal_sinet_hardswish_se_stats = (
+        _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
+            model_ir
+        )
+    )
+    _terminal_dequant_hardsigmoid_bridge_stats = (
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    )
+    # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
+    _terminal_sinet_preadd_resize_results = (
+        _run_sinet_preadd_resize_recovery_sequence()
+    )
+    # Apply singleton transpose->reshape rewrite regardless of layout-opt mode.
+    # This is required for fallback relowering (optimize_layout_transpose_chains=False)
+    # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
+    _post_terminal_singleton_reshape_results = (
+        _run_singleton_reshape_layout_pass_cluster(
+            include_duplicate_fanout=True,
+            include_spatial_concat_post_transpose=False,
+        )
+    )
+    _post_terminal_indexed_shape_convergence_stats = (
+        _run_indexed_shape_convergence_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    # Very late shape reconciliation can expose strict shuffle-residual patterns.
+    # Re-run terminal transpose reducers once at absolute end.
+    _very_late_sinet_layout_recovery_results = (
+        _run_sinet_terminal_layout_recovery_sequence()
+    )
+    _very_late_sinet_preadd_resize_results = (
+        _run_sinet_preadd_resize_recovery_sequence()
+    )
+    # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
+    _very_late_residual_affine_prelu_stats = (
+        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+    )
+    _very_late_residual_affine_fanout_stats = (
+        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
+    )
+    _very_late_prune_reconcile_stats = run_indexed_prune_reconcile_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
+    # Dead-op pruning can unblock strict locality guards in this recovery.
+    # Its pre-Add/PRELU rewrites can recreate SiNet dual-resize adapters.
+    _post_cleanup_sinet_preadd_resize_results = (
+        _run_sinet_preadd_resize_recovery_sequence()
+    )
+    # Late SiNet rewrites can recreate SA/PA MIRROR_PAD NCHW<->NHWC bridges.
+    _post_cleanup_csp_attention_stats = (
+        _optimize_transpose_csp_attention_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _post_cleanup_sa_pa_mirrorpad_stats = (
+        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _post_sinet_batchmatmul_affine_input_stats = (
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
+    )
+    _post_sinet_batchmatmul_reshape_se_stats = (
         _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
+    )
+    _post_sinet_batchmatmul_adj_flags_stats = (
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
+    )
+    _post_sinet_qkv_attention_results = (
         _run_qkv_attention_layout_pass_cluster()
+    )
+    _post_sinet_relu_split_all_outputs_stats = (
+        _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _post_sinet_relu_split_conv_concat_stats = (
+        _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _post_sinet_split_conv_concat_bridge_stats = (
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
             model_ir,
             layout_state=session.layout_state,
         )
-        # Run the multi-branch gate rewrite at terminal stage so earlier
-        # generic passes do not re-wrap rewritten NHWC tensors.
-        _run_singleton_reshape_layout_pass_cluster(
-            include_layout_transpose=True,
-            include_multi_branch_gate=True,
+    )
+    _post_sinet_mix_attention_stats = (
+        _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
         )
-    _run_terminal_clamp_unary_relu_pass_cluster()
-    _run_sinet_terminal_layout_recovery_sequence()
-    _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
-    _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-    # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
-    _run_sinet_preadd_resize_recovery_sequence()
-    # Apply singleton transpose->reshape rewrite regardless of layout-opt mode.
-    # This is required for fallback relowering (optimize_layout_transpose_chains=False)
-    # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
-    _run_singleton_reshape_layout_pass_cluster(
-        include_duplicate_fanout=True,
-        include_spatial_concat_post_transpose=False,
     )
-    _run_indexed_shape_convergence_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_sinet_mixed_attention_layout_stats = (
+        run_mixed_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    # Very late shape reconciliation can expose strict shuffle-residual patterns.
-    # Re-run terminal transpose reducers once at absolute end.
-    _run_sinet_terminal_layout_recovery_sequence()
-    _run_sinet_preadd_resize_recovery_sequence()
-    # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
-    _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
-    _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-    _prune_dead_operators(model_ir, layout_state=session.layout_state)
-    _reconcile_static_tensor_shapes(model_ir)
-    # Dead-op pruning can unblock strict locality guards in this recovery.
-    # Its pre-Add/PRELU rewrites can recreate SiNet dual-resize adapters.
-    _run_sinet_preadd_resize_recovery_sequence()
-    # Late SiNet rewrites can recreate SA/PA MIRROR_PAD NCHW<->NHWC bridges.
-    _optimize_transpose_csp_attention_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _post_sinet_dequant_hardsigmoid_bridge_stats = (
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     )
-    _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
-    _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
-    _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
-    _run_qkv_attention_layout_pass_cluster()
-    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    _optimize_sinet_mix_attention_double_logistic_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-    )
-    run_mixed_attention_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     late_ndhwc_cost_volume_state_scope = ModelIRPassStateScope(
         model_ir,
         layout_state=session.layout_state,
     )
-    run_ndhwc_gate_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_ndhwc_cost_volume_state_scope,
+    _late_ndhwc_gate_layout_stats = (
+        run_ndhwc_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_ndhwc_cost_volume_state_scope,
+        )
     )
-    run_cost_volume_scatter_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_ndhwc_cost_volume_state_scope,
+    _late_cost_volume_scatter_layout_stats = (
+        run_cost_volume_scatter_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_ndhwc_cost_volume_state_scope,
+        )
     )
-    _optimize_fold_conv_mul_add_affine_chains(
-        model_ir,
-        enable_conv_add_only_fold=True,
-        layout_state=session.layout_state,
+    _late_cost_volume_conv_affine_stats = (
+        _optimize_fold_conv_mul_add_affine_chains(
+            model_ir,
+            enable_conv_add_only_fold=True,
+            layout_state=session.layout_state,
+        )
     )
     late_concat_layout_state_scope = ModelIRPassStateScope(
         model_ir,
         layout_state=session.layout_state,
     )
-    run_axis3_const_concat_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_concat_layout_state_scope,
+    _late_concat_axis3_const_layout_stats = (
+        run_axis3_const_concat_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_concat_layout_state_scope,
+        )
     )
-    run_dequant_concat_quantize_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_concat_layout_state_scope,
+    _late_concat_dequant_quantize_layout_stats = (
+        run_dequant_concat_quantize_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_concat_layout_state_scope,
+        )
     )
-    run_layernorm_statistics_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-        state_scope=late_concat_layout_state_scope,
+    _late_concat_layernorm_layout_stats = (
+        run_layernorm_statistics_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=late_concat_layout_state_scope,
+        )
     )
-    run_layout_transpose_cleanup(
+    _late_concat_transpose_layout_stats = run_layout_transpose_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
         state_scope=late_concat_layout_state_scope,
     )
     if optimize_layout_transpose_chains:
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-    _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+        _late_concat_elementwise_fanout_stats = (
+            _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+                model_ir
+            )
+        )
+    _late_expanddims_reshape_layout_stats = (
+        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_flatten_hw_reshape_layout_stats = (
+        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-    _run_channel_shuffle_gather_layout_pass_cluster(
-        include_two_way_shuffle=False,
-        include_nhwc_shuffle=False,
+    _late_nhwc_reshape_collapse_stats = (
+        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(
+            model_ir
+        )
     )
-    _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_channel_shuffle_gather_results = (
+        _run_channel_shuffle_gather_layout_pass_cluster(
+            include_two_way_shuffle=False,
+            include_nhwc_shuffle=False,
+        )
     )
-    _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-    _optimize_gather_axis0_singleton_to_reshape_input_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_attention_qkv_reshape_stats = (
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
-    _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_attention_gather_cleanup_stats = (
+        _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
     )
-    _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_gather_axis0_reshape_stats = (
+        _optimize_gather_axis0_singleton_to_reshape_input_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _late_attention_preproj_ranklift_stats = (
+        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
+    )
+    _late_window_partition_stats = (
+        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _late_window_reverse_stats = (
+        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.
-    _run_indexed_final_shape_activation_convergence(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_final_shape_activation_convergence_stats = (
+        _run_indexed_final_shape_activation_convergence(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Final boundary cleanup after all late transpose/layout rewrites.
-    run_boundary_input_normalization_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _final_boundary_input_normalization_stats = (
+        run_boundary_input_normalization_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
-    _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
-    _run_terminal_slice_concat_layout_recovery_sequence()
-    _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
+    _final_internal_channel_slice_stats = (
+        _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
+    )
+    _final_channel_slice_muladd_bridge_stats = (
+        _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
+    )
+    _final_slice_concat_recovery_results = (
+        _run_terminal_slice_concat_layout_recovery_sequence()
+    )
+    _final_slice_prepost_passthrough_stats = (
+        _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
+    )
     # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
     # can recreate CONCAT(axis=1)+post-transpose wrappers.
-    _optimize_transpose_pre_concat_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _final_pre_concat_stats = (
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_relu_split_all_outputs_stats = (
+        _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_relu_split_conv_concat_stats = (
+        _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_split_mixed_pre_concat_stats = (
+        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
-        model_ir,
-        layout_state=session.layout_state,
+    _terminal_concat_input_adapter_stats = (
+        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    run_concat_unary_conv_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _terminal_concat_unary_conv_stats = (
+        run_concat_unary_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    _terminal_shape_extract_stats = (
+        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    )
     if optimize_layout_transpose_chains:
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-    _run_terminal_singleton_maxpool_reshape_pass_pair()
+        _terminal_elementwise_fanout_stats = (
+            _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+                model_ir
+            )
+        )
+    _terminal_singleton_maxpool_reshape_results = (
+        _run_terminal_singleton_maxpool_reshape_pass_pair()
+    )
     if optimize_layout_transpose_chains:
-        _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
+        _terminal_convpool_output_passthrough_stats = (
+            _optimize_convpool_output_transpose_nhwc_passthrough_chains(
+                model_ir
+            )
+        )
     elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
         _apply_safe_transpose_reduction_lite(model_ir)
         # Keep strict, const-only NHWC<->NCHW affine bridge folding enabled
         # in no-layout fallback so simple TRANSPOSE->MUL->ADD->TRANSPOSE
         # chains are still reduced.
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+        _no_layout_fallback_affine_prepost_stats = (
+            _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
+        )
+    _late_dequant_hardsigmoid_bridge_stats = (
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    )
+    _late_dequant_unary_fanout_results = (
+        _run_late_dequant_unary_fanout_pass_cluster()
+    )
+    # No-layout fallback relowering can still keep strict
+    # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
+    _late_swish_transpose_passthrough_stats = (
+        _optimize_swish_transpose_passthrough_chains(
             model_ir,
             layout_state=session.layout_state,
         )
-    _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-    _run_late_dequant_unary_fanout_pass_cluster()
-    # No-layout fallback relowering can still keep strict
-    # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
-    _optimize_swish_transpose_passthrough_chains(
-        model_ir,
-        layout_state=session.layout_state,
     )
     # Conv1D shim patterns can retain:
     # TRANSPOSE -> SQUEEZE -> UNARY -> EXPAND_DIMS -> TRANSPOSE.
     # Fold them to a single rank-4 UNARY op.
-    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_squeeze_unary_stats = (
+        _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Variant with intermediate rank-4 transpose:
     # TRANSPOSE -> UNARY -> TRANSPOSE -> RESHAPE -> EXPAND_DIMS -> TRANSPOSE.
-    _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_rank4_unary_stats = (
+        _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Fanout variant:
     # Keep NCHW side branch and bypass only the NHWC wrapper branch.
-    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_unary_fanout_stats = (
+        _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # InstanceNorm(flat) bridge variant:
     # T -> SQUEEZE -> RESHAPE -> IN -> RESHAPE -> UNARY -> EXPAND -> T
     # can be rewritten in NHWC by swapping C/W at reshape boundary.
-    _optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_instancenorm_unary_stats = (
+        _optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # tencoder residual-gated branch variant:
     # dual (post-conv T->SQUEEZE) branches merge via ADD then EXPAND->T before next CONV.
-    _optimize_tencoder_add_expand_transpose_conv_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_tencoder_stats = (
+        _optimize_tencoder_add_expand_transpose_conv_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Conv1D tail patterns may still contain:
     # TRANSPOSE -> SQUEEZE -> UNARY* -> BATCH_MATMUL.
     # Rewire to NHWC + adjX matmul when mathematically equivalent.
-    _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_conv1d_batchmatmul_stats = (
+        _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Decoder linear->deconv tails can keep:
     # BATCH_MATMUL -> ADD -> EXPAND_DIMS -> TRANSPOSE -> TRANSPOSE_CONV.
     # Transpose BATCH_MATMUL/ADD layout so TRANSPOSE before deconv is removed.
-    _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_decoder_deconv_stats = (
+        _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Decoder terminal tails can keep:
     # TRANSPOSE -> SQUEEZE -> MEAN -> SQUEEZE.
     # Remap squeeze/mean axes in NHWC and drop the transpose.
-    _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_terminal_squeeze_mean_stats = (
+        _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Very late transpose/layout rewrites can recreate PAD-adjacent NCHW wrappers.
-    run_pad_layout_cleanup(
+    _very_late_pad_layout_stats = run_pad_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_instancenorm_residual_mul_concat_stats = (
+        _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_instancenorm_dualstats_stats = (
+        _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Norm-subgraph fallback rewrites can introduce channelwise
     # [1,C,1,1]->[1,1,1,C] adapters as TRANSPOSE in no-layout mode.
     # Re-canonicalize them to RESHAPE at the very end.
-    _run_singleton_consecutive_reshape_pass_cluster(
-        model_ir,
-        session.layout_state,
+    _very_late_singleton_consecutive_reshape_results = (
+        _run_singleton_consecutive_reshape_pass_cluster(
+            model_ir,
+            session.layout_state,
+        )
     )
     if optimize_layout_transpose_chains:
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
-    _realign_dynamic_boundary_shape_signature_map(model_ir)
-    # Keep final serialized metadata consistent for tools that render
-    # shape_signature (e.g. Netron): HARD_SWISH is shape-preserving.
-    _sanitize_hardswish_tensor_shapes(model_ir)
-    # Final guardrail for runtime validity: ensure SQUEEZE axes target
-    # singleton dimensions after all late layout/shape rewrites.
-    _sanitize_squeeze_axes_with_static_input_shapes(model_ir)
-    _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
-    _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-    _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-    _run_singleton_consecutive_reshape_pass_cluster(
-        model_ir,
-        session.layout_state,
-    )
-    _reconcile_static_tensor_shapes(model_ir)
-    _sanitize_static_shape_signature_consistency(model_ir)
-    _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-    _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
-    if optimize_layout_transpose_chains or apply_safe_transpose_reduction_lite_on_no_layout_opt:
-        # Late binary-layout repairs can recreate PRELU bridge wrappers.
-        # Run PRELU transpose passthrough once more before final safety checks,
-        # including the safe-reduction fallback relowering path.
-        _optimize_prelu_transpose_passthrough_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        _optimize_transpose_dual_pre_add_to_single_post_adapter_nhwc_chains(model_ir)
-        _optimize_terminal_transpose_mul_add_reshape_fc_nhwc_chains(model_ir)
-        if optimize_layout_transpose_chains:
-            _optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains(model_ir)
-        # PRELU rewrite can recreate strict TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE
-        # bridges on legacy branches. Fold them again in this final stage.
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-        if optimize_layout_transpose_chains:
+        _very_late_layout_transpose_cleanup_stats = (
             run_layout_transpose_cleanup(
                 model_ir,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
             )
-        _reconcile_static_tensor_shapes(model_ir)
+        )
+    _very_late_broadcast_repair_stats = (
+        _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
+            model_ir
+        )
+    )
+    _very_late_broadcast_static_shape_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        include_mutation_count=True,
+    )
+    shared_late_tensor_count = len(model_ir.tensors)
+    shared_boundary_signature_stats = (
+        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    )
+    # Keep final serialized metadata consistent for tools that render
+    # shape_signature (e.g. Netron): HARD_SWISH is shape-preserving.
+    shared_hardswish_stats = _sanitize_hardswish_tensor_shapes(model_ir)
+    # Final guardrail for runtime validity: ensure SQUEEZE axes target
+    # singleton dimensions after all late layout/shape rewrites.
+    shared_squeeze_stats = _sanitize_squeeze_axes_with_static_input_shapes(
+        model_ir
+    )
+    shared_conv_transpose_stats = (
+        _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
+    )
+    shared_binary_adapter_stats, shared_singleton_adapter_stats = (
+        run_indexed_binary_layout_adapter_cleanup(model_ir)
+    )
+    (
+        shared_singleton_channel_stats,
+        shared_duplicate_fanout_stats,
+        shared_consecutive_reshape_stats,
+    ) = _run_singleton_consecutive_reshape_pass_cluster(
+        model_ir,
+        session.layout_state,
+    )
+    if _stats_have_positive_count(
+        shared_boundary_signature_stats,
+        shared_hardswish_stats,
+        shared_squeeze_stats,
+        shared_conv_transpose_stats,
+        shared_binary_adapter_stats,
+        shared_singleton_adapter_stats,
+        shared_singleton_channel_stats,
+        shared_duplicate_fanout_stats,
+        shared_consecutive_reshape_stats,
+    ) or len(model_ir.tensors) < shared_late_tensor_count:
+        _shared_late_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
+    late_binary_repair_tensor_count = len(model_ir.tensors)
+    late_signature_stats = _sanitize_static_shape_signature_consistency(
+        model_ir
+    )
+    late_binary_adapter_stats, late_singleton_adapter_stats = (
+        run_indexed_binary_layout_adapter_cleanup(model_ir)
+    )
+    if (
+        int(
+            late_signature_stats.get(
+                "sanitized_static_shape_signature_consistency",
+                0,
+            )
+        )
+        + int(
+            late_binary_adapter_stats.get(
+                "inserted_rank4_binary_layout_fix_transpose",
+                0,
+            )
+        )
+        + int(
+            late_singleton_adapter_stats.get(
+                "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
+                0,
+            )
+        )
+        > 0
+        or len(model_ir.tensors) < late_binary_repair_tensor_count
+    ):
+        _late_binary_repair_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
+    if optimize_layout_transpose_chains or apply_safe_transpose_reduction_lite_on_no_layout_opt:
+        late_binary_layout_recovery_stats = run_late_binary_layout_recovery(
+            model_ir,
+            include_layout_transpose=optimize_layout_transpose_chains,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        if _stats_have_positive_count(late_binary_layout_recovery_stats):
+            _late_binary_layout_recovery_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    model_ir,
+                    include_mutation_count=True,
+                )
+            )
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _pre_terminal_affine_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _pre_terminal_affine_instancenorm_residual_mul_concat_stats = (
+        _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _pre_terminal_affine_instancenorm_dualstats_stats = (
+        _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     # Late bridge rewrites above can recreate strict
     # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
-    _run_terminal_affine_concat_split_recovery_sequence()
-    _optimize_transpose_pre_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    pre_terminal_affine_tensor_count = len(model_ir.tensors)
+    pre_terminal_affine_results = (
+        _run_terminal_affine_concat_split_recovery_sequence()
     )
-    _run_channel_slice_pad_mul_layout_pass_cluster()
-    _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _pre_terminal_affine_stats = summarize_terminal_affine_concat_split_mutations(
+        pre_terminal_affine_results,
+        pruned_unused_tensors=max(
+            0,
+            int(pre_terminal_affine_tensor_count - len(model_ir.tensors)),
+        ),
     )
-    _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
+    pre_terminal_pre_add_tensor_count = len(model_ir.tensors)
+    _pre_terminal_pre_add_stats = {
+        **_optimize_transpose_pre_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        ),
+        "pruned_unused_tensors": max(
+            0,
+            int(pre_terminal_pre_add_tensor_count - len(model_ir.tensors)),
+        ),
+    }
+    channel_slice_pad_mul_results = _run_channel_slice_pad_mul_layout_pass_cluster()
+    _pre_terminal_channel_slice_pad_mul_stats = (
+        summarize_channel_slice_pad_mul_mutations(channel_slice_pad_mul_results)
+    )
+    _pre_terminal_affine_post_add_stats = (
+        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    _pre_terminal_affine_slice_pad_concat_stats = (
+        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
+            model_ir
+        )
+    )
     # Strict slice/merge cleanup above can recreate simple affine bridge tails:
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
     # Keep this after pre_add/slice/pad strict rewrites: those passes can
     # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
-    _run_terminal_affine_concat_split_recovery_sequence()
-    _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
-    _run_late_spp_concat_unary_conv_pass_pair()
-    _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    terminal_affine_tensor_count = len(model_ir.tensors)
+    terminal_affine_results = _run_terminal_affine_concat_split_recovery_sequence()
+    _terminal_affine_stats = summarize_terminal_affine_concat_split_mutations(
+        terminal_affine_results,
+        pruned_unused_tensors=max(
+            0,
+            int(terminal_affine_tensor_count - len(model_ir.tensors)),
+        ),
+    )
+    _terminal_slice_pad_concat_stats = (
+        _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(
+            model_ir
+        )
+    )
+    late_spp_results = _run_late_spp_concat_unary_conv_pass_pair()
+    _late_spp_stats = summarize_late_spp_concat_unary_conv_mutations(
+        late_spp_results
+    )
+    _late_pre_qkv_shape_extract_stats = (
+        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
+    )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
-    _run_qkv_attention_layout_pass_cluster(
+    late_qkv_tensor_count = len(model_ir.tensors)
+    late_qkv_results = _run_qkv_attention_layout_pass_cluster(
         include_layout_transpose=optimize_layout_transpose_chains,
         include_prefix=False,
     )
-    _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
-        model_ir,
-        layout_state=session.layout_state,
+    _late_qkv_stats = summarize_qkv_attention_mutations(
+        late_qkv_results,
+        include_layout_transpose=optimize_layout_transpose_chains,
+        include_prefix=False,
+        pruned_unused_tensors=max(
+            0,
+            int(late_qkv_tensor_count - len(model_ir.tensors)),
+        ),
     )
-    _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
+    _terminal_split_conv_concat_bridge_stats = (
+        _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+    )
+    terminal_hardswish_se_tensor_count = len(model_ir.tensors)
+    _terminal_hardswish_se_stats = {
+        **_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
+            model_ir
+        ),
+        "pruned_unused_tensors": max(
+            0,
+            int(terminal_hardswish_se_tensor_count - len(model_ir.tensors)),
+        ),
+    }
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.
-    _run_late_hard_activation_layout_pass_pair(
+    late_hard_activation_tensor_count = len(model_ir.tensors)
+    late_hard_activation_results = _run_late_hard_activation_layout_pass_pair(
         include_layout_transpose=optimize_layout_transpose_chains,
+    )
+    _late_hard_activation_stats = summarize_late_hard_activation_layout_mutations(
+        late_hard_activation_results,
+        include_layout_transpose=optimize_layout_transpose_chains,
+        pruned_unused_tensors=max(
+            0,
+            int(late_hard_activation_tensor_count - len(model_ir.tensors)),
+        ),
     )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.
-    _optimize_transpose_pre_concat_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _absolute_final_pre_concat_stats = (
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
-    _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
-        include_layout_transpose=optimize_layout_transpose_chains,
+    _late_pre_layout_cluster_shape_extract_stats = (
+        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     )
-    _replace_expand_dims_and_squeeze_with_reshape(
+    late_layout_cluster_tensor_count = len(model_ir.tensors)
+    late_layout_cluster_results = (
+        _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
+            include_layout_transpose=optimize_layout_transpose_chains,
+        )
+    )
+    _late_layout_cluster_stats = (
+        summarize_late_layout_mean_spp_gather_constant_cast_mutations(
+            late_layout_cluster_results,
+            include_layout_transpose=optimize_layout_transpose_chains,
+            pruned_unused_tensors=max(
+                0,
+                int(late_layout_cluster_tensor_count - len(model_ir.tensors)),
+            ),
+        )
+    )
+    _terminal_expand_squeeze_stats = _replace_expand_dims_and_squeeze_with_reshape(
         model_ir,
         layout_state=session.layout_state,
     )
     _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
 
-    _repair_orphan_recurrent_step_tensors(model_ir)
-    _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(model_ir)
+    _late_orphan_recurrent_repair_stats = (
+        _repair_orphan_recurrent_step_tensors(model_ir)
+    )
+    _late_unbound_input_repair_stats = (
+        _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(model_ir)
+    )
     # The late unbound-input repair can inject strict
     # NHWC->NCHW->NHWC MUL/ADD wrappers (repair_perm tensors).
     # Fold them again before final shape/topology reconciliation.
-    _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_affine_post_add_stats = (
+        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _run_very_late_gather_constant_normalization_pass_cluster()
+    very_late_normalization_tensor_count = len(model_ir.tensors)
+    very_late_normalization_results = (
+        _run_very_late_gather_constant_normalization_pass_cluster()
+    )
+    _very_late_normalization_stats = (
+        summarize_very_late_gather_constant_normalization_mutations(
+            very_late_normalization_results,
+            pruned_unused_tensors=max(
+                0,
+                int(very_late_normalization_tensor_count - len(model_ir.tensors)),
+            ),
+        )
+    )
     # Very late terminal bridge/transpose rewrites above can still stale out
     # RESHAPE constant inputs. Re-resolve once immediately before final sort.
-    _resolve_dynamic_reshape_shapes(
+    _very_late_dynamic_reshape_stats = _resolve_dynamic_reshape_shapes(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
     )
-    _run_indexed_conv_input_adapter_repairs(model_ir)
-    run_stale_nchw_channel_shuffle_repair(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    very_late_conv_input_tensor_count = len(model_ir.tensors)
+    _very_late_conv_input_stats = {
+        **_run_indexed_conv_input_adapter_repairs(model_ir),
+        "pruned_unused_tensors": max(
+            0,
+            int(very_late_conv_input_tensor_count - len(model_ir.tensors)),
+        ),
+    }
+    _very_late_stale_channel_shuffle_stats = (
+        run_stale_nchw_channel_shuffle_repair(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _repair_nchw_concat_transpose_conv_axes(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_concat_transpose_conv_axis_stats = (
+        _repair_nchw_concat_transpose_conv_axes(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _repair_nchw_concat_global_pool_conv_axes(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_concat_global_pool_conv_axis_stats = (
+        _repair_nchw_concat_global_pool_conv_axes(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
-        model_ir,
-        layout_state=session.layout_state,
+    _very_late_dynamic_rank1_reshape_stats = (
+        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _very_late_static_shape_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        include_mutation_count=True,
+    )
     split_fallback_stats = _replace_unsupported_split_with_slice(
         model_ir,
         layout_state=session.layout_state,
     )
+    _post_split_fallback_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(split_fallback_stats.get("replaced_unsupported_split_with_slice", 0)) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _post_split_fallback_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
 
     # Safety fallback:
     # Some aggressive transpose/layout rewrites can leave dangling dynamic inputs
@@ -5212,113 +5761,225 @@ def lower_onnx_to_ir(
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
             protected_boundary_tensor_names=protected_boundary_tensor_names,
         )
-        fallback_norm_stats = run_pad_layout_cleanup(
-            fallback_ir,
-            include_pad=False,
-            include_unary=False,
-            include_norm=True,
-            diagnostics=session.diagnostics,
-        )
-        if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
-            _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
-            _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)
-            _run_singleton_consecutive_reshape_pass_cluster(
+        fallback_norm_tensor_count = len(fallback_ir.tensors)
+        fallback_norm_stats = {
+            **run_pad_layout_cleanup(
                 fallback_ir,
-                None,
+                include_pad=False,
+                include_unary=False,
+                include_norm=True,
+                diagnostics=session.diagnostics,
+            ),
+            "pruned_unused_tensors": max(
+                0,
+                fallback_norm_tensor_count - len(fallback_ir.tensors),
+            ),
+        }
+        if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
+            (
+                _fallback_binary_adapter_stats,
+                _fallback_singleton_adapter_stats,
+            ) = run_indexed_binary_layout_adapter_cleanup(fallback_ir)
+            _fallback_singleton_consecutive_reshape_results = (
+                _run_singleton_consecutive_reshape_pass_cluster(
+                    fallback_ir,
+                    None,
+                )
             )
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
-        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
+        _fallback_dynamic_rank1_stats = (
+            _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
+        )
         _topologically_sort_operators(fallback_ir)
         infer_model_ir_logical_layouts(fallback_ir)
         fallback_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             fallback_ir
         )
+        _fallback_broadcast_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(fallback_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_broadcast_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
             _topologically_sort_operators(fallback_ir)
             infer_model_ir_logical_layouts(fallback_ir)
-        _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
-            fallback_ir,
-            layout_state=None,
+        fallback_se_fc_gather_tensor_count = len(fallback_ir.tensors)
+        fallback_sinet_shuffle_stats = (
+            _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+                fallback_ir,
+                layout_state=None,
+            )
         )
-        _run_se_fc_gather_channel_fanout_pass_cluster(
-            fallback_ir,
-            None,
+        fallback_se_fc_stats, fallback_gather_stats = (
+            _run_se_fc_gather_channel_fanout_pass_cluster(
+                fallback_ir,
+                None,
+            )
         )
-        _reconcile_static_tensor_shapes(fallback_ir)
+        _fallback_se_fc_gather_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
+        if (
+            int(
+                fallback_sinet_shuffle_stats.get(
+                    "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+                    0,
+                )
+            )
+            + int(
+                fallback_se_fc_stats.get(
+                    "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
+                    0,
+                )
+            )
+            + int(
+                fallback_gather_stats.get(
+                    "optimized_transpose_gather_transpose_nhwc_channel_chains",
+                    0,
+                )
+            )
+            > 0
+            or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count
+        ):
+            _fallback_se_fc_gather_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
+        fallback_placeholder_matmul_stats = (
+            _restore_placeholder_matmul_flattened_inputs(fallback_ir)
+        )
+        _fallback_placeholder_matmul_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
-            _restore_placeholder_matmul_flattened_inputs(fallback_ir).get(
+            fallback_placeholder_matmul_stats.get(
                 "restored_placeholder_matmul_flattened_inputs",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_placeholder_matmul_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         _topologically_sort_operators(fallback_ir)
-        _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
-        run_consecutive_mul_constants_cleanup(
-            fallback_ir,
-            diagnostics=session.diagnostics,
+        _fallback_precision_div_rewrite_stats = (
+            _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
         )
-        _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
-        fallback_unbound_repair_stats = (
+        _fallback_precision_consecutive_mul_stats = (
+            run_consecutive_mul_constants_cleanup(
+                fallback_ir,
+                diagnostics=session.diagnostics,
+            )
+        )
+        _fallback_precision_div_restore_stats = (
+            _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
+        )
+        _fallback_unbound_repair_stats = (
             _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
                 fallback_ir
             )
         )
-        if int(
-            fallback_unbound_repair_stats.get(
-                "repaired_unbound_nonconstant_inputs_with_layout_transpose",
+        fallback_conv_input_tensor_count = len(fallback_ir.tensors)
+        fallback_conv_input_stats = {
+            **_run_indexed_conv_input_adapter_repairs(fallback_ir),
+            "pruned_unused_tensors": max(
                 0,
-            )
-        ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
-        fallback_conv_input_stats = _run_indexed_conv_input_adapter_repairs(
-            fallback_ir
-        )
+                fallback_conv_input_tensor_count - len(fallback_ir.tensors),
+            ),
+        }
+        _fallback_conv_input_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_conv_input_stats.get(
                 "repaired_stale_nchw_to_nhwc_conv_input_transposes",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_conv_input_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         fallback_concat_layout_stats = (
             _repair_mixed_nhwc_inputs_for_nchw_concat(fallback_ir)
         )
+        _fallback_mixed_concat_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_concat_layout_stats.get(
                 "repaired_mixed_nhwc_inputs_for_nchw_concat",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_mixed_concat_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         fallback_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(
             fallback_ir
         )
+        _fallback_concat_axis_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_concat_axis_stats.get(
                 "repaired_nchw_concat_transpose_conv_axes",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
-        fallback_binary_layout_stats = (
-            _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
-                fallback_ir
+            _fallback_concat_axis_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
             )
-        )
+        fallback_binary_layout_tensor_count = len(fallback_ir.tensors)
+        fallback_binary_layout_stats = {
+            **_repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+                fallback_ir
+            ),
+            "pruned_unused_tensors": max(
+                0,
+                fallback_binary_layout_tensor_count - len(fallback_ir.tensors),
+            ),
+        }
+        _fallback_binary_layout_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_binary_layout_stats.get(
                 "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_binary_layout_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
         _topologically_sort_operators(fallback_ir)
-        fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
-        if len(fallback_layout_problems) > 0:
-            fallback_ir.metadata["logical_layout_validation_errors"] = list(fallback_layout_problems)
         fallback_ir.metadata["layout_optimize_fallback"] = {
             "reason": "dangling_dynamic_inputs_detected",
             "count": int(len(unbound_inputs)),
@@ -5327,65 +5988,108 @@ def lower_onnx_to_ir(
         fallback_high_rank_bmm_stats = _compress_static_high_rank_batch_matmul(
             fallback_ir
         )
+        _fallback_high_rank_bmm_static_shape_stats = {
+            "reconciled_static_tensor_shapes": 0,
+            "reconciled_static_shape_mutations": 0,
+        }
         if int(
             fallback_high_rank_bmm_stats.get(
                 "compressed_static_high_rank_batch_matmul",
                 0,
             )
         ) > 0:
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_high_rank_bmm_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
             _topologically_sort_operators(fallback_ir)
-        _run_indexed_binary_layout_convergence(fallback_ir)
+        _fallback_binary_layout_convergence_stats = (
+            _run_indexed_binary_layout_convergence(fallback_ir)
+        )
         _topologically_sort_operators(fallback_ir)
+        fallback_layout_problems = validate_model_ir_layout_annotations(
+            fallback_ir
+        )
+        if len(fallback_layout_problems) > 0:
+            fallback_ir.metadata["logical_layout_validation_errors"] = list(
+                fallback_layout_problems
+            )
+        else:
+            fallback_ir.metadata.pop(
+                "logical_layout_validation_errors",
+                None,
+            )
         return _finalize_model_ir(fallback_ir)
 
-    _rewrite_constant_divisors_to_multiplicative_reciprocals(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_precision_div_rewrite_stats = (
+        _rewrite_constant_divisors_to_multiplicative_reciprocals(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    run_consecutive_mul_constants_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _final_precision_consecutive_mul_stats = (
+        run_consecutive_mul_constants_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     )
-    _restore_precision_sensitive_reciprocal_divisions(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_precision_div_restore_stats = (
+        _restore_precision_sensitive_reciprocal_divisions(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _set_post_progress_desc("topological sort")
     _topologically_sort_operators(model_ir)
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # In no-layout fallback path, some strict MUL/ADD affine bridges become
         # reducible only after final topological normalization.
-        run_se_fc_layout_cleanup(
+        _no_layout_final_se_fc_stats = run_se_fc_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+        _no_layout_final_affine_prepost_stats = (
+            _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         )
         _topologically_sort_operators(model_ir)
     # Final boundary-signature restore:
     # late static-shape reconciliations may overwrite graph-boundary dynamic
     # contracts (e.g. NMS selected_indices leading axis).
-    _realign_dynamic_boundary_shape_signature_map(model_ir)
-    _sanitize_static_shape_signature_consistency(model_ir)
+    _absolute_final_boundary_signature_stats = (
+        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    )
+    _absolute_final_static_signature_stats = (
+        _sanitize_static_shape_signature_consistency(model_ir)
+    )
     # Absolute-final guard: topological sort + signature sanitize can expose
     # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.
-    _optimize_transpose_mul_posttranspose_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _absolute_final_affine_post_add_stats = (
+        _optimize_transpose_mul_posttranspose_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _absolute_final_instancenorm_post_bias_stats = (
+        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _run_absolute_final_normalization_attention_pass_pair()
-    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
-        model_ir,
-        layout_state=session.layout_state,
+    _absolute_final_normalization_attention_results = (
+        _run_absolute_final_normalization_attention_pass_pair()
+    )
+    _absolute_final_dynamic_rank1_stats = (
+        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)
@@ -5393,193 +6097,523 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_convinteger_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_convinteger_layout_stats.get(
             "repaired_channel_last_convinteger_input_transposes",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_convinteger_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
     final_instancenorm_repair_stats = _repair_decomposed_instance_normalization_layouts(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_instancenorm_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(final_instancenorm_repair_stats.get("repaired_decomposed_instance_normalization_layouts", 0)) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_instancenorm_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
     final_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+    _final_broadcast_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(final_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_broadcast_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
-    _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
-        model_ir,
-        layout_state=session.layout_state,
+    final_mixed_singleton_concat_stats = (
+        _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _final_mixed_singleton_concat_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
+        final_mixed_singleton_concat_stats.get(
+            "repaired_mixed_singleton_nchw_inputs_for_nhwc_concat",
+            0,
+        )
+    ) > 0:
+        _final_mixed_singleton_concat_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
+    final_placeholder_matmul_stats = (
         _restore_placeholder_matmul_flattened_inputs(
             model_ir,
             layout_state=session.layout_state,
-        ).get(
+        )
+    )
+    _final_placeholder_matmul_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    _final_placeholder_binary_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if int(
+        final_placeholder_matmul_stats.get(
             "restored_placeholder_matmul_flattened_inputs",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
-        _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
-        _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_placeholder_matmul_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
+        final_placeholder_reconcile_stats = {
+            "reconciled_static_tensor_shapes": int(
+                _final_placeholder_matmul_static_shape_stats.get(
+                    "reconciled_static_tensor_shapes",
+                    0,
+                )
+            )
+        }
+        final_placeholder_binary_tensor_count = len(model_ir.tensors)
+        (
+            final_placeholder_exact_binary_stats,
+            final_placeholder_singleton_binary_stats,
+        ) = run_indexed_binary_layout_adapter_cleanup(model_ir)
+        if _stats_have_positive_count(
+            final_placeholder_reconcile_stats,
+            final_placeholder_exact_binary_stats,
+            final_placeholder_singleton_binary_stats,
+        ) or len(model_ir.tensors) < final_placeholder_binary_tensor_count:
+            _final_placeholder_binary_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    model_ir,
+                    include_mutation_count=True,
+                )
+            )
         _topologically_sort_operators(model_ir)
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.
-    _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    final_se_fc_gather_tensor_count = len(model_ir.tensors)
+    final_sinet_shuffle_stats = (
+        _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _run_se_fc_gather_channel_fanout_pass_cluster(
-        model_ir,
-        session.layout_state,
+    final_se_fc_stats, final_gather_stats = (
+        _run_se_fc_gather_channel_fanout_pass_cluster(
+            model_ir,
+            session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _final_se_fc_gather_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if (
+        int(
+            final_sinet_shuffle_stats.get(
+                "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+                0,
+            )
+        )
+        + int(
+            final_se_fc_stats.get(
+                "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
+                0,
+            )
+        )
+        + int(
+            final_gather_stats.get(
+                "optimized_transpose_gather_transpose_nhwc_channel_chains",
+                0,
+            )
+        )
+        > 0
+        or len(model_ir.tensors) < final_se_fc_gather_tensor_count
+    ):
+        _final_se_fc_gather_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     # Absolute-final PRELU cleanup:
     # late layout/broadcast/singleton repairs can still recreate strict
     # TRANSPOSE->PRELU->inverse-TRANSPOSE wrappers (e.g. SiNet entry blocks).
-    _optimize_prelu_transpose_passthrough_chains(
+    final_prelu_tensor_count = len(model_ir.tensors)
+    final_prelu_stats = _optimize_prelu_transpose_passthrough_chains(
         model_ir,
         layout_state=session.layout_state,
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _final_prelu_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if (
+        int(
+            final_prelu_stats.get(
+                "rewritten_prelu_transpose_passthrough_chains",
+                0,
+            )
+        )
+        > 0
+        or len(model_ir.tensors) < final_prelu_tensor_count
+    ):
+        _final_prelu_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
     # Absolute-final reshape cleanup:
     # very late repair/reconciliation passes above can still recreate trivial
     # singleton-growth RESHAPE chains (e.g. 2D->3D->4D Conv1D input shims).
-    run_consecutive_reshape_cleanup(
+    final_consecutive_reshape_stats = run_consecutive_reshape_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _final_consecutive_reshape_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if (
+        int(
+            final_consecutive_reshape_stats.get(
+                "removed_noop_reshape_chains",
+                0,
+            )
+        )
+        + int(
+            final_consecutive_reshape_stats.get(
+                "rewritten_consecutive_reshape_passthrough_chains",
+                0,
+            )
+        )
+        + int(
+            final_consecutive_reshape_stats.get(
+                "rewritten_fanout_bypass_reshape_passthrough_chains",
+                0,
+            )
+        )
+    ) > 0:
+        _final_consecutive_reshape_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     # Keep this after the final shape reconciliation: earlier than this,
     # SiNet-specific residual branches are not yet in their terminal form and
     # the strict matcher can fire on upstream blocks instead.
-    _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    final_sinet_late_residual_stats = (
+        _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_sinet_late_residual_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if int(
+        final_sinet_late_residual_stats.get(
+            "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains",
+            0,
+        )
+    ) > 0:
+        _final_sinet_late_residual_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
+    final_sinet_preadd_fanout_stats = (
+        _optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_deep_skip_dual_resize_affine_transpose_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_sinet_preadd_fanout_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if int(
+        final_sinet_preadd_fanout_stats.get(
+            "optimized_sinet_deep_skip_pre_add_concat_prelu_fanout_chains",
+            0,
+        )
+    ) > 0:
+        _final_sinet_preadd_fanout_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
+    final_sinet_dual_resize_stats = (
+        _optimize_sinet_deep_skip_dual_resize_affine_transpose_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_shared_post_prelu_transpose_fanout_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_sinet_dual_resize_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if int(
+        final_sinet_dual_resize_stats.get(
+            "optimized_sinet_deep_skip_dual_resize_affine_transpose_chains",
+            0,
+        )
+    ) > 0:
+        _final_sinet_dual_resize_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
+    final_sinet_shared_post_stats = (
+        _optimize_sinet_shared_post_prelu_transpose_fanout_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
-    _optimize_sinet_deep_skip_concat_resize_affine_tail_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    _final_sinet_shared_post_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if int(
+        final_sinet_shared_post_stats.get(
+            "optimized_sinet_shared_post_prelu_transpose_fanout_chains",
+            0,
+        )
+    ) > 0:
+        _final_sinet_shared_post_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
+    final_sinet_deep_skip_stats = (
+        _optimize_sinet_deep_skip_concat_resize_affine_tail_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _final_sinet_deep_skip_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if int(
+        final_sinet_deep_skip_stats.get(
+            "optimized_sinet_deep_skip_concat_resize_affine_tail_chains",
+            0,
+        )
+    ) > 0:
+        _final_sinet_deep_skip_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     # Keep this after all late SiNet residual/deep-skip folds: those passes can
     # still recreate the mid-stage concat+resize affine NHWC/NCHW bridge.
-    _optimize_sinet_concat_resize_affine_transpose_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    final_sinet_concat_resize_stats = (
+        _optimize_sinet_concat_resize_affine_transpose_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _final_sinet_concat_resize_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+    if int(
+        final_sinet_concat_resize_stats.get(
+            "optimized_sinet_concat_resize_affine_transpose_chains",
+            0,
+        )
+    ) > 0:
+        _final_sinet_concat_resize_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
     final_high_rank_bmm_stats = _compress_static_high_rank_batch_matmul(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_high_rank_bmm_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_high_rank_bmm_stats.get(
             "compressed_static_high_rank_batch_matmul",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_high_rank_bmm_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
         _topologically_sort_operators(model_ir)
     final_pad_layout_stats = repair_channel_last_inputs_for_channel_first_pad(
         model_ir,
         layout_state=session.layout_state,
     )
+    _final_pad_layout_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_pad_layout_stats.get(
             "repaired_channel_last_inputs_for_channel_first_pad",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_pad_layout_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
-    final_conv_input_stats = (
-        _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
-    )
+    final_conv_input_tensor_count = len(model_ir.tensors)
+    final_conv_input_stats = {
+        **_repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir),
+        "pruned_unused_tensors": max(
+            0,
+            final_conv_input_tensor_count - len(model_ir.tensors),
+        ),
+    }
+    _final_conv_input_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_conv_input_stats.get(
             "repaired_stale_nchw_to_nhwc_conv_input_transposes",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_conv_input_static_shape_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
         _topologically_sort_operators(model_ir)
     final_concat_layout_stats = _repair_mixed_nhwc_inputs_for_nchw_concat(
         model_ir
     )
+    _final_mixed_concat_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_concat_layout_stats.get(
             "repaired_mixed_nhwc_inputs_for_nchw_concat",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_mixed_concat_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
         _topologically_sort_operators(model_ir)
     final_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+    _final_concat_axis_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_concat_axis_stats.get(
             "repaired_nchw_concat_transpose_conv_axes",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_concat_axis_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
         _topologically_sort_operators(model_ir)
-    final_binary_layout_stats = (
-        _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
-    )
+    final_binary_layout_tensor_count = len(model_ir.tensors)
+    final_binary_layout_stats = {
+        **_repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir),
+        "pruned_unused_tensors": max(
+            0,
+            final_binary_layout_tensor_count - len(model_ir.tensors),
+        ),
+    }
+    _final_binary_layout_static_shape_stats = {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
     if int(
         final_binary_layout_stats.get(
             "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
             0,
         )
     ) > 0:
-        _reconcile_static_tensor_shapes(model_ir)
+        _final_binary_layout_static_shape_stats = (
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            )
+        )
         _topologically_sort_operators(model_ir)
-    layout_problems = validate_model_ir_layout_annotations(model_ir)
-    if len(layout_problems) > 0:
-        model_ir.metadata["logical_layout_validation_errors"] = list(layout_problems)
     _advance_post_progress()
     if post_progress_bar is not None:
         post_progress_spinner.stop()
         post_progress_bar.close()
 
-    # Layout validation infers annotations from the terminal graph and can
-    # expose stale direct-NCHW fallback bridges that were not identifiable
-    # before the final annotations were available.
-    _run_indexed_binary_layout_convergence(model_ir)
-    coalesce_static_high_rank_binary_operators(
+    # Terminal layout cleanup can expose stale direct-NCHW fallback bridges
+    # that were not identifiable before the final annotations were available.
+    _final_binary_layout_convergence_stats = (
+        _run_indexed_binary_layout_convergence(model_ir)
+    )
+    _final_high_rank_binary_stats = coalesce_static_high_rank_binary_operators(
         model_ir,
         layout_state=session.layout_state,
     )
-    _realign_dynamic_boundary_shape_signature_map(model_ir)
+    _final_dynamic_boundary_signature_stats = (
+        _realign_dynamic_boundary_shape_signature_map(model_ir)
+    )
     _topologically_sort_operators(model_ir)
+    layout_problems = validate_model_ir_layout_annotations(model_ir)
+    if len(layout_problems) > 0:
+        model_ir.metadata["logical_layout_validation_errors"] = list(
+            layout_problems
+        )
+    else:
+        model_ir.metadata.pop(
+            "logical_layout_validation_errors",
+            None,
+        )
     return _finalize_model_ir(model_ir)

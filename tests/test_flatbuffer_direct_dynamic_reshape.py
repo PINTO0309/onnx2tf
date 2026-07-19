@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 
 import numpy as np
+import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
@@ -200,6 +202,110 @@ def test_indexed_shape_convergence_matches_legacy_sequence(monkeypatch) -> None:
                 indexed_tensor.data,
                 legacy_tensor.data,
             )
+
+
+def test_indexed_shape_convergence_skips_final_reconcile_when_stable(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("stable_indexed_shape_convergence")
+    calls = {"prune": 0, "reconcile": 0, "reshape": 0}
+    graph_indexes: list[ModelIRGraphIndex | None] = []
+
+    def prune_probe(target_model_ir, *, graph_index=None, layout_state=None):
+        assert target_model_ir is model_ir
+        assert layout_state is None
+        calls["prune"] += 1
+        graph_indexes.append(graph_index)
+        return {"removed_dead_operators": 0}
+
+    def reconcile_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        calls["reconcile"] += 1
+        graph_indexes.append(graph_index)
+        return {"reconciled_static_tensor_shapes": 0}
+
+    def reshape_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        calls["reshape"] += 1
+        graph_indexes.append(graph_index)
+        return {"resolved_dynamic_reshape_shapes": 0}
+
+    monkeypatch.setattr(lowering_module, "_prune_dead_operators", prune_probe)
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        reconcile_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_resolve_dynamic_reshape_shapes",
+        reshape_probe,
+    )
+
+    stats = _run_indexed_shape_convergence_cleanup(model_ir)
+
+    assert calls == {"prune": 1, "reconcile": 1, "reshape": 1}
+    assert stats == {
+        "removed_dead_operators": 0,
+        "resolved_dynamic_reshape_shapes": 0,
+        "reconciled_static_tensor_shapes": 0,
+    }
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+@pytest.mark.parametrize("changed_owner", ["prune", "reconcile", "reshape"])
+def test_indexed_shape_convergence_keeps_final_reconcile_after_mutation(
+    monkeypatch,
+    changed_owner: str,
+) -> None:
+    model_ir = ModelIR(f"changing_indexed_shape_convergence_{changed_owner}")
+    reconcile_calls = 0
+
+    def prune_probe(target_model_ir, *, graph_index=None, layout_state=None):
+        assert target_model_ir is model_ir
+        assert graph_index is not None
+        assert layout_state is None
+        return {"removed_dead_operators": int(changed_owner == "prune")}
+
+    def reconcile_probe(target_model_ir, *, graph_index=None):
+        nonlocal reconcile_calls
+        assert target_model_ir is model_ir
+        assert graph_index is not None
+        reconcile_calls += 1
+        return {
+            "reconciled_static_tensor_shapes": int(
+                changed_owner == "reconcile" and reconcile_calls == 1
+            ),
+        }
+
+    def reshape_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        assert graph_index is not None
+        return {
+            "resolved_dynamic_reshape_shapes": int(changed_owner == "reshape"),
+        }
+
+    monkeypatch.setattr(lowering_module, "_prune_dead_operators", prune_probe)
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        reconcile_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_resolve_dynamic_reshape_shapes",
+        reshape_probe,
+    )
+
+    stats = _run_indexed_shape_convergence_cleanup(model_ir)
+
+    assert reconcile_calls == 2
+    assert stats == {
+        "removed_dead_operators": int(changed_owner == "prune"),
+        "resolved_dynamic_reshape_shapes": int(changed_owner == "reshape"),
+        "reconciled_static_tensor_shapes": int(changed_owner == "reconcile"),
+    }
 
 
 def test_shape_reconciliation_repairs_stale_flatten_shape_constant() -> None:

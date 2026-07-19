@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import onnx2tf.tflite_builder.passes.stale_binary_adapter_repair as stale_binary_owner
 import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -193,14 +194,16 @@ def test_indexed_stale_binary_transpose_repair_handles_multiple_matches(
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     monkeypatch.setattr(
-        lowering_module,
+        stale_binary_owner,
         "_build_tensor_consumer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
     monkeypatch.setattr(
-        lowering_module,
+        stale_binary_owner,
         "_build_tensor_producer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
     graph_index = ModelIRGraphIndex(model_ir)
     stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
@@ -345,3 +348,129 @@ def test_indexed_binary_layout_convergence_matches_legacy_sequence(
         "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes"
     ] == 2
     assert _normalize(model_ir) == _normalize(legacy_model_ir)
+
+
+@pytest.mark.parametrize(
+    ("reconcile_counts", "expected_rounds"),
+    [
+        ([0], 1),
+        ([1, 0], 2),
+    ],
+)
+def test_indexed_binary_layout_convergence_stops_after_stable_round(
+    monkeypatch,
+    reconcile_counts: list[int],
+    expected_rounds: int,
+) -> None:
+    model_ir = ModelIR("stable_indexed_binary_layout_convergence")
+    calls = {"broadcast": 0, "transpose": 0, "reconcile": 0}
+    graph_indexes: list[ModelIRGraphIndex | None] = []
+
+    def broadcast_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        calls["broadcast"] += 1
+        graph_indexes.append(graph_index)
+        return {"repaired_rank4_channelwise_broadcast_constants": 0}
+
+    def transpose_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        calls["transpose"] += 1
+        graph_indexes.append(graph_index)
+        return {
+            "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+        }
+
+    def reconcile_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        round_index = calls["reconcile"]
+        calls["reconcile"] += 1
+        graph_indexes.append(graph_index)
+        count = (
+            reconcile_counts[round_index]
+            if round_index < len(reconcile_counts)
+            else 0
+        )
+        return {"reconciled_static_tensor_shapes": count}
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
+        broadcast_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
+        transpose_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        reconcile_probe,
+    )
+
+    stats = _run_indexed_binary_layout_convergence(model_ir)
+
+    assert calls == {
+        "broadcast": expected_rounds,
+        "transpose": expected_rounds,
+        "reconcile": expected_rounds,
+    }
+    assert stats == {
+        "repaired_rank4_channelwise_broadcast_constants": 0,
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+        "reconciled_static_tensor_shapes": sum(reconcile_counts),
+    }
+    assert graph_indexes
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+def test_indexed_binary_layout_convergence_retains_three_round_cap(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("bounded_indexed_binary_layout_convergence")
+    reconcile_calls = 0
+
+    def zero_broadcast(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        assert graph_index is not None
+        return {"repaired_rank4_channelwise_broadcast_constants": 0}
+
+    def zero_transpose(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        assert graph_index is not None
+        return {
+            "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+        }
+
+    def changing_reconcile(target_model_ir, *, graph_index=None):
+        nonlocal reconcile_calls
+        assert target_model_ir is model_ir
+        assert graph_index is not None
+        reconcile_calls += 1
+        return {"reconciled_static_tensor_shapes": 1}
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
+        zero_broadcast,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
+        zero_transpose,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        changing_reconcile,
+    )
+
+    stats = _run_indexed_binary_layout_convergence(model_ir)
+
+    assert reconcile_calls == 3
+    assert stats == {
+        "repaired_rank4_channelwise_broadcast_constants": 0,
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 0,
+        "reconciled_static_tensor_shapes": 3,
+    }

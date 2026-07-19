@@ -132,7 +132,7 @@ def test_late_layout_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -248,6 +248,166 @@ def test_late_layout_runner_preserves_both_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_late_layout_returns_ordered_results_through_lowerer_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    context = _context(use_layout_state=True)
+    expected_ids = (
+        LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS
+        if include_layout_transpose
+        else LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_REQUIRED_PASS_IDS
+    )
+    expected_results = tuple(
+        {f"mutation_{index}": index + 1}
+        for index in range(len(expected_ids))
+    )
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(invocation.pass_id for invocation in invocations) == tuple(
+            expected_ids
+        )
+        assert tuple(expected_pass_ids) == tuple(expected_ids)
+        assert phase_name == (
+            "late layout/mean/SPP/gather/constant-fold/cast"
+        )
+        return expected_results
+
+    monkeypatch.setattr(
+        late_layout_mean_spp_gather_constant_cast_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    result = run_late_layout_mean_spp_gather_constant_cast(
+        context,
+        include_layout_transpose=include_layout_transpose,
+    )
+
+    assert result == expected_results
+    _, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+    assert isinstance(helper.body[0].value.func, ast.Name)
+    assert (
+        helper.body[0].value.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast"
+    )
+
+
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_late_layout_mutation_summary_filters_iterations_and_reports_pruning(
+    include_layout_transpose: bool,
+) -> None:
+    summarize = getattr(
+        late_layout_mean_spp_gather_constant_cast_orchestration,
+        "summarize_late_layout_mean_spp_gather_constant_cast_mutations",
+    )
+    layout_result = {
+        "iterations": 9,
+        "removed_identity_transpose": 1,
+        "removed_inverse_transpose_pairs": 2,
+        "removed_inverse_transpose_fanout_branches": 3,
+        "composed_consecutive_transpose_pairs": 4,
+    }
+    required_results = (
+        {"mean_mutations": 5},
+        {"spp_mutations": 6},
+        {"gather_mutations": 7},
+        {"constant_fold_mutations": 8},
+        {"cast_mutations": 10},
+    )
+    pass_results = (
+        (layout_result, *required_results)
+        if include_layout_transpose
+        else required_results
+    )
+
+    result = summarize(
+        pass_results,
+        include_layout_transpose=include_layout_transpose,
+        pruned_unused_tensors=11,
+    )
+
+    expected_layout = {
+        "removed_identity_transpose": int(include_layout_transpose),
+        "removed_inverse_transpose_pairs": int(include_layout_transpose) * 2,
+        "removed_inverse_transpose_fanout_branches": (
+            int(include_layout_transpose) * 3
+        ),
+        "composed_consecutive_transpose_pairs": (
+            int(include_layout_transpose) * 4
+        ),
+    }
+    assert result == {
+        **expected_layout,
+        "mean_mutations": 5,
+        "spp_mutations": 6,
+        "gather_mutations": 7,
+        "constant_fold_mutations": 8,
+        "cast_mutations": 10,
+        "pruned_unused_tensors": 11,
+    }
+    assert "iterations" not in result
+    with pytest.raises(
+        ValueError,
+        match=r"late layout mutation summary expected [56] pass results",
+    ):
+        summarize(
+            pass_results[:-1],
+            include_layout_transpose=include_layout_transpose,
+            pruned_unused_tensors=0,
+        )
+
+
+def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    assignment_indices = {}
+    assignments = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if target.id in {
+            "late_layout_cluster_tensor_count",
+            "late_layout_cluster_results",
+            "_late_layout_cluster_stats",
+        }:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    assert assignment_indices == {
+        "late_layout_cluster_tensor_count": min(assignment_indices.values()),
+        "late_layout_cluster_results": min(assignment_indices.values()) + 1,
+        "_late_layout_cluster_stats": min(assignment_indices.values()) + 2,
+    }
+    count_call = assignments["late_layout_cluster_tensor_count"]
+    assert isinstance(count_call, ast.Call)
+    assert isinstance(count_call.func, ast.Name)
+    assert count_call.func.id == "len"
+    result_call = assignments["late_layout_cluster_results"]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == LATE_LAYOUT
+    summary_call = assignments["_late_layout_cluster_stats"]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == (
+        "summarize_late_layout_mean_spp_gather_constant_cast_mutations"
+    )
+    assert len(summary_call.args) == 1
+    assert isinstance(summary_call.args[0], ast.Name)
+    assert summary_call.args[0].id == "late_layout_cluster_results"
+    assert {keyword.arg for keyword in summary_call.keywords} == {
+        "include_layout_transpose",
+        "pruned_unused_tensors",
+    }
+
+
 def test_late_layout_has_one_required_policy_production_call() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [
@@ -271,23 +431,38 @@ def test_late_layout_preserves_outer_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "late_layout_cluster_results"
+            for target in statement.targets
+        )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == LATE_LAYOUT
     )
 
-    previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
+    previous = lowerer.body[invocation_index - 2]
+    following = lowerer.body[invocation_index + 2]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_late_pre_layout_cluster_shape_extract_stats"
+    )
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    assert following.value.func.id == "_replace_expand_dims_and_squeeze_with_reshape"
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert (
+        following.value.func.id
+        == "_replace_expand_dims_and_squeeze_with_reshape"
+    )
 
 
 def test_late_layout_composes_child_builder_without_lowerer_import() -> None:

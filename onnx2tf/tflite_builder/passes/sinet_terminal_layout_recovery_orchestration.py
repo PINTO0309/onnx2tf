@@ -55,8 +55,8 @@ def build_sinet_terminal_layout_recovery_invocations(
 
 def run_sinet_terminal_layout_recovery(
     context: SINetTerminalLayoutRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_sinet_terminal_layout_recovery_invocations(context),
         expected_pass_ids=SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS,
         phase_name="SINet terminal-layout recovery",

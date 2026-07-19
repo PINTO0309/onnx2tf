@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import numpy as np
-import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import onnx2tf.tflite_builder.passes.binary_layout_adapter as binary_layout_owner
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
@@ -130,14 +130,16 @@ def test_shared_broadcast_constant_repair_preserves_snapshot_clone_policy(
         raise AssertionError("unexpected producer/consumer map rebuild")
 
     monkeypatch.setattr(
-        lowering_module,
+        binary_layout_owner,
         "_build_tensor_consumer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
     monkeypatch.setattr(
-        lowering_module,
+        binary_layout_owner,
         "_build_tensor_producer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
     stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
         model_ir,

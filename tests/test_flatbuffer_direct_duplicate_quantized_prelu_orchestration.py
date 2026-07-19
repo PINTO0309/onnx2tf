@@ -118,7 +118,7 @@ def test_duplicate_quantized_prelu_signature_and_delegate_are_explicit() -> None
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)

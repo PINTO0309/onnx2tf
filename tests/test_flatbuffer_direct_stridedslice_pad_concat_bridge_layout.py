@@ -1207,3 +1207,246 @@ def test_slice_pad_concat_keeps_owner_wrapper_and_ordered_calls() -> None:
         assert isinstance(call.args[0], ast.Name)
         assert call.args[0].id == "model_ir"
         assert call.keywords == []
+
+
+def test_second_terminal_slice_pad_concat_captures_complete_mutation_evidence() -> None:
+    lowering_tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_slice_pad_concat_stats"
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert invocation.value.keywords == []
+
+    previous = lowerer.body[invocation_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_terminal_affine_stats"
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "summarize_terminal_affine_concat_split_mutations"
+    )
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "late_spp_results"
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 2
+    assert isinstance(direct_statements[0], ast.Assign)
+    first_target = direct_statements[0].targets[0]
+    assert isinstance(first_target, ast.Name)
+    assert first_target.id == "_pre_terminal_affine_slice_pad_concat_stats"
+    assert direct_statements[1] is invocation
+
+
+def test_first_terminal_slice_pad_concat_captures_complete_mutation_evidence() -> None:
+    lowering_tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_pre_terminal_affine_slice_pad_concat_stats"
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert invocation.value.keywords == []
+
+    previous = lowerer.body[invocation_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "terminal_affine_tensor_count"
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 2
+    assert direct_statements[0] is invocation
+    assert isinstance(direct_statements[1], ast.Assign)
+    second_target = direct_statements[1].targets[0]
+    assert isinstance(second_target, ast.Name)
+    assert second_target.id == "_terminal_slice_pad_concat_stats"
+
+
+def test_pre_terminal_affine_post_add_captures_complete_mutation_evidence() -> None:
+    lowering_tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    slice_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_pre_terminal_affine_slice_pad_concat_stats"
+    )
+    invocation = lowerer.body[slice_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    channel_slice_summary = lowerer.body[slice_index - 2]
+    assert isinstance(channel_slice_summary, ast.Assign)
+    assert len(channel_slice_summary.targets) == 1
+    assert isinstance(channel_slice_summary.targets[0], ast.Name)
+    assert channel_slice_summary.targets[0].id == (
+        "_pre_terminal_channel_slice_pad_mul_stats"
+    )
+    assert isinstance(channel_slice_summary.value, ast.Call)
+    assert isinstance(channel_slice_summary.value.func, ast.Name)
+    assert channel_slice_summary.value.func.id == (
+        "summarize_channel_slice_pad_mul_mutations"
+    )
+    channel_slice_results = lowerer.body[slice_index - 3]
+    assert isinstance(channel_slice_results, ast.Assign)
+    assert len(channel_slice_results.targets) == 1
+    assert isinstance(channel_slice_results.targets[0], ast.Name)
+    assert channel_slice_results.targets[0].id == "channel_slice_pad_mul_results"
+    assert isinstance(channel_slice_results.value, ast.Call)
+    assert isinstance(channel_slice_results.value.func, ast.Name)
+    assert channel_slice_results.value.func.id == (
+        "_run_channel_slice_pad_mul_layout_pass_cluster"
+    )
+    previous = lowerer.body[slice_index - 4]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_pre_add_stats"
+    assert isinstance(previous.value, ast.Dict)
+    pre_add_owner = previous.value.values[0]
+    assert isinstance(pre_add_owner, ast.Call)
+    assert isinstance(pre_add_owner.func, ast.Name)
+    assert pre_add_owner.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    following = lowerer.body[slice_index]
+    assert isinstance(following, ast.Assign)
+    assert following.targets[0].id == "_pre_terminal_affine_slice_pad_concat_stats"
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 3
+    assert direct_statements[0] is invocation
+    assert isinstance(direct_statements[1], ast.Assign)
+    second_target = direct_statements[1].targets[0]
+    assert isinstance(second_target, ast.Name)
+    assert second_target.id == "_very_late_affine_post_add_stats"
+    assert isinstance(direct_statements[2], ast.Assign)
+    third_target = direct_statements[2].targets[0]
+    assert isinstance(third_target, ast.Name)
+    assert third_target.id == "_absolute_final_affine_post_add_stats"

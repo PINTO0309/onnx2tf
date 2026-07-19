@@ -537,3 +537,26 @@ def test_affine_post_add_preflight_avoids_graph_index(monkeypatch: pytest.Monkey
     assert optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir) == {
         "optimized_transpose_mul_posttranspose_add_nhwc_chains": 0
     }
+
+
+def test_affine_post_add_counter_is_complete_mutation_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir, _ = _model()
+    prune_calls: list[tuple[ModelIR, LayoutState | None]] = []
+
+    def record_prune(
+        active_model_ir: ModelIR,
+        *,
+        layout_state: LayoutState | None = None,
+    ) -> None:
+        prune_calls.append((active_model_ir, layout_state))
+
+    monkeypatch.setattr(post_add_module, "_prune_unused_tensors", record_prune)
+
+    first = optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
+    second = optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
+
+    assert first == {"optimized_transpose_mul_posttranspose_add_nhwc_chains": 1}
+    assert second == {"optimized_transpose_mul_posttranspose_add_nhwc_chains": 0}
+    assert prune_calls == [(model_ir, None)]

@@ -73,8 +73,10 @@ def build_safe_binary_recovery_invocations(
     )
 
 
-def run_safe_binary_recovery(context: QuantizedRecoveryContext) -> None:
-    run_recovery_invocations(
+def run_safe_binary_recovery(
+    context: QuantizedRecoveryContext,
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_safe_binary_recovery_invocations(context),
         expected_pass_ids=SAFE_BINARY_RECOVERY_PASS_IDS,
         phase_name="safe binary recovery",
@@ -124,8 +126,8 @@ def build_quantized_activation_binary_invocations(
 
 def run_quantized_activation_binary_recovery(
     context: QuantizedRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_quantized_activation_binary_invocations(context),
         expected_pass_ids=QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
         phase_name="quantized activation/binary recovery",

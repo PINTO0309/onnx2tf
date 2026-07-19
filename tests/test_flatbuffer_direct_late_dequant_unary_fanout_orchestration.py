@@ -98,6 +98,7 @@ def test_late_dequant_unary_fanout_is_a_straight_line_scoped_cluster() -> None:
     assert helper.args.kwonlyargs == []
     assert helper.args.vararg is None
     assert helper.args.kwarg is None
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
     assert len(helper.body) == 1
     assert not any(isinstance(node, control_flow_nodes) for node in ast.walk(helper))
     assert not any(
@@ -114,7 +115,8 @@ def test_late_dequant_unary_fanout_is_a_straight_line_scoped_cluster() -> None:
     }
     loaded_data_names = {
         node.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
@@ -173,14 +175,24 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == LATE_DEQUANT_UNARY_FANOUT
     )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_late_dequant_unary_fanout_results"
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Expr)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_late_dequant_hardsigmoid_bridge_stats"
+    )
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (
@@ -189,7 +201,12 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
     )
 
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Expr)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_late_swish_transpose_passthrough_stats"
+    )
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_optimize_swish_transpose_passthrough_chains"
@@ -203,7 +220,7 @@ def test_late_dequant_unary_fanout_preserves_outer_boundaries() -> None:
 def test_late_dequant_unary_fanout_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)

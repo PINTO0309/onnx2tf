@@ -24,6 +24,13 @@ from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+PHASE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "sinet_preadd_resize_recovery_orchestration.py"
+)
 SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
 
@@ -51,6 +58,13 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
+
+
+def _direct_call_name(statement: ast.stmt) -> str:
+    assert isinstance(statement, (ast.Assign, ast.Expr))
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    return statement.value.func.id
 
 
 def _context() -> SINetPreaddResizeRecoveryContext:
@@ -119,7 +133,13 @@ def test_sinet_preadd_resize_recovery_is_a_straight_line_closure() -> None:
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
     }
-    assert loaded_data_names == {"sinet_preadd_resize_recovery_context"}
+    assert loaded_data_names == {
+        "Dict",
+        "Tuple",
+        "int",
+        "sinet_preadd_resize_recovery_context",
+        "str",
+    }
 
 
 def test_sinet_preadd_resize_recovery_preserves_all_call_contracts() -> None:
@@ -208,20 +228,43 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_sinet_preadd_resize_results",
+            "_very_late_sinet_preadd_resize_results",
+            "_post_cleanup_sinet_preadd_resize_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINET_PREADD_RESIZE
     ]
     assert len(invocation_indexes) == 3
+    assert [
+        lowerer.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(lowerer.body[index], ast.Assign)
+        and isinstance(lowerer.body[index].targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_preadd_resize_results",
+        "_very_late_sinet_preadd_resize_results",
+        "_post_cleanup_sinet_preadd_resize_results",
+    ]
     observed: list[tuple[str, str]] = []
+    assigned_boundary_targets: list[str] = []
     for index in invocation_indexes:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
+            if isinstance(boundary, ast.Assign):
+                assert len(boundary.targets) == 1
+                assert isinstance(boundary.targets[0], ast.Name)
+                assigned_boundary_targets.append(boundary.targets[0].id)
         observed.append((previous.value.func.id, following.value.func.id))
 
     assert observed == [
@@ -234,9 +277,17 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
             "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
         ),
         (
-            "_reconcile_static_tensor_shapes",
+            "run_indexed_prune_reconcile_cleanup",
             "_optimize_transpose_csp_attention_nhwc_chains",
         ),
+    ]
+    assert assigned_boundary_targets == [
+        "_terminal_dequant_hardsigmoid_bridge_stats",
+        "_post_terminal_singleton_reshape_results",
+        "_very_late_sinet_layout_recovery_results",
+        "_very_late_residual_affine_prelu_stats",
+        "_very_late_prune_reconcile_stats",
+        "_post_cleanup_csp_attention_stats",
     ]
 
 
@@ -244,7 +295,7 @@ def test_sinet_preadd_resize_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -298,15 +349,124 @@ def test_sinet_preadd_resize_runner_preserves_instrumented_order(
     assert events == list(SINET_PREADD_RESIZE_RECOVERY_PASS_IDS)
 
 
-def test_sinet_preadd_resize_module_does_not_import_lowerer() -> None:
-    module_path = (
-        REPO_ROOT
-        / "onnx2tf"
-        / "tflite_builder"
-        / "passes"
-        / "sinet_preadd_resize_recovery_orchestration.py"
+def test_sinet_preadd_resize_propagates_and_retains_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    result_by_pass_id = {
+        pass_id: {f"{pass_id}_mutations": index}
+        for index, pass_id in enumerate(
+            SINET_PREADD_RESIZE_RECOVERY_PASS_IDS,
+            start=1,
+        )
+    }
+    probe_steps = build_sinet_preadd_resize_recovery_invocations(context)
+    for step in probe_steps:
+        module_name = next(
+            name
+            for name, value in vars(
+                sinet_preadd_resize_recovery_orchestration
+            ).items()
+            if value is step.callback
+        )
+        result = result_by_pass_id[step.pass_id]
+        monkeypatch.setattr(
+            sinet_preadd_resize_recovery_orchestration,
+            module_name,
+            lambda *args, result=result, **kwargs: dict(result),
+        )
+
+    expected_results = tuple(
+        result_by_pass_id[pass_id]
+        for pass_id in SINET_PREADD_RESIZE_RECOVERY_PASS_IDS
     )
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    assert run_sinet_preadd_resize_recovery(context) == expected_results
+
+    phase_tree = ast.parse(PHASE_PATH.read_text(encoding="utf-8"))
+    phase_runner = next(
+        node
+        for node in phase_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_sinet_preadd_resize_recovery"
+    )
+    assert ast.unparse(phase_runner.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(phase_runner.body) == 1
+    assert isinstance(phase_runner.body[0], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    direct_results = sorted(
+        (
+            statement
+            for statement in ast.walk(lowerer)
+            if isinstance(statement, (ast.Assign, ast.Expr))
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and statement.value.func.id == SINET_PREADD_RESIZE
+        ),
+        key=lambda statement: statement.lineno,
+    )
+    assert len(direct_results) == 3
+    assert all(isinstance(statement, ast.Assign) for statement in direct_results)
+    assert [
+        statement.targets[0].id
+        for statement in direct_results
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_preadd_resize_results",
+        "_very_late_sinet_preadd_resize_results",
+        "_post_cleanup_sinet_preadd_resize_results",
+    ]
+    assert all(statement.value.args == [] for statement in direct_results)
+    assert all(statement.value.keywords == [] for statement in direct_results)
+
+    first_index = lowerer.body.index(direct_results[0])
+    second_index = lowerer.body.index(direct_results[1])
+    third_index = lowerer.body.index(direct_results[2])
+    assert _direct_call_name(lowerer.body[first_index - 1]) == (
+        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
+    )
+    assert _direct_call_name(lowerer.body[first_index + 1]) == (
+        "_run_singleton_reshape_layout_pass_cluster"
+    )
+    assert _direct_call_name(lowerer.body[second_index - 1]) == SINET_TERMINAL
+    assert _direct_call_name(lowerer.body[second_index + 1]) == (
+        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
+    )
+    assert _direct_call_name(lowerer.body[third_index - 1]) == (
+        "run_indexed_prune_reconcile_cleanup"
+    )
+    assert _direct_call_name(lowerer.body[third_index + 1]) == (
+        "_optimize_transpose_csp_attention_nhwc_chains"
+    )
+
+    terminal_context_assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "sinet_terminal_layout_recovery_context"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(terminal_context_assignment.value, ast.Call)
+    callback_keyword = next(
+        keyword
+        for keyword in terminal_context_assignment.value.keywords
+        if keyword.arg == "preadd_resize_recovery"
+    )
+    assert isinstance(callback_keyword.value, ast.Name)
+    assert callback_keyword.value.id == SINET_PREADD_RESIZE
+
+
+def test_sinet_preadd_resize_module_does_not_import_lowerer() -> None:
+    tree = ast.parse(PHASE_PATH.read_text(encoding="utf-8"))
     assert not any(
         isinstance(node, ast.ImportFrom)
         and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -66,8 +66,8 @@ def build_late_dequant_unary_fanout_invocations(
 
 def run_late_dequant_unary_fanout(
     context: LateDequantUnaryFanoutContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Dict[str, int], ...]:
+    return run_recovery_invocations(
         build_late_dequant_unary_fanout_invocations(context),
         expected_pass_ids=LATE_DEQUANT_UNARY_FANOUT_PASS_IDS,
         phase_name="late dequant/unary/fanout",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -152,13 +152,13 @@ def run_singleton_reshape(
     include_duplicate_fanout: bool = False,
     include_multi_branch_gate: bool = False,
     include_spatial_concat_post_transpose: bool = True,
-) -> None:
+) -> Tuple[Dict[str, int], ...]:
     expected_pass_ids = _selected_pass_ids(
         include_layout_transpose=include_layout_transpose,
         include_duplicate_fanout=include_duplicate_fanout,
         include_multi_branch_gate=include_multi_branch_gate,
     )
-    run_recovery_invocations(
+    return run_recovery_invocations(
         build_singleton_reshape_invocations(
             context,
             include_layout_transpose=include_layout_transpose,

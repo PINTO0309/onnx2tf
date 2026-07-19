@@ -82,8 +82,8 @@ def build_qlinear_mean_concat_invocations(
 
 def run_qlinear_mean_concat_recovery(
     context: QLinearRecoveryContext,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_qlinear_mean_concat_invocations(context),
         expected_pass_ids=QLINEAR_MEAN_CONCAT_PASS_IDS,
         phase_name="qlinear mean/concat recovery",

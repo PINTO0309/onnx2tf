@@ -194,22 +194,78 @@ def test_terminal_affine_concat_split_preserves_outer_boundaries() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+            for node in ast.walk(statement)
+        )
     ]
 
     assert len(invocation_indexes) == 2
     observed: list[tuple[str, str]] = []
-    for index in invocation_indexes:
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
-            assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
-        observed.append((previous.value.func.id, following.value.func.id))
+    for position, index in enumerate(invocation_indexes):
+        if position == 0:
+            invocation = lowerer.body[index]
+            assert isinstance(invocation, ast.Assign)
+            assert len(invocation.targets) == 1
+            assert isinstance(invocation.targets[0], ast.Name)
+            assert invocation.targets[0].id == "pre_terminal_affine_results"
+            recovery_count = lowerer.body[index - 1]
+            assert isinstance(recovery_count, ast.Assign)
+            assert len(recovery_count.targets) == 1
+            assert isinstance(recovery_count.targets[0], ast.Name)
+            assert recovery_count.targets[0].id == "pre_terminal_affine_tensor_count"
+            previous = lowerer.body[index - 2]
+            recovery_summary = lowerer.body[index + 1]
+            assert isinstance(recovery_summary, ast.Assign)
+            assert len(recovery_summary.targets) == 1
+            assert isinstance(recovery_summary.targets[0], ast.Name)
+            assert recovery_summary.targets[0].id == "_pre_terminal_affine_stats"
+            assert isinstance(recovery_summary.value, ast.Call)
+            assert isinstance(recovery_summary.value.func, ast.Name)
+            assert recovery_summary.value.func.id == (
+                "summarize_terminal_affine_concat_split_mutations"
+            )
+            pre_add_count = lowerer.body[index + 2]
+            assert isinstance(pre_add_count, ast.Assign)
+            assert len(pre_add_count.targets) == 1
+            assert isinstance(pre_add_count.targets[0], ast.Name)
+            assert pre_add_count.targets[0].id == (
+                "pre_terminal_pre_add_tensor_count"
+            )
+            following = lowerer.body[index + 3]
+        else:
+            invocation = lowerer.body[index]
+            assert isinstance(invocation, ast.Assign)
+            assert len(invocation.targets) == 1
+            assert isinstance(invocation.targets[0], ast.Name)
+            assert invocation.targets[0].id == "terminal_affine_results"
+            previous = lowerer.body[index - 2]
+            following = lowerer.body[index + 2]
+        assert isinstance(previous, (ast.Expr, ast.Assign))
+        if position == 1:
+            assert isinstance(previous, ast.Assign)
+            assert len(previous.targets) == 1
+            assert isinstance(previous.targets[0], ast.Name)
+            assert previous.targets[0].id == (
+                "_pre_terminal_affine_slice_pad_concat_stats"
+            )
+        assert isinstance(previous.value, ast.Call)
+        assert isinstance(previous.value.func, ast.Name)
+        assert isinstance(following, (ast.Expr, ast.Assign))
+        if position == 0:
+            assert isinstance(following, ast.Assign)
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            assert following.targets[0].id == "_pre_terminal_pre_add_stats"
+            assert isinstance(following.value, ast.Dict)
+            following_call = following.value.values[0]
+        else:
+            following_call = following.value
+        assert isinstance(following_call, ast.Call)
+        assert isinstance(following_call.func, ast.Name)
+        observed.append((previous.value.func.id, following_call.func.id))
 
     assert observed == [
         (
@@ -227,7 +283,7 @@ def test_terminal_affine_concat_split_context_and_wrapper_are_explicit() -> None
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -281,6 +337,464 @@ def test_terminal_affine_concat_split_runner_preserves_instrumented_order(
     run_terminal_affine_concat_split_recovery(context)
 
     assert events == list(TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS)
+
+
+def test_terminal_affine_returns_and_summarizes_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    result_keys = (
+        ("optimized_fold_mul_add_mul_affine_chains",),
+        ("optimized_transpose_mul_add_const_prepost_nhwc_chains",),
+        ("optimized_concat_mul_add_transpose_nhwc_bridge_chains",),
+        ("optimized_concat_mul_add_transpose_add_nhwc_bridge_chains",),
+        ("optimized_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",),
+        ("optimized_concat_tree_mul_add_transpose_nhwc_bridge_chains",),
+        ("optimized_singleton_gate_conv_concat_nhwc_bridge_blocks",),
+        ("optimized_transpose_unary_split_concat_single_post_nchw",),
+        ("optimized_transpose_split_channelwise_tail_to_single_post_nchw",),
+        ("optimized_transpose_binary_split_channelwise_tail_to_single_post_nchw",),
+        (
+            "sanitized_probable_nhwc_axis_sensitive_ops",
+            "inserted_probable_nhwc_terminal_transposes",
+        ),
+    )
+    value = 1
+    expected_results = []
+    expected_summary: dict[str, int] = {}
+    for keys in result_keys:
+        result: dict[str, int] = {}
+        for key in keys:
+            result[key] = value
+            expected_summary[key] = value
+            value += 1
+        expected_results.append(result)
+    expected_tuple = tuple(expected_results)
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(
+            invocation.pass_id for invocation in invocations
+        ) == TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS
+        assert (
+            tuple(expected_pass_ids)
+            == TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS
+        )
+        assert phase_name == "terminal affine/concat/split recovery"
+        return expected_tuple
+
+    monkeypatch.setattr(
+        terminal_affine_concat_split_recovery_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    results = run_terminal_affine_concat_split_recovery(context)
+    summarize = getattr(
+        terminal_affine_concat_split_recovery_orchestration,
+        "summarize_terminal_affine_concat_split_mutations",
+    )
+    summary = summarize(results, pruned_unused_tensors=13)
+
+    assert results == expected_tuple
+    assert summary == {**expected_summary, "pruned_unused_tensors": 13}
+    with pytest.raises(
+        ValueError,
+        match=r"terminal affine mutation summary expected 11 pass results",
+    ):
+        summarize((), pruned_unused_tensors=0)
+
+    _, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+
+
+def test_lowerer_captures_second_terminal_affine_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = (
+        "terminal_affine_tensor_count",
+        "terminal_affine_results",
+        "_terminal_affine_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+        target_names[2]: first_index + 2,
+    }
+    result_call = assignments[target_names[1]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+    summary_call = assignments[target_names[2]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == (
+        "summarize_terminal_affine_concat_split_mutations"
+    )
+    assert {keyword.arg for keyword in summary_call.keywords} == {
+        "pruned_unused_tensors"
+    }
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_slice_pad_concat_stats"
+    )
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
+    )
+    following = lowerer.body[first_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_terminal_slice_pad_concat_stats"
+
+    recovery_statements = [
+        statement
+        for statement in lowerer.body
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(recovery_statements) == 2
+    assert isinstance(recovery_statements[0], ast.Assign)
+    assert len(recovery_statements[0].targets) == 1
+    assert isinstance(recovery_statements[0].targets[0], ast.Name)
+    assert recovery_statements[0].targets[0].id == "pre_terminal_affine_results"
+    assert recovery_statements[1] is lowerer.body[first_index + 1]
+
+
+def test_lowerer_captures_first_terminal_affine_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = (
+        "pre_terminal_affine_tensor_count",
+        "pre_terminal_affine_results",
+        "_pre_terminal_affine_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+        target_names[2]: first_index + 2,
+    }
+    tensor_count = assignments[target_names[0]]
+    assert isinstance(tensor_count, ast.Call)
+    assert isinstance(tensor_count.func, ast.Name)
+    assert tensor_count.func.id == "len"
+    result_call = assignments[target_names[1]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+    assert result_call.args == []
+    assert result_call.keywords == []
+    summary_call = assignments[target_names[2]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == (
+        "summarize_terminal_affine_concat_split_mutations"
+    )
+    assert len(summary_call.args) == 1
+    assert isinstance(summary_call.args[0], ast.Name)
+    assert summary_call.args[0].id == "pre_terminal_affine_results"
+    assert {keyword.arg for keyword in summary_call.keywords} == {
+        "pruned_unused_tensors"
+    }
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+    )
+    following = lowerer.body[first_index + 3]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "pre_terminal_pre_add_tensor_count"
+
+    recovery_statements = [
+        statement
+        for statement in lowerer.body
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == TERMINAL_AFFINE_CONCAT_SPLIT
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(recovery_statements) == 2
+    assert recovery_statements[0] is lowerer.body[first_index + 1]
+    assert isinstance(recovery_statements[1], ast.Assign)
+    assert len(recovery_statements[1].targets) == 1
+    assert isinstance(recovery_statements[1].targets[0], ast.Name)
+    assert recovery_statements[1].targets[0].id == "terminal_affine_results"
+
+
+def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    affine_count_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "pre_terminal_affine_tensor_count"
+    )
+    invocation = lowerer.body[affine_count_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[affine_count_index - 2]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
+    )
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
+    )
+    following = lowerer.body[affine_count_index]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "pre_terminal_affine_tensor_count"
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 3
+    assert isinstance(direct_statements[0], ast.Assign)
+    assert isinstance(direct_statements[0].targets[0], ast.Name)
+    assert direct_statements[0].targets[0].id == (
+        "_terminal_instancenorm_dualstats_stats"
+    )
+    assert isinstance(direct_statements[1], ast.Assign)
+    assert isinstance(direct_statements[1].targets[0], ast.Name)
+    assert direct_statements[1].targets[0].id == (
+        "_very_late_instancenorm_dualstats_stats"
+    )
+    assert direct_statements[2] is invocation
+
+
+def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    dualstats_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
+    invocation = lowerer.body[dualstats_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
+    )
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[dualstats_index - 2]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_post_bias_stats"
+    )
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )
+    following = lowerer.body[dualstats_index]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_dualstats_stats"
+    )
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 3
+    assert isinstance(direct_statements[0], ast.Assign)
+    assert isinstance(direct_statements[0].targets[0], ast.Name)
+    assert direct_statements[0].targets[0].id == (
+        "_terminal_instancenorm_residual_mul_concat_stats"
+    )
+    assert isinstance(direct_statements[1], ast.Assign)
+    assert isinstance(direct_statements[1].targets[0], ast.Name)
+    assert direct_statements[1].targets[0].id == (
+        "_very_late_instancenorm_residual_mul_concat_stats"
+    )
+    assert direct_statements[2] is invocation
+
+
+def test_pre_terminal_affine_post_bias_captures_mutation_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    residual_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
+    )
+    invocation = lowerer.body[residual_index - 1]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_post_bias_stats"
+    )
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == (
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert len(invocation.value.keywords) == 1
+    layout_keyword = invocation.value.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+
+    previous = lowerer.body[residual_index - 2]
+    assert isinstance(previous, ast.If)
+    following = lowerer.body[residual_index]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_pre_terminal_affine_instancenorm_residual_mul_concat_stats"
+    )
+
+    direct_statements = [
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+            for node in ast.walk(statement)
+        )
+    ]
+    assert len(direct_statements) == 4
+    assert isinstance(direct_statements[0], ast.Assign)
+    assert isinstance(direct_statements[0].targets[0], ast.Name)
+    assert direct_statements[0].targets[0].id == (
+        "_terminal_instancenorm_post_bias_stats"
+    )
+    assert isinstance(direct_statements[1], ast.Assign)
+    assert isinstance(direct_statements[1].targets[0], ast.Name)
+    assert direct_statements[1].targets[0].id == (
+        "_very_late_instancenorm_post_bias_stats"
+    )
+    assert direct_statements[2] is invocation
+    assert isinstance(direct_statements[3], ast.Assign)
+    assert len(direct_statements[3].targets) == 1
+    assert isinstance(direct_statements[3].targets[0], ast.Name)
+    assert direct_statements[3].targets[0].id == (
+        "_absolute_final_instancenorm_post_bias_stats"
+    )
 
 
 def test_terminal_affine_concat_split_module_does_not_import_lowerer() -> None:

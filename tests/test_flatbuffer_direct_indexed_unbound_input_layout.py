@@ -454,11 +454,13 @@ def test_indexed_unbound_input_layout_matches_all_legacy_families(
         lowering_module,
         "_build_tensor_producer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
     monkeypatch.setattr(
         lowering_module,
         "_build_tensor_consumer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
 
     stats = _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
@@ -504,6 +506,44 @@ def test_indexed_unbound_input_layout_keeps_index_current_and_guards_fanout(
     assert graph_index.duplicate_producers == refreshed.duplicate_producers
     assert graph_index._operator_indices_by_id == refreshed._operator_indices_by_id
     assert graph_index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
+def test_indexed_unbound_wrapper_reconciles_once_after_positive_repair(
+    monkeypatch,
+) -> None:
+    model_ir = _make_all_family_model_ir()
+    reconcile_graph_indexes: list[ModelIRGraphIndex | None] = []
+    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+
+    def counted_reconcile(
+        active_model_ir: ModelIR,
+        *,
+        graph_index: ModelIRGraphIndex | None = None,
+        **kwargs,
+    ) -> dict[str, int]:
+        reconcile_graph_indexes.append(graph_index)
+        return original_reconcile(
+            active_model_ir,
+            graph_index=graph_index,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        counted_reconcile,
+    )
+
+    stats = _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
+        model_ir
+    )
+
+    assert stats == {
+        "repaired_unbound_nonconstant_inputs_with_layout_transpose": 5,
+    }
+    assert len(reconcile_graph_indexes) == 1
+    assert reconcile_graph_indexes[0] is not None
+    assert reconcile_graph_indexes[0].model_ir is model_ir
 
 
 def test_indexed_unbound_dequantize_fallback_is_nearest_and_exact_is_strict(

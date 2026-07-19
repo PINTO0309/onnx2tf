@@ -22,6 +22,13 @@ from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+PHASE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "sinet_terminal_layout_recovery_orchestration.py"
+)
 SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
 
@@ -53,6 +60,13 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
+
+
+def _direct_call_name(statement: ast.stmt) -> str:
+    assert isinstance(statement, (ast.Assign, ast.Expr))
+    assert isinstance(statement.value, ast.Call)
+    assert isinstance(statement.value.func, ast.Name)
+    return statement.value.func.id
 
 
 def _context(
@@ -129,7 +143,11 @@ def test_sinet_terminal_layout_recovery_is_a_straight_line_closure() -> None:
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
     }
-    assert loaded_data_names == {"sinet_terminal_layout_recovery_context"}
+    assert loaded_data_names == {
+        "Any",
+        "Tuple",
+        "sinet_terminal_layout_recovery_context",
+    }
 
 
 def test_sinet_terminal_layout_recovery_preserves_all_call_contracts() -> None:
@@ -176,21 +194,42 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_sinet_layout_recovery_results",
+            "_very_late_sinet_layout_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINET_TERMINAL
     ]
 
     assert len(invocation_indexes) == 2
+    assert [
+        lowerer.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(lowerer.body[index], ast.Assign)
+        and isinstance(lowerer.body[index].targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_layout_recovery_results",
+        "_very_late_sinet_layout_recovery_results",
+    ]
     observed: list[tuple[str, str]] = []
+    assigned_boundary_targets: list[str] = []
     for index in invocation_indexes:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
+            if isinstance(boundary, ast.Assign):
+                assert len(boundary.targets) == 1
+                assert isinstance(boundary.targets[0], ast.Name)
+                assigned_boundary_targets.append(boundary.targets[0].id)
         observed.append((previous.value.func.id, following.value.func.id))
 
     assert observed == [
@@ -203,13 +242,19 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
             SINET_PREADD_RESIZE,
         ),
     ]
+    assert assigned_boundary_targets == [
+        "_terminal_clamp_unary_relu_results",
+        "_terminal_sinet_hardswish_se_stats",
+        "_post_terminal_indexed_shape_convergence_stats",
+        "_very_late_sinet_preadd_resize_results",
+    ]
 
 
 def test_sinet_terminal_layout_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -275,15 +320,95 @@ def test_sinet_terminal_layout_runner_preserves_instrumented_order(
     assert events == list(SINET_TERMINAL_LAYOUT_RECOVERY_PASS_IDS)
 
 
-def test_sinet_terminal_layout_module_does_not_import_lowerer() -> None:
-    module_path = (
-        REPO_ROOT
-        / "onnx2tf"
-        / "tflite_builder"
-        / "passes"
-        / "sinet_terminal_layout_recovery_orchestration.py"
+def test_sinet_terminal_layout_propagates_and_retains_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_results = (
+        {"shuffle_residual_mutations": 1},
+        {"preadd_resize_mutations": 2},
+        {"terminal_affine_prelu_mutations": 3},
     )
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    context = _context(
+        preadd_resize_recovery=lambda: dict(expected_results[1]),
+    )
+    monkeypatch.setattr(
+        sinet_terminal_layout_recovery_orchestration,
+        "optimize_sinet_shuffle_residual_transpose_chains",
+        lambda *args, **kwargs: dict(expected_results[0]),
+    )
+    monkeypatch.setattr(
+        sinet_terminal_layout_recovery_orchestration,
+        "optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains",
+        lambda *args, **kwargs: dict(expected_results[2]),
+    )
+
+    assert run_sinet_terminal_layout_recovery(context) == expected_results
+
+    phase_tree = ast.parse(PHASE_PATH.read_text(encoding="utf-8"))
+    phase_runner = next(
+        node
+        for node in phase_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_sinet_terminal_layout_recovery"
+    )
+    assert ast.unparse(phase_runner.returns) == "Tuple[Any, ...]"
+    assert len(phase_runner.body) == 1
+    assert isinstance(phase_runner.body[0], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    direct_results = sorted(
+        (
+            statement
+            for statement in ast.walk(lowerer)
+            if isinstance(statement, (ast.Assign, ast.Expr))
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and statement.value.func.id == SINET_TERMINAL
+        ),
+        key=lambda statement: statement.lineno,
+    )
+    assert len(direct_results) == 2
+    assert all(isinstance(statement, ast.Assign) for statement in direct_results)
+    assert [
+        statement.targets[0].id
+        for statement in direct_results
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_layout_recovery_results",
+        "_very_late_sinet_layout_recovery_results",
+    ]
+    assert all(statement.value.args == [] for statement in direct_results)
+    assert all(statement.value.keywords == [] for statement in direct_results)
+
+    first_index = lowerer.body.index(direct_results[0])
+    second_index = lowerer.body.index(direct_results[1])
+    first_previous = lowerer.body[first_index - 1]
+    first_following = lowerer.body[first_index + 1]
+    second_previous = lowerer.body[second_index - 1]
+    second_following = lowerer.body[second_index + 1]
+    assert _direct_call_name(first_previous) == (
+        "_run_terminal_clamp_unary_relu_pass_cluster"
+    )
+    assert _direct_call_name(first_following) == (
+        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
+    )
+    assert isinstance(second_previous, ast.Assign)
+    assert len(second_previous.targets) == 1
+    assert isinstance(second_previous.targets[0], ast.Name)
+    assert second_previous.targets[0].id == (
+        "_post_terminal_indexed_shape_convergence_stats"
+    )
+    assert _direct_call_name(second_following) == SINET_PREADD_RESIZE
+
+
+def test_sinet_terminal_layout_module_does_not_import_lowerer() -> None:
+    tree = ast.parse(PHASE_PATH.read_text(encoding="utf-8"))
     assert not any(
         isinstance(node, ast.ImportFrom)
         and node.module == "onnx2tf.tflite_builder.lower_from_onnx2tf"

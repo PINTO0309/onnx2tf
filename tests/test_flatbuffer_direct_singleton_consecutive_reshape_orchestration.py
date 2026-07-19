@@ -64,11 +64,22 @@ def _direct_call_name(statement: ast.stmt) -> str:
     return statement.value.func.id
 
 
+def _statement_call_name(statement: ast.stmt) -> str:
+    value = (
+        statement.value
+        if isinstance(statement, (ast.Expr, ast.Assign))
+        else None
+    )
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Name)
+    return value.func.id
+
+
 def _main_invocation_indexes(lowerer: ast.FunctionDef) -> list[int]:
     return [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, (ast.Expr, ast.Assign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_CONSECUTIVE
@@ -144,7 +155,7 @@ def test_singleton_consecutive_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -242,6 +253,44 @@ def test_singleton_consecutive_runner_preserves_both_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
+def test_singleton_consecutive_runner_returns_three_ordered_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(use_layout_state=True)
+    expected_results = (
+        {"singleton_changes": 1},
+        {"duplicate_changes": 2},
+        {"reshape_changes": 3},
+    )
+
+    for pass_id, expected_result in zip(
+        SINGLETON_CONSECUTIVE_RESHAPE_PASS_IDS,
+        expected_results,
+        strict=True,
+    ):
+        monkeypatch.setattr(
+            singleton_consecutive_reshape_orchestration,
+            pass_id,
+            lambda *args, _result=expected_result, **kwargs: dict(_result),
+        )
+
+    assert run_singleton_consecutive_reshape(context) == expected_results
+
+
+def test_singleton_consecutive_empty_model_returns_only_zero_mutation_counts() -> None:
+    context = _context(use_layout_state=True)
+
+    assert run_singleton_consecutive_reshape(context) == (
+        {"rewritten_singleton_channel_layout_transpose_to_reshape": 0},
+        {"removed_duplicate_reshape_fanout": 0},
+        {
+            "removed_noop_reshape_chains": 0,
+            "rewritten_consecutive_reshape_passthrough_chains": 0,
+            "rewritten_fanout_bypass_reshape_passthrough_chains": 0,
+        },
+    )
+
+
 def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocations = [
@@ -264,13 +313,90 @@ def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     assert all(invocation.keywords == [] for invocation in invocations)
 
 
+def test_singleton_consecutive_retains_very_late_main_results() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    first_index, second_index = _main_invocation_indexes(lowerer)
+
+    first = lowerer.body[first_index]
+    assert isinstance(first, ast.Assign)
+    assert len(first.targets) == 1
+    assert isinstance(first.targets[0], ast.Name)
+    assert first.targets[0].id == (
+        "_very_late_singleton_consecutive_reshape_results"
+    )
+    assert isinstance(first.value, ast.Call)
+    assert isinstance(first.value.func, ast.Name)
+    assert first.value.func.id == SINGLETON_CONSECUTIVE
+    assert [_expression_path(argument) for argument in first.value.args] == [
+        "model_ir",
+        "session.layout_state",
+    ]
+    assert first.value.keywords == []
+
+    predecessor = lowerer.body[first_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert len(predecessor.targets) == 1
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == (
+        "_very_late_instancenorm_dualstats_stats"
+    )
+
+    successor = lowerer.body[first_index + 1]
+    assert isinstance(successor, ast.If)
+    assert isinstance(successor.test, ast.Name)
+    assert successor.test.id == "optimize_layout_transpose_chains"
+
+    second = lowerer.body[second_index]
+    assert isinstance(second, ast.Assign)
+    assert len(second.targets) == 1
+    second_target = second.targets[0]
+    assert isinstance(second_target, ast.Tuple)
+    assert [
+        element.id
+        for element in second_target.elts
+        if isinstance(element, ast.Name)
+    ] == [
+        "shared_singleton_channel_stats",
+        "shared_duplicate_fanout_stats",
+        "shared_consecutive_reshape_stats",
+    ]
+
+    fallback_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SINGLETON_CONSECUTIVE
+        and [_expression_path(argument) for argument in node.args]
+        == ["fallback_ir", None]
+    ]
+    assert len(fallback_calls) == 1
+    fallback_call = fallback_calls[0]
+    assert any(
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_fallback_singleton_consecutive_reshape_results"
+        and statement.value is fallback_call
+        for statement in ast.walk(lowerer)
+    )
+
+
 def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     invocation_indexes = _main_invocation_indexes(lowerer)
 
     assert len(invocation_indexes) == 2
     first_index, second_index = invocation_indexes
-    assert _direct_call_name(lowerer.body[first_index - 1]) == (
+    first_preceding = lowerer.body[first_index - 1]
+    assert isinstance(first_preceding, ast.Assign)
+    assert len(first_preceding.targets) == 1
+    assert isinstance(first_preceding.targets[0], ast.Name)
+    assert first_preceding.targets[0].id == (
+        "_very_late_instancenorm_dualstats_stats"
+    )
+    assert _statement_call_name(first_preceding) == (
         "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
     )
     first_following = lowerer.body[first_index + 1]
@@ -278,11 +404,16 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     assert isinstance(first_following.test, ast.Name)
     assert first_following.test.id == "optimize_layout_transpose_chains"
 
-    assert _direct_call_name(lowerer.body[second_index - 1]) == (
-        "_repair_rank4_binary_singleton_broadcast_layout_mismatch"
+    assert _statement_call_name(lowerer.body[second_index - 1]) == (
+        "run_indexed_binary_layout_adapter_cleanup"
     )
-    assert _direct_call_name(lowerer.body[second_index + 1]) == (
-        "_reconcile_static_tensor_shapes"
+    second_following = lowerer.body[second_index + 1]
+    assert isinstance(second_following, ast.If)
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_stats_have_positive_count"
+        for node in ast.walk(second_following.test)
     )
 
 
@@ -293,7 +424,7 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
         for node in ast.walk(lowerer)
         if isinstance(node, ast.If)
         and any(
-            isinstance(statement, ast.Expr)
+            isinstance(statement, (ast.Assign, ast.Expr))
             and isinstance(statement.value, ast.Call)
             and isinstance(statement.value.func, ast.Name)
             and statement.value.func.id == SINGLETON_CONSECUTIVE
@@ -303,18 +434,26 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
     invocation_index = next(
         index
         for index, statement in enumerate(fallback_guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, (ast.Assign, ast.Expr))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_CONSECUTIVE
+    )
+
+    invocation = fallback_guard.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_fallback_singleton_consecutive_reshape_results"
     )
 
     assert ast.unparse(fallback_guard.test) == (
         "int(fallback_norm_stats.get("
         "'optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains', 0)) > 0"
     )
-    assert _direct_call_name(fallback_guard.body[invocation_index - 1]) == (
-        "_repair_rank4_binary_singleton_broadcast_layout_mismatch"
+    assert _statement_call_name(fallback_guard.body[invocation_index - 1]) == (
+        "run_indexed_binary_layout_adapter_cleanup"
     )
     assert _direct_call_name(fallback_guard.body[invocation_index + 1]) == (
         "_reconcile_static_tensor_shapes"

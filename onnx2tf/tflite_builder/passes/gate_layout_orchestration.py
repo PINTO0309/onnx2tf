@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -125,13 +125,13 @@ def run_gate_layout(
     context: GateLayoutContext,
     *,
     include_mixed_attention: bool = True,
-) -> None:
+) -> Tuple[Dict[str, int], ...]:
     expected_pass_ids = (
         GATE_LAYOUT_PASS_IDS
         if include_mixed_attention
         else GATE_LAYOUT_REQUIRED_PASS_IDS
     )
-    run_recovery_invocations(
+    return run_recovery_invocations(
         build_gate_layout_invocations(
             context,
             include_mixed_attention=include_mixed_attention,

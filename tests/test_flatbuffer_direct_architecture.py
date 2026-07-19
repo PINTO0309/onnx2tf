@@ -163,6 +163,114 @@ def _orchestrated_pass_count(pass_id: str) -> int:
     return ORCHESTRATED_PASS_ID_SEQUENCE.count(str(pass_id))
 
 
+def _late_binary_layout_recovery_call_count(function_name: str) -> int:
+    runner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_binary_layout_recovery.py"
+    )
+    runner_tree = ast.parse(runner_path.read_text(encoding="utf-8"))
+    runner = next(
+        node
+        for node in runner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_binary_layout_recovery"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+        for node in ast.walk(runner)
+    )
+
+
+def test_constant_lowering_has_one_typed_op_family_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_families"
+        / "constant.py"
+    )
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    owner_source = owner_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    owner_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "lower_constant_node"
+    ]
+
+    assert len(owner_calls) == 1
+    assert owner_calls[0].args == []
+    assert {keyword.arg for keyword in owner_calls[0].keywords} == {
+        "node",
+        "ctx",
+    }
+    assert "numpy_helper.to_array(value_attr.t)" not in lowerer_source
+    assert "if node.op_type == \"Constant\":" in lowerer_source
+    assert "def lower_constant_node(" in owner_source
+    assert "node: onnx.NodeProto" in owner_source
+    assert "cast(onnx.AttributeProto" in owner_source
+    assert "tensorflow" not in owner_source.lower()
+
+
+def test_demand_driven_shape_readiness_has_one_core_owner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "core"
+        / "shape_readiness.py"
+    )
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    owner_source = owner_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    owner_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "reconcile_shape_sensitive_inputs_on_demand"
+    ]
+
+    assert len(owner_calls) == 1
+    assert owner_calls[0].args == []
+    assert {keyword.arg for keyword in owner_calls[0].keywords} == {
+        "node",
+        "ctx",
+    }
+    assert not any(
+        isinstance(node, ast.FunctionDef)
+        and node.name == "_has_unresolved_rank"
+        for node in ast.walk(lowerer)
+    )
+    assert "def reconcile_shape_sensitive_inputs_on_demand(" in owner_source
+    assert "_SHAPE_SENSITIVE_OPS" in owner_source
+    assert "reconcile_static_tensor_shapes(" in owner_source
+    assert "tensorflow" not in owner_source.lower()
+
+
 DEPENDENCY_SCOPED_ROOTS = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / name
     for name in ["core", "passes", "op_families"]
@@ -408,19 +516,19 @@ def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
         "_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains",
         "_run_channel_shuffle_gather_layout_pass_cluster",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == LAYOUT_RECOVERY_PASS_IDS
-    assert [call.func.id for call in helper_calls] == ["run_layout_recovery_prefix"]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "layout_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_layout_recovery_prefix"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "layout_recovery_context"
+    assert helper_call.keywords == []
 
     helper_invocations = [
         node
@@ -538,21 +646,19 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
         "_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains",
         "run_squeeze_reshape_identity_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == ATTENTION_RECOVERY_PASS_IDS
-    assert [call.func.id for call in helper_calls] == [
-        "run_layout_reshape_attention_recovery_prefix"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "layout_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_layout_reshape_attention_recovery_prefix"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "layout_recovery_context"
+    assert helper_call.keywords == []
 
     layout_recovery = next(
         statement
@@ -571,26 +677,57 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
     invocation_indexes = [
         index
         for index, statement in enumerate(layout_recovery.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_layout_pass_set_1_initial_attention_recovery_results",
+            "_layout_pass_set_1_post_binary_attention_recovery_results",
+            "_layout_pass_set_1_final_attention_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 3
+    assert [
+        layout_recovery.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(layout_recovery.body[index], ast.Assign)
+        and isinstance(layout_recovery.body[index].targets[0], ast.Name)
+    ] == [
+        "_layout_pass_set_1_initial_attention_recovery_results",
+        "_layout_pass_set_1_post_binary_attention_recovery_results",
+        "_layout_pass_set_1_final_attention_recovery_results",
+    ]
     next_call_names = []
+    next_targets = []
     for index in invocation_indexes:
         invocation = layout_recovery.body[index].value
         assert invocation.args == []
         assert invocation.keywords == []
         following = layout_recovery.body[index + 1]
-        assert isinstance(following, ast.Expr)
+        assert isinstance(following, (ast.Assign, ast.Expr))
         assert isinstance(following.value, ast.Call)
         assert isinstance(following.value.func, ast.Name)
         next_call_names.append(following.value.func.id)
+        next_targets.append(
+            following.targets[0].id
+            if isinstance(following, ast.Assign)
+            and len(following.targets) == 1
+            and isinstance(following.targets[0], ast.Name)
+            else None
+        )
     assert next_call_names == [
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_transpose_instancenorm_prepost_nhwc_chains",
+    ]
+    assert next_targets == [
+        "_layout_pass_set_1_initial_affine_chain_fold_stats",
+        "_layout_pass_set_1_post_binary_affine_chain_fold_stats",
+        "_layout_pass_set_1_instancenorm_prepost_stats",
     ]
 
 
@@ -619,21 +756,18 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
         "_run_mean_attention_layout_pass_cluster",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == PREADD_MEAN_ATTENTION_PASS_IDS
-    assert [call.func.id for call in helper_calls] == [
-        "run_preadd_mean_attention_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "attention_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_preadd_mean_attention_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "attention_recovery_context"
+    assert helper_call.keywords == []
 
     recovery_block = next(
         statement
@@ -652,12 +786,28 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(recovery_block.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_layout_pass_set_2_preadd_mean_attention_results",
+            "_layout_opt_preadd_mean_attention_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 2
+    assert [
+        recovery_block.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(recovery_block.body[index], ast.Assign)
+        and isinstance(recovery_block.body[index].targets[0], ast.Name)
+    ] == [
+        "_layout_pass_set_2_preadd_mean_attention_results",
+        "_layout_opt_preadd_mean_attention_results",
+    ]
     previous_call_names = []
     next_call_names = []
     for index in invocation_indexes:
@@ -667,7 +817,7 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         previous = recovery_block.body[index - 1]
         following = recovery_block.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
         previous_call_names.append(previous.value.func.id)
@@ -680,6 +830,17 @@ def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
         "_run_attention_gate_qdq_recovery_sequence",
         "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
     ]
+    full_post_boundary = recovery_block.body[invocation_indexes[1] - 1]
+    assert isinstance(full_post_boundary, ast.Assign)
+    assert isinstance(full_post_boundary.targets[0], ast.Name)
+    assert full_post_boundary.targets[0].id == (
+        "_layout_opt_channel_shuffle_gather_results"
+    )
+    sa_pa_boundary = recovery_block.body[invocation_indexes[1] + 1]
+    assert isinstance(sa_pa_boundary, ast.Assign)
+    assert len(sa_pa_boundary.targets) == 1
+    assert isinstance(sa_pa_boundary.targets[0], ast.Name)
+    assert sa_pa_boundary.targets[0].id == "_layout_opt_sa_pa_mirrorpad_stats"
 
 
 def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
@@ -710,21 +871,18 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         "run_trailing_output_transpose_cleanup",
         "_optimize_transpose_dequant_mul_add_prelu_quantize_bridges",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == ATTENTION_GATE_QDQ_PASS_IDS
-    assert [call.func.id for call in helper_calls] == [
-        "run_attention_gate_qdq_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "attention_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_attention_gate_qdq_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "attention_recovery_context"
+    assert helper_call.keywords == []
 
     helper_invocations = [
         node
@@ -753,21 +911,31 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == helper_name
             ):
                 continue
             direct_boundaries.append(
-                (statement.body[index - 1].value, statement.body[index + 1].value)
+                (
+                    candidate.targets[0].id,
+                    statement.body[index - 1].value,
+                    statement.body[index + 1].value,
+                )
             )
     assert len(direct_boundaries) == 2
-    assert [previous.func.id for previous, _ in direct_boundaries] == [
+    assert [target for target, _, _ in direct_boundaries] == [
+        "_layout_pass_set_1_attention_gate_qdq_results",
+        "_layout_pass_set_2_attention_gate_qdq_results",
+    ]
+    assert [previous.func.id for _, previous, _ in direct_boundaries] == [
         "_run_mean_attention_layout_pass_cluster",
         "_run_preadd_mean_attention_recovery_sequence",
     ]
-    assert [following.func.id for _, following in direct_boundaries] == [
+    assert [following.func.id for _, _, following in direct_boundaries] == [
         "run_quantized_prelu_cleanup",
         "_optimize_dequant_transposeconv_quantize_chains",
     ]
@@ -775,9 +943,9 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         keyword.arg == "include_layernorm"
         and isinstance(keyword.value, ast.Constant)
         and keyword.value.value is True
-        for keyword in direct_boundaries[0][0].keywords
+        for keyword in direct_boundaries[0][1].keywords
     )
-    assert direct_boundaries[1][0].keywords == []
+    assert direct_boundaries[1][1].keywords == []
 
 
 def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
@@ -805,20 +973,17 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         "_run_safe_binary_bridge_recovery_sequence",
     )
     assert QUANTIZED_ACTIVATION_BINARY_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_quantized_activation_binary_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "quantized_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_quantized_activation_binary_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "quantized_recovery_context"
+    assert helper_call.keywords == []
 
     direct_boundaries = []
     for statement in lowerer.body:
@@ -830,7 +995,9 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == helper_name
@@ -839,12 +1006,20 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
             assert candidate.value.args == []
             assert candidate.value.keywords == []
             direct_boundaries.append(
-                (statement.body[index - 1], statement.body[index + 1])
+                (
+                    candidate.targets[0].id,
+                    statement.body[index - 1],
+                    statement.body[index + 1],
+                )
             )
     assert len(direct_boundaries) == 2
+    assert [target for target, _, _ in direct_boundaries] == [
+        "_layout_pass_set_1_quantized_activation_binary_results",
+        "_layout_pass_set_2_quantized_activation_binary_results",
+    ]
     previous_call_names = []
-    for previous, _ in direct_boundaries:
-        assert isinstance(previous, ast.Expr)
+    for _, previous, _ in direct_boundaries:
+        assert isinstance(previous, (ast.Assign, ast.Expr))
         assert isinstance(previous.value, ast.Call)
         assert isinstance(previous.value.func, ast.Name)
         previous_call_names.append(previous.value.func.id)
@@ -853,15 +1028,21 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         "_optimize_dequant_transposeconv_quantize_chains",
     ]
 
-    first_following = direct_boundaries[0][1]
+    first_following = direct_boundaries[0][2]
     assert isinstance(first_following, ast.If)
     assert isinstance(first_following.test, ast.Name)
     assert (
         first_following.test.id
         == "enable_transpose_binary_bridge_optimizations"
     )
-    second_following = direct_boundaries[1][1]
-    assert isinstance(second_following, ast.Expr)
+    second_following = direct_boundaries[1][2]
+    assert isinstance(second_following, ast.Assign)
+    assert len(second_following.targets) == 1
+    assert isinstance(second_following.targets[0], ast.Name)
+    assert (
+        second_following.targets[0].id
+        == "_layout_opt_elementwise_concat_conv_stats"
+    )
     assert isinstance(second_following.value, ast.Call)
     assert isinstance(second_following.value.func, ast.Name)
     assert (
@@ -928,20 +1109,17 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         "_run_safe_binary_bridge_recovery_pass",
     )
 
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_safe_binary_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "quantized_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_safe_binary_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "quantized_recovery_context"
+    assert helper_call.keywords == []
 
     compatibility_dispatchers = {
         "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe":
@@ -984,21 +1162,31 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == helper_name
             ):
                 continue
             direct_boundaries.append(
-                (statement.body[index - 1], statement.body[index + 1])
+                (
+                    candidate.targets[0].id,
+                    statement.body[index - 1],
+                    statement.body[index + 1],
+                )
             )
     assert len(direct_boundaries) == 2
-    assert [boundary[0].value.func.id for boundary in direct_boundaries] == [
+    assert [boundary[0] for boundary in direct_boundaries] == [
+        "_layout_pass_set_1_safe_binary_results",
+        "_layout_pass_set_1_final_safe_binary_results",
+    ]
+    assert [boundary[1].value.func.id for boundary in direct_boundaries] == [
         "_run_layout_attention_quantized_recovery_suffix",
         "_run_transpose_unary_fanout_layout_pass_cluster",
     ]
-    assert [boundary[1].value.func.id for boundary in direct_boundaries] == [
+    assert [boundary[2].value.func.id for boundary in direct_boundaries] == [
         "_optimize_transpose_dequantize_mean_quantize_bridges",
         "_advance_post_progress",
     ]
@@ -1036,37 +1224,43 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
         "_optimize_transpose_mean_maxpool_concat_conv_chains",
     )
     assert QLINEAR_MEAN_CONCAT_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_qlinear_mean_concat_recovery"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "qlinear_recovery_context"
-    assert helper_calls[0].keywords == []
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_qlinear_mean_concat_recovery"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
+    assert helper_call.args[0].id == "qlinear_recovery_context"
+    assert helper_call.keywords == []
 
-    boundaries = []
+    boundaries: list[tuple[ast.stmt, ast.stmt]] = []
+    targets: list[str] = []
     for statement in lowerer.body:
         if not isinstance(statement, ast.If):
             continue
         for index, candidate in enumerate(statement.body):
             if not (
-                isinstance(candidate, ast.Expr)
+                isinstance(candidate, ast.Assign)
+                and len(candidate.targets) == 1
+                and isinstance(candidate.targets[0], ast.Name)
                 and isinstance(candidate.value, ast.Call)
                 and isinstance(candidate.value.func, ast.Name)
                 and candidate.value.func.id == helper_name
             ):
                 continue
+            targets.append(candidate.targets[0].id)
             boundaries.append(
                 (statement.body[index - 1], statement.body[index + 1])
             )
     assert len(boundaries) == 2
+    assert targets == [
+        "_layout_pass_set_1_qlinear_mean_concat_results",
+        "_layout_pass_set_2_qlinear_mean_concat_results",
+    ]
     assert [boundary[0].value.func.id for boundary in boundaries] == [
         "_optimize_transpose_dequantize_mean_quantize_bridges",
         "_set_post_progress_desc",
@@ -1391,24 +1585,21 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         "_canonicalize_softmax_transpose_chains",
     )
     assert LAYOUT_ATTENTION_QUANTIZED_SUFFIX_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert [call.func.id for call in helper_calls] == [
-        "run_layout_attention_quantized_suffix"
-    ]
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    helper_call = helper_return.value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_layout_attention_quantized_suffix"
+    assert len(helper_call.args) == 1
+    assert isinstance(helper_call.args[0], ast.Name)
     assert (
-        helper_calls[0].args[0].id
+        helper_call.args[0].id
         == "layout_attention_quantized_suffix_context"
     )
-    assert len(helper_calls[0].keywords) == 1
-    duplicate_keyword = helper_calls[0].keywords[0]
+    assert len(helper_call.keywords) == 1
+    duplicate_keyword = helper_call.keywords[0]
     assert duplicate_keyword.arg == "include_duplicate_transpose"
     assert isinstance(duplicate_keyword.value, ast.Name)
     assert duplicate_keyword.value.id == "include_duplicate_transpose"
@@ -1481,7 +1672,8 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
     )
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
+    assert statement.value is not None
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_mean_attention"
@@ -1608,13 +1800,11 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         "run_layout_transpose_cleanup",
     )
     assert TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    helper_calls = [helper.body[0].value]
+    assert isinstance(helper_calls[0], ast.Call)
+    assert isinstance(helper_calls[0].func, ast.Name)
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_slice_concat_recovery"
     ]
@@ -1629,35 +1819,66 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_slice_concat_recovery_results",
+            "_final_slice_concat_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 2
+    previous_targets = []
     previous_keyword_names = []
+    next_targets = []
     next_call_names = []
     for index in invocation_indexes:
         invocation = lowerer.body[index].value
         assert invocation.args == []
         assert invocation.keywords == []
         previous = lowerer.body[index - 1]
-        assert isinstance(previous, ast.Expr)
-        assert isinstance(previous.value, ast.Call)
-        assert isinstance(previous.value.func, ast.Name)
+        assert isinstance(previous, (ast.Assign, ast.Expr))
+        previous_target = None
+        if isinstance(previous, ast.Assign):
+            assert len(previous.targets) == 1
+            assert isinstance(previous.targets[0], ast.Name)
+            previous_target = previous.targets[0].id
+        previous_call = previous.value
+        assert isinstance(previous_call, ast.Call)
+        assert isinstance(previous_call.func, ast.Name)
         assert (
-            previous.value.func.id
+            previous_call.func.id
             == "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
         )
+        previous_targets.append(previous_target)
         previous_keyword_names.append(
-            [keyword.arg for keyword in previous.value.keywords]
+            [keyword.arg for keyword in previous_call.keywords]
         )
         following = lowerer.body[index + 1]
-        assert isinstance(following, ast.Expr)
-        assert isinstance(following.value, ast.Call)
-        assert isinstance(following.value.func, ast.Name)
-        next_call_names.append(following.value.func.id)
+        assert isinstance(following, (ast.Assign, ast.Expr))
+        next_target = None
+        if isinstance(following, ast.Assign):
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            next_target = following.targets[0].id
+        following_call = following.value
+        assert isinstance(following_call, ast.Call)
+        assert isinstance(following_call.func, ast.Name)
+        next_targets.append(next_target)
+        next_call_names.append(following_call.func.id)
+    assert previous_targets == [
+        "_terminal_channel_slice_muladd_bridge_stats",
+        "_final_channel_slice_muladd_bridge_stats",
+    ]
     assert previous_keyword_names == [["layout_state"], []]
+    assert next_targets == [
+        "_terminal_boundary_stridedslice_qdq_concat_stats",
+        "_final_slice_prepost_passthrough_stats",
+    ]
     assert next_call_names == [
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
         "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
@@ -1695,11 +1916,11 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     )
     assert TERMINAL_AFFINE_CONCAT_SPLIT_RECOVERY_PASS_IDS == expected_order
     helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
+        node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_affine_concat_split_recovery"
     ]
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_affine_concat_split_recovery"
@@ -1715,26 +1936,86 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper_name
+            for node in ast.walk(statement)
+        )
     ]
     assert len(invocation_indexes) == 2
     previous_call_names = []
     next_call_names = []
-    for index in invocation_indexes:
-        invocation = lowerer.body[index].value
+    for position, index in enumerate(invocation_indexes):
+        invocation_statement = lowerer.body[index]
+        if position == 0:
+            assert isinstance(invocation_statement, ast.Assign)
+            assert len(invocation_statement.targets) == 1
+            assert isinstance(invocation_statement.targets[0], ast.Name)
+            assert invocation_statement.targets[0].id == (
+                "pre_terminal_affine_results"
+            )
+            recovery_count = lowerer.body[index - 1]
+            assert isinstance(recovery_count, ast.Assign)
+            assert len(recovery_count.targets) == 1
+            assert isinstance(recovery_count.targets[0], ast.Name)
+            assert recovery_count.targets[0].id == (
+                "pre_terminal_affine_tensor_count"
+            )
+            previous = lowerer.body[index - 2]
+            recovery_summary = lowerer.body[index + 1]
+            assert isinstance(recovery_summary, ast.Assign)
+            assert len(recovery_summary.targets) == 1
+            assert isinstance(recovery_summary.targets[0], ast.Name)
+            assert recovery_summary.targets[0].id == "_pre_terminal_affine_stats"
+            assert isinstance(recovery_summary.value, ast.Call)
+            assert isinstance(recovery_summary.value.func, ast.Name)
+            assert recovery_summary.value.func.id == (
+                "summarize_terminal_affine_concat_split_mutations"
+            )
+            pre_add_count = lowerer.body[index + 2]
+            assert isinstance(pre_add_count, ast.Assign)
+            assert len(pre_add_count.targets) == 1
+            assert isinstance(pre_add_count.targets[0], ast.Name)
+            assert pre_add_count.targets[0].id == (
+                "pre_terminal_pre_add_tensor_count"
+            )
+            following = lowerer.body[index + 3]
+        else:
+            assert isinstance(invocation_statement, ast.Assign)
+            assert len(invocation_statement.targets) == 1
+            assert isinstance(invocation_statement.targets[0], ast.Name)
+            assert invocation_statement.targets[0].id == "terminal_affine_results"
+            previous = lowerer.body[index - 2]
+            following = lowerer.body[index + 2]
+        invocation = invocation_statement.value
+        assert isinstance(invocation, ast.Call)
         assert invocation.args == []
         assert invocation.keywords == []
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
-            assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
+        assert isinstance(previous, (ast.Expr, ast.Assign))
+        if position == 1:
+            assert isinstance(previous, ast.Assign)
+            assert len(previous.targets) == 1
+            assert isinstance(previous.targets[0], ast.Name)
+            assert previous.targets[0].id == (
+                "_pre_terminal_affine_slice_pad_concat_stats"
+            )
+        assert isinstance(previous.value, ast.Call)
+        assert isinstance(previous.value.func, ast.Name)
+        assert isinstance(following, (ast.Expr, ast.Assign))
+        if position == 0:
+            assert isinstance(following, ast.Assign)
+            assert len(following.targets) == 1
+            assert isinstance(following.targets[0], ast.Name)
+            assert following.targets[0].id == "_pre_terminal_pre_add_stats"
+            assert isinstance(following.value, ast.Dict)
+            following_call = following.value.values[0]
+        else:
+            following_call = following.value
+        assert isinstance(following_call, ast.Call)
+        assert isinstance(following_call.func, ast.Name)
         previous_call_names.append(previous.value.func.id)
-        next_call_names.append(following.value.func.id)
+        next_call_names.append(following_call.func.id)
     assert previous_call_names == [
         "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains",
         "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
@@ -1772,7 +2053,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     helper_calls = [
         statement.value
         for statement in helper.body
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Return)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
@@ -1814,14 +2095,33 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_sinet_preadd_resize_results",
+            "_very_late_sinet_preadd_resize_results",
+            "_post_cleanup_sinet_preadd_resize_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 3
+    assert [
+        lowerer.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(lowerer.body[index], ast.Assign)
+        and isinstance(lowerer.body[index].targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_preadd_resize_results",
+        "_very_late_sinet_preadd_resize_results",
+        "_post_cleanup_sinet_preadd_resize_results",
+    ]
     previous_call_names = []
     next_call_names = []
+    assigned_boundary_targets = []
     for index in invocation_indexes:
         invocation = lowerer.body[index].value
         assert invocation.args == []
@@ -1829,20 +2129,32 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
+            if isinstance(boundary, ast.Assign):
+                assert len(boundary.targets) == 1
+                assert isinstance(boundary.targets[0], ast.Name)
+                assigned_boundary_targets.append(boundary.targets[0].id)
         previous_call_names.append(previous.value.func.id)
         next_call_names.append(following.value.func.id)
     assert previous_call_names == [
         "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
         "_run_sinet_terminal_layout_recovery_sequence",
-        "_reconcile_static_tensor_shapes",
+        "run_indexed_prune_reconcile_cleanup",
     ]
     assert next_call_names == [
         "_run_singleton_reshape_layout_pass_cluster",
         "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
         "_optimize_transpose_csp_attention_nhwc_chains",
+    ]
+    assert assigned_boundary_targets == [
+        "_terminal_dequant_hardsigmoid_bridge_stats",
+        "_post_terminal_singleton_reshape_results",
+        "_very_late_sinet_layout_recovery_results",
+        "_very_late_residual_affine_prelu_stats",
+        "_very_late_prune_reconcile_stats",
+        "_post_cleanup_csp_attention_stats",
     ]
 
     all_invocations = [
@@ -1879,7 +2191,7 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     helper_calls = [
         statement.value
         for statement in helper.body
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Return)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
@@ -1895,14 +2207,31 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        in {
+            "_terminal_sinet_layout_recovery_results",
+            "_very_late_sinet_layout_recovery_results",
+        }
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 2
+    assert [
+        lowerer.body[index].targets[0].id
+        for index in invocation_indexes
+        if isinstance(lowerer.body[index], ast.Assign)
+        and isinstance(lowerer.body[index].targets[0], ast.Name)
+    ] == [
+        "_terminal_sinet_layout_recovery_results",
+        "_very_late_sinet_layout_recovery_results",
+    ]
     previous_call_names = []
     next_call_names = []
+    assigned_boundary_targets = []
     for index in invocation_indexes:
         invocation = lowerer.body[index].value
         assert invocation.args == []
@@ -1910,9 +2239,13 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         previous = lowerer.body[index - 1]
         following = lowerer.body[index + 1]
         for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary, (ast.Assign, ast.Expr))
             assert isinstance(boundary.value, ast.Call)
             assert isinstance(boundary.value.func, ast.Name)
+            if isinstance(boundary, ast.Assign):
+                assert len(boundary.targets) == 1
+                assert isinstance(boundary.targets[0], ast.Name)
+                assigned_boundary_targets.append(boundary.targets[0].id)
         previous_call_names.append(previous.value.func.id)
         next_call_names.append(following.value.func.id)
     assert previous_call_names == [
@@ -1922,6 +2255,12 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     assert next_call_names == [
         "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains",
         "_run_sinet_preadd_resize_recovery_sequence",
+    ]
+    assert assigned_boundary_targets == [
+        "_terminal_clamp_unary_relu_results",
+        "_terminal_sinet_hardswish_se_stats",
+        "_post_terminal_indexed_shape_convergence_stats",
+        "_very_late_sinet_preadd_resize_results",
     ]
 
 
@@ -2349,19 +2688,36 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    calls = [
+    direct_calls = [
         statement.value
         for statement in helper.body
         if isinstance(statement, (ast.Assign, ast.AnnAssign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
     ]
-    assert [call.func.id for call in calls] == [
+    assert [call.func.id for call in direct_calls] == [
         "_prune_dead_operators",
         "_reconcile_static_tensor_shapes",
         "_resolve_dynamic_reshape_shapes",
-        "_reconcile_static_tensor_shapes",
     ]
+    guard = next(
+        statement for statement in helper.body if isinstance(statement, ast.If)
+    )
+    assert isinstance(guard.test, ast.Call)
+    assert isinstance(guard.test.func, ast.Name)
+    assert guard.test.func.id == "_stats_have_positive_count"
+    assert [
+        argument.id
+        for argument in guard.test.args
+        if isinstance(argument, ast.Name)
+    ] == ["prune_stats", "first_reconcile_stats", "reshape_stats"]
+    assert len(guard.body) == 1
+    guarded_assignment = guard.body[0]
+    assert isinstance(guarded_assignment, ast.Assign)
+    guarded_call = guarded_assignment.value
+    assert isinstance(guarded_call, ast.Call)
+    assert isinstance(guarded_call.func, ast.Name)
+    assert guarded_call.func.id == "_reconcile_static_tensor_shapes"
     assert len(
         [
             node
@@ -2371,7 +2727,7 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
             and node.func.id == "ModelIRGraphIndex"
         ]
     ) == 1
-    for call in calls:
+    for call in [*direct_calls, guarded_call]:
         graph_index_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "graph_index"
         )
@@ -2386,14 +2742,20 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_post_terminal_indexed_shape_convergence_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
     assert len(invocation_indexes) == 1
     invocation_index = invocation_indexes[0]
-    invocation = lowerer.body[invocation_index].value
+    invocation_statement = lowerer.body[invocation_index]
+    assert isinstance(invocation_statement, ast.Assign)
+    invocation = invocation_statement.value
     assert len(invocation.args) == 1
     assert isinstance(invocation.args[0], ast.Name)
     assert invocation.args[0].id == "model_ir"
@@ -2408,6 +2770,18 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     assert layout_keyword.value.attr == "layout_state"
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_post_terminal_singleton_reshape_results"
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_very_late_sinet_layout_recovery_results"
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert previous.value.func.id == "_run_singleton_reshape_layout_pass_cluster"
     assert following.value.func.id == "_run_sinet_terminal_layout_recovery_sequence"
 
@@ -2795,35 +3169,107 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    calls = [
+    direct_calls = [
         statement.value
         for statement in helper.body
         if isinstance(statement, (ast.Assign, ast.AnnAssign))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id != "len"
     ]
-    assert [call.func.id for call in calls] == [
+    assert [call.func.id for call in direct_calls] == [
         "ModelIRGraphIndex",
         "_run_indexed_shape_convergence_cleanup",
         "_sanitize_hardswish_tensor_shapes",
-        "_reconcile_static_tensor_shapes",
         "_resolve_dynamic_reshape_shapes",
-        "_reconcile_static_tensor_shapes",
         "_optimize_fuse_conv_activation_chains",
-        "_reconcile_static_tensor_shapes",
     ]
-    for call in calls[1:]:
+    guards = [
+        statement for statement in helper.body if isinstance(statement, ast.If)
+    ]
+    assert len(guards) == 3
+    guarded_calls = []
+    for guard, expected_arguments in zip(
+        guards[:2],
+        [
+            ["convergence_stats", "hardswish_stats"],
+            ["first_reconcile_stats", "reshape_stats"],
+        ],
+        strict=True,
+    ):
+        assert isinstance(guard.test, ast.Call)
+        assert isinstance(guard.test.func, ast.Name)
+        assert guard.test.func.id == "_stats_have_positive_count"
+        assert [
+            argument.id
+            for argument in guard.test.args
+            if isinstance(argument, ast.Name)
+        ] == expected_arguments
+        assert len(guard.body) == 1
+        guarded_assignment = guard.body[0]
+        assert isinstance(guarded_assignment, ast.Assign)
+        guarded_call = guarded_assignment.value
+        assert isinstance(guarded_call, ast.Call)
+        assert isinstance(guarded_call.func, ast.Name)
+        assert guarded_call.func.id == "_reconcile_static_tensor_shapes"
+        guarded_calls.append(guarded_call)
+    final_guard = guards[2]
+    assert isinstance(final_guard.test, ast.BoolOp)
+    assert isinstance(final_guard.test.op, ast.Or)
+    assert len(final_guard.test.values) == 2
+    final_predicate = final_guard.test.values[0]
+    assert isinstance(final_predicate, ast.Call)
+    assert isinstance(final_predicate.func, ast.Name)
+    assert final_predicate.func.id == "_stats_have_positive_count"
+    assert [
+        argument.id
+        for argument in final_predicate.args
+        if isinstance(argument, ast.Name)
+    ] == ["second_reconcile_stats", "fusion_stats"]
+    prune_comparison = final_guard.test.values[1]
+    assert ast.unparse(prune_comparison) == (
+        "len(model_ir.tensors) < fusion_tensor_count"
+    )
+    assert len(final_guard.body) == 1
+    final_guarded_assignment = final_guard.body[0]
+    assert isinstance(final_guarded_assignment, ast.Assign)
+    final_guarded_call = final_guarded_assignment.value
+    assert isinstance(final_guarded_call, ast.Call)
+    assert isinstance(final_guarded_call.func, ast.Name)
+    assert final_guarded_call.func.id == "_reconcile_static_tensor_shapes"
+    guarded_calls.append(final_guarded_call)
+    reshape_call = next(
+        call
+        for call in direct_calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "_resolve_dynamic_reshape_shapes"
+    )
+    fusion_call = next(
+        call
+        for call in direct_calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "_optimize_fuse_conv_activation_chains"
+    )
+    assert direct_calls[2].lineno < guards[0].lineno < reshape_call.lineno
+    assert reshape_call.lineno < guards[1].lineno < fusion_call.lineno
+    tensor_count_assignment = next(
+        statement
+        for statement in helper.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "fusion_tensor_count"
+            for target in statement.targets
+        )
+    )
+    assert guards[1].lineno < tensor_count_assignment.lineno < fusion_call.lineno
+    assert fusion_call.lineno < final_guard.lineno
+    for call in [*direct_calls[1:], *guarded_calls]:
         graph_index_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "graph_index"
         )
         assert isinstance(graph_index_keyword.value, ast.Name)
         assert graph_index_keyword.value.id == "graph_index"
-    fusion_call = next(
-        call
-        for call in calls
-        if isinstance(call.func, ast.Name)
-        and call.func.id == "_optimize_fuse_conv_activation_chains"
-    )
     fusion_layout_keyword = next(
         keyword
         for keyword in fusion_call.keywords
@@ -2840,12 +3286,18 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
-    invocation = lowerer.body[invocation_index].value
+    invocation_statement = lowerer.body[invocation_index]
+    assert isinstance(invocation_statement, ast.Assign)
+    assert isinstance(invocation_statement.targets[0], ast.Name)
+    assert invocation_statement.targets[0].id == (
+        "_late_final_shape_activation_convergence_stats"
+    )
+    invocation = invocation_statement.value
     assert len(invocation.args) == 1
     assert isinstance(invocation.args[0], ast.Name)
     assert invocation.args[0].id == "model_ir"
@@ -2901,16 +3353,24 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert "remove_operator" in fusion_call_names
     assert "_prune_unused_tensors" in fusion_call_names
 
-    direct_production_calls = [
-        statement.value
+    direct_production_assignments = [
+        statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == "_optimize_fuse_conv_activation_chains"
     ]
-    assert len(direct_production_calls) == 2
-    for call in direct_production_calls:
+    assert [
+        statement.targets[0].id
+        for statement in direct_production_assignments
+        if isinstance(statement.targets[0], ast.Name)
+    ] == [
+        "_core_cleanup_conv_activation_stats",
+        "_terminal_cleanup_conv_activation_stats",
+    ]
+    for statement in direct_production_assignments:
+        call = statement.value
         layout_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "layout_state"
         )
@@ -4582,7 +5042,10 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_qkv_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -4593,16 +5056,24 @@ def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> Non
             for keyword in statement.value.keywords
         )
     )
-    previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    previous_boundary = lowerer.body[invocation_index - 2]
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_late_pre_qkv_shape_extract_stats"
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    next_boundary = lowerer.body[invocation_index + 2]
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == (
+        "_terminal_split_conv_concat_bridge_stats"
+    )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -4634,7 +5105,7 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
     assert DUPLICATE_QUANTIZED_PRELU_PASS_IDS == expected_order
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_duplicate_quantized_prelu"
@@ -4684,7 +5155,8 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS == expected_order
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
+    assert statement.value is not None
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert (
@@ -4702,24 +5174,104 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "very_late_normalization_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
-    )
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "very_late_normalization_tensor_count"
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_very_late_normalization_stats"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
-    assert next_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"
+    assert next_boundary.value.func.id == (
+        "summarize_very_late_gather_constant_normalization_mutations"
+    )
+    affine_boundary = lowerer.body[invocation_index - 2]
+    assert isinstance(affine_boundary, ast.Assign)
+    assert isinstance(affine_boundary.targets[0], ast.Name)
+    assert affine_boundary.targets[0].id == "_very_late_affine_post_add_stats"
+    resolve_boundary = lowerer.body[invocation_index + 2]
+    assert isinstance(resolve_boundary, ast.Assign)
+    assert len(resolve_boundary.targets) == 1
+    assert isinstance(resolve_boundary.targets[0], ast.Name)
+    assert resolve_boundary.targets[0].id == "_very_late_dynamic_reshape_stats"
+    assert isinstance(resolve_boundary.value, ast.Call)
+    assert isinstance(resolve_boundary.value.func, ast.Name)
+    assert resolve_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"
+    conv_input_count = lowerer.body[invocation_index + 3]
+    assert isinstance(conv_input_count, ast.Assign)
+    assert isinstance(conv_input_count.targets[0], ast.Name)
+    assert conv_input_count.targets[0].id == "very_late_conv_input_tensor_count"
+    conv_input_stats = lowerer.body[invocation_index + 4]
+    assert isinstance(conv_input_stats, ast.Assign)
+    assert isinstance(conv_input_stats.targets[0], ast.Name)
+    assert conv_input_stats.targets[0].id == "_very_late_conv_input_stats"
+    assert isinstance(conv_input_stats.value, ast.Dict)
+    channel_shuffle_stats = lowerer.body[invocation_index + 5]
+    assert isinstance(channel_shuffle_stats, ast.Assign)
+    assert isinstance(channel_shuffle_stats.targets[0], ast.Name)
+    assert channel_shuffle_stats.targets[0].id == (
+        "_very_late_stale_channel_shuffle_stats"
+    )
+    assert isinstance(channel_shuffle_stats.value, ast.Call)
+    assert isinstance(channel_shuffle_stats.value.func, ast.Name)
+    assert (
+        channel_shuffle_stats.value.func.id
+        == "run_stale_nchw_channel_shuffle_repair"
+    )
+    concat_axis_stats = lowerer.body[invocation_index + 6]
+    assert isinstance(concat_axis_stats, ast.Assign)
+    assert isinstance(concat_axis_stats.targets[0], ast.Name)
+    assert concat_axis_stats.targets[0].id == (
+        "_very_late_concat_transpose_conv_axis_stats"
+    )
+    assert isinstance(concat_axis_stats.value, ast.Call)
+    assert isinstance(concat_axis_stats.value.func, ast.Name)
+    assert (
+        concat_axis_stats.value.func.id
+        == "_repair_nchw_concat_transpose_conv_axes"
+    )
+    concat_pool_axis_stats = lowerer.body[invocation_index + 7]
+    assert isinstance(concat_pool_axis_stats, ast.Assign)
+    assert isinstance(concat_pool_axis_stats.targets[0], ast.Name)
+    assert concat_pool_axis_stats.targets[0].id == (
+        "_very_late_concat_global_pool_conv_axis_stats"
+    )
+    assert isinstance(concat_pool_axis_stats.value, ast.Call)
+    assert isinstance(concat_pool_axis_stats.value.func, ast.Name)
+    assert (
+        concat_pool_axis_stats.value.func.id
+        == "_repair_nchw_concat_global_pool_conv_axes"
+    )
+    dynamic_rank1_stats = lowerer.body[invocation_index + 8]
+    assert isinstance(dynamic_rank1_stats, ast.Assign)
+    assert isinstance(dynamic_rank1_stats.targets[0], ast.Name)
+    assert dynamic_rank1_stats.targets[0].id == (
+        "_very_late_dynamic_rank1_reshape_stats"
+    )
+    assert isinstance(dynamic_rank1_stats.value, ast.Call)
+    assert isinstance(dynamic_rank1_stats.value.func, ast.Name)
+    assert dynamic_rank1_stats.value.func.id == (
+        "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
+    static_shape_stats = lowerer.body[invocation_index + 9]
+    assert isinstance(static_shape_stats, ast.Assign)
+    assert isinstance(static_shape_stats.targets[0], ast.Name)
+    assert static_shape_stats.targets[0].id == "_very_late_static_shape_stats"
+    assert isinstance(static_shape_stats.value, ast.Call)
+    assert isinstance(static_shape_stats.value.func, ast.Name)
+    assert static_shape_stats.value.func.id == "_reconcile_static_tensor_shapes"
 
 
 def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
@@ -4779,7 +5331,7 @@ def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
     ]
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_se_fc_gather_channel_fanout"
@@ -4839,30 +5391,35 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
         "run_transpose_gather_channel_fanout_cleanup",
     )
     assert TERMINAL_BOUNDARY_LAYOUT_PASS_IDS == expected_order
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
-    assert len(helper_calls) == 1
-    assert helper_calls[0].func.id == "run_terminal_boundary_layout"
-    assert len(helper_calls[0].args) == 1
-    assert isinstance(helper_calls[0].args[0], ast.Name)
-    assert helper_calls[0].args[0].id == "terminal_boundary_layout_context"
-    assert helper_calls[0].keywords == []
+    assert len(helper.body) == 1
+    helper_return = helper.body[0]
+    assert isinstance(helper_return, ast.Return)
+    assert isinstance(helper_return.value, ast.Call)
+    assert isinstance(helper_return.value.func, ast.Name)
+    assert helper_return.value.func.id == "run_terminal_boundary_layout"
+    assert len(helper_return.value.args) == 1
+    assert isinstance(helper_return.value.args[0], ast.Name)
+    assert helper_return.value.args[0].id == "terminal_boundary_layout_context"
+    assert helper_return.value.keywords == []
 
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_boundary_layout_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_terminal_instancenorm_dualstats_stats"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
@@ -4896,14 +5453,14 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
         "run_transpose_unary_passthrough_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == LATE_DEQUANT_UNARY_FANOUT_PASS_IDS
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    helper_statement = helper.body[0]
+    assert isinstance(helper_statement, ast.Return)
+    assert isinstance(helper_statement.value, ast.Call)
+    assert isinstance(helper_statement.value.func, ast.Name)
+    helper_calls = [helper_statement.value]
     assert [call.func.id for call in helper_calls] == [
         "run_late_dequant_unary_fanout"
     ]
@@ -4915,13 +5472,23 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_late_dequant_unary_fanout_results"
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_late_dequant_hardsigmoid_bridge_stats"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
@@ -4929,7 +5496,12 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
         == "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == (
+        "_late_swish_transpose_passthrough_stats"
+    )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -4958,14 +5530,14 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
         "run_singleton_maxpool_layout_cleanup",
         "run_consecutive_reshape_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
     assert tuple(expected_order) == TERMINAL_SINGLETON_MAXPOOL_RESHAPE_PASS_IDS
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    helper_statement = helper.body[0]
+    assert isinstance(helper_statement, ast.Return)
+    assert isinstance(helper_statement.value, ast.Call)
+    assert isinstance(helper_statement.value.func, ast.Name)
+    helper_calls = [helper_statement.value]
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_singleton_maxpool_reshape"
     ]
@@ -4980,17 +5552,28 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_terminal_singleton_maxpool_reshape_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)
     assert isinstance(previous_boundary.test, ast.Name)
     assert previous_boundary.test.id == "optimize_layout_transpose_chains"
     previous_call = previous_boundary.body[0]
-    assert isinstance(previous_call, ast.Expr)
+    assert isinstance(previous_call, ast.Assign)
+    assert isinstance(previous_call.targets[0], ast.Name)
+    assert previous_call.targets[0].id == (
+        "_terminal_elementwise_fanout_stats"
+    )
     assert isinstance(previous_call.value, ast.Call)
     assert isinstance(previous_call.value.func, ast.Name)
     assert (
@@ -5002,7 +5585,12 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     assert isinstance(next_boundary.test, ast.Name)
     assert next_boundary.test.id == "optimize_layout_transpose_chains"
     next_call = next_boundary.body[0]
-    assert isinstance(next_call, ast.Expr)
+    assert isinstance(next_call, ast.Assign)
+    assert len(next_call.targets) == 1
+    assert isinstance(next_call.targets[0], ast.Name)
+    assert next_call.targets[0].id == (
+        "_terminal_convpool_output_passthrough_stats"
+    )
     assert isinstance(next_call.value, ast.Call)
     assert isinstance(next_call.value.func, ast.Name)
     assert (
@@ -5032,13 +5620,11 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         "run_transpose_unary_passthrough_cleanup",
         "run_maximum_zero_relu_cleanup",
     ]
-    helper_calls = [
-        statement.value
-        for statement in helper.body
-        if isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-    ]
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    helper_calls = [helper.body[0].value]
+    assert isinstance(helper_calls[0], ast.Call)
+    assert isinstance(helper_calls[0].func, ast.Name)
     assert tuple(expected_order) == TERMINAL_CLAMP_UNARY_RELU_PASS_IDS
     assert [call.func.id for call in helper_calls] == [
         "run_terminal_clamp_unary_relu"
@@ -5051,7 +5637,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_clamp_unary_relu_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -5061,7 +5650,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
     assert isinstance(previous_boundary.test, ast.Name)
     assert previous_boundary.test.id == "optimize_layout_transpose_chains"
     previous_call = previous_boundary.body[-1]
-    assert isinstance(previous_call, ast.Expr)
+    assert isinstance(previous_call, ast.Assign)
+    assert len(previous_call.targets) == 1
+    assert isinstance(previous_call.targets[0], ast.Name)
+    assert previous_call.targets[0].id == "_terminal_singleton_reshape_results"
     assert isinstance(previous_call.value, ast.Call)
     assert isinstance(previous_call.value.func, ast.Name)
     assert (
@@ -5069,7 +5661,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         == "_run_singleton_reshape_layout_pass_cluster"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_terminal_sinet_layout_recovery_results"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -5104,7 +5699,7 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     assert LATE_LAYOUT_MEAN_SPP_GATHER_CONSTANT_CAST_PASS_IDS == expected_order
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert (
@@ -5128,7 +5723,12 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "late_layout_cluster_results"
+            for target in statement.targets
+        )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -5142,16 +5742,21 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
     assert isinstance(include_layout.value, ast.Name)
     assert include_layout.value.id == "optimize_layout_transpose_chains"
 
-    previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    previous_boundary = lowerer.body[invocation_index - 2]
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_late_pre_layout_cluster_shape_extract_stats"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
         == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    next_boundary = lowerer.body[invocation_index + 2]
+    assert isinstance(next_boundary, ast.Assign)
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -5193,21 +5798,30 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_spp_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_terminal_slice_pad_concat_stats"
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
         == "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    next_boundary = lowerer.body[invocation_index + 2]
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_late_pre_qkv_shape_extract_stats"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -5249,7 +5863,10 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_hard_activation_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -5263,16 +5880,23 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert isinstance(include_layout.value, ast.Name)
     assert include_layout.value.id == "optimize_layout_transpose_chains"
 
-    previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
+    previous_boundary = lowerer.body[invocation_index - 2]
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_terminal_hardswish_se_stats"
+    assert isinstance(previous_boundary.value, ast.Dict)
+    previous_call = previous_boundary.value.values[0]
+    assert isinstance(previous_call, ast.Call)
+    assert isinstance(previous_call.func, ast.Name)
+    assert previous_call.func.id == (
+        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
     )
-    next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    next_boundary = lowerer.body[invocation_index + 2]
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_absolute_final_pre_concat_stats"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -5314,21 +5938,43 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_absolute_final_normalization_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_absolute_final_instancenorm_post_bias_stats"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
         == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
+    affine_boundary = lowerer.body[invocation_index - 2]
+    assert isinstance(affine_boundary, ast.Assign)
+    assert len(affine_boundary.targets) == 1
+    assert isinstance(affine_boundary.targets[0], ast.Name)
+    assert affine_boundary.targets[0].id == "_absolute_final_affine_post_add_stats"
+    assert isinstance(affine_boundary.value, ast.Call)
+    assert isinstance(affine_boundary.value.func, ast.Name)
+    assert (
+        affine_boundary.value.func.id
+        == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_absolute_final_dynamic_rank1_stats"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -5717,7 +6363,14 @@ def test_indexed_affine_prepost_layout_owner_preserves_canonical_output() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 7
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _late_binary_layout_recovery_call_count(
+            "optimize_transpose_mul_add_const_prepost_nhwc_chains"
+        )
+        == 7
+    )
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -6307,6 +6960,125 @@ def test_indexed_sinet_concat_resize_owner_is_bounded_and_transactional() -> Non
         assert layout_keyword.value.attr == "layout_state"
 
 
+def test_absolute_final_sinet_reconciles_only_after_changed_passes() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    expected_stats = {
+        "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains": (
+            "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains"
+        ),
+        "_optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains": (
+            "optimized_sinet_deep_skip_pre_add_concat_prelu_fanout_chains"
+        ),
+        "_optimize_sinet_deep_skip_dual_resize_affine_transpose_chains": (
+            "optimized_sinet_deep_skip_dual_resize_affine_transpose_chains"
+        ),
+        "_optimize_sinet_shared_post_prelu_transpose_fanout_chains": (
+            "optimized_sinet_shared_post_prelu_transpose_fanout_chains"
+        ),
+        "_optimize_sinet_deep_skip_concat_resize_affine_tail_chains": (
+            "optimized_sinet_deep_skip_concat_resize_affine_tail_chains"
+        ),
+        "_optimize_sinet_concat_resize_affine_transpose_chains": (
+            "optimized_sinet_concat_resize_affine_transpose_chains"
+        ),
+    }
+    complete_result_names = {
+        "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains": (
+            "_final_sinet_late_residual_static_shape_stats"
+        ),
+        "_optimize_sinet_deep_skip_pre_add_concat_prelu_fanout_chains": (
+            "_final_sinet_preadd_fanout_static_shape_stats"
+        ),
+        "_optimize_sinet_deep_skip_dual_resize_affine_transpose_chains": (
+            "_final_sinet_dual_resize_static_shape_stats"
+        ),
+        "_optimize_sinet_shared_post_prelu_transpose_fanout_chains": (
+            "_final_sinet_shared_post_static_shape_stats"
+        ),
+        "_optimize_sinet_deep_skip_concat_resize_affine_tail_chains": (
+            "_final_sinet_deep_skip_static_shape_stats"
+        ),
+        "_optimize_sinet_concat_resize_affine_transpose_chains": (
+            "_final_sinet_concat_resize_static_shape_stats"
+        ),
+    }
+
+    for pass_name, stats_key in expected_stats.items():
+        assignment_index = next(
+            index
+            for index, statement in enumerate(lowerer.body)
+            if isinstance(statement, ast.Assign)
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and statement.value.func.id == pass_name
+        )
+        result_name = complete_result_names.get(pass_name)
+        guard_offset = 1
+        if result_name is not None:
+            default_stats = lowerer.body[assignment_index + 1]
+            assert isinstance(default_stats, ast.Assign)
+            assert isinstance(default_stats.targets[0], ast.Name)
+            assert default_stats.targets[0].id == result_name
+            assert isinstance(default_stats.value, ast.Dict)
+            assert {
+                key.value: value.value
+                for key, value in zip(
+                    default_stats.value.keys,
+                    default_stats.value.values,
+                )
+                if isinstance(key, ast.Constant)
+                and isinstance(value, ast.Constant)
+            } == {
+                "reconciled_static_tensor_shapes": 0,
+                "reconciled_static_shape_mutations": 0,
+            }
+            guard_offset = 2
+        guard = lowerer.body[assignment_index + guard_offset]
+        assert isinstance(guard, ast.If)
+        assert guard.orelse == []
+        get_calls = [
+            node
+            for node in ast.walk(guard.test)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+        ]
+        assert len(get_calls) == 1
+        assert isinstance(get_calls[0].args[0], ast.Constant)
+        assert get_calls[0].args[0].value == stats_key
+        assert len(guard.body) == 1
+        reconcile = guard.body[0]
+        assert isinstance(reconcile, (ast.Assign, ast.Expr))
+        if result_name is None:
+            assert isinstance(reconcile, ast.Expr)
+        else:
+            assert isinstance(reconcile, ast.Assign)
+            assert isinstance(reconcile.targets[0], ast.Name)
+            assert reconcile.targets[0].id == result_name
+        assert isinstance(reconcile.value, ast.Call)
+        assert isinstance(reconcile.value.func, ast.Name)
+        assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+        assert len(reconcile.value.args) == 1
+        assert isinstance(reconcile.value.args[0], ast.Name)
+        assert reconcile.value.args[0].id == "model_ir"
+        assert {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in reconcile.value.keywords
+        } == (
+            {"include_mutation_count": "True"}
+            if result_name is not None
+            else {}
+        )
+
+
 def test_indexed_sinet_tail_concat_owner_reuses_indexed_branch_contracts() -> None:
     pass_root = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes"
     owner_source = (pass_root / "sinet_tail_concat_layout.py").read_text(
@@ -6666,9 +7438,10 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         "run_dual_mul_concat_layout_cleanup",
     )
     assert GATE_LAYOUT_REQUIRED_PASS_IDS == GATE_LAYOUT_PASS_IDS[1:]
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
     assert len(helper.body) == 1
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     assert statement.value.func.id == "run_gate_layout"
@@ -6740,7 +7513,7 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     assert assignment.value.func.id == "ModelIRPassStateScope"
 
     def _statement_call(statement: ast.stmt) -> ast.Call:
-        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement, (ast.Assign, ast.Expr))
         assert isinstance(statement.value, ast.Call)
         assert isinstance(statement.value.func, ast.Name)
         return statement.value
@@ -6760,6 +7533,12 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     assert ndhwc_call.func.id == "run_ndhwc_gate_layout_cleanup"
     assert cost_volume_call.func.id == "run_cost_volume_scatter_layout_cleanup"
     assert next_raw_boundary_call.func.id == "_optimize_fold_conv_mul_add_affine_chains"
+    next_raw_boundary = lowerer.body[assignment_index + 3]
+    assert isinstance(next_raw_boundary, ast.Assign)
+    assert isinstance(next_raw_boundary.targets[0], ast.Name)
+    assert next_raw_boundary.targets[0].id == (
+        "_late_cost_volume_conv_affine_stats"
+    )
 
     for call in [ndhwc_call, cost_volume_call]:
         scope_keyword = next(
@@ -6795,13 +7574,19 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     assert assignment.value.func.id == "ModelIRPassStateScope"
 
     def _statement_call(statement: ast.stmt) -> ast.Call:
-        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement, (ast.Assign, ast.Expr))
         assert isinstance(statement.value, ast.Call)
         assert isinstance(statement.value.func, ast.Name)
         return statement.value
 
     previous_raw_boundary = _statement_call(lowerer.body[assignment_index - 1])
     assert previous_raw_boundary.func.id == "_optimize_fold_conv_mul_add_affine_chains"
+    previous_boundary = lowerer.body[assignment_index - 1]
+    assert isinstance(previous_boundary, ast.Assign)
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_late_cost_volume_conv_affine_stats"
+    )
 
     expected_order = [
         "run_axis3_const_concat_layout_cleanup",
@@ -6827,6 +7612,12 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     assert (
         next_raw_boundary.func.id
         == "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    )
+    next_raw_statement = next_boundary.body[0]
+    assert isinstance(next_raw_statement, ast.Assign)
+    assert isinstance(next_raw_statement.targets[0], ast.Name)
+    assert next_raw_statement.targets[0].id == (
+        "_late_concat_elementwise_fanout_stats"
     )
 
 
@@ -6886,7 +7677,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
     )
     assert len(channel_helper.body) == 1
     channel_statement = channel_helper.body[0]
-    assert isinstance(channel_statement, ast.Expr)
+    assert isinstance(channel_statement, ast.Return)
     assert isinstance(channel_statement.value, ast.Call)
     assert isinstance(channel_statement.value.func, ast.Name)
     assert channel_statement.value.func.id == "run_channel_shuffle_gather"
@@ -7005,7 +7796,7 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -7016,8 +7807,16 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
             for keyword in statement.value.keywords
         )
     )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == "_late_channel_shuffle_gather_results"
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_late_nhwc_reshape_collapse_stats"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
@@ -7025,7 +7824,9 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_late_attention_qkv_reshape_stats"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -7067,7 +7868,11 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
     invocation_index = next(
         index
         for index, statement in enumerate(layout_recovery.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_layout_pass_set_1_transpose_unary_fanout_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
@@ -7079,7 +7884,12 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
         )
     )
     previous_boundary = layout_recovery.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary, ast.Assign)
+    assert len(previous_boundary.targets) == 1
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_layout_pass_set_1_final_attention_quantized_suffix_results"
+    )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
@@ -7087,7 +7897,12 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
         == "_run_layout_attention_quantized_recovery_suffix"
     )
     next_boundary = layout_recovery.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary, ast.Assign)
+    assert len(next_boundary.targets) == 1
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == (
+        "_layout_pass_set_1_final_safe_binary_results"
+    )
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
@@ -7216,7 +8031,7 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     )
     assert len(long_helper.body) == 1
     long_statement = long_helper.body[0]
-    assert isinstance(long_statement, ast.Expr)
+    assert isinstance(long_statement, ast.Return)
     assert isinstance(long_statement.value, ast.Call)
     assert isinstance(long_statement.value.func, ast.Name)
     assert long_statement.value.func.id == "run_singleton_reshape"
@@ -7285,7 +8100,7 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
     ]
     assert len(short_helper.body) == 1
     short_statement = short_helper.body[0]
-    assert isinstance(short_statement, ast.Expr)
+    assert isinstance(short_statement, ast.Return)
     assert isinstance(short_statement.value, ast.Call)
     assert isinstance(short_statement.value.func, ast.Name)
     assert short_statement.value.func.id == "run_singleton_consecutive_reshape"
@@ -8332,6 +9147,593 @@ def test_mixed_singleton_concat_repair_has_indexed_owner() -> None:
     assert "_set_operator_inputs" in owner_calls
     assert "_apply_plan" in owner_calls
     assert "sync_from_model_ir" in owner_calls
+
+
+def test_absolute_final_mixed_singleton_concat_reconciles_only_after_change() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    owner_name = "_repair_mixed_singleton_nchw_inputs_for_nhwc_concat"
+    counter_name = "repaired_mixed_singleton_nchw_inputs_for_nhwc_concat"
+    assignment_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == owner_name
+    )
+
+    default_stats = lowerer.body[assignment_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_final_mixed_singleton_concat_static_shape_stats"
+    )
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(
+            default_stats.value.keys,
+            default_stats.value.values,
+        )
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = lowerer.body[assignment_index + 2]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert len(get_calls) == 1
+    assert isinstance(get_calls[0].args[0], ast.Constant)
+    assert get_calls[0].args[0].value == counter_name
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Assign)
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == (
+        "_final_mixed_singleton_concat_static_shape_stats"
+    )
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert len(reconcile.value.args) == 1
+    assert isinstance(reconcile.value.args[0], ast.Name)
+    assert reconcile.value.args[0].id == "model_ir"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+
+def test_absolute_final_consecutive_reshape_reconciles_only_after_change() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    expected_counters = {
+        "removed_noop_reshape_chains",
+        "rewritten_consecutive_reshape_passthrough_chains",
+        "rewritten_fanout_bypass_reshape_passthrough_chains",
+    }
+    assignment_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "run_consecutive_reshape_cleanup"
+    )
+
+    default_stats = lowerer.body[assignment_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == (
+        "_final_consecutive_reshape_static_shape_stats"
+    )
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(
+            default_stats.value.keys,
+            default_stats.value.values,
+        )
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = lowerer.body[assignment_index + 2]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert {
+        str(call.args[0].value)
+        for call in get_calls
+        if len(call.args) >= 1 and isinstance(call.args[0], ast.Constant)
+    } == expected_counters
+    assert len(get_calls) == len(expected_counters)
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Assign)
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == (
+        "_final_consecutive_reshape_static_shape_stats"
+    )
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert len(reconcile.value.args) == 1
+    assert isinstance(reconcile.value.args[0], ast.Name)
+    assert reconcile.value.args[0].id == "model_ir"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+
+def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    owner_name = "_optimize_prelu_transpose_passthrough_chains"
+    assignment_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == owner_name
+    )
+
+    tensor_count_assignment = lowerer.body[assignment_index - 1]
+    assert isinstance(tensor_count_assignment, ast.Assign)
+    assert len(tensor_count_assignment.targets) == 1
+    tensor_count_target = tensor_count_assignment.targets[0]
+    assert isinstance(tensor_count_target, ast.Name)
+    assert tensor_count_target.id == "final_prelu_tensor_count"
+    assert isinstance(tensor_count_assignment.value, ast.Call)
+    assert isinstance(tensor_count_assignment.value.func, ast.Name)
+    assert tensor_count_assignment.value.func.id == "len"
+    assert len(tensor_count_assignment.value.args) == 1
+    counted_tensors = tensor_count_assignment.value.args[0]
+    assert isinstance(counted_tensors, ast.Attribute)
+    assert isinstance(counted_tensors.value, ast.Name)
+    assert counted_tensors.value.id == "model_ir"
+    assert counted_tensors.attr == "tensors"
+
+    default_stats = lowerer.body[assignment_index + 1]
+    assert isinstance(default_stats, ast.Assign)
+    assert isinstance(default_stats.targets[0], ast.Name)
+    assert default_stats.targets[0].id == "_final_prelu_static_shape_stats"
+    assert isinstance(default_stats.value, ast.Dict)
+    assert {
+        key.value: value.value
+        for key, value in zip(
+            default_stats.value.keys,
+            default_stats.value.values,
+        )
+        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+    } == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    guard = lowerer.body[assignment_index + 2]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert len(get_calls) == 1
+    assert isinstance(get_calls[0].args[0], ast.Constant)
+    assert (
+        get_calls[0].args[0].value
+        == "rewritten_prelu_transpose_passthrough_chains"
+    )
+    guard_names = {
+        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
+    }
+    assert "final_prelu_tensor_count" in guard_names
+    tensor_len_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "len"
+    ]
+    assert len(tensor_len_calls) == 1
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Assign)
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == "_final_prelu_static_shape_stats"
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+
+def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    sanitizer_name = "_sanitize_static_shape_signature_consistency"
+    runner_name = "run_indexed_binary_layout_adapter_cleanup"
+    expected_counters = {
+        "sanitized_static_shape_signature_consistency",
+        "inserted_rank4_binary_layout_fix_transpose",
+        "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
+    }
+    sanitizer_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == sanitizer_name
+    )
+
+    count_assignment = lowerer.body[sanitizer_index - 1]
+    assert isinstance(count_assignment, ast.Assign)
+    assert len(count_assignment.targets) == 1
+    count_target = count_assignment.targets[0]
+    assert isinstance(count_target, ast.Name)
+    assert isinstance(count_assignment.value, ast.Call)
+    assert isinstance(count_assignment.value.func, ast.Name)
+    assert count_assignment.value.func.id == "len"
+
+    repair_assignment = lowerer.body[sanitizer_index + 1]
+    assert isinstance(repair_assignment, ast.Assign)
+    assert len(repair_assignment.targets) == 1
+    repair_targets = repair_assignment.targets[0]
+    assert isinstance(repair_targets, ast.Tuple)
+    assert [
+        target.id
+        for target in repair_targets.elts
+        if isinstance(target, ast.Name)
+    ] == ["late_binary_adapter_stats", "late_singleton_adapter_stats"]
+    assert isinstance(repair_assignment.value, ast.Call)
+    assert isinstance(repair_assignment.value.func, ast.Name)
+    assert repair_assignment.value.func.id == runner_name
+
+    guard = lowerer.body[sanitizer_index + 2]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    get_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert {
+        str(call.args[0].value)
+        for call in get_calls
+        if len(call.args) >= 1 and isinstance(call.args[0], ast.Constant)
+    } == expected_counters
+    assert len(get_calls) == len(expected_counters)
+    guard_names = {
+        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
+    }
+    assert count_target.id in guard_names
+    tensor_len_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "len"
+    ]
+    assert len(tensor_len_calls) == 1
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Assign)
+    assert len(reconcile.targets) == 1
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == (
+        "_late_binary_repair_static_shape_stats"
+    )
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+
+def test_placeholder_matmul_repairs_reconcile_only_after_change_or_prune() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    restore_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "final_placeholder_matmul_stats"
+            for target in statement.targets
+        )
+    )
+    restore_assignment = lowerer.body[restore_index]
+    assert isinstance(restore_assignment.value, ast.Call)
+    assert isinstance(restore_assignment.value.func, ast.Name)
+    assert (
+        restore_assignment.value.func.id
+        == "_restore_placeholder_matmul_flattened_inputs"
+    )
+
+    result_names = (
+        "_final_placeholder_matmul_static_shape_stats",
+        "_final_placeholder_binary_static_shape_stats",
+    )
+    for offset, result_name in enumerate(result_names, start=1):
+        default_stats = lowerer.body[restore_index + offset]
+        assert isinstance(default_stats, ast.Assign)
+        assert isinstance(default_stats.targets[0], ast.Name)
+        assert default_stats.targets[0].id == result_name
+        assert isinstance(default_stats.value, ast.Dict)
+
+    outer_guard = lowerer.body[restore_index + 3]
+    assert isinstance(outer_guard, ast.If)
+    assert len(outer_guard.body) == 6
+    legacy_projection = outer_guard.body[1]
+    assert isinstance(legacy_projection, ast.Assign)
+    assert isinstance(legacy_projection.targets[0], ast.Name)
+    assert legacy_projection.targets[0].id == "final_placeholder_reconcile_stats"
+    assert isinstance(legacy_projection.value, ast.Dict)
+
+    for statement, target_name, call_name in (
+        (
+            outer_guard.body[0],
+            result_names[0],
+            "_reconcile_static_tensor_shapes",
+        ),
+        (
+            outer_guard.body[2],
+            "final_placeholder_binary_tensor_count",
+            "len",
+        ),
+    ):
+        assert isinstance(statement, ast.Assign)
+        assert len(statement.targets) == 1
+        assert isinstance(statement.targets[0], ast.Name)
+        assert statement.targets[0].id == target_name
+        assert isinstance(statement.value, ast.Call)
+        assert isinstance(statement.value.func, ast.Name)
+        assert statement.value.func.id == call_name
+
+    binary_assignment = outer_guard.body[3]
+    assert isinstance(binary_assignment, ast.Assign)
+    assert len(binary_assignment.targets) == 1
+    binary_targets = binary_assignment.targets[0]
+    assert isinstance(binary_targets, ast.Tuple)
+    assert [
+        target.id
+        for target in binary_targets.elts
+        if isinstance(target, ast.Name)
+    ] == [
+        "final_placeholder_exact_binary_stats",
+        "final_placeholder_singleton_binary_stats",
+    ]
+    assert isinstance(binary_assignment.value, ast.Call)
+    assert isinstance(binary_assignment.value.func, ast.Name)
+    assert binary_assignment.value.func.id == (
+        "run_indexed_binary_layout_adapter_cleanup"
+    )
+
+    first_reconcile = outer_guard.body[0]
+    assert isinstance(first_reconcile, ast.Assign)
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in first_reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    reconcile_guard = outer_guard.body[4]
+    assert isinstance(reconcile_guard, ast.If)
+    assert ast.unparse(reconcile_guard.test) == (
+        "_stats_have_positive_count(final_placeholder_reconcile_stats, "
+        "final_placeholder_exact_binary_stats, "
+        "final_placeholder_singleton_binary_stats) or "
+        "len(model_ir.tensors) < final_placeholder_binary_tensor_count"
+    )
+    assert len(reconcile_guard.body) == 1
+    reconcile = reconcile_guard.body[0]
+    assert isinstance(reconcile, ast.Assign)
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == result_names[1]
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+    topology_sort = outer_guard.body[5]
+    assert isinstance(topology_sort, ast.Expr)
+    assert isinstance(topology_sort.value, ast.Call)
+    assert isinstance(topology_sort.value.func, ast.Name)
+    assert topology_sort.value.func.id == "_topologically_sort_operators"
+
+
+def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    direct_owner_names = (
+        "_realign_dynamic_boundary_shape_signature_map",
+        "_sanitize_hardswish_tensor_shapes",
+        "_sanitize_squeeze_axes_with_static_input_shapes",
+        "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
+    )
+    adapter_runner_name = "run_indexed_binary_layout_adapter_cleanup"
+    cluster_name = "_run_singleton_consecutive_reshape_pass_cluster"
+    first_owner_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == direct_owner_names[0]
+    )
+
+    count_assignment = lowerer.body[first_owner_index - 1]
+    assert isinstance(count_assignment, ast.Assign)
+    assert len(count_assignment.targets) == 1
+    count_target = count_assignment.targets[0]
+    assert isinstance(count_target, ast.Name)
+    assert isinstance(count_assignment.value, ast.Call)
+    assert isinstance(count_assignment.value.func, ast.Name)
+    assert count_assignment.value.func.id == "len"
+
+    result_names: list[str] = []
+    for offset, owner_name in enumerate(direct_owner_names):
+        assignment = lowerer.body[first_owner_index + offset]
+        assert isinstance(assignment, ast.Assign)
+        assert isinstance(assignment.value, ast.Call)
+        assert isinstance(assignment.value.func, ast.Name)
+        assert assignment.value.func.id == owner_name
+        assert len(assignment.targets) == 1
+        assert isinstance(assignment.targets[0], ast.Name)
+        result_names.append(assignment.targets[0].id)
+
+    adapter_assignment = lowerer.body[
+        first_owner_index + len(direct_owner_names)
+    ]
+    assert isinstance(adapter_assignment, ast.Assign)
+    assert isinstance(adapter_assignment.value, ast.Call)
+    assert isinstance(adapter_assignment.value.func, ast.Name)
+    assert adapter_assignment.value.func.id == adapter_runner_name
+    assert len(adapter_assignment.targets) == 1
+    adapter_targets = adapter_assignment.targets[0]
+    assert isinstance(adapter_targets, ast.Tuple)
+    assert len(adapter_targets.elts) == 2
+    assert all(isinstance(target, ast.Name) for target in adapter_targets.elts)
+    result_names.extend(
+        target.id
+        for target in adapter_targets.elts
+        if isinstance(target, ast.Name)
+    )
+
+    cluster_assignment = lowerer.body[
+        first_owner_index + len(direct_owner_names) + 1
+    ]
+    assert isinstance(cluster_assignment, ast.Assign)
+    assert isinstance(cluster_assignment.value, ast.Call)
+    assert isinstance(cluster_assignment.value.func, ast.Name)
+    assert cluster_assignment.value.func.id == cluster_name
+    assert len(cluster_assignment.targets) == 1
+    cluster_targets = cluster_assignment.targets[0]
+    assert isinstance(cluster_targets, ast.Tuple)
+    assert len(cluster_targets.elts) == 3
+    assert all(isinstance(target, ast.Name) for target in cluster_targets.elts)
+    result_names.extend(
+        target.id
+        for target in cluster_targets.elts
+        if isinstance(target, ast.Name)
+    )
+
+    guard = lowerer.body[first_owner_index + len(direct_owner_names) + 2]
+    assert isinstance(guard, ast.If)
+    assert guard.orelse == []
+    mutation_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_stats_have_positive_count"
+    ]
+    assert len(mutation_calls) == 1
+    assert [
+        argument.id
+        for argument in mutation_calls[0].args
+        if isinstance(argument, ast.Name)
+    ] == result_names
+    guard_names = {
+        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
+    }
+    assert count_target.id in guard_names
+    tensor_len_calls = [
+        node
+        for node in ast.walk(guard.test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "len"
+    ]
+    assert len(tensor_len_calls) == 1
+    assert len(guard.body) == 1
+    reconcile = guard.body[0]
+    assert isinstance(reconcile, ast.Assign)
+    assert len(reconcile.targets) == 1
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == "_shared_late_static_shape_stats"
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
 
 
 def test_window_partition_rewrite_has_indexed_owner() -> None:
@@ -9722,7 +11124,7 @@ def test_rank4_binary_layout_adapter_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert production_calls == []
 
     owner_path = (
         REPO_ROOT
@@ -9742,9 +11144,14 @@ def test_rank4_binary_layout_adapter_has_one_module_owner() -> None:
     )
     owner_function_source = ast.get_source_segment(owner_source, owner)
     assert owner_function_source is not None
-    assert "model_ir.operators.insert(" in owner_function_source
+    assert "model_ir.operators.insert(" not in owner_function_source
+    assert "graph_index.insert_operator(" in owner_function_source
     assert "_replace_operator_input_at(" in owner_function_source
-    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    assert "graph_index=graph_index" in owner_function_source
+    assert (
+        "_prune_unused_tensors(model_ir, layout_state=layout_state)"
+        in owner_function_source
+    )
     assert "lower_from_onnx2tf" not in owner_source
 
 
@@ -9782,7 +11189,7 @@ def test_rank4_binary_singleton_adapter_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert production_calls == []
 
     owner_path = (
         REPO_ROOT
@@ -9805,9 +11212,15 @@ def test_rank4_binary_singleton_adapter_has_one_module_owner() -> None:
     assert "np.broadcast_shapes" in owner_function_source
     assert 'op_type="TRANSPOSE"' in owner_function_source
     assert 'op_type="RESHAPE"' in owner_function_source
+    assert "model_ir.operators.insert(" not in owner_function_source
+    assert "graph_index.insert_operator(" in owner_function_source
     assert "_replace_operator_input_at(" in owner_function_source
+    assert "graph_index=graph_index" in owner_function_source
     assert "if repaired > 0:" in owner_function_source
-    assert "_prune_unused_tensors(model_ir)" in owner_function_source
+    assert (
+        "_prune_unused_tensors(model_ir, layout_state=layout_state)"
+        in owner_function_source
+    )
     assert "lower_from_onnx2tf" not in owner_source
 
 
@@ -11916,6 +13329,10 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert (
         len(calls)
         + sum(_orchestrated_pass_count(name) for name in runner_names)
+        + sum(
+            _late_binary_layout_recovery_call_count(name)
+            for name in runner_names
+        )
         == 120
     )
     for call in calls:
@@ -12112,6 +13529,9 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert (
         len(layout_transpose_calls)
         + _orchestrated_pass_count("run_layout_transpose_cleanup")
+        + _late_binary_layout_recovery_call_count(
+            "run_layout_transpose_cleanup"
+        )
         == 12
     )
 
@@ -14946,6 +16366,70 @@ def test_indexed_split_layout_owner_is_bounded_and_transactional() -> None:
             assert layout_keyword.value.attr == "layout_state"
 
 
+def test_late_binary_layout_recovery_uses_one_aggregate_runner() -> None:
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    branch = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test)
+        == (
+            "optimize_layout_transpose_chains or "
+            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+        )
+    )
+
+    assert len(branch.body) == 2
+    assignment = branch.body[0]
+    assert isinstance(assignment, ast.Assign)
+    assert len(assignment.targets) == 1
+    assert isinstance(assignment.targets[0], ast.Name)
+    assert assignment.targets[0].id == "late_binary_layout_recovery_stats"
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == "run_late_binary_layout_recovery"
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in assignment.value.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+
+    reconcile_guard = branch.body[1]
+    assert isinstance(reconcile_guard, ast.If)
+    assert ast.unparse(reconcile_guard.test) == (
+        "_stats_have_positive_count(late_binary_layout_recovery_stats)"
+    )
+    assert len(reconcile_guard.body) == 1
+    reconcile = reconcile_guard.body[0]
+    assert isinstance(reconcile, ast.Assign)
+    assert len(reconcile.targets) == 1
+    assert isinstance(reconcile.targets[0], ast.Name)
+    assert reconcile.targets[0].id == (
+        "_late_binary_layout_recovery_static_shape_stats"
+    )
+    assert isinstance(reconcile.value, ast.Call)
+    assert isinstance(reconcile.value.func, ast.Name)
+    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile.value.keywords
+    } == {"include_mutation_count": "True"}
+
+
 def test_indexed_split_adapter_owners_are_bounded_and_transactional() -> None:
     owner_path = (
         REPO_ROOT
@@ -15390,7 +16874,14 @@ def test_indexed_prelu_passthrough_owner_is_bounded_and_transactional() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _late_binary_layout_recovery_call_count(
+            "optimize_prelu_transpose_passthrough_chains"
+        )
+        == 3
+    )
     for production_call in production_calls:
         layout_keyword = next(
             keyword
@@ -15959,7 +17450,10 @@ def test_dual_pre_add_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) == 0
+    assert (
+        _late_binary_layout_recovery_call_count(owner_name) == 1
+    )
 
 
 def test_terminal_affine_fc_optimizer_has_one_module_owner() -> None:
@@ -16014,7 +17508,10 @@ def test_terminal_affine_fc_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) == 0
+    assert (
+        _late_binary_layout_recovery_call_count(owner_name) == 1
+    )
 
 
 def test_terminal_prelu_bmm_optimizer_has_one_module_owner() -> None:
@@ -16071,7 +17568,10 @@ def test_terminal_prelu_bmm_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) == 0
+    assert (
+        _late_binary_layout_recovery_call_count(owner_name) == 1
+    )
 
 
 def test_residual_affine_prelu_optimizer_has_one_module_owner() -> None:

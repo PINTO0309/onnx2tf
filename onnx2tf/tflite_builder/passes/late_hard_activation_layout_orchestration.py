@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -23,6 +23,52 @@ LATE_HARD_ACTIVATION_LAYOUT_PASS_IDS = (
 
 
 LateHardActivationLayoutContext = ModelIRPassContext
+_LAYOUT_MUTATION_KEYS = (
+    "removed_identity_transpose",
+    "removed_inverse_transpose_pairs",
+    "removed_inverse_transpose_fanout_branches",
+    "composed_consecutive_transpose_pairs",
+)
+
+
+def summarize_late_hard_activation_layout_mutations(
+    pass_results: Tuple[Dict[str, int], ...],
+    *,
+    include_layout_transpose: bool,
+    pruned_unused_tensors: int,
+) -> Dict[str, int]:
+    """Normalize raw cluster results into mutation-only counters."""
+
+    expected_count = len(
+        active_late_hard_activation_layout_pass_ids(
+            include_layout_transpose=include_layout_transpose,
+        )
+    )
+    if len(pass_results) != expected_count:
+        raise ValueError(
+            "late hard-activation mutation summary expected "
+            f"{expected_count} pass results, got {len(pass_results)}"
+        )
+
+    summary = {
+        str(key): int(value)
+        for key, value in pass_results[0].items()
+        if str(key) != "iterations"
+    }
+    summary.update({key: 0 for key in _LAYOUT_MUTATION_KEYS})
+    if include_layout_transpose:
+        layout_result = pass_results[1]
+        summary.update(
+            {
+                key: int(layout_result.get(key, 0))
+                for key in _LAYOUT_MUTATION_KEYS
+            }
+        )
+    summary["pruned_unused_tensors"] = max(
+        0,
+        int(pruned_unused_tensors),
+    )
+    return summary
 
 
 def active_late_hard_activation_layout_pass_ids(
@@ -78,11 +124,11 @@ def run_late_hard_activation_layout(
     context: LateHardActivationLayoutContext,
     *,
     include_layout_transpose: bool,
-) -> None:
+) -> Tuple[Dict[str, int], ...]:
     expected_pass_ids = active_late_hard_activation_layout_pass_ids(
         include_layout_transpose=include_layout_transpose,
     )
-    run_recovery_invocations(
+    return run_recovery_invocations(
         build_late_hard_activation_layout_invocations(
             context,
             include_layout_transpose=include_layout_transpose,

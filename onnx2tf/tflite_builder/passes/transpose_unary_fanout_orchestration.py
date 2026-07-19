@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassStateScope
@@ -99,12 +99,12 @@ def run_transpose_unary_fanout(
     *,
     include_layout_transpose: bool = False,
     include_unary_passthrough: bool = True,
-) -> None:
+) -> Tuple[Dict[str, int], ...]:
     expected_pass_ids = active_transpose_unary_fanout_pass_ids(
         include_layout_transpose=include_layout_transpose,
         include_unary_passthrough=include_unary_passthrough,
     )
-    run_recovery_invocations(
+    return run_recovery_invocations(
         build_transpose_unary_fanout_invocations(
             context,
             include_layout_transpose=include_layout_transpose,

@@ -10,6 +10,7 @@ import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.passes import conv_input_adapter_repair
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_singleton_nhwc_conv_input_reshapes,
     _repair_stale_nchw_to_nhwc_conv_input_transposes,
@@ -183,11 +184,13 @@ def test_indexed_conv_input_adapter_repairs_match_legacy_pair(
         lowering_module,
         "_build_tensor_consumer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
     monkeypatch.setattr(
         lowering_module,
         "_build_tensor_producer_map",
         unexpected_graph_rescan,
+        raising=False,
     )
     indexed_stats = _run_indexed_conv_input_adapter_repairs(model_ir)
 
@@ -208,6 +211,48 @@ def test_indexed_conv_input_adapter_repairs_match_legacy_pair(
         "transpose_source1",
     ]
     assert _normalize(model_ir) == _normalize(legacy_model_ir)
+
+
+def test_indexed_conv_input_adapter_runner_can_prune_without_rewrites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("zero_rewrite_conv_input_adapter_prune")
+    prune_calls: list[ModelIR] = []
+
+    def record_prune(active_model_ir: ModelIR) -> None:
+        prune_calls.append(active_model_ir)
+
+    monkeypatch.setattr(
+        conv_input_adapter_repair,
+        "_prune_unused_tensors",
+        record_prune,
+    )
+
+    stats = _run_indexed_conv_input_adapter_repairs_owner(model_ir)
+
+    assert stats == {
+        "repaired_singleton_nhwc_conv_input_reshapes": 0,
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": 0,
+    }
+    assert prune_calls == [model_ir, model_ir]
+
+
+def test_stale_conv_input_owner_can_prune_without_a_rewrite() -> None:
+    model_ir = ModelIR("zero_rewrite_stale_conv_input_prune")
+    model_ir.tensors["unused"] = TensorIR(
+        name="unused",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+    )
+
+    stats = _repair_stale_nchw_to_nhwc_conv_input_transposes_owner(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": 0,
+    }
+    assert "unused" not in model_ir.tensors
 
 
 @pytest.mark.parametrize(

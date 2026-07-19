@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_transpose.py"
+)
+LATE_BINARY_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_binary_layout_recovery.py"
+)
+OWNER = "run_layout_transpose_cleanup"
+INNER_OWNER = "_optimize_layout_transpose_chains"
+RESULT_TARGET = "_layout_pass_set_1_layout_transpose_cleanup_stats"
+
+
+def _functions(path: Path) -> dict[str, ast.FunctionDef]:
+    return {
+        node.name: node
+        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def _statement_call(statement: ast.stmt) -> ast.Call | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    return statement.value if isinstance(statement.value, ast.Call) else None
+
+
+def _call_name(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if call is None or not isinstance(call.func, ast.Name):
+        return None
+    return call.func.id
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
+
+
+def _direct_lowerer_calls(lowerer: ast.FunctionDef) -> list[ast.stmt]:
+    return [
+        statement
+        for root in lowerer.body
+        for statement in ast.walk(root)
+        if isinstance(statement, (ast.Assign, ast.Expr))
+        and _call_name(statement) == OWNER
+    ]
+
+
+def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> None:
+    functions = _functions(OWNER_PATH)
+    owner = functions[OWNER]
+    default_details = next(
+        statement
+        for statement in owner.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "default_details"
+            for target in statement.targets
+        )
+    )
+    assert isinstance(default_details.value, ast.Dict)
+    assert [ast.literal_eval(key) for key in default_details.value.keys] == [
+        "iterations",
+        "removed_identity_transpose",
+        "removed_inverse_transpose_pairs",
+        "removed_inverse_transpose_fanout_branches",
+        "composed_consecutive_transpose_pairs",
+    ]
+    owner_return = owner.body[-1]
+    assert isinstance(owner_return, ast.Return)
+    assert ast.unparse(owner_return.value) == (
+        "{str(key): int(value) for key, value in details.items()}"
+    )
+
+    inner_owner = functions[INNER_OWNER]
+    inner_source = ast.get_source_segment(
+        OWNER_PATH.read_text(encoding="utf-8"), inner_owner
+    )
+    assert inner_source is not None
+    assert "_prune_unused_tensors(model_ir, layout_state=layout_state)" in (
+        inner_source
+    )
+    assert "layout_state.sync_from_model_ir(model_ir)" in inner_source
+
+    lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
+    direct_calls = _direct_lowerer_calls(lowerer)
+    assert len(direct_calls) == 3
+    assert [_single_target(statement) for statement in direct_calls] == [
+        RESULT_TARGET,
+        "_late_concat_transpose_layout_stats",
+        "_very_late_layout_transpose_cleanup_stats",
+    ]
+    assert all(
+        [ast.unparse(argument) for argument in _statement_call(statement).args]
+        == ["model_ir"]
+        for statement in direct_calls
+        if _statement_call(statement) is not None
+    )
+    keyword_contracts = [
+        {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in call.keywords
+        }
+        for statement in direct_calls
+        if (call := _statement_call(statement)) is not None
+    ]
+    assert keyword_contracts == [
+        {
+            "layout_state": "session.layout_state",
+            "diagnostics": "session.diagnostics",
+        },
+        {
+            "layout_state": "session.layout_state",
+            "diagnostics": "session.diagnostics",
+            "state_scope": "late_concat_layout_state_scope",
+        },
+        {
+            "layout_state": "session.layout_state",
+            "diagnostics": "session.diagnostics",
+        },
+    ]
+
+    late_binary = _functions(LATE_BINARY_PATH)["run_late_binary_layout_recovery"]
+    nested_calls = [
+        node
+        for node in ast.walk(late_binary)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(nested_calls) == 1
+    nested_call = nested_calls[0]
+    assert [ast.unparse(argument) for argument in nested_call.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in nested_call.keywords
+    } == {
+        "layout_state": "layout_state",
+        "diagnostics": "diagnostics",
+    }
+
+
+def test_primary_layout_transpose_result_is_retained_observation_only() -> None:
+    lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
+    layout_guard = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test) == "optimize_layout_transpose_chains"
+        and any(_call_name(child) == OWNER for child in statement.body)
+    )
+    result_index = next(
+        index
+        for index, statement in enumerate(layout_guard.body)
+        if _call_name(statement) == OWNER
+    )
+    result = layout_guard.body[result_index]
+    assert _single_target(result) == RESULT_TARGET
+    call = _statement_call(result)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {
+        "layout_state": "session.layout_state",
+        "diagnostics": "session.diagnostics",
+    }
+    assert _single_target(layout_guard.body[result_index - 1]) == (
+        "enable_duplicate_transpose_fanout_optimizations"
+    )
+    assert _single_target(layout_guard.body[result_index + 1]) == (
+        "_layout_pass_set_1_initial_attention_recovery_results"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == RESULT_TARGET
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )

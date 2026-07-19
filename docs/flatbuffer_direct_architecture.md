@@ -2223,6 +2223,155 @@ rewrite. The lowerer retains a private compatibility wrapper and passes the
 session `LayoutState`; complete operator-list construction is forbidden by the
 ownership gate.
 
+The fallback's `replaced_unsupported_split_with_slice` result is complete
+mutation evidence for this owner. Tensor pruning and `LayoutState` syncing are
+both nested under a positive rewrite count; a zero result changes neither the
+ModelIR nor layout metadata. The direct lowerer therefore retains its existing
+positive guard around the immediately following static-shape reconciliation.
+The lowerer initializes a stable two-key zero result and, on a positive Split
+rewrite, replaces it with the reconciliation's complete opt-in result. This
+stages mutation evidence instead of discarding it without changing the guard,
+Split result schema, or pass order.
+
+The safety-fallback norm-only Pad cleanup has a different mutation contract.
+Its raw rewrite counter is incomplete because the child owner prunes unused
+tensors even after a zero rewrite. The fallback call therefore adds a clamped
+before/after tensor-count delta while retaining the existing norm-rewrite guard
+and recursive relowering order. The extra evidence remains observation-only;
+cleanup alone does not trigger shape reconciliation.
+
+The next fallback-only dynamic rank-one Unsqueeze/Reshape-shape owner exposes
+one complete rewrite counter and performs no cleanup when it is zero.
+Its existing result is assigned independently of the norm summary. The
+immediately following topological sort and logical-layout inference remain
+unconditional until the recursive return state and all prior fallback
+mutations have a stronger equivalence proof.
+
+The following fallback rank-four broadcast-constant repair has a complete
+counter and no cleanup-only path. Its reconciliation is already guarded by a
+positive rewrite and followed by topological/layout refreshes in the same
+branch. A stable zero result and assigned opt-in complete reconciliation
+evidence replace the discarded return value; the guard and both refreshes
+remain unchanged.
+
+The fallback SINet-shuffle plus SE/FC/Gather boundary already combines three
+rewrite counters with a before/after tensor-count predicate, so cleanup-only
+pruning remains visible. A stable zero static-shape result and an assigned
+opt-in complete result replace the discarded return inside the unchanged
+combined guard. No owner, predicate term, or pass order is altered.
+
+The fallback placeholder-MatMul restore has one complete counter: its tensor
+pruning executes only after a positive restore. The inline owner call is
+separated from its guard, and both the owner result and complete reconciliation
+result are staged while preserving the single invocation and following
+topological sort.
+
+The unbound-input compatibility wrapper owns static reconciliation after a
+positive indexed repair and reuses the repair's live GraphIndex. The fallback
+caller no longer repeats the same reconciliation immediately. The wrapper's
+one-call contract remains intact, and only the duplicate caller-side full-graph
+scan is removed.
+
+The fallback Conv-input runner has two rewrite counters, but both indexed child
+owners prune unused tensors even on zero. A clamped tensor-count delta plus a
+stable complete reconciliation result now preserve that cleanup evidence. The
+existing stale-Transpose-only reconciliation predicate remains unchanged;
+singleton repair updates its output metadata directly, and pruning alone does
+not require shape propagation.
+
+The fallback mixed-NHWC-input repair for NCHW Concat has one complete rewrite
+counter and no cleanup-only path. A stable complete zero result and assigned
+opt-in reconciliation evidence replace the discarded result under the
+unchanged positive guard, while the following Concat-axis repair boundary
+remains fixed.
+
+The fallback NCHW Concat/Transpose/Conv-axis repair also has one complete
+counter and no cleanup-only path. The same stable zero and opt-in complete
+reconciliation result replace the discarded return under its unchanged guard,
+with the following stale binary-layout repair fixed as the outer boundary.
+
+The stale channelwise binary-layout owner unconditionally prunes unused
+tensors, including zero-rewrite calls. The fallback branch therefore records a
+clamped tensor-count delta and initializes a stable complete reconciliation
+result. The existing repair-only guard assigns the opt-in reconciliation
+result, while the following topological sort remains unchanged; cleanup alone
+does not require shape propagation.
+
+The recursive safety fallback computes layout-validation metadata from its
+terminal graph, after high-rank BatchMatMul compression, indexed binary
+convergence, and the final topological sort. The validator is pure. A non-empty
+result keeps the established error-list schema, while an empty terminal result
+removes validation errors inherited from the recursive lower. This changes
+diagnostics only; the mutation owners and their ordering remain fixed.
+
+Gate-layout orchestration remains owned by
+`passes/gate_layout_orchestration.py`. The lowerer re-exports the elementwise
+gate runner from that module solely for the established Python/test import
+contract; it does not call the runner directly or create another pass owner.
+
+The static high-rank BatchMatMul owner prunes and synchronizes layout state
+only after a successful rewrite, so its exact rewrite counter is complete
+mutation evidence and a zero result is a true no-op. The fallback caller keeps
+a stable complete reconciliation result and assigns the opt-in result under
+the existing positive guard; its sort and following indexed binary-convergence
+boundary remain fixed.
+
+Indexed binary-layout convergence already aggregates the complete broadcast,
+stale-Transpose, and static-shape mutation counts for up to three rounds and
+stops after a stable round. Its fallback caller requires no additional
+reconciliation and retains that complete result before the unchanged terminal
+sort and layout validation.
+
+The primary path validates layout annotations after indexed binary
+convergence, high-rank binary coalescing, dynamic-boundary signature
+realignment, and its final sort. The pure validator preserves the established
+error-list schema and removes a stale validation-error key when the terminal
+graph is valid. Progress reporting and all mutation owners remain outside this
+diagnostic-only change.
+
+All three terminal mutation owners already return complete evidence: indexed
+binary convergence aggregates its bounded-round counters, high-rank binary
+coalescing returns an exact rewrite count, and boundary-signature realignment
+returns its update count. The primary caller retains those dictionaries without
+adding reconciliation, scans, or changing the final sort/validation boundary.
+
+The earlier final high-rank BatchMatMul owner is the same counter-complete
+implementation used by the safety fallback. The primary guard retains the same
+stable, opt-in complete static-shape result without changing its sort or the
+following channel-first Pad repair boundary.
+
+The final channel-first Pad repair mutates and synchronizes layout state only
+when its exact adapter-insertion counter increments. Its zero path performs no
+cleanup. The caller retains stable complete shape evidence under the existing
+guard, with its sort and following Conv-input repair boundary fixed.
+
+The standalone final stale Conv-input owner always prunes unused tensors, even
+when its rewrite counter is zero. The caller therefore records a clamped
+tensor-count delta plus a stable complete shape result. Cleanup-only evidence
+does not broaden the existing rewrite-only guard, and the following mixed-
+Concat boundary remains fixed.
+
+The final mixed-NHWC-input repair for NCHW Concat is the same counter-complete
+owner used by the safety fallback. The primary guard retains its stable
+complete shape result without changing the guarded sort or following Concat-
+axis owner boundary.
+
+The final Concat-axis owner is counter-complete and has no cleanup-only path;
+the adjacent stale-binary owner always prunes unused tensors. The caller keeps
+a stable Concat-axis shape result followed by stale-binary tensor-delta
+accounting and its stable shape result. Both rewrite-only guards, sorts, and
+the progress boundary remain fixed.
+
+The final SiNet Concat/Resize affine owner prunes and synchronizes layout state
+only after a successful transactional rewrite. Its counter-complete primary
+guard retains a stable complete shape result without changing the following
+high-rank BatchMatMul boundary.
+
+The five preceding final SiNet owners—late residual, pre-add fan-out, dual
+Resize, shared-post fan-out, and deep-skip—share the same transactional
+positive-only prune/layout-sync contract. Their stable complete shape results
+preserve every guard and the exact owner order.
+
 Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
 operator list. The established matcher still converts each eligible Squeeze to
 the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct
@@ -7956,6 +8105,19 @@ that process tree, records the model as `swap_detected`, and includes the peak
 tree total and per-process peak values in `bulk_status.json` and the generated
 summary.
 
+The indexed Split/Conv/Concat bridge owner returns the fixed one-counter
+`optimized_split_conv_concat_transpose_bridge_to_single_post_nchw` dictionary.
+Each count follows a successful transactional plan, and unused tensors are
+pruned only after a positive rewrite, so the counter is complete owner mutation
+evidence.
+
+Three direct calls exist. The late call is already retained as
+`_terminal_split_conv_concat_bridge_stats`; the terminal-QKV and post-SiNet
+calls now retain `_terminal_qkv_split_conv_concat_bridge_stats` and
+`_post_sinet_split_conv_concat_bridge_stats`. Both predecessors and successors,
+exact live LayoutState arguments, total occurrence count, and the existing late
+target remain fixed. The two new dictionaries are unconsumed in this unit.
+
 A model reported as `swap_detected` must be changed to
 `baseline_classification: excluded` in the managed regression profile before
 the next corpus run, with `baseline_reason` set to
@@ -9615,3 +9777,3073 @@ context or an explicit callback composition around it; no orchestration
 dataclass independently repeats ModelIR, LayoutState, or diagnostics. QLinear's
 five argument contracts and SINet's three invocation/callback contracts remain
 unchanged.
+
+The next non-context efficiency boundary is ModelIR pass diagnostic numbering.
+`run_model_ir_pass_group()` currently scans the complete diagnostic history to
+select the next group number, then scans the growing history again for every
+pass result to calculate global `sequence` and per-pass `invocation` values.
+This preserves correct numbering but makes bookkeeping quadratic in the number
+of recorded pass events. The frozen contract ignores non-`model_ir_pass`
+events, assigns the next group after the maximum existing `group_sequence`,
+numbers new events after the existing ModelIR-pass event count, and advances
+each pass ID independently. A strict expected-failure efficiency fixture proves
+that the current implementation performs four history iterations for a
+three-result group where one initialization scan is sufficient. The next
+bounded implementation step may cache those three counters from one initial
+scan, but must preserve the exact event schema, append order, caller-owned list,
+failure diagnostics, and summary output.
+
+The diagnostic-numbering boundary now performs exactly that one initialization
+scan. It derives the existing ModelIR-pass event count, the maximum existing
+group sequence, and per-pass invocation counts together, then advances the
+local counters as new events are appended. The caller-owned diagnostic list,
+non-pass records, event schema, append order, group semantics, failure path,
+and summary remain unchanged. The strict scan-count fixture is green, reducing
+one group with `P` results from `P + 1` full history iterations to one.
+
+Cross-group numbering is the adjacent characterized boundary. The ordinary
+list-compatible API must retain its one-scan fallback because callers may
+mutate an arbitrary list between invocations. The production
+`ConversionSession`, however, owns the same append-only diagnostics object for
+the complete conversion. A strict expected-failure contract now requires that
+Session-owned diagnostics retain numbering state across groups, lazily rebuild
+that state once after an arbitrary list mutation, and keep subsequent group
+numbering at constant bookkeeping cost. It also freezes list compatibility and
+the same sequence, invocation, and group values across two repeated pass
+groups. Production remains unchanged at this characterization checkpoint.
+
+The Session-owned cross-group ledger is now implemented as a private
+list-compatible core type. Append, extend, and insert update a valid numbering
+snapshot incrementally; replacement, deletion, multiplication, pop, and remove
+invalidate it; clear restores an empty valid snapshot. The next pass group
+rebuilds invalid state once and subsequent groups reuse it. Ordinary external
+lists continue through the prior one-scan fallback. The production append-only
+Session path performs no rebuild across repeated groups, while the destructive-
+mutation fixture performs exactly one. The internal type is not re-exported by
+the public core package, and diagnostics remain the same mutable list contract
+for existing consumers.
+
+The next graph-scan boundary is the absolute-final SINet cleanup. Six bounded,
+transactional SINet owners execute in a fixed terminal order, each followed by
+an unconditional static-shape reconciliation. Every owner already returns one
+complete mutation counter and has positive, no-op, rejection, and idempotence
+fixtures. A strict expected-failure architecture contract now maps each owner
+to its exact counter and requires its following reconciliation to be guarded by
+that counter. This preserves all six pass calls and their order while allowing
+the common zero-owner path to avoid six full operator/tensor reconciliation
+scans. Production remains unchanged at this characterization checkpoint.
+
+The six absolute-final SINet reconciliations are now guarded by their exact
+owner counters. Every owner still runs once in the same terminal position with
+the same LayoutState; only a zero result skips the immediately following
+static-shape reconciliation. A synthetic lowerer contract proves that enabling
+any one counter adds exactly one reconciliation relative to the all-zero path,
+and the complete owner suites retain their positive/no-op/idempotence behavior.
+The common non-SINet path therefore avoids six full reconciliation scans without
+changing any rewrite or cross-owner ordering.
+
+The next terminal reconciliation candidate is the indexed mixed-singleton
+NCHW-input repair for an NHWC Concat. Its owner returns the single complete
+`repaired_mixed_singleton_nchw_inputs_for_nhwc_concat` mutation counter, mutates
+only when that counter is positive, and has explicit positive, no-op, index,
+layout, fan-out, naming, and missing-Concat coverage. The production lowerer
+still reconciles unconditionally at this characterization checkpoint. A strict
+architecture expectation fixes the required immediate counter guard before
+production changes. Nearby owners are not equivalent: the PReLU owner prunes
+unused tensors even on a zero rewrite count, while the SE/FC/Gather cluster
+currently discards multiple pass results. They must not reuse this guard without
+separate counter-completeness work.
+
+The absolute-final mixed-singleton Concat call now assigns that owner result and
+guards only its immediately following static-shape reconciliation with the
+exact counter. The owner still executes once in the same position with the same
+Session LayoutState. A lowerer-level zero/one fixture proves that a positive
+counter adds exactly one reconciliation over the zero-counter path, while the
+complete owner suite preserves positive and no-op behavior. The unrelated
+PReLU and SE/FC/Gather boundaries remain unconditional pending their separate
+mutation-accounting contracts.
+
+The absolute-final consecutive-Reshape runner is the next characterized scan
+boundary. Its three returned counters cover no-op removal, consecutive-chain
+bypass, and fan-out bypass. The fan-out path also increments the aggregate
+consecutive counter, and tensor pruning/LayoutState synchronization occur only
+after a positive mutation count. A no-candidate fixture freezes the exact
+all-zero result, unchanged ModelIR, skipped diagnostic, and absence of pass-state
+construction. Production still reconciles unconditionally at this checkpoint;
+a strict architecture expectation requires one immediate guard over all three
+counters before that call may change.
+
+The terminal consecutive-Reshape result is now assigned, and the existing
+immediate reconciliation is guarded by the sum of those three exact mutation
+counters. The runner remains in its original position with the same Session
+LayoutState and diagnostics. A lowerer-level fixture proves the zero path and
+each individual positive counter; the complete runner suite retains both
+rewrite behavior and its state-free no-candidate fast path.
+
+The absolute-final PReLU boundary cannot use its rewrite counter alone. The
+owner intentionally prunes unused tensors on every invocation, including when
+the rewrite count is zero. A new owner fixture freezes that behavior and proves
+the corresponding LayoutState remains current. The bounded guard contract
+therefore records the tensor-table size immediately before the owner and
+requires reconciliation after either a positive rewrite counter or a tensor
+count reduction. Production remains unconditional at this characterization
+checkpoint.
+
+The absolute-final PReLU call now records the tensor count, assigns the owner
+result, and reconciles only after a positive rewrite or a tensor-count decrease.
+The owner still performs its unconditional prune and retains the same Session
+LayoutState. A lowerer-level fixture covers unchanged, rewrite, and prune-only
+outcomes, so the optimized guard preserves the previously unreported cleanup
+mutation rather than treating a zero rewrite count as a no-op.
+
+The shared recovery-invocation utility validates pass IDs and runs callbacks in
+order but currently discards every callback result. This prevents the terminal
+SE/FC/Gather wrapper from exposing its two already-complete runner dictionaries
+to the lowerer. Strict expected-failure contracts now require the generic
+utility and this specific wrapper to return ordered result tuples without
+changing callback order, arguments, shared state scope, diagnostics, or
+exception timing. Production remains unchanged at this characterization
+checkpoint.
+
+`run_recovery_invocations()` now returns callback values as an ordered tuple
+after the same pre-execution ID validation. Existing orchestrators continue to
+ignore that tuple. The SE/FC/Gather runner narrows and forwards its two result
+dictionaries, and the lowerer's private wrapper returns them without changing
+context construction or shared state scope. The complete orchestration corpus
+confirms that result propagation is additive to existing behavior.
+
+The remaining main and fallback SINet/SE-FC/Gather reconciliation boundaries
+are now characterized together. Each boundary must record the tensor count,
+retain the SINet shuffle result, unpack the two ordered cluster results, and
+reconcile after any of the three exact rewrite counters or a tensor-count
+decrease caused by zero-rewrite pruning. A strict structural expectation covers
+both ModelIR targets and preserves the four-statement owner order. Production
+remains unconditional at this checkpoint.
+
+Both terminal boundaries now implement that four-statement contract. The main
+and fallback paths record tensor count, retain the SINet result, unpack the two
+cluster results, and reconcile only after a positive exact counter or pruning.
+The owner order, main Session LayoutState, fallback `None` LayoutState, shared
+diagnostics, and fallback/main separation remain unchanged. A lowerer fixture
+covers all three counters plus prune-only behavior on the main path, while the
+structural contract verifies identical fallback wiring.
+
+The next safe late boundary contains static shape-signature sanitization,
+exact rank-four binary adapter repair, singleton-broadcast adapter repair, and
+one unconditional reconciliation. The sanitizer's `sanitized` counter and both
+repair counters cover their graph/metadata mutations; the exact adapter owner
+also prunes unused tensors on a zero rewrite. A new fixture freezes that prune
+side effect. A strict structural expectation therefore requires all three
+counters plus tensor-count reduction before this specific reconciliation may
+be guarded. Production remains unchanged at this characterization checkpoint.
+
+That late boundary now records tensor count and assigns all three results before
+guarding its immediate reconciliation. A positive sanitizer or repair counter,
+or a tensor-count decrease from exact-adapter pruning, preserves the scan; the
+all-zero/no-prune path skips it. The surrounding first repair reconciliation
+and later final signature sanitization are unchanged. Lowerer wiring covers all
+three counters and prune-only behavior independently.
+
+The earlier shared boundary also depends on the three-runner
+singleton-channel/duplicate-fan-out/consecutive-Reshape cluster. Although the
+generic recovery utility now preserves callback results, this specific runner
+and the lowerer's private helper still discard them. A strict expected-failure
+contract requires the ordered three-dictionary tuple without changing owner
+order, shared state scope, arguments, diagnostics, or any call site. Production
+remains unchanged at this characterization checkpoint.
+
+`run_singleton_consecutive_reshape()` now forwards its three ordered result
+dictionaries, and the lowerer's private helper preserves that tuple. All three
+production call sites continue ignoring it, so this checkpoint changes neither
+ModelIR nor reconciliation behavior. The complete orchestration corpus confirms
+that tuple propagation is additive to the existing shared-state contract.
+
+The earlier shared reconciliation can now be characterized over nine pure
+mutation-result dictionaries: boundary-signature realignment, HardSwish shape,
+Squeeze axes/shape, wrong-way Conv transpose, two binary repairs, and the three
+singleton/consecutive cluster results. The empty-cluster contract freezes only
+zero-valued mutation counters. A strict expected-failure boundary contract
+requires all nine dictionaries to pass through one compact positive-count
+predicate, plus tensor-count reduction for zero-rewrite pruning. Production is
+unchanged at this characterization checkpoint.
+
+The shared late boundary now records the tensor count, assigns all six direct
+results, unpacks the three ordered cluster results, and guards only its
+immediate reconciliation with `_stats_have_positive_count()` or a tensor-count
+decrease. The helper accepts only pure mutation-count dictionaries. A synthetic
+lowerer fixture independently covers all nine dictionaries and prune-only
+behavior; every changed outcome adds exactly one reconciliation over the
+all-zero/no-prune path. Structural tests that span extracted owners now resolve
+their helper dependencies from the owning core module instead of the lowerer
+compatibility surface.
+
+The indexed binary-layout convergence coordinator is the next bounded scan
+target. It currently executes all three broadcast-repair, stale-Transpose
+repair, and static-shape reconciliation rounds even after a complete round
+returns only zero mutation counters. All three owners return pure mutation
+dictionaries; their zero paths do not prune tensors or mutate topology. Strict
+expected-failure cases now require termination after the first stable round,
+whether stability is immediate or follows one changing reconciliation round.
+A separate passing contract preserves the existing three-round maximum while
+shape reconciliation continues changing metadata. Production remains
+unchanged at this characterization checkpoint.
+
+The coordinator now adds all three current-round statistics before testing the
+same pure mutation dictionaries with `_stats_have_positive_count()`. An
+all-zero round terminates the loop; a changing repair or reconciliation keeps
+the shared index and advances to the next round, still bounded by the existing
+three-round cap. Immediate and second-round convergence fixtures are green,
+the always-changing fixture still executes three rounds, and the original
+multi-repair graph produces the same aggregate statistics and complete ModelIR
+as the fixed three-round sequence.
+
+The indexed dead-prune/shape/Reshape convergence helper is the next stable-scan
+target. Its final reconciliation currently runs even when dead pruning, the
+first reconciliation, and dynamic-Reshape resolution all return zero mutation
+counters. A strict expected-failure fixture requires that complete zero path to
+perform only the first reconciliation while retaining the one shared index.
+Separate passing cases require the final reconciliation after a mutation from
+each of the three owners, preserving possible second-order shape convergence.
+Production remains unchanged at this characterization checkpoint.
+
+The helper now initializes the final result with the exact zero counter and
+uses `_stats_have_positive_count()` across prune, first-reconciliation, and
+dynamic-Reshape results before invoking the second reconciliation. The stable
+path therefore performs one shape scan, while any mutation retains the former
+second scan and its aggregate statistic. Both production call boundaries,
+LayoutState forwarding, and the one-index contract are unchanged. The original
+dynamic-Reshape graph remains fully equivalent to the former four-call
+sequence.
+
+The first extra reconciliation in the indexed final shape/activation
+coordinator is the next isolated scan. The preceding indexed shape-convergence
+aggregate and HardSwish sanitizer both return pure mutation dictionaries. A
+strict expected-failure fixture requires this reconciliation to be skipped when
+both are completely zero, while passing fixtures retain it independently after
+either predecessor changes. The later Reshape and activation-fusion
+reconciliations remain explicitly present and ordered. Production is unchanged
+at this characterization checkpoint.
+
+`first_reconcile_stats` now starts with the exact zero counter and the first
+extra scan runs only when the preceding convergence aggregate or HardSwish
+sanitizer reports a positive mutation. Both changing paths preserve the scan;
+the complete stable path proceeds directly to dynamic-Reshape resolution. The
+later Reshape and fusion reconciliation boundaries, aggregate return schema,
+shared index, and LayoutState forwarding remain unchanged. The full legacy
+fixture retains identical ModelIR and statistics.
+
+The second extra final-convergence reconciliation is now characterized over
+its complete mutation interval. A strict expected-failure event-order fixture
+requires it to be skipped when both the optional first reconciliation and
+dynamic-Reshape resolution return zero. Separate passing paths retain it after
+a first-reconciliation metadata change or a Reshape rewrite. The already
+guarded first scan and the final post-fusion reconciliation remain unchanged in
+production at this checkpoint.
+
+`second_reconcile_stats` now starts with the exact zero counter and the second
+scan runs only when the optional first reconciliation or dynamic-Reshape
+resolver reports a positive mutation. Stable and predecessor-only paths proceed
+directly to fusion; first-reconciliation metadata changes and Reshape rewrites
+retain the scan. The final post-fusion reconciliation, aggregate return schema,
+one-index ownership, and LayoutState forwarding remain unchanged. The complete
+legacy fixture still produces identical ModelIR and aggregate statistics.
+
+The final post-fusion reconciliation cannot use fusion counters alone.
+Activation fusion returns complete per-family and aggregate rewrite counts but
+unconditionally prunes unused tensors, including on a zero-rewrite call. A new
+owner fixture freezes that prune-only path and LayoutState synchronization. A
+strict expected-failure final-coordinator fixture requires the scan to be
+skipped only when the second reconciliation and all fusion counters are zero
+and the tensor table did not shrink. Passing paths retain it after a second
+reconciliation change, fusion rewrite, or prune-only mutation. Production
+remains unchanged at this characterization checkpoint.
+
+The coordinator now records tensor count immediately before fusion,
+initializes the final reconciliation result with the exact zero counter, and
+guards the scan with `second_reconcile_stats`, every fusion counter, or a
+tensor-count decrease. The stable path ends after fusion; second-scan metadata
+changes, fusion rewrites, and zero-rewrite pruning each retain the final scan.
+All three reconciliation guards remain ordered under one index, and the
+complete legacy fixture preserves ModelIR and aggregate statistics.
+
+The absolute-final placeholder-MatMul restoration block is the next bounded
+reconciliation interval. A positive restoration still requires its first shape
+scan. The immediately following exact and singleton binary repairs return pure
+rewrite counters, while the exact owner may prune unused tensors on a zero
+rewrite. A strict expected-failure lowerer fixture requires the second scan
+only after a changing first reconciliation, either repair counter, or a
+tensor-count decrease. Production remains unchanged at this characterization
+checkpoint.
+
+The restoration result is now assigned before the unchanged outer guard. A
+positive restoration retains the first reconciliation, then records tensor
+count and captures both binary-repair results. The second reconciliation runs
+only after a changing first scan, either repair counter, or exact-repair
+pruning. The following topology sort remains unconditional inside the outer
+restoration block. Lowerer wiring covers unchanged, all three counters, and
+prune-only behavior independently.
+
+The conditional late binary-layout recovery sequence is the next extraction
+boundary. It currently expands PReLU passthrough, dual pre-Add, terminal FC,
+optional PReLU-BMM, affine pre/post, optional generic layout cleanup, and an
+unconditional reconciliation inline. All owners expose rewrite counters, but
+several prune on zero rewrites and generic layout cleanup also reports a
+non-mutating iteration count. Strict expected-failure contracts require one
+dedicated runner to preserve branch/order/context, return only mutation counts
+plus net pruning, and let the lowerer reconcile only after a positive aggregate.
+Production remains unchanged at this characterization checkpoint.
+
+`run_late_binary_layout_recovery()` now owns that complete sequence in the
+original order. The optional PReLU-BMM and generic layout cleanup owners remain
+controlled by one `include_layout_transpose` flag, while the runner forwards
+the shared LayoutState and diagnostics to the owners that accept them. Its
+result contains the five owner rewrite counters, the four generic-layout
+mutation counters, and `pruned_unused_tensors` from the net tensor-table
+reduction. The non-mutating layout `iterations` field is deliberately omitted.
+
+The lowerer branch is consequently reduced to one runner assignment and one
+`_stats_have_positive_count()` guard. Static-shape reconciliation is skipped
+when the complete recovery sequence is stable and retained after any rewrite
+or zero-rewrite pruning. Dedicated runner tests fix owner order, optional-owner
+behavior, context forwarding, normalized counters, pruning, and the empty-model
+stable path. Architecture tests count calls at the new ownership boundary
+rather than assuming every owner is invoked directly from the lowerer.
+
+The next unconditional post-lowering reconciliation is not yet a safe local
+optimization boundary: it follows a broad terminal phase whose owners do not
+all return complete mutation or prune evidence. The next bounded extraction is
+therefore the inline ONNX `Constant` lowering special case. Its current tensor
+value, dtype, shape/signature, output, provenance, no-operator, and missing
+`value` error behavior are fixed by characterization tests.
+
+A strict expected-failure architecture contract requires one typed
+`op_families.constant` owner called with only the ONNX node and
+`LoweringContext`. The owner must preserve the existing collision and
+placeholder replacement behavior, use an explicit `onnx.AttributeProto` cast
+for protobuf attributes, and remain TensorFlow-independent. This removes the
+protobuf stub's ambiguous `type[In]` inference from the central lowerer without
+changing supported Constant attribute forms. Production remains unchanged at
+this characterization checkpoint.
+
+`op_families.constant.lower_constant_node()` now owns the tensor-valued
+Constant path. The central node loop retains only the op-type guard, one typed
+call with `node` and `ctx`, and `continue`. The owner uses an explicit
+`onnx.AttributeProto` cast before reading `name` or `t`, removing the protobuf
+stub ambiguity that Pylance reported in the central lowerer.
+
+The extraction preserves new-tensor creation, in-place placeholder replacement,
+legacy collision renaming, constants-map updates, dtype and shape/signature
+normalization, provenance, the absence of a ModelIR operator, and the exact
+missing tensor-`value` error. It deliberately does not add other ONNX Constant
+attribute encodings or change registry dispatch. Focused owner and contract
+coverage plus the core/architecture/TensorFlow-boundary gate are green.
+
+The remaining special branch in the ONNX node loop performs demand-driven
+shape reconciliation before Attention, Gather, GatherElements,
+LayerNormalization, MatMul, and MultiHeadAttention. Characterization now fixes
+its exact trigger: at least one wrapped input must still have rank zero or one,
+must not carry constant data, and must have no raw shape hint. Non-target ops,
+known rank-two-or-higher inputs, explicit rank-one hints, and constant tensors
+remain no-ops.
+
+A strict expected-failure architecture contract requires one
+TensorFlow-independent `core.shape_readiness` owner to hold the target-op set,
+unresolved-input predicate, and reconciliation call. The lowerer must call it
+once with the wrapped node and `LoweringContext`, eliminating the per-node
+nested closure while preserving the demand-driven scan boundary. Production is
+unchanged at this characterization checkpoint.
+
+`core.shape_readiness.reconcile_shape_sensitive_inputs_on_demand()` now owns
+the complete policy. It performs one constant-time op-set check for every
+non-Constant node, inspects inputs only for the six target ops, returns the
+exact zero reconciliation dictionary on every stable path, and invokes the
+existing static-shape owner only when an unresolved nonconstant input has no
+raw shape hint.
+
+The central loop now constructs `NodeView`, makes one typed `node`/`ctx` call,
+and dispatches. The target set, raw-shape rules, constant exclusion, and nested
+predicate are no longer duplicated there. Dedicated tests cover every target
+op, all four no-op classes, the integration trigger before dispatch, and the
+one-owner architecture contract.
+
+The broad terminal phase still cannot drive its final reconciliation from a
+complete aggregate, but its last composite cluster is now isolated as the next
+result-propagation boundary. The late layout/mean/SPP/gather/constant-fold/cast
+orchestrator builds five required invocations and one optional generic-layout
+invocation. `run_recovery_invocations()` already returns their ordered values;
+both the orchestrator and its private lowerer helper currently discard them.
+
+Strict expected-failure cases require the exact five- or six-element tuple to
+pass through both layers without reordering, filtering, or copying. This unit
+does not capture the result at the production call site and does not change the
+unconditional phase reconciliation. In particular, the optional layout result
+still contains a non-mutating `iterations` field that must not later be treated
+as mutation evidence. Production remains unchanged at this characterization
+checkpoint.
+
+`run_late_layout_mean_spp_gather_constant_cast()` now returns the raw ordered
+tuple from `run_recovery_invocations()`, and its private lowerer helper returns
+the same object. The required policy yields five dictionaries and the optional
+layout policy yields six. Invocation order, one shared state scope, diagnostics,
+and exception propagation remain unchanged.
+
+The terminal production call is intentionally still an expression statement,
+so this checkpoint changes no reconciliation or ModelIR behavior. Focused tests
+verify both policies and both return boundaries. The next step must normalize
+the optional layout dictionary by mutation keys before it can participate in a
+phase aggregate; its `iterations` value is not a change counter.
+
+The next cluster-local contract is a normalized mutation summary. Strict
+expected-failure fixtures require a fixed schema for both policies: four
+generic-layout mutation keys initialized to zero when layout cleanup is
+disabled, every dictionary from the five required passes, and one
+`pruned_unused_tensors` count. The generic layout `iterations` key must never
+appear in the summary.
+
+The terminal call site is also required to record tensor count immediately
+before the cluster, capture the raw ordered results, and derive the summary from
+their exact net tensor reduction. This remains observation-only: the following
+Expand/Squeeze rewrite and unconditional phase reconciliation do not consume
+the summary at this checkpoint. Production is unchanged.
+
+`summarize_late_layout_mean_spp_gather_constant_cast_mutations()` now validates
+the policy-specific tuple length, initializes the four layout mutation keys,
+filters `iterations`, merges all five required result dictionaries, and clamps
+the explicit prune count to a nonnegative integer. Both layout-enabled and
+required-only policies therefore expose the same mutation-only schema.
+
+The terminal call site records tensor count, captures the raw tuple, and stores
+the derived summary in `_late_layout_cluster_stats` before the existing
+Expand/Squeeze call. The leading underscore marks this as staged evidence until
+the rest of the terminal phase has complete accounting. No phase guard or
+reconciliation behavior changes in this checkpoint.
+
+The adjacent terminal Expand/Squeeze-to-Reshape owner is the next evidence
+boundary. It already returns `replaced_expand_dims_and_squeeze_with_reshape`
+and `expand_dims_squeeze_rewrite_shape_tensors`, and it prunes only after a
+positive rewrite. Its result is currently discarded immediately before the
+same unconditional phase reconciliation.
+
+A strict expected-failure structural contract requires that call to be assigned
+to staged `_terminal_expand_squeeze_stats` while preserving its LayoutState and
+the immediate reconciliation statement. This checkpoint does not use either
+terminal evidence dictionary as a guard. Production remains unchanged.
+
+The terminal call now assigns its unchanged two-counter dictionary to
+`_terminal_expand_squeeze_stats`. The Session LayoutState argument, position
+after `_late_layout_cluster_stats`, and immediately following unconditional
+shape reconciliation are preserved. The underscored result is staged for a
+future complete phase aggregate and is not yet consumed.
+
+Moving backward, the late hard-activation/layout pair is the next complete
+cluster boundary. Its required hard-activation owner and optional generic
+layout owner both prune unused tensors even when rewrite counters are zero, and
+the layout result also contains non-mutating `iterations`. Both runner layers
+currently discard the ordered one- or two-result tuple.
+
+Strict expected-failure contracts require raw tuple propagation, a fixed
+mutation-only summary with four zero-default layout keys, and net tensor-prune
+accounting. The lowerer must capture count/results/summary in three adjacent
+statements between the existing Hardswish-SE rewrite and pre-Concat cleanup.
+No phase reconciliation consumes this evidence yet.
+
+The late hard-activation/layout runner now returns the recovery utility's raw
+ordered result tuple. Its pure summary validates the policy-specific tuple
+length, preserves the required hard-activation counters, emits four stable
+layout mutation keys, excludes layout `iterations`, and records the cluster's
+clamped net tensor reduction.
+
+The lowerer stages the starting tensor count, raw results, and normalized
+`_late_hard_activation_stats` at the original terminal call site. This remains
+observation-only: pass selection and order, the adjacent Hardswish-SE and
+pre-Concat rewrites, and every downstream reconciliation are unchanged.
+
+Immediately before that cluster, the terminal Hardswish-SE owner returns one
+rewrite counter but unconditionally prunes unused tensors. A zero counter is
+therefore not sufficient evidence that the owner left ModelIR unchanged.
+Strict characterization requires the production call to preserve its raw
+counter while adding the exact net tensor reduction as
+`pruned_unused_tensors`. The neighboring split/conv bridge owner and late
+hard-activation cluster remain fixed boundaries; production is unchanged at
+this checkpoint.
+
+The production call now records the starting tensor count and builds
+`_terminal_hardswish_se_stats` from the owner's unchanged rewrite dictionary
+plus the clamped net tensor reduction. This captures zero-rewrite pruning
+without changing owner semantics. The staged dictionary is not yet consumed by
+a reconciliation guard, and both neighboring boundaries remain in their
+original order.
+
+The immediately preceding indexed split/conv/concat bridge owner prunes only
+after a positive rewrite. Its single returned counter is therefore complete
+mutation evidence, unlike the Hardswish-SE owner. Strict characterization
+requires the terminal call to assign that unchanged result to staged
+`_terminal_split_conv_concat_bridge_stats` between the late QKV cluster and the
+Hardswish-SE tensor-count capture. Production remains unchanged in this
+checkpoint.
+
+The terminal invocation now assigns its unchanged owner result to
+`_terminal_split_conv_concat_bridge_stats`. The other same-owner invocations
+remain expressions, making the staging specific to the interval being
+accounted. ModelIR and Session LayoutState forwarding and both neighboring
+boundaries are unchanged; no reconciliation consumes the staged counter yet.
+
+The late QKV cluster immediately before that owner has three production
+policies. The terminal policy excludes the prefix and optionally runs generic
+layout cleanup before the required bridge cleanup. Both active terminal owners
+can prune with zero rewrite counters, while generic layout also reports the
+non-mutating `iterations` metric. Strict characterization requires ordered raw
+result propagation and one fixed mutation schema containing four layout, four
+prefix, two bridge, and one net-prune counter. The terminal call must stage
+count/results/summary without changing the other two production forms.
+
+The QKV runner and lowerer delegate now return ordered raw results for every
+policy. `summarize_qkv_attention_mutations()` validates the active tuple length,
+fills inactive family keys with zeros, copies only ten declared mutation
+counters, excludes `iterations`, and adds clamped net pruning. Only the
+terminal form stages starting count, raw results, and `_late_qkv_stats`; the two
+default forms continue to ignore their return values.
+
+Immediately before late QKV, the shape-extract owner prunes only after a
+positive rewrite, so its single returned counter fully describes mutation.
+There are three production calls to this owner. Strict characterization selects
+only the call between late SPP and the QKV starting-count capture and requires
+it to assign `_late_pre_qkv_shape_extract_stats`. The other two calls must remain
+untouched at this checkpoint.
+
+That exact invocation now assigns its unchanged return dictionary to
+`_late_pre_qkv_shape_extract_stats`. The earlier call and the later absolute-end
+call remain discarded expressions. This preserves all three execution points
+while giving the current terminal interval unambiguous mutation evidence.
+
+The preceding late SPP pair contains two transactional owners. Each prunes only
+after a positive rewrite, so their two returned counters completely describe
+mutation and no separate tensor-count delta is needed. Strict characterization
+requires ordered tuple propagation, exact two-result validation, and a fixed
+two-counter summary staged between the preceding raw layout rewrite and the
+pre-QKV shape-extract result.
+
+The runner and lowerer delegate now return the ordered pair. The pure
+`summarize_late_spp_concat_unary_conv_mutations()` helper validates exactly two
+results and maps them to the two declared keys. Production stages
+`late_spp_results` and `_late_spp_stats`; no unrelated fields or prune proxy are
+added, and the pair remains observation-only.
+
+The preceding strided-slice/pad/concat owner also prunes only after a positive
+rewrite, so its one counter is complete evidence. Two direct production calls
+surround the second terminal affine recovery. Strict characterization selects
+only the second call and requires `_terminal_slice_pad_concat_stats` between
+that recovery and `late_spp_results`; the first call remains an expression.
+
+The second call now assigns its unchanged result to
+`_terminal_slice_pad_concat_stats`. Boundary contracts distinguish the first
+expression from the second assignment while resolving both to the same owner.
+No tensor-count proxy is added, and the staged counter remains unused by a
+reconciliation guard.
+
+The preceding terminal affine recovery has eleven ordered child owners and
+twelve declared mutation keys; the final sanitizer owns two keys. Child prune
+conditions differ, so strict characterization requires raw tuple propagation,
+exact eleven-result validation, fixed-key extraction, and one cluster-wide net
+prune counter. Only the second of two production recovery calls may stage
+count/results/summary; the first remains an expression.
+
+The runner and lowerer delegate now return the raw eleven-result tuple. The
+pure `summarize_terminal_affine_concat_split_mutations()` helper extracts only
+the twelve declared keys and adds clamped net pruning. Production stages
+starting count, `terminal_affine_results`, and `_terminal_affine_stats` only at
+the second call; its forward-string annotation preserves the delegate's
+context-only runtime load contract.
+
+Immediately before the staged terminal affine cluster, the first direct
+strided-slice/pad/concat call still discards its complete positive-only counter.
+Strict characterization requires it to assign
+`_pre_terminal_affine_slice_pad_concat_stats` between the preceding raw
+transpose/Mul/Add owner and `terminal_affine_tensor_count`. The second direct
+call retains its distinct staged target.
+
+That first direct invocation now assigns its unchanged result to
+`_pre_terminal_affine_slice_pad_concat_stats`. The later invocation continues
+to assign `_terminal_slice_pad_concat_stats`, so the two observation points are
+unambiguous while both still invoke the same owner with only ModelIR. Neither
+counter is consumed by reconciliation, and execution order, rewrite guards,
+pruning behavior, and generated artifacts remain unchanged.
+
+Immediately before the first staged slice/pad/concat result, the indexed
+affine post-ADD owner reports one fixed rewrite counter and prunes only after a
+positive rewrite. Three direct production calls use this owner. Strict
+characterization selects only the first call, between the channel-slice cluster
+and `_pre_terminal_affine_slice_pad_concat_stats`, for a future
+`_pre_terminal_affine_post_add_stats` assignment. The other two direct calls
+and the orchestrated occurrence remain unchanged.
+
+That selected call now assigns its unchanged owner result to
+`_pre_terminal_affine_post_add_stats`. The channel-slice and first
+slice/pad/concat boundary contracts identify the exact assignment, while the
+two later direct calls remain expressions. No summary, tensor-count proxy, or
+reconciliation consumer is added because the positive-only owner counter
+already covers every mutation.
+
+The preceding channel-slice/pad-Mul orchestration has two ordered child
+results. The channel-slice child declares three rewrite counters and the
+pad-Mul child declares one. All four underlying rewrite owners prune only after
+a positive counter, so strict characterization requires ordered tuple
+propagation and a fixed four-key summary without a tensor-count proxy. Only the
+direct terminal invocation should stage results and summary; the callback used
+inside terminal slice recovery remains behaviorally unchanged.
+
+The orchestration runner and lowerer delegate now return the ordered pair, and
+`summarize_channel_slice_pad_mul_mutations()` validates exactly two results
+before extracting only the four declared counters. Production stages
+`channel_slice_pad_mul_results` and
+`_pre_terminal_channel_slice_pad_mul_stats` at the direct terminal call. The
+terminal-slice callback still ignores the returned pair, and no reconciliation
+consumer or tensor-count proxy is added.
+
+The preceding composite pre-ADD owner has one direct production call, but it
+unconditionally prunes unused tensors even when its rewrite counter is zero.
+Its raw dictionary is therefore insufficient mutation evidence. Strict
+characterization requires a starting tensor count followed by a dictionary
+containing the unchanged owner counter and clamped net
+`pruned_unused_tensors`, between terminal affine recovery and the staged
+channel-slice results.
+
+The direct call now records `pre_terminal_pre_add_tensor_count` and builds
+`_pre_terminal_pre_add_stats` from the unchanged owner result plus clamped net
+tensor reduction. This exposes zero-rewrite pruning without changing the
+owner's unconditional cleanup. The three orchestration-owned occurrences and
+all downstream reconciliation decisions remain unchanged.
+
+Immediately before the pre-ADD count, the first of two terminal affine recovery
+calls still discards its ordered eleven-result tuple. The existing fixed
+twelve-key summary and cluster-wide net-prune accounting already provide the
+complete contract. Strict characterization requires distinct
+`pre_terminal_affine_tensor_count`, `pre_terminal_affine_results`, and
+`_pre_terminal_affine_stats` assignments while preserving the independently
+staged second occurrence.
+
+The first recovery now stages those three assignments and reuses
+`summarize_terminal_affine_concat_split_mutations()` with its own clamped
+tensor-count delta. The second occurrence retains the separate
+`terminal_affine_*` targets. Both summaries remain observation-only and no
+reconciliation branch consumes either result.
+
+Immediately before the first terminal affine count, the indexed dual-statistics
+InstanceNorm residual/add/resize owner has the last of three direct production
+calls. It returns one fixed counter and prunes only after a positive rewrite,
+so its raw result is complete mutation evidence. Strict characterization
+selects only that last direct call for a future
+`_pre_terminal_affine_instancenorm_dualstats_stats` assignment; the earlier
+direct and nested occurrences remain unchanged.
+
+That selected call now assigns its unchanged raw result to
+`_pre_terminal_affine_instancenorm_dualstats_stats`. The first terminal affine
+count follows immediately, and the other three production occurrences retain
+their existing forms. No tensor-count proxy or reconciliation consumer is
+added because the counter already covers every owner mutation.
+
+The immediately preceding indexed InstanceNorm residual/Mul/Concat/Conv owner
+has the same four-occurrence shape: three direct calls and one nested call. Its
+single counter is complete because pruning is positive-only. Strict
+characterization selects only the last direct call, immediately before the
+staged dual-statistics result, for
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`.
+
+That last direct call now assigns its unchanged raw result to the staged target.
+The two earlier direct calls and nested occurrence retain their previous forms,
+and the dual-statistics assignment remains the immediate next owner. No
+tensor-count proxy or reconciliation consumer is introduced.
+
+The preceding indexed InstanceNorm post-transpose bias/add owner has four
+direct production calls plus one nested call. Its single counter is complete
+because pruning is positive-only. Strict characterization selects the third
+direct call, immediately before the staged residual/Mul/Concat result, for
+`_pre_terminal_affine_instancenorm_post_bias_stats`; the absolute-final fourth
+direct call remains an expression.
+
+That third direct call now assigns its unchanged result to the staged target.
+The first direct call retains `_terminal_instancenorm_post_bias_stats`, the
+second retains `_very_late_instancenorm_post_bias_stats`, the nested call
+remains unchanged, and the absolute-final fourth call retains its distinct
+target.
+The staged counter is observation-only, and no tensor-count proxy is required
+because pruning remains positive-only.
+
+The preceding late-binary recovery is already a complete evidence boundary.
+Its aggregate excludes non-mutating iteration metrics, exposes nine fixed
+mutation counters plus clamped net tensor reduction, and its production guard
+reconciles on any positive field. A structural contract connects that guarded
+branch directly to the staged terminal post-bias result, so no duplicate
+summary or counter is needed between them.
+
+The same post-bias owner has a distinct absolute-final fourth direct call after
+boundary-signature sanitization and affine post-ADD cleanup. Its positive-only
+counter remains complete. Strict characterization requires that fourth call to
+assign `_absolute_final_instancenorm_post_bias_stats` immediately before the
+absolute-final normalization/attention pair, while preserving the separately
+staged third call.
+
+That absolute-final call now assigns its unchanged result to
+`_absolute_final_instancenorm_post_bias_stats`. The first direct call retains
+`_terminal_instancenorm_post_bias_stats`, the second retains
+`_very_late_instancenorm_post_bias_stats`, the third retains
+`_pre_terminal_affine_instancenorm_post_bias_stats`, and the fourth therefore
+has an unambiguous observation point of its own. The result is not consumed by
+reconciliation, and pass order, ModelIR/LayoutState forwarding, rewrite guards,
+pruning, and generated artifacts remain unchanged.
+
+Immediately before that result, the absolute-final indexed affine post-ADD
+owner is the third of three direct production calls. Its single counter is
+complete because pruning occurs only after a positive rewrite. Strict
+characterization selects only that third call, after shape-signature
+sanitization and before `_absolute_final_instancenorm_post_bias_stats`, for a
+future `_absolute_final_affine_post_add_stats` assignment. The first
+pre-terminal call retains its existing staged target and the intervening
+very-late call remains an expression.
+
+That absolute-final third call now assigns its unchanged raw result to
+`_absolute_final_affine_post_add_stats`. It remains observation-only and is
+followed directly by `_absolute_final_instancenorm_post_bias_stats`. The first
+call retains `_pre_terminal_affine_post_add_stats`, and the second very-late
+call remains an expression. No tensor-count proxy, reconciliation consumer,
+pass invocation, or graph traversal is added.
+
+The remaining second affine post-ADD call is a separate very-late occurrence
+immediately after unbound-input layout-transpose repair and immediately before
+the Gather/Constant normalization cluster. The same positive-only pruning
+contract makes its raw counter complete. Strict characterization selects only
+that second call for a future `_very_late_affine_post_add_stats` assignment,
+while preserving the already staged first and third calls.
+
+That second call now assigns its unchanged result to
+`_very_late_affine_post_add_stats`. The three direct occurrences therefore have
+distinct pre-terminal, very-late, and absolute-final targets. All remain
+observation-only, and no reconciliation guard, tensor-count proxy, graph scan,
+or pass invocation is added.
+
+The following very-late Gather/Constant normalization runner has four ordered
+child results: Gather-axis cleanup, three constant-input fold counters, two
+redundant-Cast counters, and two normalization-Pad counters. The flatten
+normalization owner prunes unused tensors even when its rewrite counter is
+zero, so the raw tuple alone is incomplete. Strict characterization requires
+tuple propagation, a fixed eight-key mutation summary plus clamped net tensor
+reduction, and distinct lowerer tensor-count/result/summary assignments before
+the final dynamic-Reshape resolution.
+
+The runner now returns its existing four-result tuple. The pure
+`summarize_very_late_gather_constant_normalization_mutations()` helper validates
+that cardinality, extracts only the eight declared mutation counters, and adds
+clamped `pruned_unused_tensors`. The lowerer stages
+`very_late_normalization_tensor_count`,
+`very_late_normalization_results`, and `_very_late_normalization_stats` around
+the cluster. The summary remains observation-only and shares the existing pass
+state; no owner is invoked twice.
+
+The immediately following dynamic-Reshape resolver has one fixed
+`resolved_dynamic_reshape_shapes` counter. It mutates only RESHAPE options,
+shape-tensor metadata/data, and output metadata, increments the counter for
+each changed operator, and performs no pruning or topology removal. Of two
+direct lowerer calls, strict characterization selects only the very-late call
+with `prefer_runtime_inferable_from_onnx_raw=True` for a future
+`_very_late_dynamic_reshape_stats` assignment. The earlier core-cleanup call
+remains unchanged, as do the two already consumed convergence-helper calls.
+
+That selected call now assigns its unchanged raw result to
+`_very_late_dynamic_reshape_stats`. It remains observation-only between
+`_very_late_normalization_stats` and the indexed Conv-input adapter repair.
+The earlier direct expression and both convergence-helper uses are unchanged;
+no summary, tensor-count proxy, or reconciliation consumer is added.
+
+The following indexed Conv-input adapter runner returns two fixed repair
+counters, but both child owners invoke unused-tensor pruning even when their
+counter is zero. Strict characterization therefore requires a starting tensor
+count and a dictionary containing the unchanged two counters plus clamped net
+`pruned_unused_tensors` at the direct very-late call. The independently consumed
+`fallback_conv_input_stats` occurrence remains unchanged.
+
+The direct call now records `very_late_conv_input_tensor_count` and builds
+`_very_late_conv_input_stats` from the unchanged two counters plus clamped net
+tensor reduction. The fallback call and its reconciliation guard remain
+unchanged. The direct summary is observation-only and is followed by the same
+stale channel-shuffle repair.
+
+That following stale NCHW channel-shuffle owner has one production occurrence
+and one fixed repair counter. It changes only Concat axis and associated tensor
+metadata, counts each repair, and performs neither pruning nor topology
+mutation. Strict characterization therefore selects the direct call for a
+future `_very_late_stale_channel_shuffle_stats` assignment without a proxy or
+summary adapter.
+
+The call now assigns its unchanged raw result to
+`_very_late_stale_channel_shuffle_stats`. The result remains observation-only
+between `_very_late_conv_input_stats` and the NCHW
+Concat/Transpose/Conv-axis repair. ModelIR/LayoutState/diagnostics forwarding
+and the single invocation are unchanged.
+
+The following NCHW Concat/Transpose/Conv-axis owner has three production
+occurrences and one fixed repair counter. It changes only Concat options and
+tensor shape metadata, counts each applied plan, and performs neither pruning
+nor topology mutation. Strict characterization selects only the direct
+very-late call for a future
+`_very_late_concat_transpose_conv_axis_stats` assignment; the fallback and
+final result assignments remain unchanged.
+
+That selected call now assigns its unchanged raw result to
+`_very_late_concat_transpose_conv_axis_stats`. It remains observation-only
+between the staged channel-shuffle result and the NCHW
+Concat/global-pool/Conv-axis owner. The fallback and final result assignments
+and their reconciliation guards remain unchanged.
+
+The following NCHW Concat/global-pool/Conv-axis owner has one production
+occurrence and one fixed repair counter. It changes only Concat options and
+tensor metadata, counts each applied plan, and performs neither pruning nor
+topology mutation. Strict characterization therefore selects that call for a
+future `_very_late_concat_global_pool_conv_axis_stats` assignment without a
+proxy or summary.
+
+The call now assigns its unchanged raw result to
+`_very_late_concat_global_pool_conv_axis_stats`. It remains observation-only
+between `_very_late_concat_transpose_conv_axis_stats` and the dynamic rank-one
+Unsqueeze/Reshape-shape rewrite. ModelIR/LayoutState forwarding and the single
+invocation are unchanged.
+
+The following dynamic rank-one Unsqueeze/Reshape-shape owner has three
+production occurrences and one fixed rewrite counter. It counts every
+operator/tensor insertion and metadata-only rewrite and performs no pruning.
+Strict characterization selects only the first very-late direct call for a
+future `_very_late_dynamic_rank1_reshape_stats` assignment while preserving
+the fallback and absolute-final expressions.
+
+That selected call now assigns its unchanged raw result to
+`_very_late_dynamic_rank1_reshape_stats`. It remains observation-only before
+the existing static-shape reconciliation. The fallback and absolute-final calls
+remain expressions, and no proxy, summary, or reconciliation consumer is
+added.
+
+The immediately following reconciliation owner exposes the legacy
+`reconciled_static_tensor_shapes` count, but that key intentionally counts only
+output tensor shape updates. A RESHAPE option or shape-parameter tensor can
+change while the legacy count remains zero. Strict characterization therefore
+preserves that key and requires an opt-in
+`reconciled_static_shape_mutations` key that also covers parameter/option-only
+changes. Only the very-late call requests it and stages
+`_very_late_static_shape_stats`; existing callers retain their exact result
+schema.
+
+The reconciliation owner now counts all writes while performing its existing
+fixed-point walk. The opt-in total includes output shape updates, operator
+options, constant shape parameters, and direct tensor metadata. It adds no
+fingerprint or graph traversal. Default callers still receive only
+`reconciled_static_tensor_shapes`; the selected very-late call passes
+`include_mutation_count=True` and stages `_very_late_static_shape_stats` with
+both keys.
+
+The absolute-final consecutive-Reshape owner exposes three counters covering
+no-op removal, single-consumer chain removal, and fan-out bypass. Every graph
+rewrite increments at least one of those counters, and unused-tensor pruning
+plus optional layout-state synchronization occur only after a positive rewrite.
+Strict characterization therefore preserves the existing three-counter guard
+and requires a stable two-key `_final_consecutive_reshape_static_shape_stats`
+value that receives the opt-in complete reconciliation result only inside that
+guard. The following final SiNet owner remains adjacent and no sort or scan is
+added.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary only after the unchanged aggregate
+guard succeeds. The runner result, duplicate positive fan-out accounting,
+pruning/layout synchronization, and final SiNet boundary are unchanged.
+
+The immediately preceding absolute-final PReLU owner deliberately prunes
+unused tensors on every invocation, including zero-rewrite calls. Its caller
+already samples the tensor-table size and reconciles after either a positive
+rewrite counter or a net tensor reduction. Strict characterization preserves
+that complete guard and requires a stable two-key
+`_final_prelu_static_shape_stats` value that receives the opt-in complete
+reconciliation result only inside the guard. The following consecutive-Reshape
+owner remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary only after the unchanged rewrite-or-
+tensor-reduction guard succeeds. The unconditional owner prune, tensor-count
+sample, raw result, and consecutive-Reshape boundary are unchanged.
+
+The preceding final SiNet-shuffle plus SE/FC/Gather aggregate has three exact
+rewrite counters. SiNet-shuffle prunes only after a positive rewrite, while the
+SE/FC and Gather children can preserve legacy zero-rewrite pruning when their
+candidate callbacks run. The existing aggregate-level tensor-count sample
+captures those cleanup-only ModelIR changes. Strict characterization preserves
+the counter-or-net-reduction guard and requires a stable two-key
+`_final_se_fc_gather_static_shape_stats` value receiving the opt-in complete
+reconciliation result only inside that guard. This mirrors the already-complete
+recursive-fallback boundary and keeps final PReLU adjacent.
+
+The primary caller now initializes that symmetric stable result and replaces it
+with the opt-in complete reconciliation dictionary only after the unchanged
+counter-or-tensor-reduction guard succeeds. No child invocation, pruning,
+layout synchronization, scan, or fallback behavior changes.
+
+The preceding final placeholder-MatMul block performs one reconciliation after
+a positive restore and a conditional second reconciliation after exact or
+singleton binary repair, cleanup-only tensor deletion, or a legacy output-shape
+change from the first reconciliation. A complete first result cannot be passed
+directly to the existing generic positive-count guard because its new
+parameter-only key would broaden the second-scan condition. Strict
+characterization therefore requires two stable complete results while
+projecting only `reconciled_static_tensor_shapes` into the unchanged legacy
+guard input. Both existing reconciliation calls opt into complete evidence; no
+scan is added and the final SE/FC/Gather boundary stays adjacent.
+
+The primary caller now initializes both stable results. After a positive
+restore, it stores the complete first result and builds the one-key legacy guard
+input from that in-memory dictionary. The unchanged inner guard stores the
+complete second result when it already reconciles. No complete-only key can
+trigger the second scan.
+
+The preceding final mixed-singleton Concat owner counts every successfully
+applied adapter/rewire plan and performs pruning plus optional layout-state sync
+only after a positive count. All zero-result paths are true ModelIR no-ops.
+Strict characterization preserves its single-counter guard and requires a
+stable two-key `_final_mixed_singleton_concat_static_shape_stats` value that
+receives the opt-in complete reconciliation result only inside that guard. The
+following placeholder-MatMul block remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary only after the unchanged exact
+counter guard succeeds. No owner, scan, pruning, layout synchronization, or
+placeholder boundary changes.
+
+The preceding final rank-four channelwise broadcast owner counts every
+in-place constant rotation and shared-constant clone/rewire, performs no prune,
+and has no counter-zero ModelIR mutation. Strict characterization preserves its
+single-counter guard and the existing reconciliation→topological-sort→layout-
+inference order while requiring a stable two-key
+`_final_broadcast_static_shape_stats` result. The following mixed-singleton
+Concat owner remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary as the unchanged first statement of
+the positive guard. Topological sort and layout inference retain their exact
+positions, and no scan is added.
+
+The preceding final ConvInteger owner can propagate channel-last provenance as
+a self-contained metadata/layout update without structurally repairing a
+Transpose. The existing follow-up guard intentionally uses only
+`repaired_channel_last_convinteger_input_transposes`, which counts every input
+rewire, Transpose removal, associated tensor metadata update, prune, and layout
+sync requiring reconciliation/sort/inference. Strict characterization keeps
+the provenance counter outside that guard and requires stable two-key
+`_final_convinteger_static_shape_stats` evidence only for the existing
+repair-positive path. The following InstanceNorm owner remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary as the unchanged first statement of
+the structural-repair guard. Hint-only propagation still does not enter the
+guard, and sort/layout inference retain their positions.
+
+The immediately preceding dynamic rank-one Unsqueeze/Reshape-shape owner has
+three production occurrences and one exact rewrite counter covering both
+shape-parameter-only updates and inserted runtime SHAPE/CONCAT pipelines. It
+does not prune. Very-late and recursive-fallback results are already retained;
+strict characterization selects only the absolute-final direct expression for
+an `_absolute_final_dynamic_rank1_stats` assignment while preserving the
+following unconditional sort, layout inference, and ConvInteger boundary.
+
+The absolute-final call now assigns its unchanged raw dictionary to that target.
+The other two occurrences, all owner behavior, and the unconditional following
+operations are unchanged; no guard, reconciliation, or traversal is added.
+
+The immediately preceding absolute-final normalization/attention pair is a
+two-pass recovery orchestration over one shared pass-state scope. Both owners
+return stable mutation dictionaries and the common recovery runner returns
+them as an ordered tuple. The pair-specific runner and lowerer helper now return
+that tuple, and the primary caller retains it as
+`_absolute_final_normalization_attention_results`. The adjacent post-bias and
+dynamic-rank-one assignments remain fixed; no summarizer, guard,
+reconciliation, or traversal is added.
+
+Immediately before the absolute-final affine and normalization sequence, the
+boundary-signature restore runs dynamic-map realignment followed by static
+signature sanitization. The owners return, respectively, one exact mutation
+counter and a four-counter repair/preservation dictionary. The absolute-final
+caller now retains them as `_absolute_final_boundary_signature_stats` and
+`_absolute_final_static_signature_stats`, matching the already retained other
+production occurrences. Their adjacency and the following affine owner are
+unchanged; no guard, reconciliation, scan, or traversal is added.
+
+In the no-layout fallback only, the immediately preceding guarded final
+cleanup reruns SE/FC layout propagation and strict constant affine pre/post
+folding after an unconditional topological sort, then sorts again. Both owners
+return stable one-counter dictionaries. This guarded occurrence now retains
+them as `_no_layout_final_se_fc_stats` and
+`_no_layout_final_affine_prepost_stats`. The guard, callback contracts,
+surrounding sorts, and signature-restore boundary are unchanged; no guard-
+external initialization or consumption is added.
+
+Before the post-progress topological sort, the primary final precision sequence
+rewrites safe constant divisors to reciprocal multiplication, folds consecutive
+constant multiplications, then restores divisions on precision-sensitive
+integer-cast lineages. Each owner returns a stable one-counter dictionary. The
+primary caller now retains them as `_final_precision_div_rewrite_stats`,
+`_final_precision_consecutive_mul_stats`, and
+`_final_precision_div_restore_stats`. Earlier core-cleanup and recursive-
+fallback calls and the following progress/sort boundary are unchanged.
+
+The recursive safety fallback runs the same precision trio over `fallback_ir`
+after its placeholder-MatMul reconciliation and topological sort, but without a
+layout-state handoff; only the consecutive-Mul runner receives shared
+diagnostics. The fallback retains the results as
+`_fallback_precision_div_rewrite_stats`,
+`_fallback_precision_consecutive_mul_stats`, and
+`_fallback_precision_div_restore_stats`. Its exact callback contracts and the
+following unbound-input repair boundary are unchanged.
+
+The remaining earlier consecutive-Mul cleanup runs in the primary core-cleanup
+phase after pseudo-LeakyReLU and YOLO-decode rewrites and before terminal
+Transpose/Dequantize sanitization. It uses the same layout state, diagnostics,
+and stable one-counter schema as the primary-final occurrence. Its result is
+now retained as `_core_cleanup_consecutive_mul_stats`, so all three production
+occurrences of the owner retain mutation evidence. Both adjacent cleanup
+boundaries remain unchanged.
+
+The two immediately preceding core-cleanup owners fuse guarded pseudo-LeakyReLU
+subgraphs and fold YOLO decode `Mul(x,x)` plus anchor multiplication. Each has a
+single direct lowerer occurrence and returns a stable one-counter dictionary.
+The caller now retains them as `_core_cleanup_pseudo_leakyrelu_stats` and
+`_core_cleanup_yolo_decode_stats`. The core-progress boundary, their exact
+order, and the captured consecutive-Mul successor are unchanged.
+
+Terminal quantization cleanup appears as two ordered pairs: once in core
+cleanup and once after late recovery sweeps. Each pair normalizes terminal
+Transpose/Dequantize boundaries, then transactionally removes exact-grid
+terminal Quantize/Dequantize pairs before Conv-affine folding. The sanitizer
+returns two counters and the runner one. The core and terminal callers retain
+all four dictionaries under phase-specific targets. Both occurrence pairs,
+their shared callback contracts, distinct preceding boundaries, and Conv-
+affine successors are unchanged.
+
+Each terminal quantization pair is followed by Conv MUL/ADD affine folding and
+Conv/binary activation fusion. The affine owner returns four counters and has a
+third later occurrence; activation fusion returns seven counters and occurs
+only in these two pairs. The first two affine calls and both activation calls
+retain their raw dictionaries under core-cleanup and terminal-cleanup targets.
+Their phase-specific Q/DQ predecessors and distinct successors are fixed, while
+the third affine occurrence remains unchanged for a separate audit.
+
+The remaining affine occurrence uses the same four-counter owner and exact
+Conv-ADD/layout-state contract. It retains its raw dictionary under a late
+cost-volume-specific target immediately after the shared NDHWC-gate/cost-volume
+state scope and immediately before construction of the late Concat layout-state
+scope. Both boundaries remain fixed.
+
+The late Concat state scope is consumed in order by axis-3 constant-Concat,
+Dequantize/Concat/Quantize, LayerNorm-statistics, and generic Transpose-cleanup
+runners. Their stable one-, one-, two-, and five-counter dictionaries are
+retained under cluster-specific targets. The shared state scope, callback
+contracts, following optimize-layout guard, and the two other lowerer
+Transpose-cleanup occurrences remain unchanged.
+
+The elementwise NHWC→NCHW fanout roundtrip owner returns one rewrite counter and
+has two production occurrences under the same layout-optimization guard. The
+first follows the captured late Concat cleanup dictionary; the second precedes
+terminal singleton-MaxPool/Reshape orchestration. Both results are retained
+under distinct phase targets inside their original guards. The model-only
+callback contract and all four outer boundaries remain fixed.
+
+The next adjacent ExpandDims and flatten-HW Transpose/Reshape compatibility
+owners each return one rewrite counter, each has one production occurrence,
+and both receive the live Session LayoutState. Their results are retained under
+distinct late-layout targets. Their order between the captured late-Concat
+fanout guard and the following NHWC-Reshape owner remains fixed.
+
+The immediately following private rank-three layout-shim collapse owner returns
+one rewrite counter, accepts only ModelIR, and has one direct production
+occurrence. Its result is retained under a late NHWC-Reshape target between the
+captured flatten-HW dictionary and the channel-shuffle/Gather cluster with both
+optional shuffle families disabled. The model-only callback and boundaries are
+unchanged.
+
+The following channel-shuffle/Gather orchestrator selects two through seven
+transactional child passes and internally receives their ordered result tuple.
+The public runner and local helper propagate that typed tuple unchanged. The
+guarded full-post and unguarded late-base production invocations retain it under
+phase-specific targets without aggregation. Policy selection, ordering, shared
+scope, and boundaries remain unchanged.
+
+The following attention-QKV Reshape/Transpose compatibility owner returns one
+rewrite counter, has one direct production occurrence, and receives the live
+Session LayoutState. Its result is retained as
+`_late_attention_qkv_reshape_stats` between the captured base-only
+channel-shuffle/Gather tuple and attention Gather/Transpose/Reshape cleanup.
+The value has no consumer, so result retention adds no graph work or policy.
+
+The immediately following attention Gather/Transpose/Reshape cleanup owner
+returns two pattern-specific rewrite counters, accepts only the ModelIR, and has
+one direct late production call in addition to its recovery-runner selection.
+The direct result is retained as `_late_attention_gather_cleanup_stats` between
+the captured QKV dictionary and the live-LayoutState Gather-axis0 compatibility
+owner. The retained value has no consumer, and the recovery-runner path remains
+unchanged.
+
+The following Gather-axis0 singleton-to-Reshape compatibility owner returns one
+rewrite counter and receives the live Session LayoutState. It is selected by
+the recovery runner and has one additional direct late production call whose
+result is retained as `_late_gather_axis0_reshape_stats`. The target remains
+between the captured attention-cleanup dictionary and the model-only attention
+preprojection rank-lift owner. The retained value has no consumer, and the
+recovery-runner path is unchanged.
+
+The following attention-preprojection Reshape-to-BatchMatMul rank-lift owner
+returns one rewrite counter, accepts only the ModelIR, and is selected by the
+recovery runner in addition to one direct late production call. The direct
+result is retained as `_late_attention_preproj_ranklift_stats` between the
+captured Gather-axis0 dictionary and the live-LayoutState window-partition
+owner. The retained value has no consumer, and the recovery-runner path remains
+unchanged.
+
+The following window-partition Reshape/Transpose-to-SpaceToDepth indexed owner
+returns one rewrite counter and receives the live Session LayoutState. It is
+selected by the recovery runner and has one additional direct late production
+call whose result is retained as `_late_window_partition_stats`. The target
+remains between the captured attention-preprojection dictionary and the window-
+reverse owner. The retained value has no consumer, and the recovery-runner path
+is unchanged.
+
+The adjacent window-reverse Reshape/Transpose-to-DepthToSpace indexed owner
+also returns one rewrite counter, receives the live Session LayoutState, and is
+selected by the recovery runner in addition to one direct late production
+call. The direct result is retained as `_late_window_reverse_stats` between the
+captured window-partition dictionary and indexed final shape/activation
+convergence. The retained value has no consumer, and the recovery-runner path
+remains unchanged.
+
+The following indexed final shape/activation convergence runner returns its
+existing aggregate mutation dictionary and receives the live Session
+LayoutState. Its sole production result is retained as
+`_late_final_shape_activation_convergence_stats` between the captured window-
+reverse dictionary and final boundary-input normalization with shared
+LayoutState and diagnostics. The value has no consumer and adds no graph work.
+
+`run_boundary_input_normalization_cleanup()` has two production occurrences
+and returns one rewrite counter. The final occurrence follows indexed final
+convergence and retains its result as
+`_final_boundary_input_normalization_stats`; the earlier occurrence retains the
+same schema as `_terminal_boundary_input_normalization_stats` between terminal
+Softmax/Transpose cleanup and boundary-input Transpose/channel-slice rewriting.
+Both values have no consumer, and both invocations preserve the shared live
+LayoutState and diagnostics arguments.
+
+The immediately following boundary-input Transpose/channel-slice owner returns
+four mutation counters and has one production call with the live Session
+LayoutState. Its result is retained as
+`_terminal_boundary_input_channel_slice_stats` between captured terminal
+boundary-input normalization and the first internal Transpose/channel-slice
+propagation call. The retained value has no consumer.
+
+The internal Transpose/channel-slice propagation owner also returns four
+mutation counters and has two production calls. The first receives the live
+Session LayoutState and retains its result as
+`_terminal_internal_channel_slice_stats` between the captured boundary-input
+channel-slice dictionary and the first Transpose/channel-slice MulAdd bridge.
+The retained value has no consumer. The later model-only occurrence retains
+the same schema as `_final_internal_channel_slice_stats` between captured final
+boundary-input normalization and the later model-only MulAdd bridge. Neither
+retained value has a consumer.
+
+The following Transpose/channel-slice MulAdd-bridge owner returns one mutation
+counter and likewise has two production calls. The first receives the live
+Session LayoutState and retains its result as
+`_terminal_channel_slice_muladd_bridge_stats` between captured terminal
+internal channel-slice propagation and the first terminal slice/Concat
+recovery sequence. The later model-only call retains its result as
+`_final_channel_slice_muladd_bridge_stats` between captured final internal
+channel-slice propagation and the later recovery sequence. Neither retained
+value has a consumer.
+
+The sole boundary-input Transpose/StridedSlice/QDQ/Concat production call
+returns four mutation counters and receives the live Session LayoutState. Its
+result is retained as `_terminal_boundary_stridedslice_qdq_concat_stats`
+between the first terminal slice/Concat recovery sequence and the model-only
+Swish-residual closure. The retained value has no consumer.
+
+The immediately following model-only Swish-residual-closure owner returns four
+mutation counters and has one production call. Its result is retained as
+`_terminal_swish_residual_concat_closure_stats` between the
+captured boundary StridedSlice/QDQ/Concat dictionary and the model-only
+dequant-logistic-Mul-quantize bridge. The retained value has no consumer.
+
+The immediately following dequant-logistic-Mul-quantize indexed owner returns
+one mutation counter and has one model-only production call. Its result is
+retained as `_terminal_dequant_logistic_mul_quantize_bridge_stats` between the
+captured Swish-residual-closure dictionary and the model-only Swish-QDQ-island
+owner. The retained value has no consumer.
+
+The immediately following model-only Swish-QDQ-island owner returns five
+mutation counters and has one production call using its default options. Its
+result is retained as `_terminal_swish_qdq_island_stats` between the captured
+dequant-logistic bridge dictionary and the live-LayoutState InstanceNorm post-
+Transpose bias owner. The retained value has no consumer.
+
+The following indexed InstanceNorm post-Transpose bias/add owner has four
+direct production calls plus one nested convergence call. Its one-key result
+is retained by all four direct calls. The first assigns
+`_terminal_instancenorm_post_bias_stats` after
+`_terminal_swish_qdq_island_stats`; the second assigns
+`_very_late_instancenorm_post_bias_stats` in the very-late block between
+diagnostics-aware pad-layout cleanup and the live-LayoutState
+residual/Mul/Concat owner; and the two existing later targets remain distinct.
+The nested convergence call and the following diagnostics-aware normalization-
+pad cleanup boundary are unchanged.
+
+The immediately following indexed InstanceNorm residual/Mul/Concat/Conv owner
+has three direct production calls plus one nested convergence call. Its fixed
+one-counter result is complete mutation evidence because pruning occurs only
+after a positive rewrite. The first terminal direct call remains raw, the
+second is retained as
+`_very_late_instancenorm_residual_mul_concat_stats`, the third is retained as
+`_pre_terminal_affine_instancenorm_residual_mul_concat_stats`, and the nested
+call consumes its counter through the convergence guard.
+
+The second direct call now assigns its unchanged result to that very-late
+target. The captured `_very_late_instancenorm_post_bias_stats` predecessor and
+following live-LayoutState dual-statistics InstanceNorm owner remain adjacent,
+and the first, third, and nested occurrence contracts are unchanged.
+
+The first direct occurrence now retains the terminal result as
+`_terminal_instancenorm_residual_mul_concat_stats` between the live-LayoutState
+residual/add-to-single-adapter and dual-statistics owners. The one-key positive-
+only mutation contract, retained very-late and pre-terminal targets, and graph-
+indexed nested convergence call remain fixed.
+
+That following indexed dual-statistics InstanceNorm residual/add/resize owner
+also has three direct production calls plus one nested convergence call. Its
+fixed one-counter result is complete mutation evidence because pruning and
+LayoutState synchronization occur only after a positive rewrite. The first
+terminal direct call remains raw, the second is retained as
+`_very_late_instancenorm_dualstats_stats`, the third is retained as
+`_pre_terminal_affine_instancenorm_dualstats_stats`, and the nested call
+consumes its counter through the shared convergence guard.
+
+The second direct call now assigns its unchanged result to that very-late
+target. The captured very-late residual/Mul/Concat predecessor and following
+singleton consecutive-Reshape cluster remain adjacent, and the first, third,
+and nested occurrence contracts are unchanged.
+
+The first direct dual-statistics occurrence now retains the terminal result as
+`_terminal_instancenorm_dualstats_stats` between
+`_terminal_instancenorm_residual_mul_concat_stats` and the terminal boundary
+cluster. The one-key positive-only mutation contract, retained very-late/pre-
+terminal targets, and graph-indexed nested convergence call remain fixed.
+
+That following singleton/consecutive-Reshape cluster returns three ordered,
+pure mutation-count dictionaries for singleton-channel Transpose cleanup,
+duplicate Reshape fan-out cleanup, and consecutive Reshape cleanup. All child
+owners prune only after a positive counter. The private runner has three
+production occurrences: the first model-level call retains its tuple as
+`_very_late_singleton_consecutive_reshape_results`, the second model-level call
+destructures all three dictionaries for the shared reconciliation guard, and
+the conditional fallback call remains raw.
+
+The captured very-late dual-statistics predecessor, following optional layout-
+transpose cleanup branch, later destructuring assignment, and fallback
+expression remain fixed. The retained tuple has no consumer and introduces no
+graph work.
+
+The QKV attention helper already returns an ordered tuple selected from layout-
+transpose, prefix, and bridge child policies. Three direct production calls
+exist. The late call is already retained as `late_qkv_results` and summarized
+with an explicit net tensor-pruning delta; the two earlier default-policy calls
+after the captured terminal and post-SiNet adj-flags dictionaries are raw.
+
+The two default-policy calls retain `_terminal_qkv_attention_results` and
+`_post_sinet_qkv_attention_results` with empty arguments and keywords. Both
+adj-flags predecessors, their distinct successors, the total three-call count,
+and the existing late policy/summary consumer remain fixed. The two new tuples
+are observation-only and do not replace the complete late summary.
+
+The immediately following guarded `run_layout_transpose_cleanup()` occurrence
+returns `iterations` plus four rewrite counters. Those counters are useful
+observability but are not complete mutation evidence: the low-level owner
+prunes unused tensors unconditionally, including a zero-rewrite path, and the
+result has no prune delta. Three direct lowerer occurrences exist; the earlier
+layout block remains a guarded raw expression, while the late-Concat occurrence
+retains its result with a shared state scope and the very-late guarded call now
+retains `_very_late_layout_transpose_cleanup_stats`.
+
+The `optimize_layout_transpose_chains` guard, captured singleton/consecutive
+tuple predecessor, broadcast-constant repair successor, and other occurrence
+forms remain fixed. The incomplete very-late result is observation-only and
+has no reconciliation consumer.
+
+The immediately following rank-four channelwise broadcast-constant repair
+returns one complete rewrite counter. Each count corresponds to a constant
+data/shape update or a shared-constant clone plus indexed input rewire, and the
+owner has no cleanup-only mutation. Four production occurrences exist: indexed
+binary convergence consumes one result at module scope; within
+`lower_onnx_to_ir`, the very-late direct call now retains
+`_very_late_broadcast_repair_stats`, and the fallback and final calls retain
+their results for existing positive guards.
+
+The guarded layout-Transpose predecessor, immediate static-shape
+reconciliation successor, other three occurrence forms, and one-key schema
+remain fixed. The new very-late target is observation-only and changes no
+existing guard.
+
+The immediate static-shape reconciliation remains unconditional because it
+must cover every preceding owner, including the layout-Transpose cleanup whose
+result omits prune-only mutation. Its default one-key result counts only tensor
+shape updates and is not complete evidence. The reconciler's existing opt-in
+`reconciled_static_shape_mutations` counter additionally covers parameter,
+operator-option, and tensor-metadata writes without another graph traversal.
+
+The unconditional call now requests `include_mutation_count=True` and retains
+`_very_late_broadcast_static_shape_stats`. The captured broadcast-repair
+predecessor and following tensor-count boundary remain fixed. No new guard or
+consumer is introduced.
+
+The later shared-late reconciliation is already guarded by nine pure mutation-
+count dictionaries plus a tensor-count decrease that covers prune-only paths.
+Runtime fixtures independently prove that every positive dictionary and the
+prune delta add exactly one reconciliation over the all-zero/no-prune path.
+Its execution predicate is therefore complete and must remain unchanged.
+
+The call inside that existing guard now retains
+`_shared_late_static_shape_stats` with `include_mutation_count=True`. All nine
+evidence names, the tensor-count clause, following late-binary tensor-count
+boundary, and the absence of a new consumer remain fixed.
+
+The next late-binary reconciliation is also already guarded by complete
+evidence: static-signature sanitization, rank-four binary adapter insertion,
+singleton broadcast repair, and a tensor-count decrease that covers prune-only
+cleanup. Its runtime fixture independently exercises every counter and the
+prune path while preserving the all-zero skip.
+
+That predicate remains unchanged, and its body now retains
+`_late_binary_repair_static_shape_stats` with
+`include_mutation_count=True`. The following optional late-binary layout-
+recovery guard remains fixed, and the result has no consumer.
+
+The following optional late-binary layout-recovery runner already returns a
+complete aggregate that excludes iteration metrics and includes clamped net
+tensor reduction. Its nested positive-count guard is covered by runtime rewrite,
+prune, and stable outcomes and must remain unchanged.
+
+The reconciliation inside that nested guard now retains
+`_late_binary_layout_recovery_static_shape_stats` with
+`include_mutation_count=True`. The surrounding option guard, recovery target,
+positive predicate, and following terminal evidence boundary remain fixed.
+
+The terminal Softmax/Transpose-after-NHWC-propagation indexed owner returns one
+rewrite counter, receives the live Session LayoutState, and has one production
+occurrence whose result is retained as `_terminal_softmax_transpose_stats`
+between the diagnostics-aware Gather-channel-fanout runner and captured
+terminal boundary-input normalization. The retained value has no consumer.
+
+The immediately preceding diagnostics-aware Gather-channel-fanout runner
+returns one rewrite counter. Its callback is also selected by two existing
+orchestrators, while its sole direct production result is retained as
+`_terminal_transpose_gather_channel_fanout_stats` between the live-LayoutState
+ArgMax owner and captured terminal Softmax dictionary. The retained value has
+no consumer, and orchestrated selections are unchanged.
+
+The preceding terminal ArgMax owner returns the one-counter dictionary
+`optimized_transpose_pre_argmax_nhwc_terminal_chains` from its sole production
+call. That direct result is retained as `_terminal_pre_argmax_stats` between
+captured terminal Conv-activation cleanup and captured Gather-channel-fanout
+cleanup. The retained value has no consumer, and the live Session LayoutState
+input is unchanged.
+
+The preceding final decomposed-InstanceNorm owner prevalidates every constant
+and tensor-shape plan, counts each candidate only after at least one planned
+write is applied, performs no pruning or topology mutation, and synchronizes
+layout only after a positive count. Strict characterization preserves its
+single-counter guard and reconciliation→sort→layout-inference order while
+requiring stable two-key `_final_instancenorm_static_shape_stats` evidence. The
+following broadcast owner remains adjacent.
+
+The primary caller now initializes that stable result and replaces it with the
+opt-in complete reconciliation dictionary as the unchanged first statement of
+the positive guard. The following sort and layout inference remain in place,
+and no scan is added.
+
+The terminal InstanceNorm residual-add-to-single-post-adapter owner returns the
+fixed one-counter dictionary
+`optimized_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains`.
+It prunes unused tensors and synchronizes the live LayoutState only after a
+positive rewrite, so that counter is complete mutation evidence for the owner.
+
+Two production occurrences exist. Indexed binary-layout convergence consumes
+the first result with `residual_graph_index`; the terminal direct call after
+diagnostics-aware normalization/pad cleanup now retains its unchanged result as
+`_terminal_instancenorm_residual_add_stats`. The contract fixes the live
+LayoutState argument, retained terminal residual/Mul/Concat successor, and the
+single graph-indexed nested occurrence. This is an assignment-only
+orchestration change with no consumer or additional graph work.
+
+The diagnostics-aware normalization/pad aggregate returns the fixed two-key
+schema for decomposed InstanceNorm/Pad and flattened global-norm/Pad rewrites.
+Both child owners prune unused tensors unconditionally after candidate
+processing, while their counters report rewrites only. The aggregate is
+therefore stable observation data but is not complete evidence for cleanup-only
+mutation and must not be used by itself as a guard.
+
+Within `lower_onnx_to_ir`, one loop-local result is consumed by convergence and
+one terminal direct result after `_terminal_instancenorm_post_bias_stats`
+is retained as `_terminal_normalization_pad_stats`. Two additional recovery
+orchestrators select the same callback with flatten-only options and shared
+pass-state scope. The contract preserves the loop-local consumer, orchestrated
+selections, live LayoutState, diagnostics sink, and following captured
+residual-add result. The retained dictionary remains observation-only and adds
+no graph work.
+
+The terminal boundary-layout orchestrator executes five ordered child runners
+through one shared pass-state scope. `run_recovery_invocations()` already
+returns their ordered result tuple. `run_terminal_boundary_layout()` and the
+local `_run_terminal_boundary_layout_pass_cluster()` helper now transparently
+return that tuple to the sole primary call.
+
+The primary result is retained as `_terminal_boundary_layout_results` between
+the captured terminal dual-statistics result and the optional terminal mean/
+attention guard. Result propagation executes each child exactly once,
+preserves the existing tuple order and shared scope, adds no consumer, and
+leaves all mutation semantics unchanged.
+
+The mean/attention orchestrator selects five to seven ordered child runners
+from the independent LayerNorm and Conv-attention policy flags. The generic
+recovery runner already creates the matching ordered result tuple, but
+`run_mean_attention()` and the local
+`_run_mean_attention_layout_pass_cluster()` helper now transparently return it.
+
+The helper has two direct primary calls: the first enables LayerNorm and keeps
+Conv-attention enabled, while the guarded terminal call disables
+Conv-attention and keeps LayerNorm disabled. Two recovery contexts also retain
+the helper as an argument-free callback and accept an arbitrary return value
+without branching on it. The direct calls retain distinct
+`_layout_pass_set_1_mean_attention_results` and
+`_terminal_mean_attention_results` tuples. All four policy matrices, callback
+references, shared scope, option guards, and adjacent calls remain fixed.
+
+The BatchMatMul affine-transpose-input owner returns the fixed one-counter
+`optimized_batchmatmul_affine_transpose_input_chains` dictionary. It rewrites
+both affine inputs and `adjY` together, then prunes unused tensors
+unconditionally. Its counter is therefore stable observation data but is not
+complete evidence for cleanup-only pruning and must not guard later work.
+
+Two direct production calls retain distinct results. The guarded terminal
+occurrence follows `_terminal_mean_attention_results` and retains
+`_terminal_batchmatmul_affine_input_stats`; the post-SiNet occurrence follows
+SA/PA MirrorPad propagation and retains
+`_post_sinet_batchmatmul_affine_input_stats`. Both precede the BatchMatMul
+reshape/SE owner. Retention is assignment-only and observation-only and adds no
+graph traversal or consumer.
+
+The adjacent BatchMatMul reshape/SE owner returns the fixed one-counter
+`optimized_batchmatmul_reshape_se_nhwc_chains` dictionary. It converts the
+matched BATCH_MATMUL/RESHAPE/SE island atomically, then unconditionally prunes
+unused tensors. Its rewrite counter is not complete evidence for cleanup-only
+pruning and remains observation-only.
+
+Two direct occurrences follow the captured terminal and post-SiNet affine-input
+results and retain `_terminal_batchmatmul_reshape_se_stats` and
+`_post_sinet_batchmatmul_reshape_se_stats`, respectively. Both precede the same
+adj-flags owner. The retained values have no guard or consumer and add no graph
+traversal.
+
+The following BatchMatMul transpose-input-to-adj-flags owner returns the fixed
+one-counter `optimized_batchmatmul_transpose_input_to_adj_flags` dictionary.
+Each count follows the complete input rewrite or singleton-preserving RESHAPE
+conversion plus the corresponding `adjX`/`adjY` toggle. Unused tensors are
+pruned only after a positive rewrite, so the counter is complete owner mutation
+evidence.
+
+Two direct occurrences follow the captured terminal and post-SiNet reshape/SE
+results and retain `_terminal_batchmatmul_adj_flags_stats` and
+`_post_sinet_batchmatmul_adj_flags_stats`, respectively. Both precede QKV
+attention clusters. The dictionaries have no consumer or new guard and add no
+graph work.
+
+The following Singleton/Reshape orchestrator selects seven to ten child
+runners from four independent policy flags and executes them through one
+shared pass-state scope. `run_recovery_invocations()` already returns the
+selected results in pass-ID order, but `run_singleton_reshape()` and the local
+helper currently discard that tuple.
+
+There are two direct primary calls. The guarded terminal call follows
+`_terminal_qkv_split_conv_concat_bridge_stats`, enables layout-transpose and
+multi-branch-gate cleanup, and is the last statement in the layout-option
+guard. The later top-level call follows terminal SiNet pre-add/resize recovery,
+enables duplicate-fanout cleanup, disables spatial-Concat post-transpose
+cleanup, and precedes indexed shape convergence.
+
+Strict characterization selects `_terminal_singleton_reshape_results` and
+`_post_terminal_singleton_reshape_results` as distinct retention targets. It
+fixes all sixteen policy combinations, result order, the two exact call
+policies, shared scope, direct-call count, and both surrounding boundaries.
+The intended propagation is observation-only: it must not add a result
+consumer, guard, child execution, graph traversal, or TensorFlow import path.
+
+`run_singleton_reshape()` and the local helper now transparently return the
+existing policy-selected tuple. The guarded terminal call retains it as
+`_terminal_singleton_reshape_results`, and the later top-level call retains it
+as `_post_terminal_singleton_reshape_results`.
+
+Both tuples remain unconsumed observation data. Every selected child still
+executes exactly once in the original order through the original shared scope;
+all four policy flags and both surrounding boundaries remain unchanged. The
+retention adds no graph scan, mutation, conditional work, dependency, or
+TensorFlow import path.
+
+The following indexed shape-convergence helper builds or accepts one
+`ModelIRGraphIndex`, then runs dead-operator pruning, static-shape
+reconciliation, and dynamic-Reshape resolution against that shared index. It
+runs a final reconciliation only after one of the three preceding results is
+positive and returns the fixed complete mutation schema
+`removed_dead_operators`, `resolved_dynamic_reshape_shapes`, and
+`reconciled_static_tensor_shapes`.
+
+Two production forms exist. Final shape/activation convergence already retains
+and consumes the indexed result as `convergence_stats` while supplying its own
+graph index. The later top-level call after
+`_post_terminal_singleton_reshape_results` supplies the live Session
+LayoutState, builds its own index, discards the result, and immediately precedes
+very-late SiNet terminal recovery.
+
+Strict characterization selects
+`_post_terminal_indexed_shape_convergence_stats` for only the raw top-level
+form. It fixes the three-key schema, exact two-form count and arguments, nested
+consumer, predecessor, and successor. Retention must not add a result consumer,
+guard, graph traversal, mutation, dependency, or TensorFlow import path.
+
+The top-level call now retains its unchanged complete mutation dictionary as
+`_post_terminal_indexed_shape_convergence_stats`. The nested form remains
+`convergence_stats` and continues to supply later convergence guards and the
+final aggregate.
+
+This is an assignment-only retention change. The helper still creates exactly
+one graph index for the top-level form, reuses it across the same children,
+performs the same conditional final reconciliation, and supplies the same live
+LayoutState. The retained result has no new consumer or guard, and both
+surrounding recovery boundaries remain fixed.
+
+The adjacent SiNet terminal-layout orchestrator executes three fixed children:
+shuffle-residual recovery, the injected pre-add/resize callback, and terminal
+affine/PRELU recovery. The callback deliberately has an arbitrary return type.
+`run_recovery_invocations()` already returns all three results in pass-ID order,
+but `run_sinet_terminal_layout_recovery()` and its local helper currently
+discard that tuple.
+
+There are exactly two direct calls. The first follows terminal clamp/unary/ReLU
+cleanup and precedes HardSwish-SE recovery. The very-late call follows
+`_post_terminal_indexed_shape_convergence_stats` and immediately precedes a
+separate top-level pre-add/resize recovery call. Strict characterization
+selects `_terminal_sinet_layout_recovery_results` and
+`_very_late_sinet_layout_recovery_results` as distinct targets.
+
+The contract fixes all three ordered child results including the injected
+callback result, zero-argument direct calls, exact two-call count, context
+wiring, and both boundary pairs. Propagation must not change the callback,
+execute a child twice, add a result consumer or guard, or introduce graph work,
+dependencies, or a TensorFlow import path.
+
+`run_sinet_terminal_layout_recovery()` and its local helper now transparently
+return the existing `Tuple[Any, ...]`. The first direct call retains
+`_terminal_sinet_layout_recovery_results`; the second retains
+`_very_late_sinet_layout_recovery_results`.
+
+Both tuples remain unconsumed observation data. Each child still executes
+exactly once in the original order, and the middle tuple element is exactly the
+injected pre-add/resize callback result. Context wiring, zero-argument call
+forms, indexed-convergence predecessor, terminal-clamp predecessor, both
+successors, dependencies, diagnostics, and TensorFlow behavior are unchanged.
+
+The injected SiNet pre-add/resize phase itself executes six fixed dictionary-
+returning children: two residual affine repairs followed by four SiNet Resize/
+tail repairs. Four children receive the live LayoutState. The generic recovery
+runner already returns the six dictionaries in pass-ID order, but
+`run_sinet_preadd_resize_recovery()` and its local helper currently discard the
+tuple.
+
+The local helper is the middle callback of both retained terminal-layout tuples
+and also has three zero-argument direct calls. Those direct calls follow the
+terminal dequant bridge, the very-late terminal-layout result, and final static
+shape reconciliation, respectively. Strict characterization selects
+`_terminal_sinet_preadd_resize_results`,
+`_very_late_sinet_preadd_resize_results`, and
+`_post_cleanup_sinet_preadd_resize_results` for only the direct forms.
+
+The contract fixes the ordered six-result `Tuple[Dict[str, int], ...]`, all
+arguments, live LayoutState wiring, callback identity, direct-call count,
+three targets, and all boundary pairs. Propagation must not add a consumer or
+guard, execute a child twice, alter terminal-layout child order, or add graph
+work, dependencies, or a TensorFlow import path.
+
+`run_sinet_preadd_resize_recovery()` and its local helper now transparently
+return the existing ordered six-dictionary tuple. The three direct calls retain
+`_terminal_sinet_preadd_resize_results`,
+`_very_late_sinet_preadd_resize_results`, and
+`_post_cleanup_sinet_preadd_resize_results`.
+
+All three direct tuples remain unconsumed. The same helper remains the middle
+callback of both terminal-layout tuples, which now retain the six-dictionary
+tuple instead of the previously discarded `None`; those outer tuples are also
+unconsumed. Each child still executes exactly once with unchanged arguments and
+LayoutState, and no consumer, guard, scan, dependency, or TensorFlow import path
+was added.
+
+The following CSP-attention wrapper dispatches one indexed owner and returns
+the fixed one-counter dictionary
+`optimized_transpose_csp_attention_nhwc_chains`. The owner rewrites matched
+islands through its graph index, then prunes unused tensors unconditionally and
+synchronizes LayoutState only after a positive rewrite. The counter is therefore
+stable observation data but is not complete evidence for cleanup-only pruning.
+
+There is exactly one production call, after
+`_post_cleanup_sinet_preadd_resize_results` and before SA/PA MirrorPad
+propagation. It receives the live Session LayoutState and no external graph
+index. Strict characterization selects `_post_cleanup_csp_attention_stats` as
+its sole retention target and fixes the wrapper, one-key schema, unconditional
+prune, positive-only layout sync, arguments, and both boundaries.
+
+The retained dictionary must remain observation-only. It must not be used as a
+guard or consumer, and retention must not add graph work, alter owner mutation
+semantics, change the SA/PA successor, add dependencies, or create a TensorFlow
+import path.
+
+The sole production call now retains its unchanged one-counter dictionary as
+`_post_cleanup_csp_attention_stats`. It remains observation-only and has no
+consumer or guard because cleanup-only pruning can occur while the rewrite
+counter is zero.
+
+This is an assignment-only change. The wrapper, indexed owner, unconditional
+prune, positive-only LayoutState synchronization, live Session LayoutState,
+captured SiNet predecessor, SA/PA successor, dependencies, diagnostics, and
+TensorFlow behavior remain unchanged.
+
+The adjacent SA/PA MirrorPad wrapper dispatches an indexed owner with the fixed
+one-counter dictionary
+`optimized_transpose_sa_pa_mirrorpad_nhwc_propagation_chains`. The owner prunes
+unused tensors and synchronizes LayoutState only inside its positive rewrite
+guard. Its counter is therefore complete owner mutation evidence.
+
+The wrapper has two direct primary calls: one inside the layout-option guard
+between pre-add/mean/attention recovery and reduced gate-layout recovery, and
+one after `_post_cleanup_csp_attention_stats` before the captured BatchMatMul
+affine-input result. Attention-gate/QDQ orchestration also selects the owner
+module directly and remains a separate form.
+
+Strict characterization selects `_layout_opt_sa_pa_mirrorpad_stats` and
+`_post_cleanup_sa_pa_mirrorpad_stats` for only the direct forms. It fixes both
+arguments, live LayoutState, result schema, positive-only prune/sync, option
+guard, four boundaries, direct-call count, and the independent orchestration
+selection. Both retained dictionaries must remain unconsumed in this unit so
+retention adds no guard, graph work, dependency, or TensorFlow import path.
+
+The two direct calls now retain their unchanged one-counter dictionaries as
+`_layout_opt_sa_pa_mirrorpad_stats` and
+`_post_cleanup_sa_pa_mirrorpad_stats`. Both remain unconsumed even though their
+counter is complete owner mutation evidence.
+
+These are assignment-only changes. The wrapper, indexed owner, positive-only
+pruning and LayoutState synchronization, live Session LayoutState, layout
+option guard, reduced gate-layout successor, captured CSP predecessor,
+BatchMatMul successor, attention-recovery selection, dependencies, diagnostics,
+and TensorFlow behavior remain unchanged.
+
+The later ReLU/Split all-outputs wrapper dispatches an indexed owner and returns
+the fixed one-counter dictionary
+`optimized_transpose_relu_split_all_outputs_to_nhwc_chains`. The owner counts
+only successful complete plan applications and prunes unused tensors only
+inside its positive rewrite guard, so the counter covers every owner mutation
+path.
+
+There are exactly two direct calls. The post-SiNet call follows
+`_post_sinet_qkv_attention_results`; the terminal call follows late pre-Concat
+recovery. Both receive the live Session LayoutState and immediately precede the
+same ReLU/Split/Conv/Concat owner.
+
+Strict characterization selects `_post_sinet_relu_split_all_outputs_stats` and
+`_terminal_relu_split_all_outputs_stats`. It fixes the two-call count, wrapper,
+one-key schema, positive-only prune, arguments, both predecessors, shared
+successor, and surrounding retained results. Both dictionaries remain
+unconsumed in this unit; retention must add no guard, scan, dependency, or
+TensorFlow import path.
+
+The two direct calls now retain those unchanged one-counter dictionaries as
+`_post_sinet_relu_split_all_outputs_stats` and
+`_terminal_relu_split_all_outputs_stats`. Both remain unconsumed even though
+the counter is complete owner mutation evidence.
+
+These are assignment-only changes. The wrapper, indexed owner, successful-plan
+counting, positive-only unused-tensor pruning, live Session LayoutState,
+post-SiNet QKV and terminal pre-Concat predecessors, shared
+ReLU/Split/Conv/Concat successor, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged.
+
+The adjacent ReLU/Split/Conv/ReLU/Concat post-transpose wrapper dispatches a
+second indexed owner from the same module and returns the fixed one-counter
+dictionary
+`optimized_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains`.
+The owner counts only successful complete plan applications and prunes unused
+tensors only inside its positive rewrite guard, so the counter covers every
+owner mutation path.
+
+There are exactly two direct calls. Each immediately follows one of the newly
+retained ReLU/Split all-output results and receives the live Session
+LayoutState. The post-SiNet call precedes the retained Split/Conv/Concat bridge
+result; the terminal call precedes mixed pre-Concat adapter recovery.
+
+Strict characterization selects `_post_sinet_relu_split_conv_concat_stats` and
+`_terminal_relu_split_conv_concat_stats`. It fixes the two-call count, wrapper,
+one-key schema, positive-only prune, arguments, both captured predecessors,
+both successors, and absence of result consumers. Both dictionaries must
+remain unconsumed in this unit; retention must add no guard, scan, dependency,
+or TensorFlow import path.
+
+The two direct calls now retain those unchanged one-counter dictionaries as
+`_post_sinet_relu_split_conv_concat_stats` and
+`_terminal_relu_split_conv_concat_stats`. Both remain unconsumed even though
+the counter is complete owner mutation evidence.
+
+These are assignment-only changes. The wrapper, indexed owner, successful-plan
+counting, positive-only unused-tensor pruning, live Session LayoutState,
+captured ReLU/Split all-output predecessors, Split/Conv/Concat bridge and mixed
+pre-Concat successors, dependencies, diagnostics, and TensorFlow behavior
+remain unchanged.
+
+The Split/mixed pre-Concat adapter wrapper dispatches its indexed owner and
+returns the fixed one-counter dictionary
+`optimized_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains`.
+The owner counts only successful complete plan applications and prunes unused
+tensors only inside its positive rewrite guard, so the counter covers every
+owner mutation path.
+
+There are exactly two direct wrapper calls: one inside layout recovery pass-set
+2 and one terminal call. Both receive the live Session LayoutState and precede
+the same Concat input-adapter owner. The guarded call follows StridedSlice
+pre-Concat recovery; the terminal call follows the retained
+ReLU/Split/Conv/Concat result. Layout-recovery orchestration separately selects
+the public owner and must remain unchanged.
+
+Strict characterization selects `_layout_opt_split_mixed_pre_concat_stats` and
+`_terminal_split_mixed_pre_concat_stats` for only the direct wrapper forms. It
+fixes the wrapper, one-key schema, positive-only prune, exact two-call count,
+arguments, option guard, four boundaries, independent orchestration selection,
+and absence of consumers. Both dictionaries must remain unconsumed in this
+unit; retention must add no guard, scan, dependency, or TensorFlow import path.
+
+The two direct calls now retain those unchanged one-counter dictionaries as
+`_layout_opt_split_mixed_pre_concat_stats` and
+`_terminal_split_mixed_pre_concat_stats`. Both remain unconsumed even though
+the counter is complete owner mutation evidence.
+
+These are assignment-only changes. The wrapper, indexed owner, successful-plan
+counting, positive-only unused-tensor pruning, live Session LayoutState,
+layout-option guard, StridedSlice and retained ReLU/Split/Conv/Concat
+predecessors, shared Concat input-adapter successor, independent orchestration
+selection, dependencies, diagnostics, and TensorFlow behavior remain
+unchanged.
+
+The following Concat input-adapter wrapper dispatches its indexed owner and
+returns the fixed one-counter dictionary
+`optimized_transpose_input_chains_pre_concat_to_single_post_adapter`. Unlike
+the preceding owner, it prunes unused tensors unconditionally after candidate
+processing, so the rewrite counter is incomplete evidence for cleanup-only
+mutation and must remain observation-only.
+
+There are exactly two direct wrapper calls: one in layout recovery pass-set 2
+and one terminal call. Both receive the live Session LayoutState and follow the
+newly retained Split/mixed pre-Concat result. The guarded call precedes the
+Slice/Logistic/Concat tail owner; the terminal call precedes Concat/unary/Conv
+cleanup. Layout-recovery orchestration separately selects the public owner,
+while safe-transpose-reduction selects the private wrapper.
+
+Strict characterization selects `_layout_opt_concat_input_adapter_stats` and
+`_terminal_concat_input_adapter_stats` for only the direct forms. It fixes the
+wrapper, one-key schema, unconditional prune, exact two-call count, arguments,
+option guard, four boundaries, both independent selections, and absence of
+consumers. Both dictionaries must remain unconsumed; retention must add no
+guard, scan, dependency, or TensorFlow import path.
+
+The two direct calls now retain those unchanged one-counter dictionaries as
+`_layout_opt_concat_input_adapter_stats` and
+`_terminal_concat_input_adapter_stats`. Both remain unconsumed because a zero
+counter does not exclude cleanup-only pruning.
+
+These are assignment-only changes. The wrapper, indexed owner, unconditional
+unused-tensor pruning, live Session LayoutState, layout-option guard, retained
+Split/mixed pre-Concat predecessors, Slice/Logistic/Concat tail and
+Concat/unary/Conv successors, layout-recovery and safe-reduction selections,
+dependencies, diagnostics, and TensorFlow behavior remain unchanged.
+
+The guarded Slice/Logistic/Concat/Reshape-tail wrapper dispatches its indexed
+owner and returns the fixed one-counter dictionary
+`optimized_transpose_slice_logistic_concat_reshape_tail_nhwc_chains`. The owner
+unconditionally prunes unused tensors after candidate processing, so its
+rewrite counter is incomplete evidence for cleanup-only mutation and must
+remain observation-only.
+
+There is exactly one direct wrapper call. It is inside layout recovery pass-set
+2 after `_layout_opt_concat_input_adapter_stats` and before the retained
+channel-shuffle/gather tuple with post-gather cleanup enabled. It receives the
+live Session LayoutState. Layout-recovery orchestration separately selects the
+public owner.
+
+Strict characterization selects
+`_layout_opt_slice_logistic_concat_tail_stats`. It fixes the wrapper, one-key
+schema, unconditional prune, exact one-call count, arguments, option guard,
+both captured boundaries, channel-shuffle policy, independent orchestration
+selection, and absence of consumers. The dictionary must remain unconsumed;
+retention must add no guard, scan, dependency, or TensorFlow import path.
+
+The direct call now retains that unchanged one-counter dictionary as
+`_layout_opt_slice_logistic_concat_tail_stats`. It remains unconsumed because a
+zero counter does not exclude cleanup-only pruning.
+
+This is an assignment-only change. The wrapper, indexed owner, unconditional
+unused-tensor pruning, live Session LayoutState, layout-option guard, retained
+Concat input-adapter predecessor, channel-shuffle/gather successor and policy,
+independent orchestration selection, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged.
+
+The terminal Concat/unary/Conv runner executes one transactional layout pass
+and returns the fixed one-counter dictionary
+`optimized_transpose_concat_unary_fanout_conv_nhwc_chains`. A positive owner
+rewrite prunes unused tensors and synchronizes LayoutState; precondition misses
+skip graph-state construction and return zero. Diagnostics record either
+outcome, so the retained dictionary remains observation-only.
+
+There is exactly one production call. It follows
+`_terminal_concat_input_adapter_stats`, precedes the raw shape-extract owner,
+and receives the live Session LayoutState and diagnostics collection.
+
+Strict characterization selects `_terminal_concat_unary_conv_stats`. It fixes
+the one-key schema, transactional PassSpec, preflight/default details, positive-
+only prune and layout sync, exact one-call count, arguments, both boundaries,
+and absence of consumers. The dictionary must remain unconsumed; retention must
+add no guard, scan, dependency, or TensorFlow import path.
+
+The production call now retains that unchanged one-counter dictionary as
+`_terminal_concat_unary_conv_stats`. It remains unconsumed; diagnostics continue
+to record changed and skipped outcomes independently of the retained value.
+
+This is an assignment-only change. The runner, owner, one-key schema,
+transactional PassSpec, preflight/default details, positive-only pruning and
+LayoutState sync, live Session LayoutState and diagnostics, retained Concat
+input-adapter predecessor, shape-extract successor, dependencies, and
+TensorFlow behavior remain unchanged.
+
+The shape-extract compatibility wrapper returns the dedicated owner's fixed
+one-counter dictionary
+`optimized_transpose_shape_extract_nhwc_to_nchw_chains`. The owner prunes
+unused tensors only after a positive rewrite, and its existing idempotence and
+transactional rejection fixtures establish the counter as complete mutation
+evidence.
+
+There are three production calls. The pre-QKV form already retains
+`_late_pre_qkv_shape_extract_stats`; the terminal form after
+`_terminal_concat_unary_conv_stats` and the absolute-end form after pre-Concat
+cleanup remain raw. Strict characterization selects
+`_terminal_shape_extract_stats` and
+`_late_pre_layout_cluster_shape_extract_stats` for those two forms without
+renaming the existing target.
+
+The contract fixes the exact three-call count, one-key schema, positive-only
+prune, model-only arguments, all three targets, terminal option-guard boundary,
+late-SPP/QKV boundary, pre-Concat/late-layout-cluster boundary, and absence of
+consumers. All dictionaries must remain unconsumed; retention must add no guard,
+scan, dependency, or TensorFlow import path.
+
+The terminal call now retains `_terminal_shape_extract_stats`, the existing
+pre-QKV call keeps `_late_pre_qkv_shape_extract_stats`, and the absolute-end
+call now retains `_late_pre_layout_cluster_shape_extract_stats`. All three
+complete one-counter dictionaries remain unconsumed.
+
+These are assignment-only changes. The wrapper, owner, one-key schema,
+positive-only unused-tensor pruning, model-only arguments, terminal
+Concat/unary/Conv and fanout-guard boundaries, late-SPP/QKV boundaries,
+pre-Concat and late-layout-cluster boundaries, dependencies, diagnostics, and
+TensorFlow behavior remain unchanged. Three stale AST contracts now verify the
+exact assigned targets instead of requiring raw expressions.
+
+The guarded Conv/Pool output-transpose compatibility wrapper returns the fixed
+one-counter dictionary
+`optimized_convpool_output_transpose_nhwc_passthrough_chains`. Its owner prunes
+unused tensors unconditionally after candidate processing, so a zero rewrite
+counter does not exclude cleanup-only mutation and must remain
+observation-only.
+
+There is exactly one production call. It is the body of the terminal
+`optimize_layout_transpose_chains` guard after the Singleton/MaxPool/Reshape
+sequence. The `elif` branch preserves safe-transpose-reduction and strict
+Mul/Add constant bridge cleanup; both branches rejoin before the dequantized
+HardSigmoid bridge owner.
+
+Strict characterization selects
+`_terminal_convpool_output_passthrough_stats`. It fixes the wrapper, one-key
+schema, unconditional prune, exact one-call count, model-only argument, option
+guard, predecessor and successor, no-layout fallback order, and absence of
+consumers. The dictionary must remain unconsumed; retention must add no guard,
+scan, dependency, or TensorFlow import path.
+
+The guarded call now retains that unchanged one-counter dictionary as
+`_terminal_convpool_output_passthrough_stats`. It remains unconsumed because a
+zero counter does not exclude cleanup-only pruning.
+
+This is an assignment-only change. The wrapper, owner, one-key schema,
+unconditional unused-tensor pruning, model-only argument, layout option guard,
+terminal Singleton/MaxPool predecessor, no-layout safe-reduction/Mul-Add
+fallback, HardSigmoid successor, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged. Two stale boundary tests now require the exact
+assigned target instead of a raw expression.
+
+The dequantized HardSigmoid bridge wrapper returns the indexed owner's fixed
+one-counter dictionary
+`removed_transpose_dequant_hardsigmoid_quantize_bridges`. With no Transpose the
+owner returns zero early; otherwise it prunes unused tensors after scanning
+even when no bridge was removed. The counter is therefore incomplete evidence
+for cleanup-only mutation and must remain observation-only.
+
+There are exactly three direct wrapper calls: before terminal SiNet
+pre-add/resize recovery, after post-SiNet mixed-attention cleanup, and after the
+terminal Conv/Pool/no-layout branch. Attention-gate/QDQ orchestration separately
+selects the public owner.
+
+Strict characterization selects
+`_terminal_dequant_hardsigmoid_bridge_stats`,
+`_post_sinet_dequant_hardsigmoid_bridge_stats`, and
+`_late_dequant_hardsigmoid_bridge_stats`. It fixes the wrapper, one-key schema,
+early return and cleanup semantics, exact three-call count, model-only
+arguments, six direct boundaries, independent orchestration selection, and
+absence of consumers. All dictionaries must remain unconsumed; retention must
+add no guard, scan, dependency, or TensorFlow import path.
+
+The three direct calls now retain their unchanged one-counter dictionaries as
+`_terminal_dequant_hardsigmoid_bridge_stats`,
+`_post_sinet_dequant_hardsigmoid_bridge_stats`, and
+`_late_dequant_hardsigmoid_bridge_stats`. All remain unconsumed because a zero
+counter does not exclude cleanup-only pruning when Transpose operators exist.
+
+These are assignment-only changes. The wrapper, indexed owner, one-key schema,
+no-Transpose early return, graph-index policy, cleanup behavior,
+attention-recovery selection, terminal SiNet, post-SiNet cost-volume, and
+ConvPool/late-dequant boundaries, dependencies, diagnostics, and TensorFlow
+behavior remain unchanged. Four stale AST boundary contracts now require the
+new assigned targets.
+
+The adjacent HardSwish-SE layout owner has exactly two production forms. The
+absolute-terminal form already captures a starting tensor count and merges the
+owner's one rewrite counter with `pruned_unused_tensors`; the earlier form,
+immediately after terminal SiNet recovery, still discards its raw result. The
+owner invokes unused-tensor pruning unconditionally, so a zero rewrite counter
+does not prove ModelIR stability.
+
+Strict characterization freezes the wrapper and one-key schema, unconditional
+cleanup, exact two-call count, the existing prune-aware late form, and the
+terminal-SiNet/dequant-HardSigmoid boundaries. It selects
+`_terminal_sinet_hardswish_se_stats` for the earlier raw result and requires it
+to remain unconsumed. Retention must add no mutation guard, dependency, pass
+call, reorder, or TensorFlow import path.
+
+The earlier production call now assigns its unchanged one-counter dictionary
+to `_terminal_sinet_hardswish_se_stats`. It remains observation-only because
+the owner's unconditional pruning can mutate ModelIR while the rewrite counter
+is zero. The later `_terminal_hardswish_se_stats` prune-aware form, wrapper,
+owner, call count, arguments, and both adjacent boundaries are unchanged.
+
+This assignment adds no consumer or control flow. Terminal SiNet recovery,
+dequantized HardSigmoid cleanup, late hard-activation recovery, dependencies,
+diagnostics, public behavior, and the TensorFlow-free direct path remain fixed.
+The two stale outer-boundary contracts now require the assigned target.
+
+Immediately before terminal SiNet recovery, the terminal clamp/unary/ReLU
+orchestration runs clamp canonicalization, unary Transpose passthrough, and
+Maximum-zero ReLU canonicalization through one shared pass-state scope. Its
+shared recovery executor already returns the three ordered dictionaries, but
+the orchestration runner and lowerer delegate both return `None` and the sole
+production call discards the result.
+
+Strict characterization freezes the three one-key zero schemas, child order,
+single shared scope, and cleanup semantics: clamp and unary owner callbacks
+prune unconditionally when executed, while Maximum-zero ReLU prunes only after
+a rewrite. It requires both runner layers to propagate
+`Tuple[Dict[str, int], ...]`, assigns the sole call to
+`_terminal_clamp_unary_relu_results`, and keeps the tuple unconsumed between
+the guarded singleton/reshape and terminal-SiNet boundaries. Raw counters must
+not become a mutation guard.
+
+The orchestration runner and lowerer delegate now return the shared executor's
+unchanged ordered three-dictionary tuple, and the sole production call retains
+it as `_terminal_clamp_unary_relu_results`. The tuple remains unconsumed because
+its child counters do not universally capture cleanup-only tensor pruning.
+
+These are return- and assignment-only changes. The three child callbacks,
+stable IDs, exact order, one shared state scope, ModelIR/layout/diagnostics
+routing, transactional behavior, guarded singleton/reshape predecessor, and
+terminal-SiNet successor are unchanged. No result summary, mutation guard,
+dependency, public API change, or TensorFlow import path was added.
+
+The earlier terminal slice/concat recovery has fourteen ordered slots and two
+production invocations. Its first slot is itself the two-dictionary
+channel-slice/pad-Mul tuple; the remaining slots return fixed rewrite
+dictionaries, the two-key probable-NHWC sanitizer result, and a final layout
+dictionary containing four mutation counters plus non-mutating `iterations`.
+The shared executor returns this nested ordered evidence, but both runner
+layers currently return `None` and both production calls discard it.
+
+Strict characterization freezes every empty-model schema, callback and
+argument order, exact two-call multiplicity, and both distinct boundary pairs.
+It also fixes unconditional cleanup in pre-Add and layout owners, proving that
+zero raw counters cannot serve as a general stability guard. The selected
+targets are `_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`; both nested tuples must remain
+unconsumed when propagated.
+
+Both runner layers now return the shared executor's unchanged fourteen-slot
+nested tuple. The two existing production calls retain it as
+`_terminal_slice_concat_recovery_results` and
+`_final_slice_concat_recovery_results`; neither result is consumed. This keeps
+cleanup-only mutation and non-mutating `iterations` as observation rather than
+control policy.
+
+These are return- and assignment-only changes. The nested channel-slice/
+pad-Mul result, remaining child schemas, stable IDs, callback identity,
+arguments, order, invocation count, and both predecessor/successor pairs are
+unchanged. No summary, guard, dependency, public API change, or TensorFlow
+import path was added.
+
+Immediately after the final slice/concat result, the Slice pre/post NHWC
+passthrough owner has one production call and returns one rewrite counter. Its
+unused-tensor pruning is guarded by a positive rewrite count, so unlike the
+preceding nested recovery tuple, its raw counter completely describes owner
+mutation.
+
+Strict characterization freezes the compatibility wrapper, one-key schema,
+positive-only cleanup, exact one-call count, model-only argument, and final
+slice/concat to pre-Concat boundaries. It selects
+`_final_slice_prepost_passthrough_stats` for assignment-only retention and
+requires the value to remain unconsumed. Retention must add no guard, pass
+call, reorder, dependency, or TensorFlow import path.
+
+The sole production call now retains its unchanged one-counter dictionary as
+`_final_slice_prepost_passthrough_stats`. It remains unconsumed in this unit.
+The wrapper, owner, positive-only cleanup, call count, model-only argument,
+final slice/concat predecessor, and pre-Concat successor are unchanged.
+
+This assignment adds no mutation guard or control flow. Pass execution,
+dependencies, diagnostics, public behavior, and the TensorFlow-free direct path
+remain fixed; only two stale boundary target expectations changed.
+
+The pre-Concat composite has three direct production calls plus one independent
+layout-recovery callback execution. It dispatches indexed, quantized-indexed,
+and legacy families in fixed order and returns their sum as one counter. The
+legacy owner prunes unused tensors unconditionally, so a zero composite counter
+does not prove ModelIR stability.
+
+Strict characterization selects `_layout_opt_pre_concat_stats`,
+`_final_pre_concat_stats`, and `_absolute_final_pre_concat_stats` for the three
+direct calls. It freezes their identical ModelIR/layout/diagnostics arguments,
+three distinct boundary pairs, one-key schema, dispatch order, unconditional
+legacy cleanup, and independent layout-recovery callback selection. All three
+direct results must remain unconsumed; the orchestration callback form is not
+changed by this retention unit.
+
+The three direct calls now retain their unchanged one-counter dictionaries as
+`_layout_opt_pre_concat_stats`, `_final_pre_concat_stats`, and
+`_absolute_final_pre_concat_stats`. All remain unconsumed because a zero
+composite counter does not exclude unconditional legacy cleanup.
+
+These are assignment-only changes. Indexed/quantized/legacy dispatch, the
+independent layout-recovery callback, ModelIR/layout/diagnostics routing,
+three-call multiplicity, and all boundary pairs remain unchanged. No summary,
+guard, dependency, public behavior change, or TensorFlow import path was added.
+
+The sole direct NDHWC Concat cleanup immediately after the layout-option
+pre-Concat result has one independent counterpart inside layout recovery. Its
+transactional runner returns one counter, and the inner owner prunes only
+after a positive rewrite, so the counter completely describes owner mutation.
+
+Strict characterization selects `_layout_opt_ndhwc_concat_stats` for the
+direct result and requires it to remain unconsumed. It freezes the one-key
+schema, positive-only cleanup, ModelIR/layout/diagnostics arguments,
+pre-Concat/strided-Slice boundaries, exact sole direct call, and independent
+layout-recovery selection. The orchestration occurrence is not changed by this
+retention unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_ndhwc_concat_stats`. It remains unconsumed in this unit. The
+transactional runner, positive-only cleanup, layout-recovery occurrence,
+arguments, call multiplicity, and both adjacent boundaries are unchanged.
+
+This assignment adds no summary, guard, dependency, public behavior change, or
+TensorFlow import path. Only the direct observation becomes available.
+
+The indexed strided-Slice pre-Concat owner immediately after the direct NDHWC
+result has one direct call and one independent public-owner execution inside
+layout recovery. It returns one rewrite counter but invokes unused-tensor
+pruning unconditionally; a dedicated zero-rewrite fixture proves cleanup-only
+mutation is possible.
+
+Strict characterization selects `_layout_opt_stridedslice_pre_concat_stats`
+for the direct result and requires it to remain unconsumed. It freezes the
+wrapper's optional graph-index/layout/bound/candidate forwarding, one-key
+schema, unconditional cleanup, sole direct call, model/layout arguments,
+NDHWC/split-mixed boundaries, and independent orchestration selection. The
+layout-recovery occurrence is not changed by this retention unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_stridedslice_pre_concat_stats`. It remains unconsumed because the
+owner's unconditional prune can mutate ModelIR while the counter is zero. The
+public-owner layout-recovery occurrence remains unchanged.
+
+This is an assignment-only change. Optional graph index, layout, rewrite bound,
+candidate forwarding, one-key schema, direct arguments, call multiplicity,
+NDHWC/split-mixed boundaries, dependencies, public behavior, and TensorFlow
+isolation remain fixed.
+
+The SPP transactional cleanup immediately before the layout-option pre-Concat
+result has one direct call and three independent runner selections in layout
+recovery, the late-layout cluster, and the late-SPP pair. Its inner owner prunes
+only after a positive rewrite, so its one counter completely describes owner
+mutation.
+
+Strict characterization selects `_layout_opt_spp_stats` for the direct result
+and requires it to remain unconsumed. It freezes the one-key schema,
+positive-only cleanup, ModelIR/layout/diagnostics arguments, sole direct call,
+elementwise-Concat/pre-Concat boundaries, and all three independent
+orchestration selections. Those orchestration result policies are not changed
+by this retention unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_spp_stats`. It remains unconsumed in this unit. The positive-only
+cleanup, transactional runner, three orchestration selections, arguments,
+direct-call count, and adjacent boundaries are unchanged.
+
+This assignment adds no summary, guard, dependency, public behavior change, or
+TensorFlow import path; the three orchestration result policies remain fixed.
+
+The indexed elementwise-Concat/Conv owner immediately before the direct SPP
+result has one direct private-wrapper call and one independent public-owner
+execution inside layout recovery. Its wrapper forwards optional graph index,
+layout state, rewrite bound, and candidate identity without adaptation. The
+owner returns one rewrite counter but prunes unused tensors unconditionally; a
+dedicated zero-rewrite fixture proves cleanup-only mutation is possible.
+
+Strict characterization selects `_layout_opt_elementwise_concat_conv_stats`
+for the direct result and requires it to remain unconsumed. It freezes the
+one-key schema, unconditional cleanup, ModelIR/layout arguments, exact sole
+direct call, binary-bridge/SPP boundaries, and independent layout-recovery
+selection. That orchestration occurrence is not changed by this retention
+unit.
+
+The sole direct call now retains its unchanged one-counter dictionary as
+`_layout_opt_elementwise_concat_conv_stats`. It remains unconsumed because a
+zero counter does not exclude the owner's unconditional unused-tensor cleanup.
+The public-owner layout-recovery occurrence remains unchanged.
+
+This is an assignment-only change. Optional graph index, layout state, rewrite
+bound, and candidate forwarding, the one-key schema, direct arguments,
+binary-bridge/SPP boundaries, dependencies, public behavior, and TensorFlow
+isolation remain fixed.
+
+The quantized-activation binary recovery runner selects six ordered slots:
+four dequantized activation folds, Softmax/Transpose canonicalization, and a
+nested safe-binary recovery. The nested runner itself selects one owner whose
+dictionary contains the five safe binary modes. Both phase runners currently
+discard the tuples returned by `run_recovery_invocations()`.
+
+Strict characterization requires the safe-binary runner to return its
+one-slot tuple and the outer runner to return a six-slot tuple whose last item
+is that nested tuple. It selects distinct
+`_layout_pass_set_1_quantized_activation_binary_results` and
+`_layout_pass_set_2_quantized_activation_binary_results` targets for the two
+production calls. Both must remain unconsumed: every activation/canonicalizer/
+safe-binary owner performs unused-tensor cleanup independently of its rewrite
+counter, and a zero-counter fixture proves cleanup-only mutation.
+
+The contract also freezes the shared ModelIR/layout context, exact child
+order, fixed dictionary schemas, zero-argument helper boundary, distinct
+reshape/conditional-binary and dequant-TransposeConv/elementwise-Concat
+boundaries, and absence of a new summary or guard.
+
+Both phase runners now return their existing ordered tuples. The lowerer helper
+returns the six-slot outer tuple, and its two calls retain separate
+`_layout_pass_set_1_quantized_activation_binary_results` and
+`_layout_pass_set_2_quantized_activation_binary_results` values. The sixth
+outer slot is the one-slot safe-binary tuple rather than `None`.
+
+Both results remain unconsumed and observation-only. This propagation changes
+no child owner, schema, cleanup timing, call order, context, conditional
+binary-bridge policy, elementwise-Concat/Conv successor, dependency, public
+behavior, or TensorFlow import boundary.
+
+The one-slot safe-binary runner is also called through a separate zero-argument
+lowerer helper twice outside the nested quantized-activation sequence. The
+first call follows the layout-attention/quantized suffix and precedes the
+dequantized-Mean/Quantize bridge; the second follows the Transpose/unary fanout
+cluster and precedes the pass-set progress boundary. That helper still discards
+the tuple now exposed by the phase runner.
+
+Strict characterization selects `_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_final_safe_binary_results` for those two direct calls. Both
+must remain unconsumed because the five-mode owner prunes unused tensors even
+when all rewrite counters are zero. The contract freezes the helper return
+boundary, exact two-call count, zero arguments, one-slot/five-key schema,
+distinct predecessor/successor pairs, and absence of a summary or guard.
+
+The separate lowerer helper now transparently returns the existing one-slot
+tuple. Its two direct calls retain `_layout_pass_set_1_safe_binary_results` and
+`_layout_pass_set_1_final_safe_binary_results`, respectively. Both remain
+unconsumed and observation-only.
+
+This propagation changes no safe-binary phase, five-key dictionary schema,
+cleanup timing, shared context, nested quantized-activation invocation,
+layout-attention or unary-fanout policy, progress boundary, dependency, public
+behavior, or TensorFlow isolation.
+
+The layout-attention/quantized recovery suffix selects thirteen ordered
+results: three direct layout owners, three nested attention/PReLU clusters,
+dequantized TransposeConv, quantized Reshape cleanup, four quantized activation
+folds, and Softmax/Transpose canonicalization. Its phase runner and
+zero-argument lowerer helper currently discard the ordered tuple.
+
+Strict characterization selects
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_attention_quantized_suffix_results` for the two
+calls. An instrumented contract freezes all thirteen result identities and
+their pass-ID order, the shared ModelIR/layout/diagnostics context, the common
+duplicate-Transpose policy argument, helper return boundary, exact two-call
+count, fold/safe-binary and squeeze/unary-fanout boundaries, and an unconsumed
+policy. Both results remain observation-only because suffix children can prune
+with zero rewrite counters.
+
+The phase runner and lowerer helper now return the existing thirteen-slot
+tuple. The two production calls retain
+`_layout_pass_set_1_attention_quantized_suffix_results` and
+`_layout_pass_set_1_final_attention_quantized_suffix_results`. Both remain
+unconsumed and observation-only.
+
+This propagation changes no child callback, nested result, pass-ID order,
+shared context, duplicate-Transpose policy, cleanup timing, safe-binary or
+unary-fanout successor, dependency, public behavior, or TensorFlow isolation.
+
+The Transpose/unary-fanout runner has two three-slot policies. Its default
+callback policy runs unary-passthrough plus unary-fanout and unary/binary-
+fanout cleanup. The post-QDQ direct policy replaces unary-passthrough with
+layout-Transpose cleanup. Both variants share one pass-state scope. The runner
+and lowerer helper currently discard their ordered results.
+
+Strict characterization requires both variants to return their three
+dictionaries in active pass-ID order. It selects
+`_layout_pass_set_1_transpose_unary_fanout_results` for the sole post-QDQ
+direct call between the final suffix and final safe-binary results. The target
+must remain unconsumed. The same helper remains the attention-gate/QDQ callback;
+its newly exposed tuple will occupy that parent's existing callback slot, but
+the parent currently discards its own result and has no summary or guard.
+
+The runner and helper now return the active three-dictionary tuple for both
+policies. The sole post-QDQ direct call retains
+`_layout_pass_set_1_transpose_unary_fanout_results` between the final suffix
+and final safe-binary results. It remains unconsumed and observation-only.
+
+The attention-gate/QDQ callback slot now contains the default-policy tuple
+instead of `None`, but its parent still discards the enclosing result. No child
+owner, active pass-ID order, policy, shared scope, cleanup timing, summary,
+guard, dependency, public behavior, or TensorFlow boundary changed.
+
+The attention-gate/QDQ parent selects ten ordered slots around SA/PA,
+SINet attention, gate layout, TransposeConv output, quantized activation, and
+trailing-output cleanup. Its Transpose/unary-fanout callback slot now contains
+the three-dictionary default-policy tuple. The parent runner and lowerer helper
+currently discard the complete ten-slot tuple.
+
+Strict characterization selects
+`_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results` for the two direct calls. It
+freezes every instrumented slot including the nested unary-fanout tuple, the
+shared context, zero-argument helper, exact call count, mean-attention/
+quantized-PReLU and pre-add/dequant-TransposeConv boundaries, the parent slot
+inside both retained suffix executions, and an unconsumed observation-only
+policy.
+
+The parent runner and lowerer helper now return the existing ten-slot tuple.
+Its two direct calls retain `_layout_pass_set_1_attention_gate_qdq_results` and
+`_layout_pass_set_2_attention_gate_qdq_results`. The attention-parent slot in
+each retained suffix tuple now contains the same nested result rather than
+`None`.
+
+All parent and suffix results remain unconsumed and observation-only. This
+propagation changes no child, callback, nested tuple identity, shared context,
+order, cleanup timing, summary, guard, dependency, public behavior, or
+TensorFlow isolation.
+
+The pre-add/mean/attention parent selects seven ordered slots: pre-add, two
+residual-affine forms, direct affine, pre-unary affine, mean-affine, and the
+nested mean-attention cluster result. Its runner and zero-argument lowerer
+helper currently discard the tuple at both pass-set-2 direct calls.
+
+Strict characterization selects
+`_layout_pass_set_2_preadd_mean_attention_results` and
+`_layout_opt_preadd_mean_attention_results`. It freezes all instrumented slot
+identities including the nested mean-attention tuple, shared context, exact
+two-call count, layout-prefix/retained-attention and channel-shuffle/SA-PA
+boundaries, and unconsumed observation-only policy.
+
+The pre-add parent runner and helper now return the existing seven-slot tuple.
+Its direct calls retain `_layout_pass_set_2_preadd_mean_attention_results` and
+`_layout_opt_preadd_mean_attention_results`. Both remain unconsumed and
+observation-only, and the nested mean-attention tuple is unchanged.
+
+This propagation changes no child, nested result, shared context, call order,
+cleanup timing, surrounding retained result, summary, guard, dependency,
+public behavior, or TensorFlow isolation.
+
+The layout-recovery prefix selects nineteen ordered slots. Three slots are
+lowerer callbacks and can themselves return heterogeneous nested tuples: the
+boundary BatchMatMul/unary cluster, pre-Concat cleanup, and channel-shuffle/
+Gather cluster. The phase runner already obtains the complete ordered tuple
+from `run_recovery_invocations()`, but currently discards it.
+
+Strict characterization selects
+`_layout_pass_set_2_layout_recovery_prefix_results` for the sole direct
+lowerer call. It freezes every instrumented result identity, the shared
+`LayoutRecoveryContext`, the QLinear/pre-add boundary, the absence of a
+consumer, and the independent nested selection as the first attention-prefix
+callback. The tuple must remain observation-only because individual children
+can perform cleanup that is not represented by a positive rewrite counter.
+
+The phase runner and lowerer helper now return that existing nineteen-slot
+tuple, and the sole direct call retains it as
+`_layout_pass_set_2_layout_recovery_prefix_results`. The target remains
+unconsumed. The first attention-prefix callback now also returns the nested
+tuple to its parent invocation, while the attention runner continues to
+discard its own aggregate result. No child, callback, context, ordering,
+cleanup timing, guard, summary, dependency, public API, or TensorFlow boundary
+changes with this propagation.
+
+The layout/reshape/attention prefix selects fifteen ordered slots, with the
+complete nineteen-slot layout-recovery tuple now occupying its first slot.
+The parent runner and lowerer helper currently discard the aggregate tuple at
+all three direct pass-set-1 calls.
+
+Strict characterization selects
+`_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results`. It freezes the nested
+layout tuple, every other result identity, the shared context, all three
+zero-argument calls, layout-cleanup/affine, duplicate-fanout/affine, and
+QLinear/InstanceNorm boundaries, and an unconsumed observation-only policy.
+
+The parent runner and lowerer helper now return the existing fifteen-slot
+tuple. The three direct calls retain
+`_layout_pass_set_1_initial_attention_recovery_results`,
+`_layout_pass_set_1_post_binary_attention_recovery_results`, and
+`_layout_pass_set_1_final_attention_recovery_results`; all remain unconsumed.
+The first slot preserves the nested nineteen-slot layout result without
+normalization or copying. No child, context, ordering, cleanup timing, guard,
+summary, dependency, public API, or TensorFlow boundary changes.
+
+`run_layout_transpose_cleanup()` returns five integer fields: `iterations` and
+four explicit Transpose mutation counters. The lowerer has three direct
+occurrences: the raw primary pass-set-1 call, retained late-Concat call with a
+shared state scope, and retained very-late call. Late-binary recovery also owns
+one independent nested occurrence.
+
+Strict characterization selects
+`_layout_pass_set_1_layout_transpose_cleanup_stats` for only the raw primary
+call. It freezes the fixed schema, unconditional owner cleanup and LayoutState
+sync path, all occurrence counts, exact layout/diagnostics/state-scope routing,
+the duplicate-fanout-policy/initial-attention boundary, and an unconsumed
+observation-only policy.
+
+The post-SINet raw mixed-attention call now retains its unchanged one-key
+dictionary as `_post_sinet_mix_attention_stats`. The target remains unconsumed
+and observation-only. The layout-aware attention selection and the following
+distinct mixed-attention cleanup owner are unchanged.
+
+No GraphIndex/candidate handling, rewrite cap, matching or application logic,
+guarded pruning, LayoutState synchronization, schema, wrapper forwarding,
+direct arguments, call order, nested route, dependency, public API, or
+TensorFlow boundary changed.
+
+`run_mixed_attention_layout_cleanup()` exposes the fixed one-key result
+`optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains` through a
+transactional ModelIR pass. The lowerer calls it once directly. Gate-layout
+full policy selects it at index 0, reduced policy excludes it, and absolute-
+final normalization/attention selects it at index 1. Both nested routes share
+their parent `ModelIRPassStateScope`. The underlying optimizer prunes unused
+tensors on exit, so zero is not complete mutation evidence.
+
+Strict characterization selects `_post_sinet_mixed_attention_layout_stats`
+only for the raw direct result. It freezes the schema, pass ID and transactional
+contract, direct ModelIR/LayoutState/diagnostics arguments, retained indexed
+SINet predecessor, dequant-HardSigmoid successor, both nested indices and
+shared-scope keyword contracts, reduced-policy exclusion, sole direct
+occurrence, and an unconsumed observation-only policy.
+
+The post-SINet raw mixed-attention layout call now retains its unchanged
+one-key dictionary as `_post_sinet_mixed_attention_layout_stats`. The target
+remains unconsumed and observation-only. Gate-layout full/reduced policy and
+absolute-final normalization/attention selection are unchanged.
+
+No transactional pass logic, underlying pruning, result schema, state-scope
+ownership, direct argument, retained predecessor/successor, nested route, call
+order, dependency, public API, or TensorFlow boundary changed. The counter is
+not used as complete mutation evidence or as a later-pass guard.
+
+The late NDHWC gate and cost-volume scatter runners expose fixed two-key and
+one-key dictionaries through transactional ModelIR passes. Their direct lowerer
+calls are adjacent and share one explicit `ModelIRPassStateScope`. Gate-layout
+required policy selects them at indices 3 and 4, while full policy selects them
+at indices 4 and 5 with the same parent scope. All three underlying optimizers
+prune unused tensors on exit, so zero counters are not complete mutation
+evidence.
+
+Strict characterization selects `_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats`. It freezes both schemas and
+transactional pass IDs, shared direct scope and exact arguments, retained
+dequant-HardSigmoid predecessor, retained cost-volume affine successor,
+required/full nested indices and shared-scope contracts, sole direct
+occurrences, and an unconsumed observation-only policy for both targets.
+
+The adjacent late direct calls now retain their unchanged dictionaries as
+`_late_ndhwc_gate_layout_stats` and
+`_late_cost_volume_scatter_layout_stats`. Both targets remain unconsumed and
+observation-only, and the direct calls continue to share the same explicit
+state scope.
+
+No transactional owner logic, schemas, lower-level pruning, direct or nested
+state-scope ownership, arguments, required/full gate indices, neighboring
+retained results, call order, dependency, public API, or TensorFlow boundary
+changed. Neither target is used as complete mutation evidence.
+
+The primary call now retains its unchanged dictionary as
+`_layout_pass_set_1_layout_transpose_cleanup_stats`. All three direct lowerer
+occurrences are therefore explicit assignments, while the late-binary nested
+consumer is unchanged. The new target remains unconsumed. No owner, schema,
+preflight, transaction, cleanup, LayoutState sync, argument, shared scope,
+pass-order, guard, dependency, public API, or TensorFlow boundary changes.
+
+`run_duplicate_fanout_cleanup()` has a policy-dependent result schema. The
+reshape-only form returns `removed_duplicate_reshape_fanout`; enabling
+Transpose adds `removed_duplicate_transpose_fanout`. The sole direct lowerer
+call forwards `not has_qdq_ops` as this policy, while duplicate/PReLU,
+singleton/consecutive-Reshape, and Singleton/Reshape orchestration select the
+same owner independently.
+
+Strict characterization selects
+`_layout_pass_set_1_duplicate_fanout_stats`, freezes both schemas, transactional
+pass IDs, all nested selections, the exact QDQ-dependent argument and live
+LayoutState/diagnostics, the binary-bridge/post-binary-attention boundary, and
+an unconsumed observation-only policy.
+
+The sole direct call now retains its policy-dependent dictionary as
+`_layout_pass_set_1_duplicate_fanout_stats`. The target remains unconsumed, and
+the QDQ-derived `include_transpose` value continues to control only the
+existing owner. No schema, pass selection, preflight, transaction, nested
+occurrence, live context, ordering, guard, dependency, public API, or
+TensorFlow boundary changes.
+
+The dequantize/keepdims-Mean/quantize bridge owner returns the one-key
+`moved_transpose_dequantize_mean_quantize_bridges` dictionary. It prunes unused
+tensors both on missing-type early exits and after candidate processing, so a
+zero counter does not exclude cleanup-only mutation. Its lowerer wrapper
+forwards only ModelIR and has one production call.
+
+Strict characterization selects
+`_layout_pass_set_1_dequant_mean_quantize_stats`, freezes the owner/wrapper
+schema and unconditional pruning paths, sole exact call, retained safe-binary/
+QLinear boundaries, and an unconsumed observation-only policy.
+
+The sole direct call now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_dequant_mean_quantize_stats`. It remains unconsumed because
+the counter omits cleanup-only pruning. No wrapper, owner, schema, graph-index
+allocation, prune path, pass order, adjacent retained result, guard,
+dependency, public API, or TensorFlow boundary changes.
+
+The InstanceNorm pre/post compatibility dispatcher returns the one-key
+`optimized_transpose_instancenorm_prepost_nhwc_chains` dictionary after
+graph-order dispatch across four indexed owners, capped at 32 rewrites. It has
+two production forms: a raw pass-set-1 call and a later call whose counter is
+already consumed inside a two-iteration normalization convergence loop.
+
+Strict characterization selects
+`_layout_pass_set_1_instancenorm_prepost_stats` for only the raw direct form. It
+freezes the four-owner dispatch and schema, direct live LayoutState argument,
+later shared GraphIndex consumer, exact call count, final-attention/
+squeeze-cleanup boundary, and an unconsumed observation-only policy.
+
+The direct pass-set-1 call now retains its unchanged one-key dictionary as
+`_layout_pass_set_1_instancenorm_prepost_stats`. The target remains unconsumed;
+the later two-iteration form still consumes its counter with the shared
+normalization GraphIndex. No dispatcher, owner order, rewrite cap, schema,
+GraphIndex/LayoutState routing, convergence guard, pass order, dependency,
+public API, or TensorFlow boundary changes.
+
+`run_squeeze_reshape_identity_cleanup()` has a one-key identity-only schema and
+a two-key schema when unary passthrough is enabled. The lowerer has three raw
+two-key direct calls in pass-set 1, core cleanup, and pass-set 2. The attention
+prefix independently selects the two-key policy, while Singleton/Reshape
+selects the one-key policy.
+
+Strict characterization selects
+`_layout_pass_set_1_squeeze_reshape_identity_stats`,
+`_core_cleanup_squeeze_reshape_identity_stats`, and
+`_layout_pass_set_2_squeeze_reshape_identity_stats`. It freezes both schemas,
+all direct arguments and nested selections, InstanceNorm/final-suffix,
+dynamic-Reshape/prune, and normalization-loop/prune boundaries, and an
+unconsumed observation-only policy.
+
+The direct call now retains its unchanged dictionary as
+`_layout_pass_set_1_pre_unary_affine_fanout_stats`. The target remains
+unconsumed and observation-only. Both attention selections remain model-only,
+and unconditional pruning is unchanged. No producer/consumer-map construction,
+constant handling, call order, dependency, public API, or TensorFlow boundary
+changed.
+
+`optimize_transpose_mean_mul_add_const_prepost_nhwc_chains()` exposes the fixed
+one-key result `optimized_transpose_mean_mul_add_const_prepost_nhwc_chains`.
+Its sole lowerer call and the attention/quantized-suffix and pre-add-attention
+selections are model-only. The owner always prunes unused tensors on exit, so a
+zero counter is not complete mutation evidence.
+
+Strict characterization selects `_layout_pass_set_1_mean_affine_prepost_stats`
+for the direct result. It freezes the exact model-only call, pre-unary-fan-out/
+mean-attention boundary, both declarative selection indices and empty keyword
+contracts, fixed schema, and an unconsumed observation-only policy.
+
+The direct call now retains its unchanged dictionary as
+`_layout_pass_set_1_mean_affine_prepost_stats`. The target remains unconsumed
+and observation-only. Both attention selections remain model-only, and
+unconditional pruning is unchanged. No producer/consumer-map construction,
+constant or axis handling, call order, dependency, public API, or TensorFlow
+boundary changed.
+
+Gate-layout orchestration has eight ordered full-policy invocations and seven
+required-policy invocations, all sharing one `ModelIRPassStateScope`. The
+recovery engine already constructs the corresponding result tuple, but
+`run_gate_layout()`, the lowerer helper, and the reduced direct call currently
+discard it. The helper's default full policy remains the argument-free callback
+owned by attention recovery.
+
+Strict characterization requires `run_gate_layout()` and the helper to return
+`Tuple[Dict[str, int], ...]`, and selects `_layout_opt_gate_layout_results` for
+the reduced direct result. It freezes full/reduced order, shared scope, exact
+policy arguments, retained SA/PA-mirrorpad/normalization-loop boundaries, and
+an unconsumed observation-only direct policy.
+
+`optimize_transpose_binary_bridges()` exposes the fixed two-key result
+`removed_transpose_binary_bridges` and
+`removed_transpose_binary_asymmetric_bridges` from an indexed owner with a
+default 32-rewrite cap. The lowerer selects it once under
+`enable_transpose_binary_bridge_optimizations`, with the live LayoutState and
+no else path. Both zero-cap and normal exits prune unused tensors, so zero
+counters are not complete mutation evidence.
+
+Strict characterization selects
+`_layout_pass_set_1_transpose_binary_bridge_stats`. It freezes the exact call,
+feature guard, no-else policy, quantized-activation/duplicate-fanout boundaries,
+sole occurrence, fixed schema, and an unconsumed observation-only policy.
+
+The guarded call now retains its unchanged dictionary as
+`_layout_pass_set_1_transpose_binary_bridge_stats`. The target remains
+unconsumed and observation-only. The feature guard and no-else policy are
+unchanged. No GraphIndex ownership, rewrite cap, candidate handling, pruning,
+layout synchronization, call order, dependency, public API, or TensorFlow
+boundary changed.
+
+The three direct calls now retain the same two-key results in those selected
+targets. Their arguments, ordering, nested policy selections, live context,
+normalization convergence logic, and surrounding calls remain unchanged. The
+final-attention boundary contract recognizes both direct-call statement forms
+so that result retention does not weaken its call-identity assertion. These
+targets are not mutation counters and remain observation-only.
+
+The QLinear/mean/Concat recovery parent selects five ordered dictionary
+results: mean/HardSigmoid/MulAdd, QLinear SiLU prefix, QLinear Concat/Conv,
+pre-quantized Concat cleanup, and mean/MaxPool/Concat/Conv. Its runner and
+lowerer helper currently discard both pass-set result tuples.
+
+Strict characterization selects
+`_layout_pass_set_1_qlinear_mean_concat_results` and
+`_layout_pass_set_2_qlinear_mean_concat_results`. It freezes every result
+identity, the shared `ModelIRPassContext`, exact zero-argument calls,
+dequant-mean/final-attention and progress/layout-recovery boundaries, and an
+unconsumed observation-only policy. Child pruning can occur without a positive
+counter, so the parent tuple is not complete mutation evidence.
+
+The QLinear runner and lowerer helper now return the unchanged five-slot
+tuple. The two direct calls retain
+`_layout_pass_set_1_qlinear_mean_concat_results` and
+`_layout_pass_set_2_qlinear_mean_concat_results`; both remain unconsumed and
+observation-only. Their newly retained final-attention and layout-recovery
+successors are unchanged. No child, context, pass order, cleanup timing, guard,
+summary, dependency, public API, or TensorFlow boundary changes.
+
+`run_quantized_prelu_cleanup()` exposes a fixed four-key dictionary covering
+its transpose/quantize bridge, transpose bridge, quantize fusion, and
+depthwise fusion passes. Its default direct lowerer call enables all four in
+priorities 10 through 40. The duplicate-fanout orchestration independently
+selects the same callback with a shared `ModelIRPassStateScope`.
+
+Strict characterization selects
+`_layout_pass_set_1_quantized_prelu_stats` for the sole direct call. It freezes
+the exact direct arguments, attention-gate/dequant-TransposeConv boundaries,
+nested invocation arguments, fixed result schema, and an unconsumed
+observation-only policy. The nested callback and its shared state scope remain
+owned by the existing orchestration.
+
+The direct call now retains that dictionary as
+`_layout_pass_set_1_quantized_prelu_stats`. The target is unconsumed and
+observation-only. No pass implementation, selection, ordering, transaction,
+preflight, shared state scope, nested invocation, live context, surrounding
+call, dependency, public API, or TensorFlow boundary changed.
+
+`run_quantized_reshape_cleanup()` exposes the fixed one-key result
+`folded_dequant_reshape_quantize_chains` from one transactional layout pass.
+The lowerer selects it once directly; the attention/quantized suffix selects it
+once through `_model_invocation` with the live LayoutState and diagnostics.
+
+Strict characterization selects
+`_layout_pass_set_1_quantized_reshape_stats` for the direct result. It freezes
+the exact direct arguments, dequant-TransposeConv/quantized-activation
+boundaries, nested suffix index and context flags, fixed result schema, and an
+unconsumed observation-only policy.
+
+The direct call now retains the same one-key dictionary as
+`_layout_pass_set_1_quantized_reshape_stats`. The target remains unconsumed and
+observation-only. The activation-recovery predecessor contract accepts either
+direct-call statement form while preserving the exact cleanup call. No pass
+implementation, selection, ordering, transaction, preflight, nested suffix,
+live context, dependency, public API, or TensorFlow boundary changed.
+
+`_optimize_dequant_transposeconv_quantize_chains()` returns the fixed one-key
+dictionary `folded_dequant_transposeconv_quantize_chains`. It is called twice
+directly by the lowerer and once through the attention/quantized suffix, always
+with the live LayoutState. Candidate-missing exits can prune unused tensors and
+still return zero, so its counter is not complete mutation evidence.
+
+Strict characterization selects
+`_layout_pass_set_1_dequant_transposeconv_quantize_stats` and
+`_layout_pass_set_2_dequant_transposeconv_quantize_stats`. It freezes the exact
+direct arguments, quantized-PReLU/quantized-Reshape and attention-gate/
+quantized-activation boundaries, nested suffix index/context flag, fixed
+schema, and an unconsumed observation-only policy.
+
+The two direct calls now retain their unchanged dictionaries in the selected
+targets. Both remain unconsumed and observation-only; the nested suffix route
+and cleanup/pruning behavior are unchanged. A zero counter remains insufficient
+to infer absence of mutation. No GraphIndex construction, mutation, pruning,
+call order, argument, dependency, public API, or TensorFlow boundary changed.
+
+`optimize_fold_mul_add_mul_affine_chains()` exposes the fixed one-key result
+`optimized_fold_mul_add_mul_affine_chains` from an indexed owner with a default
+32-rewrite cap. The lowerer wrapper calls it twice directly. Terminal affine/
+Concat/Split recovery independently selects the public callback with the live
+LayoutState and consumes that nested result in its declared mutation summary.
+
+Strict characterization selects
+`_layout_pass_set_1_initial_affine_chain_fold_stats` and
+`_layout_pass_set_1_post_binary_affine_chain_fold_stats` for only the two
+direct results. It freezes exact arguments, initial-attention/affine-prepost and
+post-binary-attention/quantized-suffix boundaries, nested terminal index and
+layout flag, fixed schema, and an unconsumed observation-only direct policy.
+
+The two direct calls now retain their unchanged dictionaries in the selected
+targets. Both remain unconsumed and observation-only. The terminal nested
+result remains consumed by the same mutation summary, and its callback route is
+unchanged. No GraphIndex ownership, rewrite cap, candidate handling, layout
+synchronization, call order, dependency, public API, or TensorFlow boundary
+changed.
+
+`optimize_transpose_mul_add_const_prepost_nhwc_chains()` exposes the fixed
+one-key result `optimized_transpose_mul_add_const_prepost_nhwc_chains` with a
+default 32-rewrite cap. The lowerer calls it in the initial layout phase, the
+no-layout fallback, and the final no-layout cleanup; the final call already
+retains `_no_layout_final_affine_prepost_stats`. Terminal, attention, and
+attention/quantized orchestration select the public callback with LayoutState,
+while late-binary recovery consumes it inside its composite result. Because the
+owner prunes unused tensors even on candidate-missing exits, a zero counter is
+not complete mutation evidence.
+
+Strict characterization selects `_layout_pass_set_1_affine_prepost_stats` and
+`_no_layout_fallback_affine_prepost_stats` for the two raw direct forms. It
+freezes all three direct calls, exact arguments, initial/fallback/final
+boundaries, three declarative selections, the consumed late-binary form, fixed
+schema, and an unconsumed observation-only policy for the two new targets.
+
+The initial and fallback calls now retain their unchanged dictionaries in the
+selected targets. Both remain unconsumed and observation-only. The final target,
+declarative orchestration selections, and consumed late-binary form remain
+unchanged. No GraphIndex ownership, rewrite cap, candidate handling, pruning,
+layout synchronization, condition, dependency, public API, or TensorFlow
+boundary changed.
+
+`optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains()` exposes
+the fixed one-key result
+`optimized_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains`. Its sole
+lowerer call and the attention/quantized-suffix and pre-add-attention selections
+are model-only. The owner always prunes unused tensors on exit, so a zero
+counter is not complete mutation evidence.
+
+Strict characterization selects
+`_layout_pass_set_1_pre_unary_affine_fanout_stats` for the direct result. It
+freezes the exact model-only call, affine-pre/post/mean-affine boundary, both
+declarative selection indices and empty keyword contracts, fixed schema, and an
+unconsumed observation-only policy.
+
+Gate-layout result propagation now preserves the ordered child-result tuple
+already produced by the shared recovery engine. `run_gate_layout()` returns the
+full eight-result tuple or reduced seven-result tuple unchanged, and the lowerer
+helper exposes the same typed return contract. The reduced direct call retains
+its tuple as `_layout_opt_gate_layout_results` without consuming it.
+
+The full-policy helper remains the same argument-free attention-recovery
+callback. Pass selection and order, the single shared `ModelIRPassStateScope`,
+child callback contracts, direct policy argument, SA/PA-MirrorPad predecessor,
+two-iteration normalization successor, public API, dependencies, and
+TensorFlow boundary are unchanged. The retained direct tuple is
+observation-only and is not interpreted as mutation evidence.
+
+Terminal singleton-MaxPool/Reshape orchestration has two ordered children:
+singleton-MaxPool layout cleanup followed by consecutive-Reshape cleanup. Both
+receive the same model, LayoutState, diagnostics, and one shared
+`ModelIRPassStateScope`. Their fixed result dictionaries contain two and three
+integer counters respectively. `run_recovery_invocations()` already constructs
+the ordered pair, while the runner, lowerer helper, and sole direct call
+currently discard it.
+
+Strict characterization selects
+`_terminal_singleton_maxpool_reshape_results`. It freezes both child schemas,
+shared-scope invocation contracts, zero-argument helper use, the guarded
+terminal elementwise-fanout/convpool-output boundary, sole occurrence, typed
+runner/helper propagation requirement, and an unconsumed observation-only
+direct policy.
+
+Terminal singleton-MaxPool/Reshape result propagation now returns the existing
+ordered two-child tuple from the runner and lowerer helper. The sole direct
+invocation retains the tuple as
+`_terminal_singleton_maxpool_reshape_results`, which remains unconsumed and
+observation-only.
+
+Both child callbacks and fixed schemas, shared `ModelIRPassStateScope`, exact
+context and arguments, child order, terminal elementwise-fanout predecessor,
+convpool-output successor, feature guards, public API, dependencies, and
+TensorFlow boundary are unchanged. The observation target is not a combined
+mutation counter and is not used to steer later lowering.
+
+Late dequant/unary fan-out orchestration has three ordered children: dequant-
+Concat-Quantize layout cleanup, transpose-unary passthrough cleanup, and
+transpose-unary fan-out bridge cleanup. Each returns one fixed integer counter,
+and all three receive one shared `ModelIRPassStateScope` with the same ModelIR,
+LayoutState, and diagnostics. The recovery engine constructs their ordered
+tuple, while the runner, lowerer helper, and sole direct call currently discard
+it.
+
+Strict characterization selects `_late_dequant_unary_fanout_results`. It
+freezes all child IDs and schemas, shared-scope contracts, zero-argument helper
+use, the retained dequant-HardSigmoid predecessor, raw swish successor, sole
+occurrence, typed runner/helper propagation requirement, and an unconsumed
+observation-only direct policy.
+
+Late dequant/unary fan-out result propagation now returns the existing ordered
+three-child tuple from the runner and lowerer helper. The sole direct invocation
+retains it as `_late_dequant_unary_fanout_results`, which remains unconsumed and
+observation-only.
+
+All fixed child schemas and callbacks, pass order, one shared
+`ModelIRPassStateScope`, exact context and zero-argument helper use, retained
+dequant-HardSigmoid predecessor, swish-transpose successor, public API,
+dependencies, and TensorFlow boundary are unchanged. The result tuple does not
+control later lowering or claim complete mutation evidence.
+
+`optimize_transpose_pre_add_mul_add_prelu_nhwc_chains()` exposes the fixed
+one-key result `optimized_transpose_pre_add_mul_add_prelu_nhwc_chains`. The
+lowerer calls its wrapper once directly, while pre-Add/mean-attention and SINet
+pre-Add/resize orchestration each select the public model-only owner once. The
+owner always prunes unused tensors on exit, so a zero counter is not complete
+mutation evidence.
+
+Strict characterization selects `_very_late_residual_affine_prelu_stats` for
+only the direct result. It freezes the owner schema and unconditional cleanup,
+wrapper contract, exact direct argument, retained very-late SINet predecessor,
+residual-affine-fan-out successor, both declarative selection indices and
+model-only contracts, sole direct occurrence, and an unconsumed observation-
+only policy.
+
+The very-late raw residual affine/PReLU call now retains its unchanged one-key
+dictionary as `_very_late_residual_affine_prelu_stats`. The target remains
+unconsumed and observation-only. Both model-only declarative selections and
+their parent result tuples are unchanged.
+
+No owner logic, unconditional pruning, schema, wrapper, direct argument,
+surrounding call order, nested route, dependency, public API, or TensorFlow
+boundary changed. In particular, the observation counter is not used to infer
+whether unconditional cleanup mutated tensor storage.
+
+`optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains()` exposes the
+fixed one-key result
+`optimized_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains`. Its lowerer
+wrapper is called once directly, while pre-Add/mean-attention and SINet pre-
+Add/resize orchestration each select the public model-only owner once. The owner
+always prunes unused tensors on exit, so zero is not complete mutation evidence.
+
+Strict characterization selects `_very_late_residual_affine_fanout_stats` only
+for the direct result. It freezes owner schema and cleanup, wrapper, exact
+argument, retained residual-affine/PReLU predecessor, dead-operator-prune
+successor, both nested selection indices and model-only contracts, sole direct
+occurrence, and an unconsumed observation-only policy.
+
+The very-late raw residual affine fan-out call now retains its unchanged one-key
+dictionary as `_very_late_residual_affine_fanout_stats`. The target remains
+unconsumed and observation-only, and both model-only declarative selections
+remain part of the same parent tuples.
+
+No owner logic, unconditional pruning, schema, wrapper, direct argument,
+neighboring residual-affine/PReLU result, dead-operator pruning, nested route,
+dependency, public API, or TensorFlow boundary changed. The counter is not used
+as complete mutation evidence or to steer later cleanup.
+
+`optimize_sinet_mix_attention_double_logistic_nhwc_chains()` exposes the fixed
+one-key result `optimized_sinet_mix_attention_double_logistic_nhwc_chains` from
+a GraphIndex/candidate-based owner with a default 32-rewrite cap. The lowerer
+calls its wrapper once directly, and attention gate/QDQ recovery selects the
+public owner once with LayoutState. Unused tensors are pruned only when at least
+one rewrite succeeds.
+
+Strict characterization selects `_post_sinet_mix_attention_stats` only for the
+raw direct result. It freezes the owner defaults, schema and guarded cleanup,
+wrapper forwarding, exact direct arguments, retained split/Conv/Concat bridge
+predecessor, mixed-attention cleanup successor, attention selection index and
+layout-only keyword contract, sole direct occurrence, and an unconsumed
+observation-only policy.
+
+`run_pad_layout_cleanup()` exposes the fixed three-key result
+`optimized_transpose_pad_prepost_nhwc_chains`,
+`optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains`, and
+`optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains` from three
+transactional layout passes. Each underlying optimizer prunes unused tensors
+on exit, so zero rewrite counters are not complete mutation evidence.
+
+The owner is reached by one raw very-late call, gate-layout required/full
+policies, terminal-boundary layout orchestration, and a consumed norm-only
+safety fallback. Strict characterization selects `_very_late_pad_layout_stats`
+only for the raw result and leaves `fallback_norm_stats` consumed. It freezes
+the three schemas and pass IDs, route indices, state-scope forwarding, direct
+arguments and neighbors, fallback feature flags, sole direct occurrence, and
+an unconsumed observation-only policy for the raw result.
+
+The raw very-late call now retains its unchanged three-key dictionary as
+`_very_late_pad_layout_stats`. The target remains unconsumed and
+observation-only. The consumed norm-only safety fallback, all nested route
+selection and state-scope contracts, transactional owners, underlying pruning,
+schemas, direct arguments, and call order remain unchanged; the counters do
+not steer later cleanup.
+
+The Conv1D tencoder residual-gate owner returns the fixed one-key result
+`optimized_tencoder_add_expand_transpose_conv_nhwc_chains` through a
+GraphIndex/LayoutState-aware wrapper. It prunes unused tensors on both
+preflight-zero and normal exits, so a zero counter is not complete mutation
+evidence.
+
+The wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_tencoder_stats` only for that result.
+It freezes schema, wrapper defaults and forwarding, unconditional cleanup,
+exact arguments, retained InstanceNorm predecessor, BatchMatMul successor,
+sole occurrence, and an unconsumed observation-only policy.
+
+The raw Conv1D tencoder call now retains its unchanged dictionary as
+`_late_conv1d_tencoder_stats`. The target remains unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, unconditional pruning, wrapper forwarding, direct arguments, and
+neighboring InstanceNorm/BatchMatMul owners remain unchanged; the counter does
+not steer later cleanup.
+
+`run_singleton_consecutive_reshape()` returns a fixed three-dictionary tuple
+from singleton-channel transpose, duplicate-fanout, and consecutive-reshape
+cleanup. Its three child invocations share one `ModelIRPassStateScope`; the
+fallback route intentionally uses no LayoutState while retaining the lowerer's
+diagnostics.
+
+The lowerer has two assigned main routes and one raw fallback route. The
+shared-late tuple participates in reconciliation decisions, whereas the earlier
+very-late tuple remains observational. Strict characterization selects
+`_fallback_singleton_consecutive_reshape_results` only for the guarded
+`fallback_ir` route. It freezes the tuple schema, pass order, shared-scope and
+duplicate-fanout flags, exact fallback guard, arguments and repair/reconcile
+neighbors, sole fallback occurrence, and an unconsumed observation-only policy.
+
+The guarded fallback call now retains its unchanged tuple as
+`_fallback_singleton_consecutive_reshape_results`. The target remains
+unconsumed and observation-only. The two main-route results, positive norm-
+cleanup guard, shared child state, disabled duplicate-fanout transpose handling,
+LayoutState choice, diagnostics, and adjacent repair/reconciliation remain
+unchanged; the retained fallback tuple does not steer later cleanup.
+
+`optimize_swish_transpose_passthrough_chains()` exposes the fixed one-key result
+`rewritten_swish_transpose_passthrough_chains` through a GraphIndex/candidate-
+aware owner. A successful plan performs indexed graph edits, layout updates,
+and unused-tensor pruning; an empty or rejected candidate set returns zero.
+
+The lowerer calls its forwarding wrapper once directly, while layout-recovery
+selects the public owner at index 5 with LayoutState. Strict characterization
+selects `_late_swish_transpose_passthrough_stats` only for the raw direct result.
+It freezes wrapper defaults and forwarding, result schema and guarded pruning,
+direct arguments and retained dequant-unary/squeeze-unary neighbors, nested
+selection and keyword contract, sole direct occurrence, and an unconsumed
+observation-only policy.
+
+The raw late Swish wrapper call now retains its unchanged one-key dictionary as
+`_late_swish_transpose_passthrough_stats`. The target remains unconsumed and
+observation-only. Owner matching and indexed application, wrapper forwarding,
+GraphIndex/candidate and rewrite-limit handling, guarded pruning, LayoutState
+updates, layout-recovery selection, direct arguments, and call order remain
+unchanged; the counter does not steer the following passthrough owners.
+
+The three adjacent Conv1D unary owners cover Squeeze/Unary/ExpandDims,
+rank-4 Unary/Transpose/Reshape/ExpandDims, and fan-out bypass forms. Each
+returns one fixed counter, accepts optional GraphIndex and LayoutState through
+its forwarding wrapper, and prunes unused tensors even on the zero-rewrite
+preflight path. A zero counter is therefore not complete mutation evidence.
+
+Each wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_squeeze_unary_stats`,
+`_late_conv1d_rank4_unary_stats`, and `_late_conv1d_unary_fanout_stats`
+together. It freezes all three schemas, wrapper defaults and forwarding,
+unconditional pruning, direct arguments and adjacency between retained Swish
+and InstanceNorm passthrough boundaries, sole occurrences, and unconsumed
+observation-only policies.
+
+The three raw Conv1D unary calls now retain their unchanged dictionaries as
+`_late_conv1d_squeeze_unary_stats`, `_late_conv1d_rank4_unary_stats`, and
+`_late_conv1d_unary_fanout_stats`. All targets remain unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, unconditional pruning, wrapper forwarding, direct arguments,
+adjacency, and following owner behavior remain unchanged; the counters do not
+steer later cleanup.
+
+The Conv1D InstanceNorm unary passthrough owner returns the fixed one-key result
+`optimized_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains`
+through a GraphIndex/LayoutState-aware wrapper. It prunes unused tensors on
+both preflight-zero and normal exits, so a zero counter is not complete
+mutation evidence.
+
+The wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_instancenorm_unary_stats` only for that
+result. It freezes schema, wrapper defaults and forwarding, unconditional
+cleanup, exact arguments, retained Conv1D fan-out predecessor, tencoder
+successor, sole occurrence, and an unconsumed observation-only policy.
+
+The raw Conv1D InstanceNorm unary call now retains its unchanged dictionary as
+`_late_conv1d_instancenorm_unary_stats`. The target remains unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, unconditional pruning, wrapper forwarding, direct arguments, and
+neighboring Conv1D fan-out/tencoder owners remain unchanged; the counter does
+not steer later cleanup.
+
+The adjacent late-tail owners cover Conv1D Squeeze/Unary/BatchMatMul,
+decoder BatchMatMul/Add/ExpandDims/TransposeConv input, and terminal
+Squeeze/Mean/Squeeze forms. Each returns one fixed counter through an optional
+GraphIndex/LayoutState wrapper. Unused-tensor pruning and LayoutState sync are
+guarded by a positive rewrite count.
+
+Each wrapper has one direct lowerer call and no nested selection. Strict
+characterization selects `_late_conv1d_batchmatmul_stats`,
+`_late_decoder_deconv_stats`, and `_late_terminal_squeeze_mean_stats` together.
+It freezes all schemas, wrapper defaults and forwarding, positive-only cleanup,
+direct arguments and adjacency between retained tencoder and pad-layout
+results, sole occurrences, and unconsumed observation-only policies.
+
+The three raw late-tail calls now retain their unchanged dictionaries as
+`_late_conv1d_batchmatmul_stats`, `_late_decoder_deconv_stats`, and
+`_late_terminal_squeeze_mean_stats`. All targets remain unconsumed and
+observation-only. Indexed matching and application, GraphIndex/LayoutState
+handling, positive-only cleanup, wrapper forwarding, direct arguments, and
+adjacency between tencoder and pad-layout results remain unchanged; the
+counters do not steer later cleanup.
+
+The duplicate-fanout/quantized-PReLU and boundary-BatchMatMul/input-unary
+orchestration runners each own two ordered child passes sharing one
+`ModelIRPassStateScope`. Their child callbacks return fixed dictionaries, but
+the runners and lowerer helpers currently declare `None` and discard the
+ordered child tuples.
+
+Strict characterization freezes both child schemas, duplicate-transpose policy,
+shared-scope identity, callback-only helper ownership, and parent positions:
+layout/attention/quantized suffix index 5 and layout-recovery index 1. The
+propagation contract replaces only each parent's existing `None` slot with the
+ordered two-dictionary tuple; parent tuple arity and pass order stay unchanged.
+
+Both public runners and lowerer helpers now return their unchanged ordered
+two-dictionary child tuples. The corresponding parent slots therefore carry
+nested evidence instead of `None`; parent tuple arity, child selection and
+order, shared state scopes, duplicate-transpose policy, callback-only ownership,
+and route positions remain unchanged. No additional scan, copy, aggregation,
+or result consumer was introduced.
+
+The recurrent-alias indexed equivalence test obtains its legacy producer and
+consumer scans from `core.model_ir_utils`, which is the canonical owner after
+the lowerer compatibility imports were removed. Its monkeypatched rescan
+blocker targets that same module. No production compatibility re-export is
+reintroduced solely for a test.
+
+The terminal direct input-repair boundary runs orphan recurrent-step alias
+repair immediately before unbound nonconstant rank-four input layout repair.
+Each owner returns a fixed one-counter dictionary. A positive unbound-input
+repair may additionally reconcile static tensor shapes internally, but that
+secondary cleanup is intentionally part of the existing owner contract rather
+than a new pipeline branch.
+
+Strict characterization selects `_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats` only for the two discarded direct results.
+It freezes their schemas, return annotations, exact arguments, adjacency after
+post progress and before very-late affine cleanup, and an unconsumed
+observation-only policy. No repair counter may steer the following cleanup.
+
+The two direct repair calls retain their unchanged dictionaries as
+`_late_orphan_recurrent_repair_stats` and
+`_late_unbound_input_repair_stats`. Both remain unconsumed; matching, indexed
+mutation, conditional shape reconciliation, arguments, order, and following
+affine cleanup are unchanged. Result retention therefore adds no scan, copy,
+aggregation, or control dependency.
+
+Core cleanup, conditional layout pass-set 2, and very-late residual-affine
+cleanup each contain the same raw dead-operator prune followed immediately by
+static-shape reconciliation. The six result dictionaries are discarded, and
+the pair has no shared GraphIndex contract.
+
+Strict characterization selects a two-pass-only indexed owner. It must reuse
+one `ModelIRGraphIndex`, preserve the exact legacy graph and tensor mutation,
+and return only `removed_dead_operators` plus
+`reconciled_static_tensor_shapes`. The three direct results are selected as
+unconsumed `_core_cleanup_prune_reconcile_stats`,
+`_layout_pass_set_2_prune_reconcile_stats`, and
+`_very_late_prune_reconcile_stats`. Dynamic reshape and fixed-point retries are
+explicitly outside this owner's contract.
+
+`run_indexed_prune_reconcile_cleanup()` now implements that two-pass-only
+contract. One `ModelIRGraphIndex` is created or accepted and forwarded through
+dead-op pruning and static-shape reconciliation; LayoutState is forwarded only
+where the legacy pair used it. The three phase calls retain their selected
+dictionaries without consumers. No additional pass, scan after pruning,
+summary, fixed-point loop, or control dependency is introduced.
+
+Exact rank-four binary layout repair and singleton-broadcast repair form the
+same ordered pair at four pipeline boundaries. Their owners currently scan the
+operator list and mutate it directly; three pairs retain separate results and
+fallback discards both.
+
+Strict characterization selects optional GraphIndex/LayoutState contracts for
+both owners and one `run_indexed_binary_layout_adapter_cleanup()` runner. The
+runner must create one index, preserve exact-before-singleton behavior and both
+unchanged dictionaries, and leave the three existing guard consumers intact.
+Fallback gains only two unconsumed observation targets. Candidate guards,
+adapter metadata, quantization cloning, zero-rewrite pruning, and direct call
+arguments are fixed equivalence requirements.
+
+The indexed binary-adapter contract is now implemented. Both owners perform
+candidate lookup, operator insertion, and input replacement through one live
+`ModelIRGraphIndex`, while accepting the current `LayoutState` for pruning.
+The shared runner executes only the exact adapter followed by the singleton
+adapter and returns their two unchanged dictionaries. All four pipeline pairs
+use the runner; existing guard consumers remain unchanged and fallback's two
+results remain unconsumed. No additional pass, retry, summary, or control
+dependency was introduced.

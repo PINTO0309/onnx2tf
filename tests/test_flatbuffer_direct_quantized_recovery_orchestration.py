@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.passes import quantized_recovery_orchestration
 from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
     QUANTIZED_ACTIVATION_BINARY_PASS_IDS,
@@ -22,9 +22,24 @@ from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "quantized_recovery_orchestration.py"
+)
 SAFE_BINARY = "_run_safe_binary_bridge_recovery_sequence"
 QUANTIZED_ACTIVATION_BINARY = (
     "_run_quantized_activation_binary_bridge_recovery_sequence"
+)
+RESULT_TARGETS = (
+    "_layout_pass_set_1_quantized_activation_binary_results",
+    "_layout_pass_set_2_quantized_activation_binary_results",
+)
+SAFE_RESULT_TARGETS = (
+    "_layout_pass_set_1_safe_binary_results",
+    "_layout_pass_set_1_final_safe_binary_results",
 )
 
 
@@ -51,6 +66,22 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    function = statement.value.func
+    return function.id if isinstance(function, ast.Name) else None
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
 
 
 def _context() -> QuantizedRecoveryContext:
@@ -84,7 +115,7 @@ def _normalize_new_contract(
 def test_quantized_recovery_sequences_are_straight_line_closures() -> None:
     expected_lines = {
         SAFE_BINARY: 2,
-        QUANTIZED_ACTIVATION_BINARY: 4,
+        QUANTIZED_ACTIVATION_BINARY: 5,
     }
     control_flow_nodes = (
         ast.AsyncFor,
@@ -118,12 +149,14 @@ def test_quantized_recovery_sequences_are_straight_line_closures() -> None:
 
         called_names = {
             node.func.id
-            for node in ast.walk(helper)
+            for statement in helper.body
+            for node in ast.walk(statement)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
         loaded_data_names = {
             node.id
-            for node in ast.walk(helper)
+            for statement in helper.body
+            for node in ast.walk(statement)
             if isinstance(node, ast.Name)
             and isinstance(node.ctx, ast.Load)
             and node.id not in called_names
@@ -206,16 +239,21 @@ def test_quantized_recovery_context_and_wrappers_are_explicit() -> None:
     lowerer, safe_helper = _lowerer_and_helper(SAFE_BINARY)
     _, quantized_helper = _lowerer_and_helper(QUANTIZED_ACTIVATION_BINARY)
     expected_wrappers = {
-        SAFE_BINARY: (safe_helper, "run_safe_binary_recovery"),
+        SAFE_BINARY: (safe_helper, "run_safe_binary_recovery", ast.Return),
         QUANTIZED_ACTIVATION_BINARY: (
             quantized_helper,
             "run_quantized_activation_binary_recovery",
+            ast.Return,
         ),
     }
-    for helper_name, (helper, runner_name) in expected_wrappers.items():
+    for helper_name, (
+        helper,
+        runner_name,
+        statement_type,
+    ) in expected_wrappers.items():
         assert len(helper.body) == 1
         statement = helper.body[0]
-        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement, statement_type)
         call = statement.value
         assert isinstance(call, ast.Call)
         assert isinstance(call.func, ast.Name)
@@ -285,6 +323,210 @@ def test_quantized_recovery_runners_preserve_instrumented_order(
     run_phase(context)
 
     assert events == list(expected_ids)
+
+
+def test_quantized_activation_binary_child_schemas_are_explicit() -> None:
+    context = _context()
+    quantized_invocations = build_quantized_activation_binary_invocations(context)
+    safe_invocations = build_safe_binary_recovery_invocations(context)
+
+    assert tuple(invocation.run() for invocation in quantized_invocations[:5]) == (
+        {"folded_dequant_hardsigmoid_quantize_chains": 0},
+        {"folded_dequant_maxpool_quantize_chains": 0},
+        {"folded_dequant_softmax_quantize_chains": 0},
+        {"folded_dequant_logistic_quantize_chains": 0},
+        {"canonicalized_softmax_transpose_chains": 0},
+    )
+    assert tuple(invocation.run() for invocation in safe_invocations) == (
+        {
+            "rewritten_transpose_binary_symmetric_legacy_only_bridges_safe": 0,
+            "rewritten_transpose_binary_single_post_bridges_safe": 0,
+            "rewritten_transpose_binary_mixed_fanout_bridges_safe": 0,
+            "rewritten_transpose_binary_asymmetric_fanout_bridges": 0,
+            "rewritten_transpose_binary_full_post_fanout_bridges": 0,
+        },
+    )
+
+
+def test_quantized_activation_binary_zero_counter_can_hide_cleanup() -> None:
+    model_ir = ModelIR("quantized_activation_binary_zero_prune")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["x"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    model_ir.tensors["unused"] = TensorIR(
+        name="unused",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    context = QuantizedRecoveryContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+
+    stats = build_quantized_activation_binary_invocations(context)[0].run()
+
+    assert stats == {"folded_dequant_hardsigmoid_quantize_chains": 0}
+    assert "unused" not in model_ir.tensors
+
+
+def test_quantized_activation_binary_propagates_nested_results_to_both_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    safe_result = {
+        "rewritten_transpose_binary_symmetric_legacy_only_bridges_safe": 5,
+    }
+    monkeypatch.setattr(
+        quantized_recovery_orchestration,
+        "run_safe_binary_bridge_recovery",
+        lambda *args, **kwargs: dict(safe_result),
+    )
+    assert run_safe_binary_recovery(context) == (safe_result,)
+
+    first_five_results = tuple(
+        {"slot": index} for index in range(5)
+    )
+    for pass_id, expected_result in zip(
+        QUANTIZED_ACTIVATION_BINARY_PASS_IDS[:5],
+        first_five_results,
+        strict=True,
+    ):
+        monkeypatch.setattr(
+            quantized_recovery_orchestration,
+            pass_id,
+            lambda *args, _result=expected_result, **kwargs: dict(_result),
+        )
+    safe_results = (safe_result,)
+    monkeypatch.setattr(
+        quantized_recovery_orchestration,
+        "run_safe_binary_recovery",
+        lambda *args, **kwargs: safe_results,
+    )
+    expected_results = (*first_five_results, safe_results)
+    assert run_quantized_activation_binary_recovery(context) == expected_results
+
+    orchestration_functions = {
+        node.name: node
+        for node in ast.parse(
+            ORCHESTRATION_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    for runner_name in (
+        "run_safe_binary_recovery",
+        "run_quantized_activation_binary_recovery",
+    ):
+        runner = orchestration_functions[runner_name]
+        assert ast.unparse(runner.returns) == "Tuple[Any, ...]"
+        assert len(runner.body) == 1
+        assert isinstance(runner.body[0], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper(QUANTIZED_ACTIVATION_BINARY)
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    production_results: list[tuple[list[ast.stmt], int]] = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if _direct_call_name(candidate) == QUANTIZED_ACTIVATION_BINARY:
+                production_results.append((statement.body, index))
+    assert len(production_results) == 2
+    assert tuple(
+        _single_target(body[index]) for body, index in production_results
+    ) == RESULT_TARGETS
+    assert tuple(
+        _direct_call_name(body[index - 1])
+        for body, index in production_results
+    ) == (
+        "run_quantized_reshape_cleanup",
+        "_optimize_dequant_transposeconv_quantize_chains",
+    )
+    first_following = production_results[0][0][production_results[0][1] + 1]
+    assert isinstance(first_following, ast.If)
+    assert ast.unparse(first_following.test) == (
+        "enable_transpose_binary_bridge_optimizations"
+    )
+    second_following = production_results[1][0][production_results[1][1] + 1]
+    assert _single_target(second_following) == (
+        "_layout_opt_elementwise_concat_conv_stats"
+    )
+    for target in RESULT_TARGETS:
+        assert not any(
+            isinstance(node, ast.Name)
+            and node.id == target
+            and isinstance(node.ctx, ast.Load)
+            for node in ast.walk(lowerer)
+        )
+
+
+def test_safe_binary_helper_propagates_and_retains_both_direct_results() -> None:
+    orchestration_functions = {
+        node.name: node
+        for node in ast.parse(
+            ORCHESTRATION_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    runner = orchestration_functions["run_safe_binary_recovery"]
+    assert ast.unparse(runner.returns) == "Tuple[Any, ...]"
+    assert len(runner.body) == 1
+    assert isinstance(runner.body[0], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper(SAFE_BINARY)
+    assert ast.unparse(helper.returns) == "Tuple[Any, ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    helper_call = helper.body[0].value
+    assert isinstance(helper_call, ast.Call)
+    assert isinstance(helper_call.func, ast.Name)
+    assert helper_call.func.id == "run_safe_binary_recovery"
+    assert [ast.unparse(argument) for argument in helper_call.args] == [
+        "quantized_recovery_context"
+    ]
+    assert helper_call.keywords == []
+
+    production_results: list[tuple[list[ast.stmt], int]] = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if _direct_call_name(candidate) == SAFE_BINARY:
+                production_results.append((statement.body, index))
+    assert len(production_results) == 2
+    assert tuple(
+        _single_target(body[index]) for body, index in production_results
+    ) == SAFE_RESULT_TARGETS
+    assert tuple(
+        _direct_call_name(body[index - 1])
+        for body, index in production_results
+    ) == (
+        "_run_layout_attention_quantized_recovery_suffix",
+        "_run_transpose_unary_fanout_layout_pass_cluster",
+    )
+    assert tuple(
+        _direct_call_name(body[index + 1])
+        for body, index in production_results
+    ) == (
+        "_optimize_transpose_dequantize_mean_quantize_bridges",
+        "_advance_post_progress",
+    )
+    for target in SAFE_RESULT_TARGETS:
+        assert not any(
+            isinstance(node, ast.Name)
+            and node.id == target
+            and isinstance(node.ctx, ast.Load)
+            for node in ast.walk(lowerer)
+        )
 
 
 def test_quantized_recovery_module_does_not_import_the_lowerer() -> None:

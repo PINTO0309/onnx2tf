@@ -6,7 +6,7 @@ from dataclasses import fields, is_dataclass
 from typing import Any
 
 import numpy as np
-import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import onnx2tf.tflite_builder.core.model_ir_utils as model_ir_utils_module
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -132,8 +132,8 @@ def _run_legacy_direct_recurrent_alias_repair(
     model_ir: ModelIR,
 ) -> dict[str, int]:
     repaired = 0
-    producers = lowering_module._build_tensor_producer_map(model_ir)
-    consumers = lowering_module._build_tensor_consumer_map(model_ir)
+    producers = model_ir_utils_module._build_tensor_producer_map(model_ir)
+    consumers = model_ir_utils_module._build_tensor_consumer_map(model_ir)
     model_inputs = {str(name) for name in model_ir.inputs}
     model_outputs = {str(name) for name in model_ir.outputs}
     for raw_tensor_name in list(model_ir.tensors.keys()):
@@ -173,8 +173,8 @@ def _run_legacy_direct_recurrent_alias_repair(
         if tensor_name not in model_outputs:
             model_ir.tensors.pop(tensor_name, None)
         repaired += 1
-        producers = lowering_module._build_tensor_producer_map(model_ir)
-        consumers = lowering_module._build_tensor_consumer_map(model_ir)
+        producers = model_ir_utils_module._build_tensor_producer_map(model_ir)
+        consumers = model_ir_utils_module._build_tensor_consumer_map(model_ir)
     return {"repaired_orphan_recurrent_step_tensors": int(repaired)}
 
 
@@ -197,12 +197,12 @@ def test_shared_recurrent_alias_owner_matches_legacy_direct_behavior(
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     monkeypatch.setattr(
-        lowering_module,
+        model_ir_utils_module,
         "_build_tensor_producer_map",
         unexpected_graph_rescan,
     )
     monkeypatch.setattr(
-        lowering_module,
+        model_ir_utils_module,
         "_build_tensor_consumer_map",
         unexpected_graph_rescan,
     )

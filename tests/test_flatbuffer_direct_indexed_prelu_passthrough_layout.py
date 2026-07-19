@@ -396,6 +396,28 @@ def test_candidate_limit_and_idempotence() -> None:
     assert _snapshot(model) == first
 
 
+def test_zero_rewrite_still_prunes_unused_tensor() -> None:
+    model = _make_model()
+    model.tensors["unused_prelu_probe"] = _tensor(
+        "unused_prelu_probe",
+        [1],
+        data=np.asarray([0.0], dtype=np.float32),
+    )
+    layout = LayoutState.from_model_ir(model)
+    before_tensor_count = len(model.tensors)
+
+    stats = optimize_prelu_transpose_passthrough_chains(
+        model,
+        layout_state=layout,
+        max_rewrites=0,
+    )
+
+    assert stats == {"rewritten_prelu_transpose_passthrough_chains": 0}
+    assert len(model.tensors) == before_tensor_count - 1
+    assert "unused_prelu_probe" not in model.tensors
+    assert layout.validate_against_model_ir(model) == []
+
+
 def _wrong_pre_permutation(model: ModelIR) -> None:
     model.tensors["pre_perm"].data = np.asarray([0, 2, 3, 1], dtype=np.int32)
 

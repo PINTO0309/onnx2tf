@@ -79,7 +79,7 @@ def _expression_path(node: ast.expr) -> Any:
 
 
 def _direct_call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, (ast.Assign, ast.Expr))
     assert isinstance(statement.value, ast.Call)
     assert isinstance(statement.value.func, ast.Name)
     return statement.value.func.id
@@ -170,7 +170,8 @@ def test_mean_attention_context_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
+    assert statement.value is not None
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -305,6 +306,94 @@ def test_mean_attention_runner_preserves_all_instrumented_orders(
     assert all(scope is events[0][1] for _, scope in events)
 
 
+def test_mean_attention_propagates_policy_results_to_direct_primary_callers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(use_layout_state=True)
+    result_by_pass_id = {
+        pass_id: {f"{pass_id}_mutations": index}
+        for index, pass_id in enumerate(MEAN_ATTENTION_PASS_IDS, start=1)
+    }
+    for pass_id, result in result_by_pass_id.items():
+        monkeypatch.setattr(
+            mean_attention_orchestration,
+            pass_id,
+            lambda *args, result=result, **kwargs: result,
+        )
+
+    for include_layernorm, include_conv_attention in POLICIES:
+        expected_ids = _expected_ids(include_layernorm, include_conv_attention)
+        assert run_mean_attention(
+            context,
+            include_layernorm=include_layernorm,
+            include_conv_attention=include_conv_attention,
+        ) == tuple(result_by_pass_id[pass_id] for pass_id in expected_ids)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert len(helper.body) == 1
+    delegate = helper.body[0]
+    assert isinstance(delegate, ast.Return)
+    assert isinstance(delegate.value, ast.Call)
+    assert isinstance(delegate.value.func, ast.Name)
+    assert delegate.value.func.id == "run_mean_attention"
+
+    direct_results = sorted(
+        (
+            node
+            for node in ast.walk(lowerer)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == MEAN_ATTENTION
+        ),
+        key=lambda node: node.lineno,
+    )
+    assert len(direct_results) == 2
+    assert [result.targets[0].id for result in direct_results] == [
+        "_layout_pass_set_1_mean_attention_results",
+        "_terminal_mean_attention_results",
+    ]
+    assert [
+        {
+            keyword.arg: ast.unparse(keyword.value)
+            for keyword in result.value.keywords
+        }
+        for result in direct_results
+    ] == [
+        {"include_layernorm": "True"},
+        {"include_conv_attention": "False"},
+    ]
+
+    callback_assignments = {
+        target.id: statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Name)
+        and target.id
+        in {
+            "attention_recovery_context",
+            "layout_attention_quantized_suffix_context",
+        }
+    }
+    assert set(callback_assignments) == {
+        "attention_recovery_context",
+        "layout_attention_quantized_suffix_context",
+    }
+    assert all(
+        any(
+            keyword.arg == "mean_attention_cluster"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == MEAN_ATTENTION
+            for keyword in assignment.value.keywords
+        )
+        for assignment in callback_assignments.values()
+        if isinstance(assignment.value, ast.Call)
+    )
+
+
 def test_mean_attention_preserves_layernorm_conv_policy_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
     guard = next(
@@ -324,7 +413,12 @@ def test_mean_attention_preserves_layernorm_conv_policy_and_boundaries() -> None
     invocation_index = next(
         index
         for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == (
+            "_layout_pass_set_1_mean_attention_results"
+        )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == MEAN_ATTENTION
@@ -334,7 +428,7 @@ def test_mean_attention_preserves_layernorm_conv_policy_and_boundaries() -> None
     )
     invocation = guard.body[invocation_index]
 
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {
@@ -372,7 +466,10 @@ def test_mean_attention_preserves_terminal_base_policy_and_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_mean_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == MEAN_ATTENTION
@@ -380,7 +477,7 @@ def test_mean_attention_preserves_terminal_base_policy_and_boundaries() -> None:
     invocation = guard.body[invocation_index]
 
     assert invocation_index == 0
-    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert invocation.value.args == []
     assert {

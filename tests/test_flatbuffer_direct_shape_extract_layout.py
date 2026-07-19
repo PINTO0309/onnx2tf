@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import copy
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -12,6 +14,10 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.shape_extract_layout import (
     optimize_transpose_shape_extract_nhwc_to_nchw_chains,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SHAPE_EXTRACT_OWNER = "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
 
 
 def _tensor(
@@ -304,3 +310,61 @@ def test_shape_extract_owner_matches_lowerer_compatibility_wrapper() -> None:
     }
     assert wrapper_stats == direct_stats
     assert _snapshot(wrapper_model_ir) == _snapshot(direct_model_ir)
+
+
+def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() -> None:
+    tree = ast.parse(
+        (
+            REPO_ROOT
+            / "onnx2tf"
+            / "tflite_builder"
+            / "lower_from_onnx2tf.py"
+        ).read_text(encoding="utf-8")
+    )
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert isinstance(invocation.value.func, ast.Name)
+    assert invocation.value.func.id == SHAPE_EXTRACT_OWNER
+    assert len(invocation.value.args) == 1
+    assert isinstance(invocation.value.args[0], ast.Name)
+    assert invocation.value.args[0].id == "model_ir"
+    assert invocation.value.keywords == []
+
+    previous = lowerer.body[invocation_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_spp_stats"
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "summarize_late_spp_concat_unary_conv_mutations"
+    )
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "late_qkv_tensor_count"
+
+    all_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SHAPE_EXTRACT_OWNER
+    ]
+    assert len(all_calls) == 3

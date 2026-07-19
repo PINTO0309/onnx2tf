@@ -178,19 +178,45 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "channel_slice_pad_mul_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == CHANNEL_SLICE_PAD_MUL
     )
 
-    previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
-    assert previous.value.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    pre_add_stats = lowerer.body[invocation_index - 1]
+    pre_add_count = lowerer.body[invocation_index - 2]
+    summary = lowerer.body[invocation_index + 1]
+    following = lowerer.body[invocation_index + 2]
+    assert isinstance(pre_add_count, ast.Assign)
+    assert len(pre_add_count.targets) == 1
+    assert isinstance(pre_add_count.targets[0], ast.Name)
+    assert pre_add_count.targets[0].id == "pre_terminal_pre_add_tensor_count"
+    assert isinstance(pre_add_stats, ast.Assign)
+    assert len(pre_add_stats.targets) == 1
+    assert isinstance(pre_add_stats.targets[0], ast.Name)
+    assert pre_add_stats.targets[0].id == "_pre_terminal_pre_add_stats"
+    assert isinstance(pre_add_stats.value, ast.Dict)
+    pre_add_owner = pre_add_stats.value.values[0]
+    assert isinstance(pre_add_owner, ast.Call)
+    assert isinstance(pre_add_owner.func, ast.Name)
+    assert pre_add_owner.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert isinstance(summary, ast.Assign)
+    assert len(summary.targets) == 1
+    assert isinstance(summary.targets[0], ast.Name)
+    assert summary.targets[0].id == "_pre_terminal_channel_slice_pad_mul_stats"
+    assert isinstance(summary.value, ast.Call)
+    assert isinstance(summary.value.func, ast.Name)
+    assert summary.value.func.id == "summarize_channel_slice_pad_mul_mutations"
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert (
         following.value.func.id
         == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
@@ -207,7 +233,7 @@ def test_channel_slice_pad_mul_preserves_stable_callback_boundary() -> None:
 def test_channel_slice_pad_mul_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -253,6 +279,212 @@ def test_channel_slice_pad_mul_runner_preserves_instrumented_order(
     run_channel_slice_pad_mul(context)
 
     assert events == list(CHANNEL_SLICE_PAD_MUL_PASS_IDS)
+
+
+def test_channel_slice_pad_mul_children_have_fixed_mutation_schemas() -> None:
+    context = _context()
+
+    results = tuple(
+        invocation.run()
+        for invocation in build_channel_slice_pad_mul_invocations(context)
+    )
+
+    assert results == (
+        {
+            "optimized_transpose_channel_slice_dual_add_bridges_strict": 0,
+            "optimized_transpose_slice_muladd_conv_mergeadd_strict": 0,
+            "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 0,
+        },
+        {
+            "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 0,
+        },
+    )
+
+
+def test_channel_slice_pad_mul_returns_and_summarizes_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    channel_slice_result = {
+        "optimized_transpose_channel_slice_dual_add_bridges_strict": 2,
+        "optimized_transpose_slice_muladd_conv_mergeadd_strict": 3,
+        "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 4,
+    }
+    pad_mul_result = {
+        "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 5,
+    }
+    expected_results = (channel_slice_result, pad_mul_result)
+
+    def return_results(invocations, *, expected_pass_ids, phase_name):
+        assert tuple(
+            invocation.pass_id for invocation in invocations
+        ) == CHANNEL_SLICE_PAD_MUL_PASS_IDS
+        assert tuple(expected_pass_ids) == CHANNEL_SLICE_PAD_MUL_PASS_IDS
+        assert phase_name == "channel-slice/pad-mul"
+        return expected_results
+
+    monkeypatch.setattr(
+        channel_slice_pad_mul_orchestration,
+        "run_recovery_invocations",
+        return_results,
+    )
+
+    results = run_channel_slice_pad_mul(context)
+    assert results == expected_results
+    summarize = getattr(
+        channel_slice_pad_mul_orchestration,
+        "summarize_channel_slice_pad_mul_mutations",
+    )
+    assert summarize(results) == {
+        **channel_slice_result,
+        **pad_mul_result,
+    }
+    with pytest.raises(
+        ValueError,
+        match=r"channel-slice/pad-Mul mutation summary expected 2 pass results",
+    ):
+        summarize(())
+
+
+def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
+    lowerer, helper = _lowerer_and_helper()
+    target_names = (
+        "channel_slice_pad_mul_results",
+        "_pre_terminal_channel_slice_pad_mul_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+    }
+    result_call = assignments[target_names[0]]
+    assert isinstance(result_call, ast.Call)
+    assert isinstance(result_call.func, ast.Name)
+    assert result_call.func.id == CHANNEL_SLICE_PAD_MUL
+    assert result_call.args == []
+    assert result_call.keywords == []
+    summary_call = assignments[target_names[1]]
+    assert isinstance(summary_call, ast.Call)
+    assert isinstance(summary_call.func, ast.Name)
+    assert summary_call.func.id == "summarize_channel_slice_pad_mul_mutations"
+    assert len(summary_call.args) == 1
+    assert isinstance(summary_call.args[0], ast.Name)
+    assert summary_call.args[0].id == "channel_slice_pad_mul_results"
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_pre_add_stats"
+    assert isinstance(previous.value, ast.Dict)
+    owner_call = previous.value.values[0]
+    assert isinstance(owner_call, ast.Call)
+    assert isinstance(owner_call.func, ast.Name)
+    assert owner_call.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    tensor_count = lowerer.body[first_index - 2]
+    assert isinstance(tensor_count, ast.Assign)
+    assert len(tensor_count.targets) == 1
+    assert isinstance(tensor_count.targets[0], ast.Name)
+    assert tensor_count.targets[0].id == "pre_terminal_pre_add_tensor_count"
+    following = lowerer.body[first_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "_pre_terminal_affine_post_add_stats"
+
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+    assert isinstance(helper.body[0].value, ast.Call)
+    assert isinstance(helper.body[0].value.func, ast.Name)
+    assert helper.body[0].value.func.id == "run_channel_slice_pad_mul"
+
+
+def test_pre_terminal_pre_add_captures_zero_rewrite_pruning_evidence() -> None:
+    lowerer, _ = _lowerer_and_helper()
+    target_names = (
+        "pre_terminal_pre_add_tensor_count",
+        "_pre_terminal_pre_add_stats",
+    )
+    assignment_indices: dict[str, int] = {}
+    assignments: dict[str, ast.expr] = {}
+    for index, statement in enumerate(lowerer.body):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in target_names:
+            assignment_indices[target.id] = index
+            assignments[target.id] = statement.value
+
+    first_index = min(assignment_indices.values())
+    assert assignment_indices == {
+        target_names[0]: first_index,
+        target_names[1]: first_index + 1,
+    }
+    tensor_count = assignments[target_names[0]]
+    assert isinstance(tensor_count, ast.Call)
+    assert isinstance(tensor_count.func, ast.Name)
+    assert tensor_count.func.id == "len"
+    assert len(tensor_count.args) == 1
+    assert isinstance(tensor_count.args[0], ast.Attribute)
+    assert isinstance(tensor_count.args[0].value, ast.Name)
+    assert tensor_count.args[0].value.id == "model_ir"
+    assert tensor_count.args[0].attr == "tensors"
+
+    summary = assignments[target_names[1]]
+    assert isinstance(summary, ast.Dict)
+    assert len(summary.keys) == 2
+    assert summary.keys[0] is None
+    owner_call = summary.values[0]
+    assert isinstance(owner_call, ast.Call)
+    assert isinstance(owner_call.func, ast.Name)
+    assert owner_call.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    assert len(owner_call.args) == 1
+    assert isinstance(owner_call.args[0], ast.Name)
+    assert owner_call.args[0].id == "model_ir"
+    assert len(owner_call.keywords) == 1
+    assert owner_call.keywords[0].arg == "layout_state"
+    prune_key = summary.keys[1]
+    assert isinstance(prune_key, ast.Constant)
+    assert prune_key.value == "pruned_unused_tensors"
+    prune_call = summary.values[1]
+    assert isinstance(prune_call, ast.Call)
+    assert isinstance(prune_call.func, ast.Name)
+    assert prune_call.func.id == "max"
+
+    previous = lowerer.body[first_index - 1]
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_pre_terminal_affine_stats"
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == (
+        "summarize_terminal_affine_concat_split_mutations"
+    )
+    following = lowerer.body[first_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "channel_slice_pad_mul_results"
+
+    production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    ]
+    assert len(production_calls) == 1
 
 
 def test_channel_slice_pad_mul_module_does_not_import_lowerer() -> None:

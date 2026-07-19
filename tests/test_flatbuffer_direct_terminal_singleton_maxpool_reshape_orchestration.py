@@ -95,12 +95,13 @@ def test_terminal_singleton_maxpool_reshape_is_straight_line_scoped() -> None:
     )
 
     assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 4
+    assert helper.end_lineno - helper.lineno + 1 == 6
     assert helper.args.args == []
     assert helper.args.posonlyargs == []
     assert helper.args.kwonlyargs == []
     assert helper.args.vararg is None
     assert helper.args.kwarg is None
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
     assert len(helper.body) == 1
     assert not any(isinstance(node, control_flow_nodes) for node in ast.walk(helper))
     assert not any(
@@ -117,7 +118,8 @@ def test_terminal_singleton_maxpool_reshape_is_straight_line_scoped() -> None:
     }
     loaded_data_names = {
         node.id
-        for node in ast.walk(helper)
+        for statement in helper.body
+        for node in ast.walk(statement)
         if isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id not in called_names
@@ -179,10 +181,17 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == TERMINAL_SINGLETON_MAXPOOL_RESHAPE
+    )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert len(invocation.targets) == 1
+    assert isinstance(invocation.targets[0], ast.Name)
+    assert invocation.targets[0].id == (
+        "_terminal_singleton_maxpool_reshape_results"
     )
 
     previous = lowerer.body[invocation_index - 1]
@@ -190,7 +199,9 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
     assert isinstance(previous.test, ast.Name)
     assert previous.test.id == "optimize_layout_transpose_chains"
     previous_call = previous.body[0]
-    assert isinstance(previous_call, ast.Expr)
+    assert isinstance(previous_call, ast.Assign)
+    assert isinstance(previous_call.targets[0], ast.Name)
+    assert previous_call.targets[0].id == "_terminal_elementwise_fanout_stats"
     assert isinstance(previous_call.value, ast.Call)
     assert isinstance(previous_call.value.func, ast.Name)
     assert (
@@ -203,7 +214,12 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
     assert isinstance(following.test, ast.Name)
     assert following.test.id == "optimize_layout_transpose_chains"
     following_call = following.body[0]
-    assert isinstance(following_call, ast.Expr)
+    assert isinstance(following_call, ast.Assign)
+    assert len(following_call.targets) == 1
+    assert isinstance(following_call.targets[0], ast.Name)
+    assert following_call.targets[0].id == (
+        "_terminal_convpool_output_passthrough_stats"
+    )
     assert isinstance(following_call.value, ast.Call)
     assert isinstance(following_call.value.func, ast.Name)
     assert (
@@ -215,7 +231,7 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
 def test_terminal_singleton_maxpool_reshape_context_and_wrapper_are_explicit() -> None:
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)

@@ -170,8 +170,8 @@ def run_layout_attention_quantized_suffix(
     context: LayoutAttentionQuantizedSuffixContext,
     *,
     include_duplicate_transpose: bool,
-) -> None:
-    run_recovery_invocations(
+) -> Tuple[Any, ...]:
+    return run_recovery_invocations(
         build_layout_attention_quantized_suffix_invocations(
             context,
             include_duplicate_transpose=include_duplicate_transpose,

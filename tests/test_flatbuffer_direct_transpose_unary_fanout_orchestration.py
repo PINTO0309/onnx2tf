@@ -24,7 +24,15 @@ from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "transpose_unary_fanout_orchestration.py"
+)
 TRANSPOSE_UNARY_FANOUT = "_run_transpose_unary_fanout_layout_pass_cluster"
+RESULT_TARGET = "_layout_pass_set_1_transpose_unary_fanout_results"
 DEFAULT_PASS_IDS = TRANSPOSE_UNARY_FANOUT_PASS_IDS[1:]
 POST_QDQ_PASS_IDS = (
     TRANSPOSE_UNARY_FANOUT_PASS_IDS[0],
@@ -55,6 +63,22 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    function = statement.value.func
+    return function.id if isinstance(function, ast.Name) else None
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
 
 
 def _context() -> TransposeUnaryFanoutContext:
@@ -127,7 +151,7 @@ def test_transpose_unary_fanout_signature_and_delegate_are_explicit() -> None:
     )
 
     statement = helper.body[0]
-    assert isinstance(statement, ast.Expr)
+    assert isinstance(statement, ast.Return)
     call = statement.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
@@ -309,18 +333,33 @@ def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> No
     direct_index = next(
         index
         for index, statement in enumerate(parent.body)
-        if isinstance(statement, ast.Expr)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == RESULT_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == TRANSPOSE_UNARY_FANOUT
     )
     previous = parent.body[direct_index - 1]
     following = parent.body[direct_index + 1]
-    for boundary in (previous, following):
-        assert isinstance(boundary, ast.Expr)
-        assert isinstance(boundary.value, ast.Call)
-        assert isinstance(boundary.value.func, ast.Name)
+    assert isinstance(previous, ast.Assign)
+    assert len(previous.targets) == 1
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == (
+        "_layout_pass_set_1_final_attention_quantized_suffix_results"
+    )
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
     assert previous.value.func.id == "_run_layout_attention_quantized_recovery_suffix"
+    assert isinstance(following, ast.Assign)
+    assert len(following.targets) == 1
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == (
+        "_layout_pass_set_1_final_safe_binary_results"
+    )
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
     assert following.value.func.id == "_run_safe_binary_bridge_recovery_sequence"
 
     callback_index = ATTENTION_GATE_QDQ_PASS_IDS.index(TRANSPOSE_UNARY_FANOUT)
@@ -330,6 +369,103 @@ def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> No
     assert ATTENTION_GATE_QDQ_PASS_IDS[callback_index + 1] == (
         "_optimize_transpose_dequant_relu_quantize_bridges"
     )
+
+
+def test_transpose_unary_fanout_returns_both_variants_and_retains_direct_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    variants = (
+        (False, True, DEFAULT_PASS_IDS),
+        (True, False, POST_QDQ_PASS_IDS),
+    )
+    for include_layout, include_unary, expected_ids in variants:
+        expected_results = tuple(
+            {"slot": index} for index in range(len(expected_ids))
+        )
+        for index, pass_id in enumerate(expected_ids):
+            monkeypatch.setattr(
+                transpose_unary_fanout_orchestration,
+                pass_id,
+                lambda *args, _index=index, **kwargs: {"slot": _index},
+            )
+        assert run_transpose_unary_fanout(
+            context,
+            include_layout_transpose=include_layout,
+            include_unary_passthrough=include_unary,
+        ) == expected_results
+
+    orchestration_functions = {
+        node.name: node
+        for node in ast.parse(
+            ORCHESTRATION_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    runner = orchestration_functions["run_transpose_unary_fanout"]
+    assert ast.unparse(runner.returns) == "Tuple[Dict[str, int], ...]"
+    assert isinstance(runner.body[-1], ast.Return)
+
+    lowerer, helper = _lowerer_and_helper()
+    assert ast.unparse(helper.returns) == "Tuple[Dict[str, int], ...]"
+    assert len(helper.body) == 1
+    assert isinstance(helper.body[0], ast.Return)
+
+    direct_results = [
+        statement
+        for statement in ast.walk(lowerer)
+        if _direct_call_name(statement) == TRANSPOSE_UNARY_FANOUT
+    ]
+    assert len(direct_results) == 1
+    result = direct_results[0]
+    assert _single_target(result) == RESULT_TARGET
+    call = result.value
+    assert isinstance(call, ast.Call)
+    assert call.args == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {
+        "include_layout_transpose": "True",
+        "include_unary_passthrough": "False",
+    }
+    parent = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If) and result in statement.body
+    )
+    result_index = parent.body.index(result)
+    assert _single_target(parent.body[result_index - 1]) == (
+        "_layout_pass_set_1_final_attention_quantized_suffix_results"
+    )
+    assert _single_target(parent.body[result_index + 1]) == (
+        "_layout_pass_set_1_final_safe_binary_results"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == RESULT_TARGET
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )
+
+    attention_context = next(
+        statement.value
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "attention_recovery_context"
+            for target in statement.targets
+        )
+        and isinstance(statement.value, ast.Call)
+    )
+    callback_keyword = next(
+        keyword
+        for keyword in attention_context.keywords
+        if keyword.arg == "transpose_unary_fanout_cluster"
+    )
+    assert isinstance(callback_keyword.value, ast.Name)
+    assert callback_keyword.value.id == TRANSPOSE_UNARY_FANOUT
 
 
 def test_transpose_unary_fanout_module_does_not_import_lowerer() -> None:

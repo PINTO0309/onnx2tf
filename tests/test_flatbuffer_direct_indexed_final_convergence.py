@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -172,6 +173,121 @@ def _run_legacy_final_convergence(model_ir: ModelIR) -> dict[str, int]:
     }
 
 
+def _run_instrumented_final_convergence(
+    monkeypatch,
+    *,
+    changed_owner: str | None,
+) -> tuple[list[str], list[ModelIRGraphIndex | None], dict[str, int]]:
+    model_ir = ModelIR("instrumented_final_shape_activation_convergence")
+    model_ir.tensors["unused_probe"] = TensorIR(
+        name="unused_probe",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    events: list[str] = []
+    graph_indexes: list[ModelIRGraphIndex | None] = []
+
+    def convergence_probe(
+        target_model_ir,
+        *,
+        layout_state=None,
+        graph_index=None,
+    ):
+        assert target_model_ir is model_ir
+        assert layout_state is None
+        events.append("convergence")
+        graph_indexes.append(graph_index)
+        return {
+            "removed_dead_operators": int(
+                changed_owner in {"convergence", "first_reconcile"}
+            ),
+            "resolved_dynamic_reshape_shapes": 0,
+            "reconciled_static_tensor_shapes": 0,
+        }
+
+    def hardswish_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        events.append("hardswish")
+        graph_indexes.append(graph_index)
+        return {
+            "sanitized_hardswish_tensor_shapes": int(
+                changed_owner == "hardswish"
+            ),
+        }
+
+    def reconcile_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        is_first_reconcile = "reshape" not in events
+        is_second_reconcile = "reshape" in events and "fusion" not in events
+        events.append("reconcile")
+        graph_indexes.append(graph_index)
+        return {
+            "reconciled_static_tensor_shapes": int(
+                (changed_owner == "first_reconcile" and is_first_reconcile)
+                or (
+                    changed_owner == "second_reconcile"
+                    and is_second_reconcile
+                )
+            ),
+        }
+
+    def reshape_probe(target_model_ir, *, graph_index=None):
+        assert target_model_ir is model_ir
+        events.append("reshape")
+        graph_indexes.append(graph_index)
+        return {
+            "resolved_dynamic_reshape_shapes": int(
+                changed_owner in {"reshape", "second_reconcile"}
+            ),
+        }
+
+    def fusion_probe(
+        target_model_ir,
+        *,
+        graph_index=None,
+        layout_state=None,
+    ):
+        assert target_model_ir is model_ir
+        assert layout_state is None
+        events.append("fusion")
+        graph_indexes.append(graph_index)
+        if changed_owner == "fusion_prune":
+            assert model_ir.tensors.pop("unused_probe", None) is not None
+        return {
+            "fused_conv_activation_chains": int(changed_owner == "fusion"),
+        }
+
+    monkeypatch.setattr(
+        lowering_module,
+        "_run_indexed_shape_convergence_cleanup",
+        convergence_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_sanitize_hardswish_tensor_shapes",
+        hardswish_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_reconcile_static_tensor_shapes",
+        reconcile_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_resolve_dynamic_reshape_shapes",
+        reshape_probe,
+    )
+    monkeypatch.setattr(
+        lowering_module,
+        "_optimize_fuse_conv_activation_chains",
+        fusion_probe,
+    )
+
+    stats = _run_indexed_final_shape_activation_convergence(model_ir)
+    return events, graph_indexes, stats
+
+
 def test_hardswish_shape_sanitizer_module_matches_compatibility_wrapper() -> None:
     direct_model_ir = _make_final_convergence_model_ir()
     wrapper_model_ir = copy.deepcopy(direct_model_ir)
@@ -216,6 +332,145 @@ def test_indexed_final_convergence_matches_legacy_sequence(monkeypatch) -> None:
     assert model_ir.operators[-1].options["fusedActivationFunction"] == "RELU"
 
 
+def test_indexed_final_convergence_skips_first_reconcile_when_stable(
+    monkeypatch,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=None,
+    )
+
+    assert events == [
+        "convergence",
+        "hardswish",
+        "reshape",
+        "fusion",
+    ]
+    assert stats == {
+        "removed_dead_operators": 0,
+        "sanitized_hardswish_tensor_shapes": 0,
+        "resolved_dynamic_reshape_shapes": 0,
+        "reconciled_static_tensor_shapes": 0,
+        "fused_conv_activation_chains": 0,
+    }
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+@pytest.mark.parametrize("changed_owner", ["convergence", "hardswish"])
+def test_indexed_final_convergence_keeps_first_reconcile_after_mutation(
+    monkeypatch,
+    changed_owner: str,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=changed_owner,
+    )
+
+    assert events == [
+        "convergence",
+        "hardswish",
+        "reconcile",
+        "reshape",
+        "fusion",
+    ]
+    assert stats["removed_dead_operators"] == int(
+        changed_owner == "convergence"
+    )
+    assert stats["sanitized_hardswish_tensor_shapes"] == int(
+        changed_owner == "hardswish"
+    )
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+def test_indexed_final_convergence_skips_second_reconcile_when_stable(
+    monkeypatch,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=None,
+    )
+
+    assert events == ["convergence", "hardswish", "reshape", "fusion"]
+    assert stats["resolved_dynamic_reshape_shapes"] == 0
+    assert stats["reconciled_static_tensor_shapes"] == 0
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+@pytest.mark.parametrize("changed_owner", ["first_reconcile", "reshape"])
+def test_indexed_final_convergence_keeps_second_reconcile_after_mutation(
+    monkeypatch,
+    changed_owner: str,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=changed_owner,
+    )
+
+    expected_prefix = ["convergence", "hardswish"]
+    if changed_owner == "first_reconcile":
+        expected_prefix.append("reconcile")
+    assert events == [
+        *expected_prefix,
+        "reshape",
+        "reconcile",
+        "fusion",
+    ]
+    assert stats["resolved_dynamic_reshape_shapes"] == int(
+        changed_owner == "reshape"
+    )
+    assert stats["reconciled_static_tensor_shapes"] == int(
+        changed_owner == "first_reconcile"
+    )
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+def test_indexed_final_convergence_skips_post_fusion_reconcile_when_stable(
+    monkeypatch,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=None,
+    )
+
+    assert events == ["convergence", "hardswish", "reshape", "fusion"]
+    assert stats["reconciled_static_tensor_shapes"] == 0
+    assert stats["fused_conv_activation_chains"] == 0
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
+@pytest.mark.parametrize(
+    "changed_owner",
+    ["second_reconcile", "fusion", "fusion_prune"],
+)
+def test_indexed_final_convergence_keeps_post_fusion_reconcile_after_mutation(
+    monkeypatch,
+    changed_owner: str,
+) -> None:
+    events, graph_indexes, stats = _run_instrumented_final_convergence(
+        monkeypatch,
+        changed_owner=changed_owner,
+    )
+
+    expected_events = ["convergence", "hardswish", "reshape"]
+    if changed_owner == "second_reconcile":
+        expected_events.append("reconcile")
+    expected_events.extend(["fusion", "reconcile"])
+    assert events == expected_events
+    assert stats["reconciled_static_tensor_shapes"] == int(
+        changed_owner == "second_reconcile"
+    )
+    assert stats["fused_conv_activation_chains"] == int(
+        changed_owner == "fusion"
+    )
+    assert graph_indexes[0] is not None
+    assert all(index is graph_indexes[0] for index in graph_indexes)
+
+
 def test_indexed_activation_fusion_updates_index_without_consumer_rescan(
     monkeypatch,
 ) -> None:
@@ -248,6 +503,7 @@ def test_indexed_activation_fusion_updates_index_without_consumer_rescan(
         lowering_module,
         "_build_tensor_consumer_map",
         unexpected_consumer_rescan,
+        raising=False,
     )
     stats = _optimize_fuse_conv_activation_chains(
         model_ir,
