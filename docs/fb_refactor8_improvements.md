@@ -734,6 +734,31 @@ Validation completed sequentially under core-only `uv`:
 No real-model conversion was run because the two reconciliation calls and
 their ModelIR effects are unchanged.
 
+## Late binary reconciliation characterization
+
+The next family contains the two guarded late binary reconciliation results.
+The first follows static-signature and indexed binary-adapter repair and also
+guards on cleanup-only tensor pruning. The second is nested under the existing
+late-layout enablement condition and runs only when the late binary recovery
+summary reports a positive mutation.
+
+Neither result has a default assignment or a consumer. The characterization
+fixes both nested guard structures, source order, owner arguments,
+`include_mutation_count=True`, pruning evidence, and absence of loads. A strict
+expected failure requires stable
+`shape_reconciliation.primary.late_binary_repair` and
+`shape_reconciliation.primary.late_binary_layout_recovery` records. No
+production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated nested-guard contract: `1 passed, 1 xfailed in 0.18s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented result-destination
+migration.
+
 ## Primary generic final reconciliation implementation
 
 The three selected results now record as:

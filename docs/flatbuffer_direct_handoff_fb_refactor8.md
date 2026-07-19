@@ -918,3 +918,26 @@ remaining unconsumed static-shape observations are guarded shared-late,
 late-binary repair, late-binary recovery, and post-split fallback boundaries.
 Classify the two binary-related boundaries together first; keep shared-late and
 post-split separate. Never create, update, or reopen a pull request.
+
+## Late binary reconciliation characterization
+
+The two binary-related remaining results have been characterized together.
+The repair result is guarded by signature/adapter mutations or cleanup-only
+tensor pruning. The layout-recovery result is nested under the existing late
+layout enablement condition and a positive recovery-summary guard. Neither has
+a default or consumer.
+
+The contract fixes both guard layers, order, `model_ir` argument,
+`include_mutation_count=True`, pruning evidence, and absence of loads. Its
+strict expected failure requires
+`shape_reconciliation.primary.late_binary_repair` and
+`shape_reconciliation.primary.late_binary_layout_recovery` records.
+
+Validation completed sequentially under core-only `uv`: the dedicated test is
+`1 passed, 1 xfailed in 0.18s`, and targeted Ruff, bytecode compilation, and
+whitespace checks pass. No production source changed.
+
+Commit and push before replacing only these two guarded assignments with phase
+records. Preserve both outer and inner guards, then update binary-recovery,
+terminal, architecture, and bounded-store contracts, validate, document,
+commit, and push. Never create, update, or reopen a pull request.
