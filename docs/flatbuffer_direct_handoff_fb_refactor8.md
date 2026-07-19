@@ -2032,3 +2032,31 @@ first. Implementation must change only the three destinations, move the store
 from 121 to 124 records, preserve the QKV composite and mix-attention result,
 run sequential gates, document, commit, and push. Never create, update, or
 reopen a pull request.
+
+## Post-SiNet ReLU/Split result implementation
+
+The three results now record under their characterized
+`cleanup.post_sinet.*` phase IDs. Only their unused local destinations
+changed. All owner calls, layout-state arguments, execution order, outer QKV
+and mix-attention boundaries, graph behavior, public contracts, artifacts,
+dependencies, and TensorFlow isolation remain unchanged.
+
+The bounded store now contains 124/128 records, leaving 4 slots. Affected
+structural tests unwrap records and retain exact phase, owner, argument,
+adjacency, and composite assertions. The strict characterization expectation
+now passes.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused ReLU/Split/QKV/mix-attention/store contracts:
+  `75 passed in 1.51s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader result contracts: `193 passed in 9.15s`;
+- lowerer architecture contracts: `258 passed in 17.38s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because only three already-computed
+one-counter result destinations changed and focused runtime tests cover their
+owners. Commit and push this unit. Begin the next unit with a fresh
+characterize-first audit and never create, update, or reopen a pull request.

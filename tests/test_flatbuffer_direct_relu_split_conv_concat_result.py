@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -67,7 +65,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -159,7 +167,7 @@ def test_relu_split_conv_concat_schema_and_positive_cleanup_are_explicit() -> No
     )
 
 
-def test_lowerer_retains_both_relu_split_conv_concat_results() -> None:
+def test_lowerer_records_post_sinet_relu_split_conv_concat_result() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = [
         statement
@@ -168,11 +176,14 @@ def test_lowerer_retains_both_relu_split_conv_concat_results() -> None:
     ]
     assert len(direct_results) == 2
     expected_targets = [
-        "_post_sinet_relu_split_conv_concat_stats",
+        None,
         "_terminal_relu_split_conv_concat_stats",
     ]
     assert [_single_target(statement) for statement in direct_results] == (
         expected_targets
+    )
+    assert _phase_id(direct_results[0]) == (
+        "cleanup.post_sinet.relu_split_conv_concat"
     )
     for statement in direct_results:
         call = _statement_call(statement)
@@ -182,7 +193,7 @@ def test_lowerer_retains_both_relu_split_conv_concat_results() -> None:
             keyword.arg: ast.unparse(keyword.value)
             for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
-    for target in expected_targets:
+    for target in (target for target in expected_targets if target is not None):
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
@@ -193,12 +204,12 @@ def test_lowerer_retains_both_relu_split_conv_concat_results() -> None:
     first_index = lowerer.body.index(direct_results[0])
     first_previous = lowerer.body[first_index - 1]
     first_following = lowerer.body[first_index + 1]
-    assert _single_target(first_previous) == (
-        "_post_sinet_relu_split_all_outputs_stats"
+    assert _phase_id(first_previous) == (
+        "cleanup.post_sinet.relu_split_all_outputs"
     )
     assert _call_name(first_previous) == RELU_SPLIT_ALL
-    assert _single_target(first_following) == (
-        "_post_sinet_split_conv_concat_bridge_stats"
+    assert _phase_id(first_following) == (
+        "cleanup.post_sinet.split_conv_concat_bridge"
     )
     assert _call_name(first_following) == SPLIT_CONV_CONCAT_BRIDGE
 
@@ -212,10 +223,6 @@ def test_lowerer_retains_both_relu_split_conv_concat_results() -> None:
     assert _call_name(second_following) == SPLIT_MIXED_PRE_CONCAT
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="post-SiNet ReLU/Split results have not moved to phase records",
-)
 def test_post_sinet_relu_split_results_use_phase_result_store() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     records = [

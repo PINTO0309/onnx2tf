@@ -28,7 +28,7 @@ OWNER_PATH = (
 DIRECT_OWNER = "_optimize_sinet_mix_attention_double_logistic_nhwc_chains"
 PUBLIC_OWNER = "optimize_sinet_mix_attention_double_logistic_nhwc_chains"
 RESULT_TARGET = "_post_sinet_mix_attention_stats"
-PREDECESSOR_TARGET = "_post_sinet_split_conv_concat_bridge_stats"
+PREDECESSOR_PHASE_ID = "cleanup.post_sinet.split_conv_concat_bridge"
 SUCCESSOR = "run_mixed_attention_layout_cleanup"
 RESULT_KEY = "optimized_sinet_mix_attention_double_logistic_nhwc_chains"
 
@@ -59,6 +59,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -164,7 +179,7 @@ def test_sinet_mix_attention_direct_boundary_is_explicit() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {"layout_state": "session.layout_state"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     assert _call_name(lowerer.body[index + 1]) == SUCCESSOR
     assert sum(
         isinstance(node, ast.Call)

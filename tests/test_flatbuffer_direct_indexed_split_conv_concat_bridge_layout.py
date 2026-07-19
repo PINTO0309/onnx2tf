@@ -871,11 +871,15 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
         if _call_name(statement) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
     )
     post_sinet = lowerer.body[post_sinet_index]
-    assert isinstance(post_sinet, ast.Assign)
-    assert len(post_sinet.targets) == 1
-    assert isinstance(post_sinet.targets[0], ast.Name)
-    assert post_sinet.targets[0].id == (
-        "_post_sinet_split_conv_concat_bridge_stats"
+    assert isinstance(post_sinet, ast.Expr)
+    post_sinet_record = post_sinet.value
+    assert isinstance(post_sinet_record, ast.Call)
+    assert isinstance(post_sinet_record.func, ast.Attribute)
+    assert isinstance(post_sinet_record.func.value, ast.Name)
+    assert post_sinet_record.func.value.id == "session"
+    assert post_sinet_record.func.attr == "record_phase_result"
+    assert ast.literal_eval(post_sinet_record.args[0]) == (
+        "cleanup.post_sinet.split_conv_concat_bridge"
     )
     assert _call_name(lowerer.body[post_sinet_index - 1]) == (
         "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains"

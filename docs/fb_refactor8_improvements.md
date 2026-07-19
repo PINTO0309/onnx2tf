@@ -923,6 +923,39 @@ boundaries and every owner call, grow the store from 121 to 124 records, run
 the sequential gates, document, commit, and push. Never create, update, or
 reopen a pull request.
 
+## Post-SiNet ReLU/Split result implementation
+
+The three characterized observations now record consecutively under:
+
+- `cleanup.post_sinet.relu_split_all_outputs`;
+- `cleanup.post_sinet.relu_split_conv_concat`;
+- `cleanup.post_sinet.split_conv_concat_bridge`.
+
+Only the unused local destinations changed. Owner calls, layout-state
+arguments, unconditional order, the preceding QKV composite, following
+mix-attention result, ModelIR behavior, public outputs, reports, artifacts,
+dependencies, and TensorFlow isolation are unchanged. The bounded store now
+covers 124/128 phase IDs, leaving 4 slots.
+
+Affected ReLU/Split, indexed bridge, QKV, mix-attention, store, and
+architecture contracts now unwrap the records and preserve exact phase,
+owner, argument, adjacency, and composite checks. The strict
+characterization expectation now passes.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused ReLU/Split/QKV/mix-attention/store contracts:
+  `75 passed in 1.51s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader result and phase-result contracts: `193 passed in 9.15s`;
+- lowerer architecture contracts: `258 passed in 17.38s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and the focused suite exercises all three
+owners.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

@@ -5101,23 +5101,26 @@ def lower_onnx_to_ir(
     _post_sinet_qkv_attention_results = (
         _run_qkv_attention_layout_pass_cluster()
     )
-    _post_sinet_relu_split_all_outputs_stats = (
+    session.record_phase_result(
+        "cleanup.post_sinet.relu_split_all_outputs",
         _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _post_sinet_relu_split_conv_concat_stats = (
+    session.record_phase_result(
+        "cleanup.post_sinet.relu_split_conv_concat",
         _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _post_sinet_split_conv_concat_bridge_stats = (
+    session.record_phase_result(
+        "cleanup.post_sinet.split_conv_concat_bridge",
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
     _post_sinet_mix_attention_stats = (
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(

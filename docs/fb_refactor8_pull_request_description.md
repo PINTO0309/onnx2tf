@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### 121 stable phase IDs
+### 124 stable phase IDs
 
-The lowerer now records 121 bounded observations covering:
+The lowerer now records 124 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -183,6 +183,8 @@ The lowerer now records 121 bounded observations covering:
   SiNet pre-Add/Resize composite and post-SiNet BatchMatMul observations;
 - post-SiNet BatchMatMul affine-input, Reshape/SE, and adjoint-flag cleanup
   before the retained QKV-attention composite;
+- post-SiNet all-output ReLU/Split, Split/Conv/ReLU/Concat, and
+  Split/Conv/Concat bridge cleanup after the retained QKV composite;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -237,16 +239,17 @@ contract that fixed the relevant schema, graph effects, cycle behavior,
 metadata behavior, phase position, arguments, and no-op behavior. Production
 changes were then limited to the characterized boundary.
 
-The latest twenty-four records cover terminal boundary StridedSlice/QDQ/Concat,
+The latest twenty-seven records cover terminal boundary StridedSlice/QDQ/Concat,
 activation bridge, InstanceNorm, normalization, and guarded BatchMatMul
 and QKV bridge plus SiNet HardSwish/HardSigmoid and indexed convergence
 and very-late residual, post-cleanup attention, plus post-SiNet BatchMatMul
-observations. They retain deterministic order and original boundaries.
+and ReLU/Split observations. They retain deterministic order and original
+boundaries.
 
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 121 phase IDs and owners appear in deterministic source order;
+- all 124 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -311,7 +314,8 @@ Final checkpoint results:
   **17 passed**;
 - focused CSP/MirrorPad runtime and orchestration contracts: **68 passed**;
 - post-SiNet BatchMatMul/QKV/attention/store contracts: **31 passed**;
-- broader result and phase-result contracts: **192 passed**;
+- post-SiNet ReLU/Split/QKV/mix-attention/store contracts: **75 passed**;
+- broader result and phase-result contracts: **193 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;
