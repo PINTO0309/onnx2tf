@@ -897,6 +897,32 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and the focused suite exercises all three
 owners.
 
+## Post-SiNet ReLU/Split result characterization
+
+The next unit is limited to the three consecutive ReLU/Split observations
+after the retained post-SiNet QKV-attention composite: all-Split-output NHWC
+propagation, Split/Conv/ReLU/Concat NHWC propagation, and the
+Split/Conv/Concat bridge collapse. Each owner returns one bounded integer
+counter and receives the existing layout state. Their local results have no
+consumers.
+
+The ReLU/Split/Conv/Concat result module now strictly expects three exact
+`cleanup.post_sinet.*` records with nested owner expressions, adjacency, the
+preceding QKV composite, the following mix-attention local, and absence of
+loads. The composite and following result remain outside this unit. No
+production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `72 passed in 1.20s`. Characterization must retain those passes plus one
+intentional strict expected failure. Targeted Ruff, bytecode compilation, and
+whitespace validation are required before the checkpoint is committed and
+pushed.
+
+Implement only these three result destinations, preserve both outer
+boundaries and every owner call, grow the store from 121 to 124 records, run
+the sequential gates, document, commit, and push. Never create, update, or
+reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER_PATH = (
@@ -24,6 +26,30 @@ SPLIT_CONV_CONCAT_BRIDGE = (
 )
 SPLIT_MIXED_PRE_CONCAT = (
     "_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains"
+)
+POST_SINET_RESULT_TARGETS = (
+    "_post_sinet_relu_split_all_outputs_stats",
+    "_post_sinet_relu_split_conv_concat_stats",
+    "_post_sinet_split_conv_concat_bridge_stats",
+)
+POST_SINET_PHASE_IDS = (
+    "cleanup.post_sinet.relu_split_all_outputs",
+    "cleanup.post_sinet.relu_split_conv_concat",
+    "cleanup.post_sinet.split_conv_concat_bridge",
+)
+POST_SINET_OWNER_EXPRESSIONS = (
+    (
+        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains("
+        "model_ir, layout_state=session.layout_state)"
+    ),
+    (
+        "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains("
+        "model_ir, layout_state=session.layout_state)"
+    ),
+    (
+        "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw("
+        "model_ir, layout_state=session.layout_state)"
+    ),
 )
 
 
@@ -56,6 +82,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def test_relu_split_conv_concat_schema_and_positive_cleanup_are_explicit() -> None:
@@ -169,3 +210,33 @@ def test_lowerer_retains_both_relu_split_conv_concat_results() -> None:
     )
     assert _call_name(second_previous) == RELU_SPLIT_ALL
     assert _call_name(second_following) == SPLIT_MIXED_PRE_CONCAT
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="post-SiNet ReLU/Split results have not moved to phase records",
+)
+def test_post_sinet_relu_split_results_use_phase_result_store() -> None:
+    lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in POST_SINET_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == POST_SINET_PHASE_IDS
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        POST_SINET_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 3))
+    predecessor = lowerer.body[indices[0] - 1]
+    assert _single_target(predecessor) == "_post_sinet_qkv_attention_results"
+    successor = lowerer.body[indices[-1] + 1]
+    assert _single_target(successor) == "_post_sinet_mix_attention_stats"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in POST_SINET_RESULT_TARGETS
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )

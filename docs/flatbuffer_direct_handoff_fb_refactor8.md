@@ -2010,3 +2010,25 @@ No root-model conversion was required because only the destination of three
 already-computed one-counter mappings changed and focused runtime tests cover
 all owners. Commit and push this unit. Start the next unit with a fresh
 characterize-first audit and never create, update, or reopen a pull request.
+
+## Post-SiNet ReLU/Split result characterization
+
+The next bounded-store unit contains the three top-level ReLU/Split results
+between `_post_sinet_qkv_attention_results` and
+`_post_sinet_mix_attention_stats`. All-Split-output propagation,
+Split/Conv/ReLU/Concat propagation, and Split/Conv/Concat bridge cleanup each
+return one integer counter, receive `session.layout_state`, and have no result
+consumer.
+
+The existing ReLU/Split/Conv/Concat result module now has a strict
+expected-failure contract for their exact `cleanup.post_sinet.*` records,
+owner expressions, adjacency, outer boundaries, and absence of loads. No
+production source changed.
+
+The related baseline is `72 passed in 1.20s`. Re-run the five focused modules
+and expect one additional strict xfail, then run targeted Ruff, bytecode
+compilation, and whitespace validation. Commit and push characterization
+first. Implementation must change only the three destinations, move the store
+from 121 to 124 records, preserve the QKV composite and mix-attention result,
+run sequential gates, document, commit, and push. Never create, update, or
+reopen a pull request.
