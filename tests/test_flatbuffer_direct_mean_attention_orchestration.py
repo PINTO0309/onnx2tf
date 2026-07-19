@@ -51,6 +51,14 @@ LAYOUT_PASS_SET_1_OWNER_PATH = (
     / "passes"
     / "layout_pass_set_1_mean_attention_gate_orchestration.py"
 )
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_boundary_mean_attention_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_boundary_mean_attention_cleanup"
 MEAN_ATTENTION = "_run_mean_attention_layout_pass_cluster"
 POLICIES = (
     (False, False),
@@ -84,6 +92,22 @@ def _layout_pass_set_1_owner_calls(child_owner: str) -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "run_layout_pass_set_1_mean_attention_gate_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _terminal_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(TERMINAL_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
     )
     return [
         node
@@ -384,19 +408,7 @@ def test_mean_attention_propagates_policy_results_to_primary_routes(
         ),
         key=lambda node: node.lineno,
     )
-    assert len(direct_results) == 1
-    assert [result.targets[0].id for result in direct_results] == [
-        "_terminal_mean_attention_results",
-    ]
-    assert [
-        {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in result.value.keywords
-        }
-        for result in direct_results
-    ] == [
-        {"include_conv_attention": "False"},
-    ]
+    assert direct_results == []
     owner_calls = _layout_pass_set_1_owner_calls("run_mean_attention")
     assert len(owner_calls) == 1
     assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
@@ -406,6 +418,15 @@ def test_mean_attention_propagates_policy_results_to_primary_routes(
         keyword.arg: ast.unparse(keyword.value)
         for keyword in owner_calls[0].keywords
     } == {"include_layernorm": "True"}
+    terminal_owner_calls = _terminal_owner_calls("run_mean_attention")
+    assert len(terminal_owner_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in terminal_owner_calls[0].args
+    ] == ["context"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in terminal_owner_calls[0].keywords
+    } == {"include_conv_attention": "False"}
 
     callback_assignments = {
         target.id: statement
@@ -450,49 +471,27 @@ def test_mean_attention_preserves_layernorm_conv_policy_and_boundaries() -> None
 
 def test_mean_attention_preserves_terminal_base_policy_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    outer_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.If)
-        and isinstance(statement.test, ast.Name)
-        and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == MEAN_ATTENTION
-            and any(
-                keyword.arg == "include_conv_attention" for keyword in node.keywords
-            )
-            for node in ast.walk(statement)
-        )
-    )
-    guard = lowerer.body[outer_index]
-    assert isinstance(guard, ast.If)
-    invocation_index = next(
-        index
-        for index, statement in enumerate(guard.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_mean_attention_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == MEAN_ATTENTION
-    )
-    invocation = guard.body[invocation_index]
-
-    assert invocation_index == 0
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert invocation.value.args == []
+    owner_calls = _terminal_owner_calls("run_mean_attention")
+    assert len(owner_calls) == 1
+    invocation = owner_calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in invocation.value.keywords
+        for keyword in invocation.keywords
     } == {"include_conv_attention": False}
-    assert _direct_call_name(lowerer.body[outer_index - 1]) == (
-        "_run_terminal_boundary_layout_pass_cluster"
+    composite_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_terminal_boundary_mean_attention_results"
     )
-    assert _direct_call_name(guard.body[invocation_index + 1]) == (
+    guard = lowerer.body[composite_index + 1]
+    assert isinstance(guard, ast.If)
+    assert _direct_call_name(guard.body[0]) == (
         "_optimize_batchmatmul_affine_transpose_input_chains"
     )
 
@@ -575,8 +574,10 @@ def test_mean_attention_preserves_both_argument_free_default_callbacks() -> None
         and node.func.id == MEAN_ATTENTION
     ]
     owner_invocations = _layout_pass_set_1_owner_calls("run_mean_attention")
-    assert len(direct_invocations) == 1
+    terminal_owner_invocations = _terminal_owner_calls("run_mean_attention")
+    assert direct_invocations == []
     assert len(owner_invocations) == 1
+    assert len(terminal_owner_invocations) == 1
 
 
 def test_mean_attention_phase_imports_owners_without_lowerer() -> None:

@@ -1825,3 +1825,17 @@ Focused and reference-based affected sequential validation report
 the deliberately absent future owner. Production behavior, both flag paths,
 dependencies, TensorFlow isolation, the 40-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional terminal boundary/mean-attention
+owner. Terminal boundary recovery always receives the exact shared pass
+context. Terminal mean/attention receives that same context with
+`include_conv_attention=False` only when layout optimization is enabled. Raw
+result identity is preserved, and the disabled branch returns no mean result.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, recorded terminal phases, compatibility wrappers, callbacks, graph
+behavior, APIs, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. Focused `4`, affected `419`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
+from 40 to 39.

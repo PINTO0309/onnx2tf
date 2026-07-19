@@ -7057,3 +7057,27 @@ reference-based affected sequential validation report
 `2 passed, 1 xfailed` and `417 passed, 1 xfailed`; the sole expected failure is
 the deliberately absent owner module. The characterized inventory remains 40,
 and the phase-result store remains exactly 128 IDs and 128 owners.
+
+## Extract terminal boundary/optional mean-attention recovery
+
+`passes/terminal_boundary_mean_attention_orchestration.py` now owns the
+characterized cross-guard pair. It always forwards the exact shared
+`ModelIRPassContext` to terminal boundary-layout recovery and conditionally
+forwards that same context to terminal mean/attention recovery with
+`include_conv_attention=False`. The boundary result is always returned by
+identity; the mean result is returned by identity when enabled and is `None`
+when disabled.
+
+The lowerer replaces only the two observation-only locals with
+`_terminal_boundary_mean_attention_results`. The existing layout-opt guard now
+starts with the recorded BatchMatMul-affine-input phase and retains all later
+QKV and singleton work. The terminal InstanceNorm-dualstats predecessor,
+disabled-path Clamp/SiNet successor, both wrappers, and independent callback
+routes remain intact.
+
+Fourteen stale structural assertions now follow both public children through
+the optional owner while retaining total route counts and true/false coverage.
+Sequential validation passes: focused `4`, affected `419`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
+pass. The phase store remains exactly 128 IDs and 128 owners, while the
+unconsumed lowerer-result inventory decreases from 40 to 39.

@@ -42,7 +42,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
     ),
 )
 PREDECESSOR_PHASE_ID = "cleanup.terminal.swish_qdq_island"
-SUCCESSOR_TARGET = "_terminal_boundary_layout_results"
+SUCCESSOR_TARGET = "_terminal_boundary_mean_attention_results"
 
 
 def _lowerer() -> ast.FunctionDef:

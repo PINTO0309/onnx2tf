@@ -218,6 +218,13 @@ LAYOUT_PASS_SET_2_CHANNEL_PREADD_OWNER_PATH = (
     / "passes"
     / "layout_pass_set_2_channel_preadd_orchestration.py"
 )
+TERMINAL_BOUNDARY_MEAN_ATTENTION_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_boundary_mean_attention_orchestration.py"
+)
 
 
 def _layout_pass_set_1_mean_attention_gate_calls(
@@ -374,6 +381,27 @@ def _layout_pass_set_2_channel_preadd_calls(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "run_layout_pass_set_2_channel_preadd_recovery"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _terminal_boundary_mean_attention_calls(
+    child_owner: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        TERMINAL_BOUNDARY_MEAN_ATTENTION_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_boundary_mean_attention_cleanup"
     )
     return [
         node
@@ -2456,6 +2484,7 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
         len(helper_invocations)
         + _orchestrated_pass_count("_run_mean_attention_layout_pass_cluster")
         + len(_layout_pass_set_1_mean_attention_gate_calls("run_mean_attention"))
+        + len(_terminal_boundary_mean_attention_calls("run_mean_attention"))
         == 4
     )
 
@@ -6526,10 +6555,12 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_boundary_layout_results"
+        and statement.targets[0].id
+        == "_terminal_boundary_mean_attention_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id
+        == "run_terminal_boundary_mean_attention_cleanup"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Expr)
@@ -6554,6 +6585,12 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
     assert isinstance(next_boundary, ast.If)
     assert isinstance(next_boundary.test, ast.Name)
     assert next_boundary.test.id == "optimize_layout_transpose_chains"
+    owner_invocations = _terminal_boundary_mean_attention_calls(
+        "run_terminal_boundary_layout"
+    )
+    assert len(owner_invocations) == 1
+    assert ast.unparse(owner_invocations[0].args[0]) == "context"
+    assert owner_invocations[0].keywords == []
 
 
 def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> None:

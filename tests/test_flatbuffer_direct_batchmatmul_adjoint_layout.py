@@ -242,11 +242,7 @@ def test_batchmatmul_adj_flags_results_are_recorded_at_both_boundaries() -> None
         if isinstance(statement, ast.If)
         and isinstance(statement.test, ast.Name)
         and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            isinstance(node, ast.Name)
-            and node.id == "_terminal_mean_attention_results"
-            for node in ast.walk(statement)
-        )
+        and any(_call_name(child) == callback_name for child in statement.body)
     )
     terminal_index = next(
         index

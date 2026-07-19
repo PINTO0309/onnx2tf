@@ -3098,11 +3098,16 @@ def test_primary_path_retains_terminal_instancenorm_dualstats_result() -> None:
 
     successor_call = _statement_call(body[terminal_index + 1])
     assert _call_name(successor_call) == (
-        "_run_terminal_boundary_layout_pass_cluster"
+        "run_terminal_boundary_mean_attention_cleanup"
     )
     assert successor_call is not None
-    assert successor_call.args == []
-    assert successor_call.keywords == []
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in successor_call.keywords
+    } == {"include_mean_attention": "optimize_layout_transpose_chains"}
 
     all_calls = [
         node

@@ -20,7 +20,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
     "_optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)",
     "_optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)",
 )
-PREDECESSOR_TARGET = "_terminal_mean_attention_results"
+PREDECESSOR_TARGET = "_terminal_boundary_mean_attention_results"
 SUCCESSOR_TARGET = "_terminal_qkv_attention_results"
 
 
@@ -67,10 +67,7 @@ def _terminal_layout_guard(lowerer: ast.FunctionDef) -> ast.If:
         if isinstance(statement, ast.If)
         and isinstance(statement.test, ast.Name)
         and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            _single_target(child) == PREDECESSOR_TARGET
-            for child in statement.body
-        )
+        and any(_phase_id(child) in EXPECTED_PHASE_IDS for child in statement.body)
         and any(
             _single_target(child) == SUCCESSOR_TARGET for child in statement.body
         )
@@ -93,8 +90,9 @@ def test_terminal_batchmatmul_results_use_phase_result_store() -> None:
     assert tuple(
         ast.unparse(_statement_call(statement).args[1]) for statement in records
     ) == EXPECTED_OWNER_EXPRESSIONS
-    assert indices == list(range(indices[0], indices[0] + 3))
-    assert _single_target(guard.body[indices[0] - 1]) == PREDECESSOR_TARGET
+    assert indices == [0, 1, 2]
+    guard_index = lowerer.body.index(guard)
+    assert _single_target(lowerer.body[guard_index - 1]) == PREDECESSOR_TARGET
     assert _single_target(guard.body[indices[-1] + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS

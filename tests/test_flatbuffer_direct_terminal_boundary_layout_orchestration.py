@@ -28,6 +28,15 @@ PHASE_PATH = (
     / "terminal_boundary_layout_orchestration.py"
 )
 TERMINAL_BOUNDARY = "_run_terminal_boundary_layout_pass_cluster"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_boundary_mean_attention_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_boundary_mean_attention_cleanup"
+OUTER_TARGET = "_terminal_boundary_mean_attention_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -43,6 +52,22 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_BOUNDARY
     )
     return lowerer, helper
+
+
+def _outer_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -259,15 +284,19 @@ def test_terminal_boundary_propagates_ordered_results_to_primary(
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_boundary_layout_results"
+        and statement.targets[0].id == OUTER_TARGET
     ]
     assert len(invocations) == 1
     invocation_index, invocation = invocations[0]
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == TERMINAL_BOUNDARY
-    assert invocation.value.args == []
-    assert invocation.value.keywords == []
+    assert invocation.value.func.id == OUTER_OWNER
+    owner_calls = _outer_owner_calls("run_terminal_boundary_layout")
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
     predecessor = lowerer.body[invocation_index - 1]
     predecessor_owner = _phase_result_owner(
@@ -294,9 +323,13 @@ def test_terminal_boundary_has_one_argument_free_production_call() -> None:
         and node.func.id == TERMINAL_BOUNDARY
     ]
 
-    assert len(invocations) == 1
-    assert invocations[0].args == []
-    assert invocations[0].keywords == []
+    assert invocations == []
+    owner_calls = _outer_owner_calls("run_terminal_boundary_layout")
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
 
 def test_terminal_boundary_preserves_outer_boundaries() -> None:
@@ -307,10 +340,10 @@ def test_terminal_boundary_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_boundary_layout_results"
+        and statement.targets[0].id == OUTER_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_BOUNDARY
+        and statement.value.func.id == OUTER_OWNER
     )
 
     previous_boundary = lowerer.body[invocation_index - 1]

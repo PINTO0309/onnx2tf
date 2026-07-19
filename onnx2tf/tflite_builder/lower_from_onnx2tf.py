@@ -231,6 +231,9 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
     TerminalSliceConcatRecoveryContext,
     run_terminal_slice_concat_recovery,
 )
+from onnx2tf.tflite_builder.passes.terminal_boundary_mean_attention_orchestration import (
+    run_terminal_boundary_mean_attention_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchestration import (
     run_terminal_affine_concat_split_recovery,
 )
@@ -4819,17 +4822,15 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         ),
     )
-    _terminal_boundary_layout_results = (
-        _run_terminal_boundary_layout_pass_cluster()
+    # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
+    # Run dedicated NHWC passthrough once more when layout optimization is on.
+    _terminal_boundary_mean_attention_results = (
+        run_terminal_boundary_mean_attention_cleanup(
+            shared_model_ir_pass_context,
+            include_mean_attention=optimize_layout_transpose_chains,
+        )
     )
     if optimize_layout_transpose_chains:
-        # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
-        # Run dedicated NHWC passthrough once more in the terminal stage.
-        _terminal_mean_attention_results = (
-            _run_mean_attention_layout_pass_cluster(
-                include_conv_attention=False,
-            )
-        )
         session.record_phase_result(
             "cleanup.terminal.batchmatmul_affine_input",
             _optimize_batchmatmul_affine_transpose_input_chains(model_ir),

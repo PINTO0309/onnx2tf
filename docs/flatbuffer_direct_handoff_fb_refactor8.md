@@ -6596,3 +6596,42 @@ expectations made stale by the new outer route. Run affected and standard
 gates sequentially under `uv`, confirm the expected inventory reduction from
 40 to 39, then commit and push the complete unit. Do not create, update,
 reopen, or otherwise modify a pull request.
+
+## Terminal boundary/optional mean-attention implementation checkpoint
+
+`passes/terminal_boundary_mean_attention_orchestration.py` now provides
+`run_terminal_boundary_mean_attention_cleanup()`. It always calls
+`run_terminal_boundary_layout(context)`. When `include_mean_attention=True`,
+it then calls `run_mean_attention(context, include_conv_attention=False)`;
+when false, it does not call the mean child. Runtime injection proves both
+branch orders, shared context and option identity, boundary identity on both
+paths, mean identity on the enabled path, and `None` on the disabled path.
+
+The lowerer replaces only `_terminal_boundary_layout_results` and
+`_terminal_mean_attention_results` with
+`_terminal_boundary_mean_attention_results`, passing the exact
+`shared_model_ir_pass_context` and current layout-optimization flag. Recorded
+`cleanup.terminal.instancenorm_dualstats` remains the direct predecessor. The
+existing guard now begins with recorded
+`cleanup.terminal.batchmatmul_affine_input`; its QKV and singleton routes are
+unchanged. When disabled, the guard performs no child work and terminal
+Clamp/SiNet is still the next production operation. Both wrappers and all
+independent callback routes remain available.
+
+Fourteen stale direct-call, route-count, guard, or neighbor expectations were
+updated to follow the public children through the optional owner while
+retaining both flag paths. Sequential validation passes: focused `4`, complete
+affected `419`, terminal-layout/efficiency `92`, core `55`, result contracts
+`196`, phase store `2`, and TensorFlow import-blocking/default-direct/`-cotof`
+`11`. Ruff, bytecode compilation, and whitespace checks pass. The phase-result
+store remains exactly 128 IDs and 128 owners, and the read-only unconsumed-
+result inventory decreases from 40 to 39. No real-model conversion was
+repeated for this ownership-only extraction.
+
+At resume, refresh the 39-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, recorded phase boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.

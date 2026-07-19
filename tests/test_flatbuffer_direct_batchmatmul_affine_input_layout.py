@@ -226,11 +226,7 @@ def test_batchmatmul_affine_input_results_are_recorded_at_both_boundaries() -> N
         if isinstance(statement, ast.If)
         and isinstance(statement.test, ast.Name)
         and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            isinstance(node, ast.Name)
-            and node.id == "_terminal_mean_attention_results"
-            for node in ast.walk(statement)
-        )
+        and any(_call_name(child) == callback_name for child in statement.body)
     )
     terminal_index = next(
         index
@@ -242,11 +238,14 @@ def test_batchmatmul_affine_input_results_are_recorded_at_both_boundaries() -> N
         terminal,
         "cleanup.terminal.batchmatmul_affine_input",
     )
-    assert terminal_index > 0
-    predecessor = terminal_guard.body[terminal_index - 1]
+    assert terminal_index == 0
+    guard_index = lowerer.body.index(terminal_guard)
+    predecessor = lowerer.body[guard_index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_mean_attention_results"
+    assert predecessor.targets[0].id == (
+        "_terminal_boundary_mean_attention_results"
+    )
     assert _call_name(terminal_guard.body[terminal_index + 1]) == (
         "_optimize_batchmatmul_reshape_se_nhwc_chains"
     )

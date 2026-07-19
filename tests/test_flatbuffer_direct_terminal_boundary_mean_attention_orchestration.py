@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    terminal_boundary_mean_attention_orchestration,
+)
 from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
     run_mean_attention,
 )
@@ -147,39 +150,32 @@ def _dict_schema(values: tuple[Any, ...]) -> tuple[tuple[str, ...], ...]:
 
 def test_terminal_boundary_mean_attention_current_contract() -> None:
     lowerer = _lowerer()
-    boundary = next(
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGETS[0]
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    boundary_index = lowerer.body.index(boundary)
-    assert _call_name(boundary) == CURRENT_CHILD_OWNERS[0]
-    boundary_call = _call(boundary)
-    assert boundary_call is not None
-    assert boundary_call.args == []
-    assert boundary_call.keywords == []
-    assert _phase_id(lowerer.body[boundary_index - 1]) == PREDECESSOR_PHASE_ID
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_mean_attention": GUARD}
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
 
     guard = _guard(lowerer)
-    assert lowerer.body[boundary_index + 1] is guard
+    assert lowerer.body[index + 1] is guard
     assert guard.orelse == []
-    mean = guard.body[0]
-    assert _single_target(mean) == RESULT_TARGETS[1]
-    assert _call_name(mean) == CURRENT_CHILD_OWNERS[1]
-    mean_call = _call(mean)
-    assert mean_call is not None
-    assert mean_call.args == []
-    assert {
-        keyword.arg: ast.literal_eval(keyword.value)
-        for keyword in mean_call.keywords
-    } == {"include_conv_attention": False}
-    assert _phase_id(guard.body[1]) == SUCCESSOR_PHASE_ID
+    assert _phase_id(guard.body[0]) == SUCCESSOR_PHASE_ID
     assert _single_target(lowerer.body[lowerer.body.index(guard) + 1]) == (
         AFTER_GUARD_TARGET
     )
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
@@ -210,10 +206,6 @@ def test_terminal_boundary_mean_attention_child_schemas() -> None:
     assert _dict_schema(mean_results) == MEAN_SCHEMA
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal boundary/optional mean-attention owner is not implemented",
-)
 def test_terminal_boundary_mean_attention_has_one_optional_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -284,3 +276,53 @@ def test_terminal_boundary_mean_attention_has_one_optional_context_owner() -> No
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_terminal_boundary_mean_attention_runtime_true_false_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    boundary_results = tuple(
+        {f"boundary_{index}": index} for index in range(5)
+    )
+    mean_results = tuple({f"mean_{index}": index} for index in range(5))
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def boundary(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, {}))
+        return boundary_results
+
+    def mean(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context, options))
+        return mean_results
+
+    monkeypatch.setattr(
+        terminal_boundary_mean_attention_orchestration,
+        CHILD_OWNERS[0],
+        boundary,
+    )
+    monkeypatch.setattr(
+        terminal_boundary_mean_attention_orchestration,
+        CHILD_OWNERS[1],
+        mean,
+    )
+
+    enabled = terminal_boundary_mean_attention_orchestration.run_terminal_boundary_mean_attention_cleanup(
+        context,
+        include_mean_attention=True,
+    )
+    assert enabled[0] is boundary_results
+    assert enabled[1] is mean_results
+    assert observed == [
+        (CHILD_OWNERS[0], context, {}),
+        (CHILD_OWNERS[1], context, {"include_conv_attention": False}),
+    ]
+
+    observed.clear()
+    disabled = terminal_boundary_mean_attention_orchestration.run_terminal_boundary_mean_attention_cleanup(
+        context,
+        include_mean_attention=False,
+    )
+    assert disabled[0] is boundary_results
+    assert disabled[1] is None
+    assert observed == [(CHILD_OWNERS[0], context, {})]
