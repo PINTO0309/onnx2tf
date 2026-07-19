@@ -2666,3 +2666,29 @@ Commit and push this implementation checkpoint. Resume by auditing the
 adjacent very-late Pad/InstanceNorm unit before the singleton-reshape cluster.
 Continue with coherent commits and pushes only; never create, update, or reopen
 a pull request.
+
+## Very-late Pad/InstanceNorm composite characterization
+
+The selected unit is four adjacent unconditional calls after the late
+Conv1D/decoder composite: Pad cleanup, InstanceNorm post-bias,
+InstanceNorm residual-Mul/Concat, and InstanceNorm dual-stat residual. Pad
+receives layout and diagnostics; the other three receive layout only. Every
+mapping is unconsumed, and the singleton/consecutive-Reshape cluster is the
+fixed successor.
+
+`tests/test_flatbuffer_direct_very_late_pad_instancenorm_layout_orchestration.py`
+fixes exact order, argument policy, boundaries, and absence of consumers. Its
+strict expected failure requires one
+`run_very_late_pad_instancenorm_layout_cleanup(shared_model_ir_pass_context)`
+call and one ordered `_very_late_pad_instancenorm_layout_results` tuple outside
+the full store. No production source changed.
+
+Run the dedicated characterization, targeted Ruff, bytecode compilation, and
+whitespace checks, then commit and push before implementation. Import all four
+existing pass owners directly, preserve wrappers and tuple order, keep the
+store at 128/128, and never create, update, or reopen a pull request.
+
+The characterization gate completed with `1 passed, 1 xfailed in 0.15s`;
+the sole xfail is the intentionally absent composite owner. Targeted Ruff,
+bytecode compilation, and whitespace checks passed. Commit and push this
+checkpoint before production changes.

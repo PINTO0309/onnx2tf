@@ -1634,6 +1634,30 @@ TensorFlow boundary changed. No root-model conversion was repeated because the
 431-test indexed family gate exercises the extracted owner paths. The store
 remains exactly 128/128.
 
+## Very-late Pad/InstanceNorm composite characterization
+
+The next selected unit contains very-late Pad cleanup followed by three
+InstanceNorm repairs: post-bias, residual-Mul/Concat, and dual-stat residual.
+All four calls are unconditional and adjacent between the late Conv1D/decoder
+composite and singleton/consecutive-Reshape cluster. Pad receives layout state
+and diagnostics; the three InstanceNorm owners receive layout state only. All
+four result mappings are unconsumed.
+
+The focused characterization fixes source order, exact argument policy, outer
+boundaries, and absence of consumers. A strict expected failure requires one
+`run_very_late_pad_instancenorm_layout_cleanup(shared_model_ir_pass_context)`
+owner and an ordered `_very_late_pad_instancenorm_layout_results` tuple outside
+the full store. No production source changed.
+
+Implementation must import all four existing pass owners directly, preserve
+their compatibility wrappers and independent mappings, keep the store fixed at
+128/128, and never create, update, or reopen a pull request.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.15s`; the sole xfail is the intentionally absent
+composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
