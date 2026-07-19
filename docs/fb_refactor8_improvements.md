@@ -4581,3 +4581,30 @@ Final sequential validation under core-only `uv`:
 No real-model corpus conversion was repeated because runtime coverage proves
 exact raw order, ModelIR identity, and schema preservation, while affected
 structural gates preserve all independent callers and neighboring boundaries.
+
+## No-layout final SE-FC/affine pair characterization
+
+The next selected cluster is the guarded no-layout final SE-FC cleanup followed
+by affine pre/post cleanup. Both calls use the same primary ModelIR and
+`LayoutState`; only SE-FC receives conversion diagnostics. Their raw mappings
+are unconsumed, and the pair is immediately followed by the guarded topology
+checkpoint.
+
+`tests/test_flatbuffer_direct_no_layout_final_cleanup_orchestration.py` fixes
+the guard, both current result targets, exact callback arguments, SE-FC-before-
+affine order, preceding primary topology checkpoint, guarded topology
+successor, following boundary-signature cleanup, affine wrapper retention, and
+SE-FC compatibility import. Its one strict expected failure requires
+`run_no_layout_final_cleanup(shared_model_ir_pass_context)` to return both raw
+mappings in order.
+
+Sequential characterization under core-only `uv` completed with
+`367 passed, 1 xfailed in 18.74s` across the dedicated contract and related
+terminal-layout, topology, affine, SE-layout, pass-efficiency, phase-store,
+architecture, and boundary-signature contracts. The sole expected failure is
+the intentionally absent ordered context owner. Targeted Ruff and whitespace
+checks passed.
+
+This checkpoint changes no production source, graph mutation, pass order,
+guard, topology phase, store entry, public API, artifact, dependency, or
+TensorFlow boundary. No real-model conversion was repeated.

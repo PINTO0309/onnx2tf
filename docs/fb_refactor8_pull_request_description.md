@@ -842,3 +842,10 @@ It replaces two individual unconsumed result locals with one ordered tuple
 while preserving metadata/tensor mutation order, all other realign/sanitize
 routes, lowerer wrappers, the following affine boundary, and the full 128/128
 store.
+
+The next characterization fixes the guarded no-layout final SE-FC and affine
+pre/post pair. It preserves shared ModelIR/LayoutState identity, SE-FC-only
+diagnostics, raw result schemas and order, both topology boundaries, the
+following signature owner, compatibility symbols, and the full 128/128 store.
+Production remains unchanged until a shared context owner is implemented
+separately.

@@ -4052,3 +4052,28 @@ Commit and push this implementation checkpoint. At resume, audit the next
 small semantically closed unconsumed-result cluster before production changes.
 Keep validation sequential and continue with commits and pushes only; never
 create, update, or reopen a pull request.
+
+## No-layout final SE-FC/affine pair characterization
+
+The next selected cluster is the guarded no-layout final SE-FC cleanup and
+affine pre/post cleanup pair. Both receive the primary ModelIR and layout state;
+only SE-FC receives diagnostics. The pair precedes the guarded topology
+checkpoint and following boundary-signature cleanup.
+
+The focused contract fixes the guard, two current targets, exact arguments,
+raw order, both topology boundaries, signature successor, affine wrapper, and
+SE-FC compatibility import. One strict xfail requires
+`run_no_layout_final_cleanup(shared_model_ir_pass_context)` and one ordered
+result target.
+
+Sequential validation under core-only `uv` completed with
+`367 passed, 1 xfailed in 18.74s` across the new characterization and related
+terminal, topology, affine, SE-layout, efficiency, store, architecture, and
+signature contracts. The sole expected failure is the unimplemented shared
+context owner. Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the guarded pair owner and site, retain the affine wrapper, SE-FC compatibility
+import, all other callers, and both topology boundaries, then validate
+sequentially. Continue with commits and pushes only; never create, update, or
+reopen a pull request.
