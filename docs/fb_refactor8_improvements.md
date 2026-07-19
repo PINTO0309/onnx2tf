@@ -1068,6 +1068,35 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented four-result
 destination migration.
 
+## Terminal cleanup phase-result implementation
+
+The four characterized results now record under stable `cleanup.terminal.*`
+phase IDs. They remain top-level and unconditional immediately after the
+`terminal cleanup passes` progress marker and immediately before pre-ArgMax
+cleanup.
+
+Only the four unconsumed assignment destinations changed. All owner calls,
+arguments, keywords, evaluation counts, graph traversals, ModelIR mutations,
+source order, progress boundary, successor, public results, reports, artifacts,
+dependencies, and TensorFlow import boundaries are unchanged. No default
+existed in this family. The bounded store now covers 64 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct terminal-cleanup, phase-store, terminal orchestration, and indexed-
+  owner architecture-boundary contracts: `68 passed in 4.13s`;
+- synthetic core runtime contracts, which execute the terminal cleanup stage:
+  `55 passed in 1.01s`;
+- broader phase-result, owner, cleanup, fallback, terminal, shape, and topology
+  contracts: `259 passed in 6.15s`;
+- lowerer architecture contracts: `258 passed in 16.54s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No root-model corpus conversion was run because this is an observation-
+destination-only change and the synthetic runtime suite executes all four
+stored owners.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

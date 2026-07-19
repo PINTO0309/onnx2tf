@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
@@ -73,21 +70,24 @@ def _phase_id(statement: ast.stmt) -> str | None:
     return ast.literal_eval(call.args[0])
 
 
-def test_terminal_cleanup_results_are_unconditional_and_unconsumed() -> None:
-    lowerer = _lowerer()
-    assignments = [
+def _terminal_records(lowerer: ast.FunctionDef) -> list[ast.Expr]:
+    return [
         statement
         for statement in lowerer.body
-        if _single_target(statement) in EXPECTED_RESULT_TARGETS
+        if isinstance(statement, ast.Expr)
+        and _phase_id(statement) in EXPECTED_PHASE_IDS
     ]
-    indices = [lowerer.body.index(statement) for statement in assignments]
 
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        EXPECTED_RESULT_TARGETS
-    )
-    assert tuple(ast.unparse(statement.value) for statement in assignments) == (
-        EXPECTED_OWNER_EXPRESSIONS
-    )
+
+def test_terminal_cleanup_results_are_unconditional_and_unconsumed() -> None:
+    lowerer = _lowerer()
+    records = _terminal_records(lowerer)
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == EXPECTED_PHASE_IDS
+    assert tuple(
+        ast.unparse(_statement_call(statement).args[1]) for statement in records
+    ) == EXPECTED_OWNER_EXPRESSIONS
     assert ast.unparse(lowerer.body[indices[0] - 1]) == (
         "_set_post_progress_desc('terminal cleanup passes')"
     )
@@ -102,29 +102,9 @@ def test_terminal_cleanup_results_are_unconditional_and_unconsumed() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal cleanup results have not moved to phase records",
-)
-def test_terminal_cleanup_results_use_phase_result_store() -> None:
+def test_terminal_cleanup_result_locals_are_removed() -> None:
     lowerer = _lowerer()
-    records = [
-        statement
-        for statement in lowerer.body
-        if _phase_id(statement) in EXPECTED_PHASE_IDS
-    ]
-    indices = [lowerer.body.index(statement) for statement in records]
 
-    assert tuple(_phase_id(statement) for statement in records) == EXPECTED_PHASE_IDS
-    assert tuple(
-        ast.unparse(_statement_call(statement).args[1]) for statement in records
-    ) == EXPECTED_OWNER_EXPRESSIONS
-    assert ast.unparse(lowerer.body[indices[0] - 1]) == (
-        "_set_post_progress_desc('terminal cleanup passes')"
-    )
-    assert _single_target(lowerer.body[indices[-1] + 1]) == (
-        "_terminal_pre_argmax_stats"
-    )
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)

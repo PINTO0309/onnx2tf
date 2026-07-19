@@ -1145,3 +1145,24 @@ destinations. Preserve the owner expressions, unconditional execution,
 progress boundary, and pre-ArgMax successor. Then update existing occurrence
 contracts and the bounded-store inventory, validate, document, commit, and
 push. Never create, update, or reopen a pull request.
+
+## Terminal cleanup phase-result implementation
+
+The four unconditional terminal-cleanup mapping results now use stable
+`cleanup.terminal.*` records. Their owner expressions, source order, progress
+predecessor, and pre-ArgMax successor remain unchanged. No defaults existed in
+this family. The bounded store now covers 64 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected structural contracts: `68 passed in 4.13s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader affected contracts: `259 passed in 6.15s`;
+- lowerer architecture contracts: `258 passed in 16.54s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite executes the terminal-cleanup stage. After
+committing and pushing, select the next family by common execution guard and
+mapping schema. Keep the 64 current records and 128-phase hard limit visible
+when sizing further migrations. Never create, update, or reopen a pull request.

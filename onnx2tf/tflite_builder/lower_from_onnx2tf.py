@@ -4802,24 +4802,32 @@ def lower_onnx_to_ir(
     _set_post_progress_desc("terminal cleanup passes")
     # Recovery sweeps above can re-introduce terminal TRANSPOSE->DEQUANTIZE.
     # Run terminal sanitizers once more at the very end.
-    _terminal_cleanup_terminal_dequant_stats = (
-        _sanitize_terminal_transpose_before_dequantize(model_ir)
+    session.record_phase_result(
+        "cleanup.terminal.dequant",
+        _sanitize_terminal_transpose_before_dequantize(model_ir),
     )
-    _terminal_cleanup_terminal_qdq_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.qdq",
         run_terminal_quantize_dequantize_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
-        )
+        ),
     )
-    _terminal_cleanup_conv_affine_stats = _optimize_fold_conv_mul_add_affine_chains(
-        model_ir,
-        enable_conv_add_only_fold=True,
-        layout_state=session.layout_state,
+    session.record_phase_result(
+        "cleanup.terminal.conv_affine",
+        _optimize_fold_conv_mul_add_affine_chains(
+            model_ir,
+            enable_conv_add_only_fold=True,
+            layout_state=session.layout_state,
+        ),
     )
-    _terminal_cleanup_conv_activation_stats = _optimize_fuse_conv_activation_chains(
-        model_ir,
-        layout_state=session.layout_state,
+    session.record_phase_result(
+        "cleanup.terminal.conv_activation",
+        _optimize_fuse_conv_activation_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        ),
     )
     _terminal_pre_argmax_stats = (
         _optimize_transpose_pre_argmax_nhwc_terminal_chains(

@@ -3384,10 +3384,11 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
         "layout_state=session.layout_state))"
     )
     terminal_statement, _ = direct_production_occurrences[1]
-    assert isinstance(terminal_statement, ast.Assign)
-    assert isinstance(terminal_statement.targets[0], ast.Name)
-    assert terminal_statement.targets[0].id == (
-        "_terminal_cleanup_conv_activation_stats"
+    assert ast.unparse(terminal_statement) == (
+        "session.record_phase_result("
+        "'cleanup.terminal.conv_activation', "
+        "_optimize_fuse_conv_activation_chains(model_ir, "
+        "layout_state=session.layout_state))"
     )
     for _, call in direct_production_occurrences:
         layout_keyword = next(
