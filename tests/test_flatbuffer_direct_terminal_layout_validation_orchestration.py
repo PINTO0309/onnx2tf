@@ -2646,21 +2646,14 @@ def test_primary_path_retains_terminal_boundary_stridedslice_result() -> None:
     index = indices[0]
 
     statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == (
-        "_terminal_boundary_stridedslice_qdq_concat_stats"
+    _assert_phase_result_record(
+        statement,
+        phase_id="cleanup.terminal.boundary_stridedslice_qdq_concat",
+        owner_expression=(
+            "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks("
+            "model_ir, layout_state=session.layout_state)"
+        ),
     )
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"layout_state": "session.layout_state"}
 
     predecessor_call = _statement_call(body[index - 1])
     assert _call_name(predecessor_call) == (
@@ -2670,7 +2663,7 @@ def test_primary_path_retains_terminal_boundary_stridedslice_result() -> None:
     assert predecessor_call.args == []
     assert predecessor_call.keywords == []
 
-    successor_call = _statement_call(body[index + 1])
+    successor_call = _owner_call(body[index + 1])
     assert _call_name(successor_call) == (
         "_optimize_transpose_swish_residual_concat_closure_nhwc_chains"
     )
@@ -2695,28 +2688,26 @@ def test_primary_path_retains_terminal_swish_residual_closure_result() -> None:
     index = indices[0]
 
     statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == (
-        "_terminal_swish_residual_concat_closure_stats"
+    _assert_phase_result_record(
+        statement,
+        phase_id="cleanup.terminal.swish_residual_concat_closure",
+        owner_expression=(
+            "_optimize_transpose_swish_residual_concat_closure_nhwc_chains("
+            "model_ir)"
+        ),
     )
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
 
     predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_terminal_boundary_stridedslice_qdq_concat_stats"
+    _assert_phase_result_record(
+        predecessor,
+        phase_id="cleanup.terminal.boundary_stridedslice_qdq_concat",
+        owner_expression=(
+            "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks("
+            "model_ir, layout_state=session.layout_state)"
+        ),
     )
 
-    successor_call = _statement_call(body[index + 1])
+    successor_call = _owner_call(body[index + 1])
     assert _call_name(successor_call) == (
         "_optimize_transpose_dequant_logistic_mul_quantize_bridges"
     )
@@ -2741,28 +2732,25 @@ def test_primary_path_retains_terminal_dequant_logistic_bridge_result() -> None:
     index = indices[0]
 
     statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == (
-        "_terminal_dequant_logistic_mul_quantize_bridge_stats"
+    _assert_phase_result_record(
+        statement,
+        phase_id="cleanup.terminal.dequant_logistic_mul_quantize_bridge",
+        owner_expression=(
+            "_optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)"
+        ),
     )
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
 
     predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_terminal_swish_residual_concat_closure_stats"
+    _assert_phase_result_record(
+        predecessor,
+        phase_id="cleanup.terminal.swish_residual_concat_closure",
+        owner_expression=(
+            "_optimize_transpose_swish_residual_concat_closure_nhwc_chains("
+            "model_ir)"
+        ),
     )
 
-    successor_call = _statement_call(body[index + 1])
+    successor_call = _owner_call(body[index + 1])
     assert _call_name(successor_call) == (
         "_optimize_transpose_swish_qdq_nhwc_islands"
     )
@@ -2785,23 +2773,19 @@ def test_primary_path_retains_terminal_swish_qdq_island_result() -> None:
     index = indices[0]
 
     statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_terminal_swish_qdq_island_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
+    _assert_phase_result_record(
+        statement,
+        phase_id="cleanup.terminal.swish_qdq_island",
+        owner_expression="_optimize_transpose_swish_qdq_nhwc_islands(model_ir)",
+    )
 
     predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_terminal_dequant_logistic_mul_quantize_bridge_stats"
+    _assert_phase_result_record(
+        predecessor,
+        phase_id="cleanup.terminal.dequant_logistic_mul_quantize_bridge",
+        owner_expression=(
+            "_optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)"
+        ),
     )
 
     successor_call = _statement_call(body[index + 1])
@@ -2848,10 +2832,11 @@ def test_primary_path_retains_terminal_instancenorm_post_bias_result() -> None:
     } == {"layout_state": "session.layout_state"}
 
     predecessor = body[terminal_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_swish_qdq_island_stats"
+    _assert_phase_result_record(
+        predecessor,
+        phase_id="cleanup.terminal.swish_qdq_island",
+        owner_expression="_optimize_transpose_swish_qdq_nhwc_islands(model_ir)",
+    )
 
     successor_call = _statement_call(body[terminal_index + 1])
     assert _call_name(successor_call) == "run_normalization_pad_layout_cleanup"

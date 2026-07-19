@@ -1960,6 +1960,18 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
             next_target = following.targets[0].id
         following_call = following.value
         assert isinstance(following_call, ast.Call)
+        if (
+            isinstance(following_call.func, ast.Attribute)
+            and isinstance(following_call.func.value, ast.Name)
+            and following_call.func.value.id == "session"
+            and following_call.func.attr == "record_phase_result"
+            and len(following_call.args) == 2
+            and isinstance(following_call.args[1], ast.Call)
+        ):
+            assert ast.literal_eval(following_call.args[0]) == (
+                "cleanup.terminal.boundary_stridedslice_qdq_concat"
+            )
+            following_call = following_call.args[1]
         assert isinstance(following_call.func, ast.Name)
         next_targets.append(next_target)
         next_call_names.append(following_call.func.id)
@@ -1969,7 +1981,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     ]
     assert previous_keyword_names == [["layout_state"], []]
     assert next_targets == [
-        "_terminal_boundary_stridedslice_qdq_concat_stats",
+        None,
         "_final_slice_prepost_passthrough_stats",
     ]
     assert next_call_names == [

@@ -928,6 +928,40 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented four-result
 destination migration.
 
+## Terminal activation cleanup implementation
+
+The four characterized terminal activation results now record under:
+
+- `cleanup.terminal.boundary_stridedslice_qdq_concat`;
+- `cleanup.terminal.swish_residual_concat_closure`;
+- `cleanup.terminal.dequant_logistic_mul_quantize_bridge`;
+- `cleanup.terminal.swish_qdq_island`.
+
+Only the unused local destinations changed. The owner calls, arguments,
+keywords, unconditional execution, evaluation count, four-statement order,
+preceding Slice/Concat composite, following InstanceNorm cleanup, graph
+mutation, public outputs, reports, artifacts, dependencies, and TensorFlow
+boundary remain unchanged. The bounded store now covers 101 of its 128 phase
+slots.
+
+Six stale structural assertions expected an outer assignment or direct owner
+call. They now unwrap the bounded record and continue to verify the exact
+phase ID, owner, arguments, keywords, and neighboring pass boundaries.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct activation, phase-store, terminal-owner, and Slice/Concat contracts:
+  `75 passed in 2.42s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader result and phase-result contracts: `187 passed in 8.61s`;
+- lowerer architecture contracts: `258 passed in 18.51s`;
+- targeted Ruff, Python bytecode compilation, AST capacity audit, and
+  whitespace validation: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and the synthetic runtime suite exercises
+the terminal path.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:

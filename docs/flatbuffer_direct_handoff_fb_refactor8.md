@@ -1572,3 +1572,39 @@ Commit and push this characterization before replacing only the four mapping
 destinations. Preserve adjacency and both boundaries, then update terminal
 orchestration and bounded-store contracts, validate, document, commit, and
 push. Never create, update, or reopen a pull request.
+
+## Terminal activation cleanup implementation
+
+The four characterized results now use the following stable records in their
+original source order:
+
+- `cleanup.terminal.boundary_stridedslice_qdq_concat`;
+- `cleanup.terminal.swish_residual_concat_closure`;
+- `cleanup.terminal.dequant_logistic_mul_quantize_bridge`;
+- `cleanup.terminal.swish_qdq_island`.
+
+The change replaces only unconsumed local mapping destinations. It preserves
+all owner calls, arguments, keywords, unconditional execution, adjacency, the
+Slice/Concat and InstanceNorm boundaries, graph behavior, public contracts,
+dependencies, and TensorFlow isolation. The phase store now contains 101/128
+records, leaving 27 slots. Composite `*_results` remain outside the bounded
+integer mapping store.
+
+Six representation-dependent assertions were updated to unwrap the record
+while retaining exact owner, phase, argument, keyword, and boundary checks.
+Production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused activation/store/terminal/Slice-Concat contracts:
+  `75 passed in 2.42s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader result contracts: `187 passed in 8.61s`;
+- lowerer architecture contracts: `258 passed in 18.51s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required for this observation-only destination
+migration. Commit and push this implementation as a self-contained unit. The
+next refactor unit must begin with a fresh characterize-first audit and must
+not create, update, or reopen a pull request.

@@ -4909,20 +4909,24 @@ def lower_onnx_to_ir(
     _terminal_slice_concat_recovery_results = (
         _run_terminal_slice_concat_layout_recovery_sequence()
     )
-    _terminal_boundary_stridedslice_qdq_concat_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.boundary_stridedslice_qdq_concat",
         _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_swish_residual_concat_closure_stats = (
-        _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
+    session.record_phase_result(
+        "cleanup.terminal.swish_residual_concat_closure",
+        _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir),
     )
-    _terminal_dequant_logistic_mul_quantize_bridge_stats = (
-        _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
+    session.record_phase_result(
+        "cleanup.terminal.dequant_logistic_mul_quantize_bridge",
+        _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir),
     )
-    _terminal_swish_qdq_island_stats = (
-        _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
+    session.record_phase_result(
+        "cleanup.terminal.swish_qdq_island",
+        _optimize_transpose_swish_qdq_nhwc_islands(model_ir),
     )
     # Late recovery passes can recreate Conv->InstNorm(NCHW)->Pad wrappers.
     _terminal_instancenorm_post_bias_stats = (

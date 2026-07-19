@@ -356,6 +356,18 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             following_target = following.targets[0].id
         following_call = following.value
         assert isinstance(following_call, ast.Call)
+        if (
+            isinstance(following_call.func, ast.Attribute)
+            and isinstance(following_call.func.value, ast.Name)
+            and following_call.func.value.id == "session"
+            and following_call.func.attr == "record_phase_result"
+            and len(following_call.args) == 2
+            and isinstance(following_call.args[1], ast.Call)
+        ):
+            assert ast.literal_eval(following_call.args[0]) == (
+                "cleanup.terminal.boundary_stridedslice_qdq_concat"
+            )
+            following_call = following_call.args[1]
         assert isinstance(following_call.func, ast.Name)
         observed.append(
             (
@@ -372,7 +384,7 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             None,
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             ("layout_state",),
-            "_terminal_boundary_stridedslice_qdq_concat_stats",
+            None,
             "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
         ),
         (

@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### Ninety-seven stable phase IDs
+### 101 stable phase IDs
 
-The lowerer now records 97 bounded observations covering:
+The lowerer now records 101 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -162,6 +162,9 @@ The lowerer now records 97 bounded observations covering:
   Slice/Logistic-tail, and SA/PA MirrorPad cleanup;
 - unconditional terminal ArgMax, Gather fan-out, Softmax, boundary-input,
   channel-slice, and channel-slice Mul/Add bridge cleanup;
+- unconditional terminal boundary StridedSlice/QDQ/Concat, Swish
+  residual/Concat, Dequantize/Logistic/Mul/Quantize, and Swish QDQ-island
+  cleanup;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -216,10 +219,15 @@ contract that fixed the relevant schema, graph effects, cycle behavior,
 metadata behavior, phase position, arguments, and no-op behavior. Production
 changes were then limited to the characterized boundary.
 
+The latest four records cover the terminal boundary StridedSlice/QDQ/Concat,
+Swish residual/Concat, Dequantize/Logistic/Mul/Quantize, and Swish QDQ-island
+cleanup observations. They remain consecutive between the terminal
+Slice/Concat recovery composite and InstanceNorm cleanup.
+
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 97 phase IDs and owners appear in deterministic source order;
+- all 101 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -268,7 +276,9 @@ Final checkpoint results:
 - terminal boundary, owner, phase-store, and runtime contracts:
   **156 passed**;
 - QLinear and terminal-layout orchestration contracts: **71 passed**;
-- broader result and phase-result contracts: **186 passed**;
+- terminal activation, phase-store, owner, and Slice/Concat contracts:
+  **75 passed**;
+- broader result and phase-result contracts: **187 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;
