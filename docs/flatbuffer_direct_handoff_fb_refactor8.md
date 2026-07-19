@@ -4466,3 +4466,35 @@ private Concat-axis callbacks locally, retain all lowerer compatibility
 wrappers and independent callers, add runtime identity/order/tuple coverage,
 and run affected plus standard gates sequentially. Never create, update, or
 reopen a pull request.
+
+## Very-late dynamic/adapter composite implementation
+
+`passes/very_late_dynamic_adapter_orchestration.py` now runs the characterized
+six-stage sequence through `shared_model_ir_pass_context`. It preserves the
+dynamic-Reshape flag, ModelIR/LayoutState/diagnostics argument policy, exact
+order, and all six mapping objects. Private Concat-axis callbacks are imported
+under module-local public aliases only.
+
+The lowerer replaces six result targets with
+`_very_late_dynamic_adapter_results`. All compatibility wrappers and fallback/
+independent callers remain, while the now-unneeded direct stale channel-shuffle
+import is removed. Mandatory very-late static-shape reconciliation and split
+fallback remain immediate successors. The phase-result store stays 128/128.
+
+Sequential validation under core-only `uv` completed with:
+
+- focused context-owner contracts: `3 passed in 0.54s`;
+- affected contracts: `499 passed in 18.86s`;
+- terminal-layout/pass-efficiency: `92 passed in 1.76s`;
+- core runtime: `55 passed in 0.93s`;
+- result contracts: `196 passed in 8.97s`;
+- phase-store capacity: `2 passed in 0.53s`;
+- TensorFlow isolation/default direct/`-cotof`: `11 passed in 9.52s`.
+
+On resume, rerun the unconsumed-result inventory. The preceding orphan/
+unbound-input/affine/normalization group remains deliberately deferred until
+the lowerer-only unbound-input mapping wrapper has a pass-module owner. Select
+another fully owned source-adjacent cluster if available; otherwise
+characterize that wrapper extraction separately before composing the group.
+Keep validation sequential, the store at 128/128, and never create, update, or
+reopen a pull request.

@@ -104,6 +104,16 @@ TERMINAL_STABILIZATION_OWNER_PATH = (
 )
 TERMINAL_STABILIZATION_OWNER = "run_terminal_stabilization_cleanup"
 TERMINAL_STABILIZATION_RESULT = "_final_terminal_stabilization_results"
+VERY_LATE_DYNAMIC_ADAPTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_dynamic_adapter_orchestration.py"
+)
+VERY_LATE_DYNAMIC_ADAPTER_OWNER = (
+    "run_very_late_dynamic_adapter_cleanup"
+)
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -391,6 +401,27 @@ def _terminal_stabilization_owner_calls(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == TERMINAL_STABILIZATION_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+    ]
+
+
+def _very_late_dynamic_adapter_owner_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        VERY_LATE_DYNAMIC_ADAPTER_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_DYNAMIC_ADAPTER_OWNER
     )
     return [
         node
@@ -1064,16 +1095,17 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == owner_name
     ]
-    assert len(direct_indices) == 1
+    assert len(direct_indices) == 0
+    very_late_calls = _very_late_dynamic_adapter_owner_calls(owner_name)
+    assert len(very_late_calls) == 1
+    assert ast.unparse(very_late_calls[0]) == (
+        "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs("
+        "context.model_ir, layout_state=context.layout_state)"
+    )
     assert (
         _absolute_final_normalization_attention_owner_call_count(owner_name)
         == 1
     )
-
-    very_late = body[direct_indices[0]]
-    assert isinstance(very_late, ast.Assign)
-    assert isinstance(very_late.targets[0], ast.Name)
-    assert very_late.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
 
     assert len(
         _absolute_final_cleanup_owner_calls(
@@ -1121,9 +1153,10 @@ def test_primary_path_stages_absolute_final_dynamic_rank1_result() -> None:
         ),
         key=lambda call: call.lineno,
     )
-    assert len(all_calls) == 2
+    assert len(all_calls) == 1
     assert (
         len(all_calls)
+        + len(very_late_calls)
         + _absolute_final_normalization_attention_owner_call_count(owner_name)
         == 3
     )

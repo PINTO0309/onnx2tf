@@ -22,14 +22,15 @@ OWNER_PATH = (
 )
 RAW_OWNER = "_run_indexed_conv_input_adapter_repairs"
 SUMMARY_OWNER = "run_indexed_conv_input_adapter_repairs_summary"
+COMPOSITE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_dynamic_adapter_orchestration.py"
+)
+COMPOSITE_OWNER = "run_very_late_dynamic_adapter_cleanup"
 SITE_CONTRACTS = (
-    (
-        "very_late_conv_input_tensor_count",
-        "_very_late_conv_input_stats",
-        "model_ir",
-        "_very_late_dynamic_reshape_stats",
-        "_very_late_stale_channel_shuffle_stats",
-    ),
     (
         "fallback_conv_input_tensor_count",
         "fallback_conv_input_stats",
@@ -52,6 +53,17 @@ def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
 
 
+def _composite_summary_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_OWNER_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+
+
 def _single_target(statement: ast.stmt) -> str | None:
     if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
         return None
@@ -69,6 +81,16 @@ def _containing_body(root: ast.AST, target: ast.stmt) -> list[ast.stmt]:
 
 def test_indexed_conv_input_prune_aware_boundaries_are_fixed() -> None:
     lowerer = _lowerer()
+    composite_calls = _composite_summary_calls()
+    assert len(composite_calls) == 1
+    assert ast.unparse(composite_calls[0]) == (
+        f"{SUMMARY_OWNER}(context.model_ir)"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "very_late_conv_input_tensor_count"
+        for node in ast.walk(lowerer)
+    )
     for count_target, stats_target, model_name, predecessor, successor in (
         SITE_CONTRACTS
     ):
@@ -118,6 +140,11 @@ def test_indexed_conv_input_uses_one_shared_prune_aware_summary_owner() -> None:
     assert ast.unparse(initial_count.value) == "len(model_ir.tensors)"
 
     lowerer = _lowerer()
+    composite_calls = _composite_summary_calls()
+    assert len(composite_calls) == 1
+    assert ast.unparse(composite_calls[0]) == (
+        f"{SUMMARY_OWNER}(context.model_ir)"
+    )
     for count_target, stats_target, model_name, predecessor, successor in (
         SITE_CONTRACTS
     ):

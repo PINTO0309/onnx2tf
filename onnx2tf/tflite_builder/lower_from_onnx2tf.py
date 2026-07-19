@@ -77,7 +77,9 @@ from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains as _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains_pass,
     _optimize_shufflenet_transpose_shuffle_chains as _optimize_shufflenet_transpose_shuffle_chains_pass,
     _repair_nchw_channel_shuffle_concat_gathers as _repair_nchw_channel_shuffle_concat_gathers_pass,
-    run_stale_nchw_channel_shuffle_repair,
+)
+from onnx2tf.tflite_builder.passes.very_late_dynamic_adapter_orchestration import (
+    run_very_late_dynamic_adapter_cleanup,
 )
 from onnx2tf.tflite_builder.passes.mean_layout import (
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains as _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains_pass,
@@ -5419,37 +5421,8 @@ def lower_onnx_to_ir(
     )
     # Very late terminal bridge/transpose rewrites above can still stale out
     # RESHAPE constant inputs. Re-resolve once immediately before final sort.
-    _very_late_dynamic_reshape_stats = _resolve_dynamic_reshape_shapes(
-        model_ir,
-        prefer_runtime_inferable_from_onnx_raw=True,
-    )
-    _very_late_conv_input_stats = (
-        run_indexed_conv_input_adapter_repairs_summary(model_ir)
-    )
-    _very_late_stale_channel_shuffle_stats = (
-        run_stale_nchw_channel_shuffle_repair(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
-    _very_late_concat_transpose_conv_axis_stats = (
-        _repair_nchw_concat_transpose_conv_axes(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _very_late_concat_global_pool_conv_axis_stats = (
-        _repair_nchw_concat_global_pool_conv_axes(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _very_late_dynamic_rank1_reshape_stats = (
-        _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
-            model_ir,
-            layout_state=session.layout_state,
-        )
+    _very_late_dynamic_adapter_results = (
+        run_very_late_dynamic_adapter_cleanup(shared_model_ir_pass_context)
     )
     session.record_phase_result(
         "shape_reconciliation.primary.very_late_final",

@@ -342,6 +342,30 @@ def _absolute_final_cleanup_calls(function_name: str) -> list[ast.Call]:
     ]
 
 
+def _very_late_dynamic_adapter_calls(function_name: str) -> list[ast.Call]:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "very_late_dynamic_adapter_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_very_late_dynamic_adapter_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
 def _no_layout_final_cleanup_call_count(function_name: str) -> int:
     owner_path = (
         REPO_ROOT
@@ -4174,7 +4198,14 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
             summary_invocations,
             key=lambda candidate: candidate.lineno,
         )
-    ] == ["model_ir", "fallback_ir"]
+    ] == ["fallback_ir"]
+    composite_summary_calls = _very_late_dynamic_adapter_calls(
+        "run_indexed_conv_input_adapter_repairs_summary"
+    )
+    assert len(composite_summary_calls) == 1
+    assert ast.unparse(composite_summary_calls[0]) == (
+        "run_indexed_conv_input_adapter_repairs_summary(context.model_ir)"
+    )
     summary_owner = next(
         node
         for node in owner_tree.body
@@ -5700,68 +5731,29 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_very_late_dynamic_reshape_stats"
+    assert next_boundary.targets[0].id == "_very_late_dynamic_adapter_results"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
-    assert next_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"
-    conv_input_stats = lowerer.body[invocation_index + 2]
-    assert isinstance(conv_input_stats, ast.Assign)
-    assert isinstance(conv_input_stats.targets[0], ast.Name)
-    assert conv_input_stats.targets[0].id == "_very_late_conv_input_stats"
-    assert isinstance(conv_input_stats.value, ast.Call)
-    assert isinstance(conv_input_stats.value.func, ast.Name)
-    assert (
-        conv_input_stats.value.func.id
-        == "run_indexed_conv_input_adapter_repairs_summary"
+    assert next_boundary.value.func.id == (
+        "run_very_late_dynamic_adapter_cleanup"
     )
-    channel_shuffle_stats = lowerer.body[invocation_index + 3]
-    assert isinstance(channel_shuffle_stats, ast.Assign)
-    assert isinstance(channel_shuffle_stats.targets[0], ast.Name)
-    assert channel_shuffle_stats.targets[0].id == (
-        "_very_late_stale_channel_shuffle_stats"
+    assert ast.unparse(next_boundary.value) == (
+        "run_very_late_dynamic_adapter_cleanup("
+        "shared_model_ir_pass_context)"
     )
-    assert isinstance(channel_shuffle_stats.value, ast.Call)
-    assert isinstance(channel_shuffle_stats.value.func, ast.Name)
-    assert (
-        channel_shuffle_stats.value.func.id
-        == "run_stale_nchw_channel_shuffle_repair"
+    owner_call_names = (
+        "resolve_dynamic_reshape_shapes",
+        "run_indexed_conv_input_adapter_repairs_summary",
+        "run_stale_nchw_channel_shuffle_repair",
+        "repair_nchw_concat_transpose_conv_axes",
+        "repair_nchw_concat_global_pool_conv_axes",
+        "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs",
     )
-    concat_axis_stats = lowerer.body[invocation_index + 4]
-    assert isinstance(concat_axis_stats, ast.Assign)
-    assert isinstance(concat_axis_stats.targets[0], ast.Name)
-    assert concat_axis_stats.targets[0].id == (
-        "_very_late_concat_transpose_conv_axis_stats"
+    assert all(
+        len(_very_late_dynamic_adapter_calls(name)) == 1
+        for name in owner_call_names
     )
-    assert isinstance(concat_axis_stats.value, ast.Call)
-    assert isinstance(concat_axis_stats.value.func, ast.Name)
-    assert (
-        concat_axis_stats.value.func.id
-        == "_repair_nchw_concat_transpose_conv_axes"
-    )
-    concat_pool_axis_stats = lowerer.body[invocation_index + 5]
-    assert isinstance(concat_pool_axis_stats, ast.Assign)
-    assert isinstance(concat_pool_axis_stats.targets[0], ast.Name)
-    assert concat_pool_axis_stats.targets[0].id == (
-        "_very_late_concat_global_pool_conv_axis_stats"
-    )
-    assert isinstance(concat_pool_axis_stats.value, ast.Call)
-    assert isinstance(concat_pool_axis_stats.value.func, ast.Name)
-    assert (
-        concat_pool_axis_stats.value.func.id
-        == "_repair_nchw_concat_global_pool_conv_axes"
-    )
-    dynamic_rank1_stats = lowerer.body[invocation_index + 6]
-    assert isinstance(dynamic_rank1_stats, ast.Assign)
-    assert isinstance(dynamic_rank1_stats.targets[0], ast.Name)
-    assert dynamic_rank1_stats.targets[0].id == (
-        "_very_late_dynamic_rank1_reshape_stats"
-    )
-    assert isinstance(dynamic_rank1_stats.value, ast.Call)
-    assert isinstance(dynamic_rank1_stats.value.func, ast.Name)
-    assert dynamic_rank1_stats.value.func.id == (
-        "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
-    )
-    static_shape_stats = lowerer.body[invocation_index + 7]
+    static_shape_stats = lowerer.body[invocation_index + 2]
     assert isinstance(static_shape_stats, ast.Expr)
     assert ast.unparse(static_shape_stats) == (
         "session.record_phase_result("
@@ -12727,9 +12719,12 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.channel_shuffle"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names | {
-        "run_stale_nchw_channel_shuffle_repair",
-    }
+    assert {alias.name for alias in imports[0].names} == function_names
+    assert len(
+        _very_late_dynamic_adapter_calls(
+            "run_stale_nchw_channel_shuffle_repair"
+        )
+    ) == 1
     for pass_id in CHANNEL_SHUFFLE_GATHER_LEADING_PASS_IDS:
         assert _orchestrated_pass_count(pass_id) == 1
     for pass_id in CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS:
@@ -13927,7 +13922,17 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     direct_runner_names = {
         call.func.id for call in calls if isinstance(call.func, ast.Name)
     }
-    assert direct_runner_names | orchestrated_runner_names == runner_names
+    composite_runner_names = {
+        name
+        for name in runner_names
+        if _very_late_dynamic_adapter_calls(name)
+    }
+    assert (
+        direct_runner_names
+        | orchestrated_runner_names
+        | composite_runner_names
+        == runner_names
+    )
     pad_owner_path = (
         REPO_ROOT
         / "onnx2tf"
@@ -13982,6 +13987,11 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and node.func.id == "_run_precision_cleanup_sequence"
     ]
     assert len(precision_sequence_invocations) == 2
+    very_late_runner_calls = [
+        call
+        for name in runner_names
+        for call in _very_late_dynamic_adapter_calls(name)
+    ]
     assert (
         len(calls)
         + len(summarized_runner_calls)
@@ -13994,9 +14004,10 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
             _late_binary_layout_recovery_call_count(name)
             for name in runner_names
         )
+        + len(very_late_runner_calls)
         == 120
     )
-    for call in calls:
+    for call in [*calls, *very_late_runner_calls]:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
         ]
@@ -14005,7 +14016,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         assert isinstance(value, ast.Attribute)
         assert value.attr == "diagnostics"
         assert isinstance(value.value, ast.Name)
-        assert value.value.id == "session"
+        assert value.value.id in {"session", "context"}
 
     hard_activation_calls = [
         call
@@ -14320,7 +14331,15 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_stale_nchw_channel_shuffle_repair"
     ]
-    assert len(stale_nchw_channel_shuffle_calls) == 1
+    assert (
+        len(stale_nchw_channel_shuffle_calls)
+        + len(
+            _very_late_dynamic_adapter_calls(
+                "run_stale_nchw_channel_shuffle_repair"
+            )
+        )
+        == 1
+    )
 
     transpose_mean_calls = [
         call

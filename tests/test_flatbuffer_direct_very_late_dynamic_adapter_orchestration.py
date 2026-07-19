@@ -3,8 +3,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    very_late_dynamic_adapter_orchestration as owner_module,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -155,35 +158,7 @@ def _assert_reconciliation_successor(
     assert split.value.func.id == "_replace_unsupported_split_with_slice"
 
 
-def test_very_late_dynamic_adapter_raw_lowerer_contract_is_fixed() -> None:
-    body = _lowerer().body
-    indices = []
-    for result_name, owner_name, arguments, keywords in RAW_CONTRACTS:
-        matches = [
-            (index, statement)
-            for index, statement in enumerate(body)
-            if _assignment_name(statement) == result_name
-        ]
-        assert len(matches) == 1
-        index, statement = matches[0]
-        assert isinstance(statement, ast.Assign)
-        _assert_call(
-            statement.value,
-            name=owner_name,
-            arguments=arguments,
-            keywords=keywords,
-        )
-        indices.append(index)
-
-    assert indices == list(range(indices[0], indices[0] + len(indices)))
-    _assert_reconciliation_successor(body, indices[-1] + 1)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late dynamic/adapter cleanup still has six lowerer results",
-)
-def test_very_late_dynamic_adapter_has_one_context_owner() -> None:
+def test_very_late_dynamic_adapter_context_owner_preserves_raw_contracts() -> None:
     owner = _function(OWNER_PATH, OWNER)
     assert [argument.arg for argument in owner.args.args] == ["context"]
     assert len(owner.body) == 1
@@ -219,3 +194,132 @@ def test_very_late_dynamic_adapter_has_one_context_owner() -> None:
         keywords={},
     )
     _assert_reconciliation_successor(body, index + 1)
+
+    assert not any(
+        _assignment_name(statement) in {
+            result_name for result_name, *_ in RAW_CONTRACTS
+        }
+        for statement in body
+    )
+
+
+def test_very_late_dynamic_adapter_lowerer_retains_one_composite_result() -> None:
+    body = _lowerer().body
+    matches = [
+        (index, statement)
+        for index, statement in enumerate(body)
+        if _assignment_name(statement) == RESULT_NAME
+    ]
+    assert len(matches) == 1
+    index, statement = matches[0]
+    assert isinstance(statement, ast.Assign)
+    _assert_call(
+        statement.value,
+        name=OWNER,
+        arguments=("shared_model_ir_pass_context",),
+        keywords={},
+    )
+    _assert_reconciliation_successor(body, index + 1)
+
+
+def test_very_late_dynamic_adapter_runtime_preserves_identity_order_and_tuple(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("very_late_dynamic_adapter")
+    diagnostics: list[dict[str, object]] = []
+    context = owner_module.VeryLateDynamicAdapterContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=diagnostics,
+    )
+    expected = tuple({f"result_{index}": index} for index in range(6))
+    calls: list[str] = []
+
+    def dynamic_reshape(
+        received_model_ir,
+        *,
+        prefer_runtime_inferable_from_onnx_raw,
+    ):
+        assert received_model_ir is context.model_ir
+        assert prefer_runtime_inferable_from_onnx_raw is True
+        calls.append("dynamic_reshape")
+        return expected[0]
+
+    def conv_input(received_model_ir):
+        assert received_model_ir is context.model_ir
+        calls.append("conv_input")
+        return expected[1]
+
+    def channel_shuffle(
+        received_model_ir,
+        *,
+        layout_state,
+        diagnostics,
+    ):
+        assert received_model_ir is context.model_ir
+        assert layout_state is context.layout_state
+        assert diagnostics is context.diagnostics
+        calls.append("channel_shuffle")
+        return expected[2]
+
+    def concat_transpose_conv(received_model_ir, *, layout_state):
+        assert received_model_ir is context.model_ir
+        assert layout_state is context.layout_state
+        calls.append("concat_transpose_conv")
+        return expected[3]
+
+    def concat_global_pool(received_model_ir, *, layout_state):
+        assert received_model_ir is context.model_ir
+        assert layout_state is context.layout_state
+        calls.append("concat_global_pool")
+        return expected[4]
+
+    def dynamic_rank1(received_model_ir, *, layout_state):
+        assert received_model_ir is context.model_ir
+        assert layout_state is context.layout_state
+        calls.append("dynamic_rank1")
+        return expected[5]
+
+    monkeypatch.setattr(
+        owner_module,
+        "resolve_dynamic_reshape_shapes",
+        dynamic_reshape,
+    )
+    monkeypatch.setattr(
+        owner_module,
+        "run_indexed_conv_input_adapter_repairs_summary",
+        conv_input,
+    )
+    monkeypatch.setattr(
+        owner_module,
+        "run_stale_nchw_channel_shuffle_repair",
+        channel_shuffle,
+    )
+    monkeypatch.setattr(
+        owner_module,
+        "repair_nchw_concat_transpose_conv_axes",
+        concat_transpose_conv,
+    )
+    monkeypatch.setattr(
+        owner_module,
+        "repair_nchw_concat_global_pool_conv_axes",
+        concat_global_pool,
+    )
+    monkeypatch.setattr(
+        owner_module,
+        "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs",
+        dynamic_rank1,
+    )
+
+    result = owner_module.run_very_late_dynamic_adapter_cleanup(context)
+
+    assert calls == [
+        "dynamic_reshape",
+        "conv_input",
+        "channel_shuffle",
+        "concat_transpose_conv",
+        "concat_global_pool",
+        "dynamic_rank1",
+    ]
+    assert result == expected
+    assert all(actual is wanted for actual, wanted in zip(result, expected))

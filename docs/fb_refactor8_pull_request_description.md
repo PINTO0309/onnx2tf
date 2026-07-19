@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Forty late lowerer clusters now have focused orchestration owners. The
+Forty-one late lowerer clusters now have focused orchestration owners. The
 first combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -325,8 +325,15 @@ all sub-owner and raw-wrapper contracts, the guarded no-layout predecessor,
 and topology/layout refresh successor while replacing three lowerer targets
 with one ordered outer tuple.
 
+The forty-first composes very-late dynamic Reshape, indexed Conv-input, stale
+channel-shuffle, two Concat-axis, and dynamic rank-one repairs. It preserves
+the runtime-inferable flag, exact ModelIR/LayoutState/diagnostics policy,
+callback order, every raw mapping object, compatibility wrappers, fallback and
+independent callers, mandatory reconciliation, and split fallback while
+replacing six lowerer results with one context-owned tuple.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing sixty-five former unconsumed locals and three
+and result schemas while removing seventy-one former unconsumed locals and three
 lowerer scope locals. They also replace twenty-nine consumed mutation-evidence
 or aggregate-result locals and twenty tensor-count snapshots with three
 explicit boolean decisions, nineteen reusable summary calls, and one prune-aware
@@ -986,3 +993,9 @@ arguments, runtime-inferable flag, raw result schemas and order,
 reconciliation and split-fallback successors, and the full 128/128 store.
 Production remains unchanged until the context owner is implemented
 separately.
+
+The latest checkpoint implements that very-late dynamic/adapter context owner.
+It moves the six callbacks without changing flags or argument policy, retains
+all wrappers and independent callers, removes one now-unused lowerer import,
+and preserves mandatory reconciliation, split fallback, raw result identity,
+and the full 128/128 store. Runtime injection proves all six stages directly.

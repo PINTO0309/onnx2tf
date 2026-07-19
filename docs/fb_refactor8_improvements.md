@@ -5042,3 +5042,45 @@ This checkpoint changes no production source, callback, context identity,
 graph mutation, pass order, flag, result schema, reconciliation, split
 fallback, store entry, API, artifact, dependency, or TensorFlow boundary. No
 real-model conversion was repeated.
+
+## Very-late dynamic/adapter composite implementation
+
+`passes/very_late_dynamic_adapter_orchestration.py` now owns the six-stage
+sequence. It uses the existing shared `ModelIRPassContext`, preserves the
+runtime-inferable dynamic-Reshape flag, forwards diagnostics only to stale
+channel-shuffle repair, forwards LayoutState to the four layout-sensitive
+repairs, and returns all six raw mappings unchanged as an ordered tuple. The
+two private Concat-axis callbacks have clear module-local aliases; their
+underlying owners are unchanged.
+
+The lowerer now retains one `_very_late_dynamic_adapter_results` target instead
+of six individual unconsumed results. Its dynamic-Reshape, Concat-axis, and
+dynamic-rank-one compatibility wrappers remain available, the fallback Conv-
+input summary call remains direct, and other independent callers are
+unchanged. The very-late normalization predecessor, mandatory static-shape
+reconciliation, and split fallback remain adjacent. The lowerer no longer
+imports stale channel-shuffle repair solely for this site.
+
+Runtime injection proves all six callback arguments, exact order, shared
+ModelIR/LayoutState/diagnostics identity, the dynamic-Reshape flag, mapping
+object identity, and outer tuple shape. Owner-aware structural tests account
+for direct, orchestrated, fallback, and compatibility-wrapper callers. No
+phase result was added; the store remains exactly 128 IDs and 128 owners.
+
+Final sequential validation under core-only `uv`:
+
+- focused context-owner runtime and structure contracts:
+  `3 passed in 0.54s`;
+- affected dynamic-Reshape, Conv-input, channel-shuffle, indexed Concat-axis,
+  Conv-layout, reconciliation, safety-fallback, shared-context, phase-store,
+  efficiency, and architecture contracts: `499 passed in 18.86s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.76s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 8.97s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.52s`.
+
+No real-model conversion was repeated because this is a straight-line owner
+move and dedicated runtime injection covers every callback, flag, shared-state
+identity, raw result, and both neighboring boundaries.
