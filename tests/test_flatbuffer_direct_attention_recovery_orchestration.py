@@ -703,7 +703,7 @@ def test_preadd_mean_attention_propagates_nested_results_to_both_direct_calls(
     )
     assert _direct_call_name(
         direct_results[0][0][direct_results[0][1] - 1]
-    ) == "_run_layout_recovery_prefix_pass_sequence"
+    ) == "run_layout_pass_set_2_qlinear_layout_recovery"
     assert _single_target(direct_results[0][0][direct_results[0][1] + 1]) == (
         "_layout_pass_set_2_attention_gate_qdq_results"
     )

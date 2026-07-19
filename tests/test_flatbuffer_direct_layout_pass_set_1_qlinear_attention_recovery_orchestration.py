@@ -17,10 +17,10 @@ from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
 )
 from onnx2tf.tflite_builder.passes import (
     layout_pass_set_1_qlinear_attention_recovery_orchestration,
+    layout_pass_set_2_qlinear_layout_recovery_orchestration,
 )
 from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     LayoutRecoveryContext,
-    run_layout_recovery_prefix,
     run_layout_reshape_attention_recovery_prefix,
 )
 from onnx2tf.tflite_builder.passes.pre_concat_nhwc_layout import (
@@ -344,7 +344,7 @@ def test_layout_pass_set_1_qlinear_attention_current_contract() -> None:
         for child_owner in CURRENT_CHILD_OWNERS
     }
     assert direct_counts == {
-        CURRENT_CHILD_OWNERS[0]: 1,
+        CURRENT_CHILD_OWNERS[0]: 0,
         CURRENT_CHILD_OWNERS[1]: 2,
     }
 
@@ -442,20 +442,20 @@ def test_layout_pass_set_1_qlinear_attention_runtime_identity(
 
 def test_layout_pass_set_2_qlinear_layout_recovery_current_contract() -> None:
     body = _set_2_guard_body()
-    assignments = [
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) in SET_2_RESULT_TARGETS
+        if _single_target(statement) == SET_2_COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == SET_2_OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_recovery_context"
     ]
-    assert [_single_target(statement) for statement in assignments] == list(
-        SET_2_RESULT_TARGETS
-    )
-    assert [_call_name(statement) for statement in assignments] == list(
-        SET_2_CURRENT_CHILD_OWNERS
-    )
-    indices = [body.index(statement) for statement in assignments]
-    assert indices[1] == indices[0] + 1
-    predecessor = body[indices[0] - 1]
+    assert call.keywords == []
+    predecessor = body[index - 1]
     assert _call_name(predecessor) == SET_2_PREDECESSOR
     predecessor_call = _call(predecessor)
     assert predecessor_call is not None
@@ -463,29 +463,20 @@ def test_layout_pass_set_2_qlinear_layout_recovery_current_contract() -> None:
         SET_2_PREDECESSOR_ARGUMENT
     ]
     assert predecessor_call.keywords == []
-    assert _single_target(body[indices[-1] + 1]) == SET_2_SUCCESSOR_TARGET
-    assert all(_call(statement).args == [] for statement in assignments)
-    assert all(_call(statement).keywords == [] for statement in assignments)
+    assert _single_target(body[index + 1]) == SET_2_SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in SET_2_RESULT_TARGETS
-        for statement in body
-        for node in ast.walk(statement)
+        for node in ast.walk(_lowerer())
     )
 
     context = _context()
-    results = (
-        run_qlinear_mean_concat_recovery(context.pass_context),
-        run_layout_recovery_prefix(context),
+    results = layout_pass_set_2_qlinear_layout_recovery_orchestration.run_layout_pass_set_2_qlinear_layout_recovery(
+        context
     )
     assert _schema(results) == (QLINEAR_SCHEMA, LAYOUT_PREFIX_SCHEMA)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout-pass-set-2 QLinear/layout owner is not implemented",
-)
 def test_layout_pass_set_2_qlinear_layout_recovery_has_one_context_owner() -> None:
     assert SET_2_OWNER_PATH.exists()
     owner = _functions(SET_2_OWNER_PATH)[SET_2_OWNER]
@@ -542,3 +533,44 @@ def test_layout_pass_set_2_qlinear_layout_recovery_has_one_context_owner() -> No
     assert all(
         name in lowerer_functions for name in SET_2_CURRENT_CHILD_OWNERS
     )
+
+
+def test_layout_pass_set_2_qlinear_layout_recovery_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    expected_results = (
+        tuple({f"qlinear_{index}": index} for index in range(5)),
+        tuple({f"layout_{index}": index} for index in range(19)),
+    )
+    observed: list[tuple[str, object]] = []
+
+    def qlinear(active_context: object) -> object:
+        observed.append((SET_2_CHILD_OWNERS[0], active_context))
+        return expected_results[0]
+
+    def layout(active_context: object) -> object:
+        observed.append((SET_2_CHILD_OWNERS[1], active_context))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        layout_pass_set_2_qlinear_layout_recovery_orchestration,
+        SET_2_CHILD_OWNERS[0],
+        qlinear,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_2_qlinear_layout_recovery_orchestration,
+        SET_2_CHILD_OWNERS[1],
+        layout,
+    )
+
+    actual = layout_pass_set_2_qlinear_layout_recovery_orchestration.run_layout_pass_set_2_qlinear_layout_recovery(
+        context
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (SET_2_CHILD_OWNERS[0], context.pass_context),
+        (SET_2_CHILD_OWNERS[1], context),
+    ]

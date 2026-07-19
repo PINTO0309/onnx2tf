@@ -208,6 +208,9 @@ from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
 from onnx2tf.tflite_builder.passes.layout_pass_set_1_qlinear_attention_recovery_orchestration import (
     run_layout_pass_set_1_qlinear_attention_recovery,
 )
+from onnx2tf.tflite_builder.passes.layout_pass_set_2_qlinear_layout_recovery_orchestration import (
+    run_layout_pass_set_2_qlinear_layout_recovery,
+)
 from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
     LayoutAttentionQuantizedSuffixContext,
     run_layout_attention_quantized_suffix,
@@ -4484,11 +4487,10 @@ def lower_onnx_to_ir(
         # Final recovery sweep:
         # some transpose-binary patterns become shape-safe only after static
         # metadata reconciliation, so run bridge passes once more.
-        _layout_pass_set_2_qlinear_mean_concat_results = (
-            _run_qlinear_mean_concat_recovery_sequence()
-        )
-        _layout_pass_set_2_layout_recovery_prefix_results = (
-            _run_layout_recovery_prefix_pass_sequence()
+        _layout_pass_set_2_qlinear_layout_recovery_results = (
+            run_layout_pass_set_2_qlinear_layout_recovery(
+                layout_recovery_context
+            )
         )
         _layout_pass_set_2_preadd_mean_attention_results = (
             _run_preadd_mean_attention_recovery_sequence()

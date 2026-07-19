@@ -6365,3 +6365,38 @@ update only stale structural entry expectations, and run affected plus standard
 gates sequentially under `uv`. Confirm the expected inventory reduction from
 43 to 42, then commit and push the complete unit only. Do not create, update,
 reopen, or otherwise modify a pull request.
+
+## Layout-pass-set-2 QLinear/layout implementation checkpoint
+
+`passes/layout_pass_set_2_qlinear_layout_recovery_orchestration.py` now
+provides `run_layout_pass_set_2_qlinear_layout_recovery()`. It calls
+`run_qlinear_mean_concat_recovery(context.pass_context)` and then
+`run_layout_recovery_prefix(context)`, returning both raw tuples unchanged.
+Runtime injection proves exact child order, pass-context and callback-bearing
+context identity, absence of extra options, and both result identities.
+
+The lowerer replaces only `_layout_pass_set_2_qlinear_mean_concat_results` and
+`_layout_pass_set_2_layout_recovery_prefix_results` with
+`_layout_pass_set_2_qlinear_layout_recovery_results`. The existing
+`_set_post_progress_desc("layout recovery pass-set 2")` call remains the direct
+predecessor and `_layout_pass_set_2_preadd_mean_attention_results` remains the
+direct successor. Both compatibility wrappers and every set-1, nested
+attention, callback, and downstream route remain available.
+
+Eight stale direct-call or neighbor expectations were updated to follow the
+public children through the new owner while retaining total route coverage.
+Sequential validation passes: focused `6`, complete affected `392`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase store
+`2`, and TensorFlow import-blocking/default-direct/`-cotof` `11`. Ruff,
+bytecode compilation, and whitespace checks pass. The phase-result store
+remains exactly 128 IDs and 128 owners, and the read-only unconsumed-result
+inventory decreases from 43 to 42. No real-model conversion was repeated for
+this straight-line ownership-only extraction.
+
+At resume, refresh the 42-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, phase or progress boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.
