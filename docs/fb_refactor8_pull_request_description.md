@@ -956,3 +956,10 @@ order, ModelIR/LayoutState identity, all raw mappings, both compatibility
 wrappers, fallback behavior, terminal validation, finalization, and the full
 128/128 store. Runtime injection and owner-aware structural tests cover the
 new boundary directly.
+
+The next characterization fixes the adjacent absolute-final boundary-signature,
+affine/InstanceNorm, and normalization/attention/rank-one composite sequence
+immediately before topology/layout refresh. It preserves exact model/context
+arguments, shared identity, nested raw result schemas and order, the refresh
+successor, and the full 128/128 store. Production remains unchanged until the
+top-level context owner is implemented separately.

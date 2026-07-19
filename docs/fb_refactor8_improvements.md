@@ -4943,3 +4943,32 @@ Final sequential validation under core-only `uv`:
 No real-model conversion was repeated because this is a straight-line
 ownership move and dedicated runtime injection proves the complete terminal
 sequence, state identity, and raw result preservation.
+
+## Absolute-final cleanup composite characterization
+
+The remaining-result inventory selected the three adjacent absolute-final
+cleanups immediately before `topology_layout.primary.absolute_final`. They run
+boundary-signature cleanup, the existing affine/InstanceNorm composite, and the
+existing normalization/attention/rank-one composite in that order. All three
+results are independent and unconsumed; the latter two already receive the
+same shared `ModelIRPassContext`.
+
+`tests/test_flatbuffer_direct_absolute_final_cleanup_orchestration.py` fixes
+the three raw result names and nested schemas, exact model/context argument
+policy, adjacency, and topology/layout refresh successor. Its one strict
+expected failure requires
+`passes/absolute_final_cleanup_orchestration.py` to expose one context owner
+that returns the three unchanged composite results as an ordered tuple, with
+the lowerer retaining one replacement result.
+
+Sequential characterization under core-only `uv` completed with
+`387 passed, 1 xfailed in 19.31s` across the dedicated contract and affected
+boundary-signature, affine/InstanceNorm, normalization/attention/rank-one,
+terminal-layout, shared-context, phase-store, and architecture contracts. The
+sole expected failure is the intentionally absent top-level context owner.
+Focused Ruff and whitespace checks passed.
+
+This checkpoint changes no production source, callback, context identity,
+graph mutation, pass order, nested result schema, topology/layout refresh,
+store entry, API, artifact, dependency, or TensorFlow boundary. No real-model
+conversion was repeated.

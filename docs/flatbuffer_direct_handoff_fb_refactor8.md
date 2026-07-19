@@ -4379,3 +4379,31 @@ and raw mapping identity. On resume, perform a fresh AST inventory of remaining
 unconsumed lowerer results and select the next small semantically closed non-
 store boundary before changing production. Keep validation sequential, the
 store at 128/128, and never create, update, or reopen a pull request.
+
+## Absolute-final cleanup composite characterization
+
+The fresh inventory selected the three adjacent results directly before
+`topology_layout.primary.absolute_final`:
+
+1. `run_boundary_shape_signature_cleanup(model_ir)`;
+2. `run_absolute_final_affine_instancenorm_cleanup(`
+   `shared_model_ir_pass_context)`;
+3. `run_absolute_final_normalization_attention_rank1_cleanup(`
+   `shared_model_ir_pass_context)`.
+
+The new focused contract preserves their result names and nested schemas,
+exact argument policy and order, shared-context identity, and immediate
+topology/layout refresh successor. One strict xfail requires
+`passes/absolute_final_cleanup_orchestration.py` to own an ordered triple and
+the lowerer to retain one `_absolute_final_cleanup_results` target.
+
+Sequential affected validation completed with
+`387 passed, 1 xfailed in 19.31s`; the only expected failure is the missing
+owner. Ruff and whitespace checks passed. Production and the full 128/128
+store are unchanged.
+
+Commit and push this characterization separately. At resume, implement the
+straight-line context owner by composing the three existing pass-module
+owners, replace only the three lowerer targets, add runtime identity/order/
+nested-tuple coverage, and run affected plus standard gates sequentially.
+Never create, update, or reopen a pull request.
