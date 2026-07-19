@@ -1231,6 +1231,43 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented three-result
 destination migration.
 
+## Layout pass-set 1 quantized cleanup implementation
+
+The trio now records under stable
+`cleanup.layout_pass_set_1.quantized_prelu`,
+`cleanup.layout_pass_set_1.dequant_transposeconv_quantize`, and
+`cleanup.layout_pass_set_1.quantized_reshape` phase IDs. All remain inside the
+same layout guard, consecutive, and between the same composite attention/QDQ
+result assignments.
+
+Only the three unconsumed mapping destinations changed. Owner calls,
+arguments, keywords, evaluation counts, graph traversals, ModelIR mutations,
+guard, source order, composite boundaries, public results, reports, artifacts,
+dependencies, and TensorFlow import boundaries are unchanged. No defaults
+existed. The bounded store now covers 71 phase IDs.
+
+The first full architecture run exposed two stale adjacent-boundary assertions.
+Both treated the new outer `session.record_phase_result` call as a direct
+`ast.Name` owner. They were updated to unwrap and verify the exact nested owner
+while retaining the composite boundary assertions. The focused correction
+passes `2 passed in 2.20s`; no production fix was required.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct trio, quantized owner/schema, and phase-store contracts:
+  `10 passed in 0.95s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader phase-result, owner, cleanup, fallback, terminal, shape, and topology
+  contracts: `273 passed in 6.62s`;
+- lowerer architecture contracts after the stale-assertion correction:
+  `258 passed in 16.61s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No root-model corpus conversion was run because this is an observation-
+destination-only change and the runtime suite exercises the guarded layout
+path.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

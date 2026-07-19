@@ -1277,3 +1277,29 @@ destinations. Preserve the outer guard and composite boundaries. Update the
 three multi-occurrence owner contracts and bounded-store inventory, then
 validate, document, commit, and push. Never create, update, or reopen a pull
 request.
+
+## Layout pass-set 1 quantized cleanup implementation
+
+The three consecutive mapping results now use stable
+`cleanup.layout_pass_set_1.*` quantized records. Their outer guard, owner
+expressions, adjacency, and composite boundaries remain unchanged. No defaults
+existed. The bounded store now covers 71 phase IDs.
+
+The first architecture run reported two failures in stale adjacent-boundary
+assertions that assumed every direct owner had an `ast.Name` outer call. Both
+now unwrap and verify the exact owner nested in the phase record. The targeted
+correction is `2 passed in 2.20s`; production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected contracts: `10 passed in 0.95s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader affected contracts: `273 passed in 6.62s`;
+- lowerer architecture contracts: `258 passed in 16.61s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite exercises the guarded path. After committing and
+pushing, keep composite results outside the mapping store and retain the
+71/128 capacity audit when choosing the next family. Never create, update, or
+reopen a pull request.

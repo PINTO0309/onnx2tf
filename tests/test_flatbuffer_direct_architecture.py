@@ -951,10 +951,30 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
         "_run_mean_attention_layout_pass_cluster",
         "_run_preadd_mean_attention_recovery_sequence",
     ]
-    assert [following.func.id for _, _, following in direct_boundaries] == [
+    following_calls = []
+    for _, _, following in direct_boundaries:
+        if (
+            isinstance(following.func, ast.Attribute)
+            and isinstance(following.func.value, ast.Name)
+            and following.func.value.id == "session"
+            and following.func.attr == "record_phase_result"
+            and len(following.args) == 2
+            and isinstance(following.args[1], ast.Call)
+        ):
+            following = following.args[1]
+        assert isinstance(following.func, ast.Name)
+        following_calls.append(following.func.id)
+    assert following_calls == [
         "run_quantized_prelu_cleanup",
         "_optimize_dequant_transposeconv_quantize_chains",
     ]
+    assert ast.unparse(direct_boundaries[0][2]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.quantized_prelu', "
+        "run_quantized_prelu_cleanup(model_ir, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
+    )
     assert any(
         keyword.arg == "include_layernorm"
         and isinstance(keyword.value, ast.Constant)
@@ -1037,12 +1057,29 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
     for _, previous, _ in direct_boundaries:
         assert isinstance(previous, (ast.Assign, ast.Expr))
         assert isinstance(previous.value, ast.Call)
-        assert isinstance(previous.value.func, ast.Name)
-        previous_call_names.append(previous.value.func.id)
+        previous_call = previous.value
+        if (
+            isinstance(previous_call.func, ast.Attribute)
+            and isinstance(previous_call.func.value, ast.Name)
+            and previous_call.func.value.id == "session"
+            and previous_call.func.attr == "record_phase_result"
+            and len(previous_call.args) == 2
+            and isinstance(previous_call.args[1], ast.Call)
+        ):
+            previous_call = previous_call.args[1]
+        assert isinstance(previous_call.func, ast.Name)
+        previous_call_names.append(previous_call.func.id)
     assert previous_call_names == [
         "run_quantized_reshape_cleanup",
         "_optimize_dequant_transposeconv_quantize_chains",
     ]
+    assert ast.unparse(direct_boundaries[0][1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.quantized_reshape', "
+        "run_quantized_reshape_cleanup(model_ir, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
+    )
 
     first_following = direct_boundaries[0][2]
     assert isinstance(first_following, ast.If)

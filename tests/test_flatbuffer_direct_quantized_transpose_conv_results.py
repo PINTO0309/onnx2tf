@@ -36,7 +36,18 @@ def _lowerer() -> ast.FunctionDef:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -118,14 +129,28 @@ def test_direct_quantized_transpose_conv_results_are_retained_observation_only()
     assert len(locations) == 2
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == RESULT_TARGETS
+    ) == (None, RESULT_TARGETS[1])
 
     first_body, first_index = locations[0]
-    assert _single_target(first_body[first_index - 1]) == (
-        "_layout_pass_set_1_quantized_prelu_stats"
+    assert ast.unparse(first_body[first_index - 1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.quantized_prelu', "
+        "run_quantized_prelu_cleanup(model_ir, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
     )
-    assert _single_target(first_body[first_index + 1]) == (
-        "_layout_pass_set_1_quantized_reshape_stats"
+    assert ast.unparse(first_body[first_index]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.dequant_transposeconv_quantize', "
+        "_optimize_dequant_transposeconv_quantize_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
+    assert ast.unparse(first_body[first_index + 1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.quantized_reshape', "
+        "run_quantized_reshape_cleanup(model_ir, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
     )
 
     second_body, second_index = locations[1]
